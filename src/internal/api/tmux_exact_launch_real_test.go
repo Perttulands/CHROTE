@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -54,13 +53,7 @@ func TestTmuxHandler_ExactLaunchRealPrivateSocket(t *testing.T) {
 	tmuxBin := core.TmuxBin()
 
 	t.Cleanup(func() {
-		kill := exec.Command(tmuxBin, "-S", socket, "kill-session", "-t", sessionName)
-		killOutput, killErr := kill.CombinedOutput()
-		if killErr != nil && !isTmuxMissingTargetError(fmt.Errorf("%s: %w", killOutput, killErr)) {
-			t.Errorf("kill exact private session: %v: %s; retained %s", killErr, strings.TrimSpace(string(killOutput)), root)
-			return
-		}
-		deadline := time.Now().Add(3 * time.Second)
+		deadline := time.Now().Add(5 * time.Second)
 		for {
 			probe := exec.Command(tmuxBin, "-S", socket, "list-sessions")
 			probeOutput, probeErr := probe.CombinedOutput()
@@ -98,18 +91,33 @@ func TestTmuxHandler_ExactLaunchRealPrivateSocket(t *testing.T) {
 	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", filepath.Join(root, "managed-status.json"))
 	core.ResetConfigForTesting()
 	t.Cleanup(core.ResetConfigForTesting)
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	inspectRec := httptest.NewRecorder()
+	mux.ServeHTTP(inspectRec, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	if inspectRec.Code != http.StatusOK {
+		t.Fatalf("inspect status = %d: %s", inspectRec.Code, inspectRec.Body.String())
+	}
+	var before SessionsResponse
+	if err := json.Unmarshal(inspectRec.Body.Bytes(), &before); err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Sources) != 1 || before.Sources[0].Status != tmuxSourceComplete || before.Sources[0].Generation == "" {
+		t.Fatalf("inspect sources = %+v", before.Sources)
+	}
 
 	argv := []string{
 		python,
 		"-c",
-		"import json,pathlib,sys,time; pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:])); time.sleep(60)",
+		"import json,pathlib,sys,time; pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:])); time.sleep(2)",
 		outputPath,
 		"arg with spaces",
 		"; touch " + sentinelPath,
 	}
 	body, err := json.Marshal(map[string]interface{}{
 		"sourceId":         tmuxSourceID(current.Username),
-		"sourceGeneration": tmuxSourceGeneration(current.Username, nil),
+		"sourceGeneration": before.Sources[0].Generation,
 		"unixUser":         current.Username,
 		"name":             sessionName,
 		"cwd":              workspace,
@@ -118,9 +126,6 @@ func TestTmuxHandler_ExactLaunchRealPrivateSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewTmuxHandler()
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/tmux/recovery-launches/22222222-2222-4222-8222-222222222222", bytes.NewReader(body)))
 	if rec.Code != http.StatusOK {
@@ -132,6 +137,18 @@ func TestTmuxHandler_ExactLaunchRealPrivateSocket(t *testing.T) {
 	}
 	if !receipt.Success || receipt.State != "launched" || receipt.SessionName != sessionName || receipt.PanePID <= 0 || receipt.ProcessStart == "" || receipt.CWD != workspace {
 		t.Fatalf("exact launch receipt = %+v", receipt)
+	}
+	verifyRec := httptest.NewRecorder()
+	mux.ServeHTTP(verifyRec, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	var after SessionsResponse
+	if err := json.Unmarshal(verifyRec.Body.Bytes(), &after); err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Sources) != 1 || after.Sources[0].Generation == before.Sources[0].Generation {
+		t.Fatalf("source generation did not advance: before=%+v after=%+v", before.Sources, after.Sources)
+	}
+	if len(after.RecoveryEvidence) != 1 || after.RecoveryEvidence[0].State != recoveryEvidenceLive || after.RecoveryEvidence[0].Name != sessionName || after.RecoveryEvidence[0].TmuxSessionID != receipt.SessionID || after.RecoveryEvidence[0].CWD != workspace {
+		t.Fatalf("post-launch evidence = %+v", after.RecoveryEvidence)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
