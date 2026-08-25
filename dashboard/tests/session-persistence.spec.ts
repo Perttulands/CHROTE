@@ -30,7 +30,7 @@ async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: s
 }
 
 test.describe('Session Persistence', () => {
-  test('should clean persisted bound sessions when API successfully confirms no live sessions', async ({ page }) => {
+  test('keeps authoritative offline placement until explicit cleanup', async ({ page }) => {
     // 1. Initial Load with Sessions
     await mockApiRoutes(page)
     await page.goto('/')
@@ -60,6 +60,12 @@ test.describe('Session Persistence', () => {
         body: JSON.stringify({
           sessions: [],
           grouped: {},
+          recoveryEvidence: [{
+            sourceId: 'tmux:default',
+            name: 'hq-deacon',
+            state: 'offline',
+            cwd: '/workspace/hq-deacon',
+          }],
           timestamp: new Date().toISOString()
         }),
       })
@@ -69,8 +75,12 @@ test.describe('Session Persistence', () => {
     await page.reload()
     await page.waitForSelector('.dashboard')
 
-    // 5. Assert the stale session tag was swept instead of requiring manual cleanup.
-    await expect(sessionTag).toHaveCount(0, { timeout: 10000 })
-    await expect(page.locator('.terminal-window:visible').first().locator('button', { hasText: 'New Session' })).toBeVisible()
+    // 5. Offline placement survives reload and clears only through the explicit action.
+    await expect(sessionTag).toBeVisible()
+    const window = page.locator('.terminal-window:visible').first()
+    await expect(window.getByText('Session is offline')).toBeVisible()
+    await window.getByRole('button', { name: 'Clear offline placement' }).click()
+    await expect(sessionTag).toHaveCount(0)
+    await expect(window.locator('button', { hasText: 'New Session' })).toBeVisible()
   })
 })
