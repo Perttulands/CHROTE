@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chrote/server/internal/core"
 )
 
 // installSelectiveTmux writes a fake tmux that fails only for sockets whose path
@@ -31,7 +33,7 @@ func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 		"case \"$sock\" in\n" +
 		"  *" + failFor + "*) printf '%s\\n' \"$TMUX_STDERR\" >&2; exit 1 ;;\n" +
 		"esac\n" +
-		"printf '%s	%s	%s	%s	%s\\n' '$7' 'healthy-session' '1' '0' '/workspaces/healthy'\n" +
+		"printf '%s	%s	%s	%s	%s	%s	%s\\n' '9001' \"$sock\" '$7' 'healthy-session' '1' '0' '/workspaces/healthy'\n" +
 		"exit 0\n"
 	scriptPath := filepath.Join(dir, "tmux")
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
@@ -189,7 +191,7 @@ func TestTmuxHandler_ListSessionsDoesNotMarkGlobalFailurePartial(t *testing.T) {
 // no-server path stays quiet in the multi-user branch too -- otherwise a user who
 // simply has no tmux running would raise a permanent cockpit error.
 func TestTmuxHandler_ListSessionsMultiUserNoServerIsNotAnError(t *testing.T) {
-	installSelectiveTmux(t, "empty", "no server running on /tmp/chrote-tmux-test/empty.sock")
+	installSelectiveTmux(t, "empty", "no server running on /tmp/fixture-build/empty.sock")
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/empty.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
@@ -341,5 +343,27 @@ func TestTmuxHandler_ListSessionsMalformedInventoryCannotOfflineEvidence(t *test
 	}
 	if len(persisted) != 1 || !persisted[0].Live || persisted[0].LastSeen != "2026-08-25T11:00:00Z" {
 		t.Fatalf("persisted evidence mutated after malformed inventory: %+v", persisted)
+	}
+}
+
+func TestTmuxSourceGenerationIncludesServerIdentity(t *testing.T) {
+	sessions := []core.Session{{ID: "$7", Name: "one", UnixUser: "alice", Windows: 1, CWD: "/workspaces/one"}}
+	one := tmuxSourceGeneration("alice", sessions, "9001@/tmp/tmux-a")
+	two := tmuxSourceGeneration("alice", sessions, "9002@/tmp/tmux-a")
+	if one == two {
+		t.Fatalf("generation = %q for distinct tmux server identities", one)
+	}
+}
+
+func TestParseAuthoritativeSessionsOutputRejectsDuplicateIdentity(t *testing.T) {
+	output := "9001	/tmp/tmux-a	$7	one	1	0	/workspaces/one\n9001	/tmp/tmux-a	$7	two	1	0	/workspaces/two\n"
+	if _, _, err := parseAuthoritativeSessionsOutput(output, "alice", "/tmp/tmux-a"); err == nil || !strings.Contains(err.Error(), "duplicates") {
+		t.Fatalf("error = %v, want duplicate identity rejection", err)
+	}
+}
+
+func TestParseAuthoritativeSessionsOutputRejectsEmptySuccess(t *testing.T) {
+	if _, _, err := parseAuthoritativeSessionsOutput("", "alice", "/tmp/tmux-a"); err == nil || !strings.Contains(err.Error(), "empty output") {
+		t.Fatalf("empty authoritative output error = %v", err)
 	}
 }

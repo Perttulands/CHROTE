@@ -1468,6 +1468,20 @@ func isTmuxNoServerError(errStr string) bool {
 		(strings.Contains(lower, "error connecting to ") && strings.Contains(lower, "(no such file or directory)"))
 }
 
+func effectiveTmuxSocket(socket string) string {
+	if socket = strings.TrimSpace(socket); socket != "" {
+		return filepath.Clean(socket)
+	}
+	return filepath.Join(core.GetTmuxTmpdir(), "default")
+}
+
+func isTmuxNoServerErrorForSocket(errStr, socket string) bool {
+	expected := strings.ToLower(effectiveTmuxSocket(socket))
+	lower := strings.ToLower(errStr)
+	return strings.Contains(lower, "no server running on "+expected) ||
+		strings.Contains(lower, "error connecting to "+expected+" (no such file or directory)")
+}
+
 func isTmuxDuplicateSessionError(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate session")
 }
@@ -1564,20 +1578,20 @@ func parseSessionsOutput(output string, unixUser string) []core.Session {
 	return sessions
 }
 
-func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget) ([]core.Session, string) {
-	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_id}	#{session_name}	#{session_windows}	#{session_attached}	#{pane_current_path}")
+func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget) ([]core.Session, string, string) {
+	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{pid}	#{socket_path}	#{session_id}	#{session_name}	#{session_windows}	#{session_attached}	#{pane_current_path}")
 	if err != nil {
 		errStr := err.Error()
-		if isTmuxNoServerError(errStr) {
-			return []core.Session{}, ""
+		if isTmuxNoServerErrorForSocket(errStr, target.socket) {
+			return []core.Session{}, "", "absent@" + effectiveTmuxSocket(target.socket)
 		}
-		return []core.Session{}, errStr
+		return []core.Session{}, errStr, ""
 	}
-	sessions, parseErr := parseAuthoritativeSessionsOutput(output, target.unixUser)
+	sessions, serverIdentity, parseErr := parseAuthoritativeSessionsOutput(output, target.unixUser, target.socket)
 	if parseErr != nil {
-		return []core.Session{}, parseErr.Error()
+		return []core.Session{}, parseErr.Error(), ""
 	}
-	return sessions, ""
+	return sessions, "", serverIdentity
 }
 
 // ListSessions handles GET /api/tmux/sessions
@@ -1636,7 +1650,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 				response.Sources = append(response.Sources, failedTmuxSource(unixUser, observedAt, targetErr.Error()))
 				continue
 			}
-			sessions, errStr := h.listSessionsForTarget(target)
+			sessions, errStr, serverIdentity := h.listSessionsForTarget(target)
 			if errStr != "" {
 				errors = append(errors, fmt.Sprintf("%s: %s", unixUser, errStr))
 				response.Sources = append(response.Sources, failedTmuxSource(unixUser, observedAt, errStr))
@@ -1644,7 +1658,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			}
 			successfulUsers++
 			authoritativeUsers[unixUser] = true
-			response.Sources = append(response.Sources, completeTmuxSource(unixUser, observedAt, sessions))
+			response.Sources = append(response.Sources, completeTmuxSource(unixUser, observedAt, serverIdentity, sessions))
 			response.Sessions = append(response.Sessions, sessions...)
 		}
 		if len(errors) > 0 {
@@ -1658,14 +1672,14 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 			return
 		}
-		sessions, errStr := h.listSessionsForTarget(target)
+		sessions, errStr, serverIdentity := h.listSessionsForTarget(target)
 		response.Sessions = append(response.Sessions, sessions...)
 		if errStr != "" {
 			response.Error = errStr
 			response.Sources = append(response.Sources, failedTmuxSource(target.unixUser, observedAt, errStr))
 		} else {
 			authoritativeUsers[target.unixUser] = true
-			response.Sources = append(response.Sources, completeTmuxSource(target.unixUser, observedAt, sessions))
+			response.Sources = append(response.Sources, completeTmuxSource(target.unixUser, observedAt, serverIdentity, sessions))
 		}
 	}
 

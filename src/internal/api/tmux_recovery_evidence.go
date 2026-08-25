@@ -24,13 +24,14 @@ const (
 // TmuxSourceEvidence qualifies one configured tmux inventory. A generation is
 // present only when the source was read authoritatively.
 type TmuxSourceEvidence struct {
-	SourceID   string `json:"sourceId"`
-	UnixUser   string `json:"unixUser,omitempty"`
-	Status     string `json:"status"`
-	ObservedAt string `json:"observedAt"`
-	Generation string `json:"generation,omitempty"`
-	ErrorCode  string `json:"errorCode,omitempty"`
-	Error      string `json:"error,omitempty"`
+	SourceID       string `json:"sourceId"`
+	UnixUser       string `json:"unixUser,omitempty"`
+	Status         string `json:"status"`
+	ObservedAt     string `json:"observedAt"`
+	Generation     string `json:"generation,omitempty"`
+	ServerIdentity string `json:"serverIdentity,omitempty"`
+	ErrorCode      string `json:"errorCode,omitempty"`
+	Error          string `json:"error,omitempty"`
 }
 
 // NativeSessionEvidence is an already-recorded native harness identity. It is
@@ -39,6 +40,7 @@ type NativeSessionEvidence struct {
 	Provider        string `json:"provider"`
 	NativeSessionID string `json:"nativeSessionId"`
 	EvidenceSource  string `json:"evidenceSource"`
+	ObservedAt      string `json:"observedAt,omitempty"`
 }
 
 // RecoverySessionEvidence projects bounded current/offline state without
@@ -72,7 +74,7 @@ func tmuxSourceID(unixUser string) string {
 	return "tmux:" + unixUser
 }
 
-func tmuxSourceGeneration(unixUser string, sessions []core.Session) string {
+func tmuxSourceGeneration(unixUser string, sessions []core.Session, sourceIdentity ...string) string {
 	rows := make([]tmuxGenerationSession, 0, len(sessions))
 	for _, session := range sessions {
 		rows = append(rows, tmuxGenerationSession{
@@ -94,43 +96,62 @@ func tmuxSourceGeneration(unixUser string, sessions []core.Session) string {
 		return rows[i].ID < rows[j].ID
 	})
 	raw, _ := json.Marshal(struct {
-		UnixUser string                  `json:"unixUser"`
-		Sessions []tmuxGenerationSession `json:"sessions"`
-	}{UnixUser: strings.TrimSpace(unixUser), Sessions: rows})
+		UnixUser       string                  `json:"unixUser"`
+		SourceIdentity string                  `json:"sourceIdentity"`
+		Sessions       []tmuxGenerationSession `json:"sessions"`
+	}{UnixUser: strings.TrimSpace(unixUser), SourceIdentity: strings.Join(sourceIdentity, ""), Sessions: rows})
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func parseAuthoritativeSessionsOutput(output string, unixUser string) ([]core.Session, error) {
+func parseAuthoritativeSessionsOutput(output, unixUser, expectedSocket string) ([]core.Session, string, error) {
 	trimmed := strings.TrimRight(output, "\r\n")
 	if strings.TrimSpace(trimmed) == "" {
-		return []core.Session{}, nil
+		return nil, "", fmt.Errorf("tmux inventory protocol returned empty output")
 	}
 	sessions := []core.Session{}
+	seenIDs := map[string]bool{}
+	seenNames := map[string]bool{}
+	serverIdentity := ""
 	for lineIndex, line := range strings.Split(trimmed, "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		parts := strings.Split(line, "	")
-		if len(parts) != 5 {
-			return nil, fmt.Errorf("tmux inventory protocol row %d has %d fields, want 5", lineIndex+1, len(parts))
+		if len(parts) != 7 {
+			return nil, "", fmt.Errorf("tmux inventory protocol row %d has %d fields, want 7", lineIndex+1, len(parts))
 		}
-		sessionID := strings.TrimSpace(parts[0])
-		name := strings.TrimSpace(parts[1])
-		windowsText := strings.TrimSpace(parts[2])
-		attachedText := strings.TrimSpace(parts[3])
-		cwd := strings.TrimSpace(parts[4])
+		serverPID := strings.TrimSpace(parts[0])
+		socketPath := filepath.Clean(strings.TrimSpace(parts[1]))
+		sessionID := strings.TrimSpace(parts[2])
+		name := strings.TrimSpace(parts[3])
+		windowsText := strings.TrimSpace(parts[4])
+		attachedText := strings.TrimSpace(parts[5])
+		cwd := strings.TrimSpace(parts[6])
+		if !tmuxPIDPattern.MatchString(serverPID) || !filepath.IsAbs(socketPath) || socketPath != effectiveTmuxSocket(expectedSocket) {
+			return nil, "", fmt.Errorf("tmux inventory protocol row %d has invalid server identity", lineIndex+1)
+		}
+		rowServerIdentity := serverPID + "@" + socketPath
+		if serverIdentity != "" && serverIdentity != rowServerIdentity {
+			return nil, "", fmt.Errorf("tmux inventory protocol changed server identity between rows")
+		}
+		serverIdentity = rowServerIdentity
 		if !tmuxSessionIDPattern.MatchString(sessionID) || name == "" || len(name) > 256 || strings.ContainsAny(name, "\x00\r\n	") {
-			return nil, fmt.Errorf("tmux inventory protocol row %d has invalid session identity", lineIndex+1)
+			return nil, "", fmt.Errorf("tmux inventory protocol row %d has invalid session identity", lineIndex+1)
 		}
 		windows, err := strconv.Atoi(windowsText)
 		if err != nil || windows <= 0 {
-			return nil, fmt.Errorf("tmux inventory protocol row %d has invalid window count", lineIndex+1)
+			return nil, "", fmt.Errorf("tmux inventory protocol row %d has invalid window count", lineIndex+1)
 		}
 		if attachedText != "0" && attachedText != "1" {
-			return nil, fmt.Errorf("tmux inventory protocol row %d has invalid attached state", lineIndex+1)
+			return nil, "", fmt.Errorf("tmux inventory protocol row %d has invalid attached state", lineIndex+1)
 		}
 		if cwd != "" && !filepath.IsAbs(cwd) {
-			return nil, fmt.Errorf("tmux inventory protocol row %d has non-absolute cwd", lineIndex+1)
+			return nil, "", fmt.Errorf("tmux inventory protocol row %d has non-absolute cwd", lineIndex+1)
 		}
+		if seenIDs[sessionID] || seenNames[name] {
+			return nil, "", fmt.Errorf("tmux inventory protocol row %d duplicates a session identity", lineIndex+1)
+		}
+		seenIDs[sessionID] = true
+		seenNames[name] = true
 		if isReservedInternalSessionName(name) {
 			continue
 		}
@@ -144,16 +165,17 @@ func parseAuthoritativeSessionsOutput(output string, unixUser string) ([]core.Se
 			CWD:      cwd,
 		})
 	}
-	return sessions, nil
+	return sessions, serverIdentity, nil
 }
 
-func completeTmuxSource(unixUser, observedAt string, sessions []core.Session) TmuxSourceEvidence {
+func completeTmuxSource(unixUser, observedAt, serverIdentity string, sessions []core.Session) TmuxSourceEvidence {
 	return TmuxSourceEvidence{
-		SourceID:   tmuxSourceID(unixUser),
-		UnixUser:   strings.TrimSpace(unixUser),
-		Status:     tmuxSourceComplete,
-		ObservedAt: observedAt,
-		Generation: tmuxSourceGeneration(unixUser, sessions),
+		SourceID:       tmuxSourceID(unixUser),
+		UnixUser:       strings.TrimSpace(unixUser),
+		Status:         tmuxSourceComplete,
+		ObservedAt:     observedAt,
+		Generation:     tmuxSourceGeneration(unixUser, sessions, serverIdentity),
+		ServerIdentity: serverIdentity,
 	}
 }
 
@@ -183,7 +205,7 @@ func nativeEvidenceFromBank(entry SessionBankEntry) []NativeSessionEvidence {
 			return
 		}
 		seen[key] = true
-		result = append(result, NativeSessionEvidence{Provider: provider, NativeSessionID: id, EvidenceSource: source})
+		result = append(result, NativeSessionEvidence{Provider: provider, NativeSessionID: id, EvidenceSource: source, ObservedAt: entry.LastSeen})
 	}
 	if entry.AgentSessionID != "" {
 		appendEvidence(entry.AgentKind, entry.AgentSessionID, "session-bank")

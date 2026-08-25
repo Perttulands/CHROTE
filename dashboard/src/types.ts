@@ -398,6 +398,7 @@ export interface TmuxSourceEvidence {
   status: 'complete' | 'failed'
   observedAt: string
   generation?: string
+  serverIdentity?: string
   errorCode?: string
   error?: string
 }
@@ -406,6 +407,7 @@ export interface NativeSessionEvidence {
   provider: string
   nativeSessionId: string
   evidenceSource: string
+  observedAt?: string
 }
 
 export interface RecoverySessionEvidence {

@@ -24,14 +24,18 @@ func installFailingTmux(t *testing.T, stderr string) {
 }
 
 func TestTmuxHandler_ListSessionsTreatsKnownNoServerErrorsAsEmptyList(t *testing.T) {
-	tests := []string{
-		"no server running on /tmp/tmux-2001/default",
-		"error connecting to /run/user/2001/tmux/default (No such file or directory)",
+	tests := []struct {
+		stderr string
+		socket string
+	}{
+		{stderr: "no server running on /tmp/tmux-2001/default", socket: "/tmp/tmux-2001/default"},
+		{stderr: "error connecting to /run/user/2001/tmux/default (No such file or directory)", socket: "/run/user/2001/tmux/default"},
 	}
 
-	for _, stderr := range tests {
-		t.Run(stderr, func(t *testing.T) {
-			installFailingTmux(t, stderr)
+	for _, test := range tests {
+		t.Run(test.stderr, func(t *testing.T) {
+			installFailingTmux(t, test.stderr)
+			t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", test.socket)
 			handler := NewTmuxHandler()
 			req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
 			rec := httptest.NewRecorder()
@@ -52,6 +56,20 @@ func TestTmuxHandler_ListSessionsTreatsKnownNoServerErrorsAsEmptyList(t *testing
 				t.Fatalf("error = %q, want no user-visible error for no-server condition", response.Error)
 			}
 		})
+	}
+}
+
+func TestTmuxHandler_ListSessionsRejectsNoServerForAnotherSocket(t *testing.T) {
+	installFailingTmux(t, "unrelated diagnostic: no server running on /tmp/other.sock")
+	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "/tmp/selected.sock")
+	rec := httptest.NewRecorder()
+	NewTmuxHandler().ListSessions(rec, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	var response SessionsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error == "" || len(response.Sources) != 1 || response.Sources[0].Status != tmuxSourceFailed {
+		t.Fatalf("response = %+v, want mismatched socket failure to remain non-authoritative", response)
 	}
 }
 

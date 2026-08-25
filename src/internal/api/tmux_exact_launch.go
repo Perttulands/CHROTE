@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -154,6 +155,9 @@ func exactLaunchArgv(raw []string) ([]string, *exactLaunchError) {
 		if strings.ContainsRune(arg, '\x00') {
 			return nil, &exactLaunchError{Status: http.StatusBadRequest, Code: "EXACT_LAUNCH_ARGV_INVALID", Message: "exact launch argv contains a NUL byte"}
 		}
+		if arg == ";" || arg == "\\;" {
+			return nil, &exactLaunchError{Status: http.StatusBadRequest, Code: "EXACT_LAUNCH_ARGV_INVALID", Message: "exact launch argv contains a tmux command separator"}
+		}
 		total += len(arg)
 		if total > exactLaunchMaxArgBytes {
 			return nil, &exactLaunchError{Status: http.StatusRequestEntityTooLarge, Code: "EXACT_LAUNCH_ARGV_TOO_LARGE", Message: "exact launch argv exceeds 16 KiB"}
@@ -300,6 +304,23 @@ func (h *TmuxHandler) replayExactLaunch(target tmuxTarget, existing core.Session
 	}, true, nil
 }
 
+func (h *TmuxHandler) sessionOwnedByExactLaunchID(target tmuxTarget, sessions []core.Session, launchID string) (core.Session, bool, error) {
+	var matched core.Session
+	found := false
+	for _, session := range sessions {
+		stored, err := h.exactLaunchSessionEnvironment(target, session.ID, exactLaunchCreationIDEnv)
+		if err != nil || stored != launchID {
+			continue
+		}
+		if found {
+			return core.Session{}, false, &exactLaunchError{Status: http.StatusConflict, Code: "EXACT_LAUNCH_IDEMPOTENCY_CONFLICT", Message: "exact launch ID is attached to multiple sessions"}
+		}
+		matched = session
+		found = true
+	}
+	return matched, found, nil
+}
+
 func (h *TmuxHandler) verifyExactLaunch(parent context.Context, target tmuxTarget, created ownedExactLaunch, cwd string) (ExactLaunchReceipt, error) {
 	output, err := h.runTmuxOnSocketContext(parent, target.socket,
 		"display-message", "-p", "-t", created.PaneID,
@@ -335,6 +356,23 @@ func writeExactLaunchError(w http.ResponseWriter, err error) {
 	core.WriteError(w, http.StatusInternalServerError, "EXACT_LAUNCH_FAILED", err.Error())
 }
 
+func decodeExactLaunchRequest(w http.ResponseWriter, r *http.Request, dest *ExactLaunchRequest) error {
+	if r == nil || r.Body == nil {
+		return fmt.Errorf("request body is required")
+	}
+	reader := http.MaxBytesReader(w, r.Body, exactLaunchMaxArgBytes+4096)
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dest); err != nil {
+		return err
+	}
+	var extra interface{}
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return fmt.Errorf("request body must contain one JSON object")
+	}
+	return nil
+}
+
 // ExactLaunch handles PUT /api/tmux/recovery-launches/{launchId}.
 func (h *TmuxHandler) ExactLaunch(w http.ResponseWriter, r *http.Request) {
 	launchID := strings.TrimSpace(r.PathValue("launchId"))
@@ -343,11 +381,12 @@ func (h *TmuxHandler) ExactLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ExactLaunchRequest
-	if err := decodeOptionalJSONBodyLimited(w, r, &req, exactLaunchMaxArgBytes+4096); err != nil {
+	if err := decodeExactLaunchRequest(w, r, &req); err != nil {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid exact launch request")
 		return
 	}
-	if valid, message := core.ValidateSessionName(strings.TrimSpace(req.Name), "session name"); !valid || isReservedInternalSessionName(req.Name) {
+	req.Name = strings.TrimSpace(req.Name)
+	if valid, message := core.ValidateSessionName(req.Name, "session name"); !valid || isReservedInternalSessionName(req.Name) {
 		if message == "" {
 			message = "session name is reserved"
 		}
@@ -379,20 +418,29 @@ func (h *TmuxHandler) ExactLaunch(w http.ResponseWriter, r *http.Request) {
 	h.recoveryMu.Lock()
 	defer h.recoveryMu.Unlock()
 
-	sessions, sourceErr := h.listSessionsForTarget(target)
+	sessions, sourceErr, serverIdentity := h.listSessionsForTarget(target)
 	if sourceErr != "" {
 		core.WriteError(w, http.StatusConflict, "TMUX_SOURCE_UNAVAILABLE", "exact launch source is not currently authoritative")
 		return
 	}
-	currentGeneration := tmuxSourceGeneration(target.unixUser, sessions)
-	if existing, exists := exactLaunchSessionByName(sessions, req.Name); exists {
-		receipt, owned, replayErr := h.replayExactLaunch(target, existing, launchID, digest, cwd)
+	currentGeneration := tmuxSourceGeneration(target.unixUser, sessions, serverIdentity)
+	ownedByLaunchID, launchIDExists, launchIDErr := h.sessionOwnedByExactLaunchID(target, sessions, launchID)
+	if launchIDErr != nil {
+		writeExactLaunchError(w, launchIDErr)
+		return
+	}
+	if launchIDExists {
+		if ownedByLaunchID.Name != req.Name {
+			core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_IDEMPOTENCY_CONFLICT", "exact launch ID already owns another session name")
+			return
+		}
+		receipt, owned, replayErr := h.replayExactLaunch(target, ownedByLaunchID, launchID, digest, cwd)
 		if replayErr != nil {
 			writeExactLaunchError(w, replayErr)
 			return
 		}
 		if !owned {
-			core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_COLLISION", "exact launch session name is already in use")
+			core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_REPLAY_UNVERIFIED", "exact launch marker changed after discovery")
 			return
 		}
 		receipt.Success = true
@@ -406,17 +454,18 @@ func (h *TmuxHandler) ExactLaunch(w http.ResponseWriter, r *http.Request) {
 		core.WriteJSON(w, http.StatusOK, receipt)
 		return
 	}
+	if _, exists := exactLaunchSessionByName(sessions, req.Name); exists {
+		core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_COLLISION", "exact launch session name is already in use")
+		return
+	}
 	if strings.TrimSpace(req.SourceGeneration) == "" || req.SourceGeneration != currentGeneration {
 		core.WriteError(w, http.StatusConflict, "TMUX_SOURCE_CHANGED", "exact launch source changed after inspection")
 		return
 	}
-	ownerHome := ""
-	if strings.TrimSpace(target.ownerHome) != "" {
-		ownerHome, err = trustedSessionBankOwnerHome(target)
-		if err != nil {
-			core.WriteError(w, http.StatusBadRequest, "EXACT_LAUNCH_OWNER_INVALID", err.Error())
-			return
-		}
+	ownerHome, err := trustedSessionBankOwnerHome(target)
+	if err != nil {
+		core.WriteError(w, http.StatusBadRequest, "EXACT_LAUNCH_OWNER_INVALID", err.Error())
+		return
 	}
 	if err := h.ensureTmuxNameOwnershipAvailable(req.Name, target.unixUser, ownerHome); err != nil {
 		writeRecoveryOwnershipError(w, "EXACT_LAUNCH_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)

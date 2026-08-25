@@ -300,6 +300,10 @@ func installFakeTmux(t *testing.T) (string, string) {
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_ARGS_FILE"
 case "$*" in
+  *"list-sessions -F #{pid}"*)
+    printf 'no server running on %s/default\n' "$TMUX_TMPDIR" >&2
+    exit 1
+    ;;
   "list-sessions -F #{session_name}:#{session_windows}:#{session_attached}")
     printf 'alpha:1:0\nbeta:2:1\n'
     ;;
