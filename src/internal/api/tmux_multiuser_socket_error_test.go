@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -263,7 +264,7 @@ func TestTmuxHandler_ListSessionsPartialFailurePreservesFailedSourceEvidence(t *
 	bankPath := os.Getenv("CHROTE_SESSION_BANK_PATH")
 	seed := []SessionBankEntry{
 		{Name: "alice-old", UnixUser: "alice", Group: "shell", Live: true, FirstSeen: "2026-08-25T10:00:00Z", LastSeen: "2026-08-25T11:00:00Z", CWD: "/workspaces/alice"},
-		{Name: "build-agent", UnixUser: "build", Group: "agents", Live: true, FirstSeen: "2026-08-25T09:00:00Z", LastSeen: "2026-08-25T11:30:00Z", AgentKind: "codex", AgentSessionID: "019f4baa-e368-7ea0-8912-fb2c6f99785c", CWD: "/workspaces/build"},
+		{Name: "build-agent", UnixUser: "build", Group: "", Live: true, FirstSeen: "2026-08-25T09:00:00Z", LastSeen: "2026-08-25T11:30:00Z", AgentKind: "codex", AgentSessionID: "019f4baa-e368-7ea0-8912-fb2c6f99785c", RecoveryKind: "legacy-kind", ResumeCommand: "legacy unsafe command", CWD: "../legacy-build"},
 	}
 	raw, err := json.Marshal(seed)
 	if err != nil {
@@ -290,6 +291,20 @@ func TestTmuxHandler_ListSessionsPartialFailurePreservesFailedSourceEvidence(t *
 	}
 	if got := stateByKey["build/build-agent"]; got != "stale" {
 		t.Fatalf("build/build-agent state = %q, want stale from its failed source", got)
+	}
+
+	persistedRaw, err := os.ReadFile(bankPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rawEntries []SessionBankEntry
+	if err := json.Unmarshal(persistedRaw, &rawEntries); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range rawEntries {
+		if entry.UnixUser == "build" && entry.Name == "build-agent" && !reflect.DeepEqual(entry, seed[1]) {
+			t.Fatalf("failed-source raw entry mutated = %+v, want exact last-known record %+v", entry, seed[1])
+		}
 	}
 
 	persisted, err := newSessionBankStore(bankPath).Read()

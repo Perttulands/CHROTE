@@ -9,18 +9,20 @@ const sessionState = vi.hoisted(() => ({
   isMobile: false,
   windowCount: 2,
   windowRevealRequest: null as { workspaceId: string; windowId: string; requestId: number } | null,
+  sessions: [
+    { name: 'alpha', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
+  ],
+  firstBindings: ['alice:alpha', 'bare-session'],
 }))
 
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
-    sessions: [
-      { name: 'alpha', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
-    ],
+    sessions: sessionState.sessions,
     workspaces: {
       terminal1: {
         windowCount: sessionState.windowCount,
         windows: [
-          { id: 'terminal1-window-0', boundSessions: ['alice:alpha', 'bare-session'], activeSession: 'alice:alpha', colorIndex: 0 },
+          { id: 'terminal1-window-0', boundSessions: sessionState.firstBindings, activeSession: sessionState.firstBindings[0] ?? null, colorIndex: 0 },
           { id: 'terminal1-window-1', boundSessions: ['bob:beta'], activeSession: 'bob:beta', colorIndex: 1 },
           { id: 'terminal1-window-2', boundSessions: [], activeSession: null, colorIndex: 2 },
           { id: 'terminal1-window-3', boundSessions: ['alice:hidden'], activeSession: 'alice:hidden', colorIndex: 3 },
@@ -55,6 +57,10 @@ describe('TerminalArea layout controls', () => {
     sessionState.isMobile = false
     sessionState.windowCount = 2
     sessionState.windowRevealRequest = null
+    sessionState.sessions = [
+      { name: 'alpha', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
+    ]
+    sessionState.firstBindings = ['alice:alpha', 'bare-session']
   })
 
   it('reconnects only visible live session frames from the layout controls menu', () => {
@@ -66,6 +72,20 @@ describe('TerminalArea layout controls', () => {
     expect(reconnectIframe).toHaveBeenCalledWith('alice:alpha')
     expect(reconnectIframe).not.toHaveBeenCalledWith('bare-session')
     expect(reconnectIframe).not.toHaveBeenCalledWith('bob:beta')
+  })
+
+  it('fails closed for ambiguous bare live identities during frame reconnect', () => {
+    sessionState.sessions = [
+      { name: 'shared', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
+      { name: 'shared', windows: 1, attached: false, group: 'shell', unixUser: 'bob' },
+    ]
+    sessionState.firstBindings = ['shared']
+    render(<TerminalArea workspaceId="terminal1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal recovery actions' }))
+    fireEvent.click(screen.getByRole('button', { name: /Reconnect frames/i }))
+
+    expect(reconnectIframe).not.toHaveBeenCalledWith('shared')
   })
 
   it('keeps Refit directly visible while stale cleanup remains in the recovery menu', () => {

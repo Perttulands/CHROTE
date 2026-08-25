@@ -35,9 +35,11 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
   const visibleWindows = windows.slice(0, windowCount)
   const liveSessions = useMemo(() => {
     const live = new Set<string>()
+    const nameCounts = new Map<string, number>()
+    sessions.forEach(session => nameCounts.set(session.name, (nameCounts.get(session.name) ?? 0) + 1))
     sessions.forEach(session => {
       live.add(getSessionKey(session.name, session.unixUser))
-      live.add(session.name)
+      if ((nameCounts.get(session.name) ?? 0) === 1) live.add(session.name)
     })
     return live
   }, [sessions])

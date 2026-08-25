@@ -1326,6 +1326,7 @@ func (s *sessionBankStore) snapshotForUsers(liveSessions []core.Session, authori
 	if err != nil {
 		return nil, err
 	}
+	rawEntries := append([]SessionBankEntry(nil), entries...)
 	entries = sanitizeSessionBankEntries(entries)
 	byKey := map[string]SessionBankEntry{}
 	for _, entry := range entries {
@@ -1387,7 +1388,21 @@ func (s *sessionBankStore) snapshotForUsers(liveSessions []core.Session, authori
 	if authoritativeUsers != nil && len(authoritativeUsers) == 0 {
 		return result, nil
 	}
-	if err := s.saveLocked(result); err != nil {
+	persisted := result
+	if authoritativeUsers != nil {
+		persisted = make([]SessionBankEntry, 0, len(result)+len(rawEntries))
+		for _, entry := range result {
+			if isAuthoritative(entry.UnixUser) {
+				persisted = append(persisted, entry)
+			}
+		}
+		for _, entry := range rawEntries {
+			if !isAuthoritative(entry.UnixUser) {
+				persisted = append(persisted, entry)
+			}
+		}
+	}
+	if err := s.saveLocked(persisted); err != nil {
 		return nil, err
 	}
 	return result, nil

@@ -19,16 +19,32 @@ func installExactLaunchTmux(t *testing.T, listOutput string) string {
 	argsPath := filepath.Join(dir, "tmux-argv.txt")
 	scriptPath := filepath.Join(dir, "tmux")
 	script := `#!/bin/sh
+socket=''
+previous=''
 for arg in "$@"; do
+  if [ "$previous" = '-S' ]; then socket="$arg"; fi
+  previous="$arg"
   printf '%s\n' "$arg" >> "$TMUX_ARGS_FILE"
 done
 printf '%s\n' '---' >> "$TMUX_ARGS_FILE"
 case " $* " in
   *" list-sessions "*)
-    if [ -n "$TMUX_LIST_OUTPUT" ]; then
+    if [ "$socket" = '/tmp/fixture-alice/tmux.sock' ] && [ -n "$TMUX_SWAP_LINK" ]; then
+      count=0
+      if [ -f "$TMUX_LIST_CALLS_FILE" ]; then read -r count < "$TMUX_LIST_CALLS_FILE"; fi
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$TMUX_LIST_CALLS_FILE"
+      if [ "$count" -eq 2 ]; then ln -sfn "$TMUX_SWAP_TARGET" "$TMUX_SWAP_LINK"; fi
+    fi
+    if [ "$socket" = '/tmp/fixture-build/tmux.sock' ] && [ -n "$TMUX_BUILD_LIST_OUTPUT" ]; then
+      printf '%b' "$TMUX_BUILD_LIST_OUTPUT"
+    elif [ "$socket" = '/tmp/fixture-build/tmux.sock' ]; then
+      printf 'no server running on %s\n' "$socket" >&2
+      exit 1
+    elif [ -n "$TMUX_LIST_OUTPUT" ]; then
       printf '%b' "$TMUX_LIST_OUTPUT"
     else
-      printf '%s\n' 'no server running on /tmp/fixture-alice/tmux.sock' >&2
+      printf 'no server running on %s\n' "$socket" >&2
       exit 1
     fi
     ;;
@@ -242,14 +258,67 @@ func TestTmuxHandler_ExactLaunchIDCannotCreateAnotherSessionName(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, exactLaunchRequest(t, root, tmuxSourceGeneration("alice", nil, "absent@/tmp/fixture-alice/tmux.sock"), []string{"/usr/bin/true", "--"}))
-
+	mux.ServeHTTP(rec, exactLaunchRequest(t, root, tmuxSourceGeneration("alice", []core.Session{{ID: "$41", Name: "original-session", Windows: 1, CWD: root}}, "9001@/tmp/fixture-alice/tmux.sock"), []string{"/bin/true", "--"}))
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "EXACT_LAUNCH_IDEMPOTENCY_CONFLICT") {
-		t.Fatalf("status/body = %d %s, want cross-label idempotency conflict", rec.Code, rec.Body.String())
+		t.Fatalf("status/body = %d %s, want cross-name idempotency conflict", rec.Code, rec.Body.String())
 	}
 	for _, call := range readArgvRecordingTmuxCalls(t, argsPath) {
 		if containsArg(call, "new-session") {
-			t.Fatalf("reused launch ID created another label: %#v", call)
+			t.Fatalf("conflicting launch ID mutated tmux: %#v", call)
+		}
+	}
+}
+
+func TestTmuxHandler_ExactLaunchIDCannotCrossConfiguredSources(t *testing.T) {
+	root := t.TempDir()
+	argsPath := installExactLaunchTmux(t, "")
+	configureExactLaunchTarget(t, root)
+	t.Setenv("TMUX_BUILD_LIST_OUTPUT", "9002	/tmp/fixture-build/tmux.sock	$51	foreign-session	1	0	"+root+"\n")
+	t.Setenv("TMUX_SHOW_LAUNCH_ID", "11111111-1111-4111-8111-111111111111")
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, exactLaunchRequest(t, root, tmuxSourceGeneration("alice", nil, "absent@/tmp/fixture-alice/tmux.sock"), []string{"/bin/true", "--"}))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "EXACT_LAUNCH_IDEMPOTENCY_CONFLICT") {
+		t.Fatalf("status/body = %d %s, want cross-source idempotency conflict", rec.Code, rec.Body.String())
+	}
+	for _, call := range readArgvRecordingTmuxCalls(t, argsPath) {
+		if containsArg(call, "new-session") {
+			t.Fatalf("cross-source launch ID mutated tmux: %#v", call)
+		}
+	}
+}
+
+func TestTmuxHandler_ExactLaunchRevalidatesPathsImmediatelyBeforeMutation(t *testing.T) {
+	root := t.TempDir()
+	safe := filepath.Join(root, "safe")
+	if err := os.MkdirAll(safe, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	link := filepath.Join(root, "workspace")
+	if err := os.Symlink(safe, link); err != nil {
+		t.Fatal(err)
+	}
+	argsPath := installExactLaunchTmux(t, "")
+	configureExactLaunchTarget(t, root)
+	t.Setenv("TMUX_SWAP_LINK", link)
+	t.Setenv("TMUX_SWAP_TARGET", outside)
+	t.Setenv("TMUX_LIST_CALLS_FILE", filepath.Join(root, "list-calls"))
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, exactLaunchRequest(t, link, tmuxSourceGeneration("alice", nil, "absent@/tmp/fixture-alice/tmux.sock"), []string{"/bin/true", "--"}))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "EXACT_LAUNCH_PATH_CHANGED") {
+		t.Fatalf("status/body = %d %s, want changed path identity rejection", rec.Code, rec.Body.String())
+	}
+	for _, call := range readArgvRecordingTmuxCalls(t, argsPath) {
+		if containsArg(call, "new-session") {
+			t.Fatalf("changed path identity mutated tmux: %#v", call)
 		}
 	}
 }
@@ -314,6 +383,39 @@ func TestTmuxHandler_ExactLaunchRejectsUnknownFieldsAndTmuxSeparatorsBeforeMutat
 			}
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodPut, "/api/tmux/recovery-launches/11111111-1111-4111-8111-111111111111", bytes.NewReader(body))
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tt.wantCode) {
+				t.Fatalf("status/body = %d %s, want %s", rec.Code, rec.Body.String(), tt.wantCode)
+			}
+		})
+	}
+	valid, err := json.Marshal(map[string]interface{}{
+		"sourceId": "tmux:alice", "sourceGeneration": "sha256:unused", "unixUser": "alice",
+		"name": "exact-session", "cwd": root, "argv": []string{"/bin/true", "--"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutUser, err := json.Marshal(map[string]interface{}{
+		"sourceId": "tmux:alice", "sourceGeneration": "sha256:unused",
+		"name": "exact-session", "cwd": root, "argv": []string{"/bin/true", "--"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawTests := []struct {
+		name     string
+		body     []byte
+		wantCode string
+	}{
+		{name: "duplicate field", body: bytes.Replace(valid, []byte(`"sourceId":`), []byte(`"sourceId":"tmux:bob","sourceId":`), 1), wantCode: "BAD_REQUEST"},
+		{name: "case variant field", body: bytes.Replace(valid, []byte(`"sourceId"`), []byte(`"SourceID"`), 1), wantCode: "BAD_REQUEST"},
+		{name: "omitted Unix user", body: withoutUser, wantCode: "EXACT_LAUNCH_USER_REQUIRED"},
+	}
+	for _, tt := range rawTests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPut, "/api/tmux/recovery-launches/11111111-1111-4111-8111-111111111111", bytes.NewReader(tt.body))
 			mux.ServeHTTP(rec, req)
 			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tt.wantCode) {
 				t.Fatalf("status/body = %d %s, want %s", rec.Code, rec.Body.String(), tt.wantCode)

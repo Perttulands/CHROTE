@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -321,6 +323,30 @@ func (h *TmuxHandler) sessionOwnedByExactLaunchID(target tmuxTarget, sessions []
 	return matched, found, nil
 }
 
+func (h *TmuxHandler) exactLaunchIDExistsOnOtherSources(selected tmuxTarget, launchID string) (bool, error) {
+	for _, unixUser := range configuredTerminalUsers() {
+		if unixUser == selected.unixUser {
+			continue
+		}
+		target, err := h.targetForUnixUser(unixUser)
+		if err != nil {
+			return false, &exactLaunchError{Status: http.StatusConflict, Code: "TMUX_SOURCE_UNAVAILABLE", Message: "exact launch ownership could not be verified across configured sources"}
+		}
+		sessions, sourceErr, _ := h.listSessionsForTarget(target)
+		if sourceErr != "" {
+			return false, &exactLaunchError{Status: http.StatusConflict, Code: "TMUX_SOURCE_UNAVAILABLE", Message: "exact launch ownership could not be verified across configured sources"}
+		}
+		_, found, err := h.sessionOwnedByExactLaunchID(target, sessions, launchID)
+		if err != nil {
+			return false, err
+		}
+		if found {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (h *TmuxHandler) verifyExactLaunch(parent context.Context, target tmuxTarget, created ownedExactLaunch, cwd string) (ExactLaunchReceipt, error) {
 	output, err := h.runTmuxOnSocketContext(parent, target.socket,
 		"display-message", "-p", "-t", created.PaneID,
@@ -361,16 +387,47 @@ func decodeExactLaunchRequest(w http.ResponseWriter, r *http.Request, dest *Exac
 		return fmt.Errorf("request body is required")
 	}
 	reader := http.MaxBytesReader(w, r.Body, exactLaunchMaxArgBytes+4096)
-	decoder := json.NewDecoder(reader)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(dest); err != nil {
+	raw, err := io.ReadAll(reader)
+	if err != nil {
 		return err
 	}
-	var extra interface{}
-	if err := decoder.Decode(&extra); err != io.EOF {
+	allowed := map[string]bool{
+		"sourceId": true, "sourceGeneration": true, "unixUser": true,
+		"name": true, "cwd": true, "argv": true,
+	}
+	keys := json.NewDecoder(bytes.NewReader(raw))
+	opening, err := keys.Token()
+	if err != nil || opening != json.Delim('{') {
 		return fmt.Errorf("request body must contain one JSON object")
 	}
-	return nil
+	seen := map[string]bool{}
+	for keys.More() {
+		token, err := keys.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := token.(string)
+		if !ok || !allowed[key] {
+			return fmt.Errorf("unknown exact launch field")
+		}
+		if seen[key] {
+			return fmt.Errorf("duplicate exact launch field")
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if err := keys.Decode(&value); err != nil {
+			return err
+		}
+	}
+	if closing, err := keys.Token(); err != nil || closing != json.Delim('}') {
+		return fmt.Errorf("request body must contain one JSON object")
+	}
+	if token, err := keys.Token(); err != io.EOF || token != nil {
+		return fmt.Errorf("request body must contain one JSON object")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(dest)
 }
 
 // ExactLaunch handles PUT /api/tmux/recovery-launches/{launchId}.
@@ -394,6 +451,11 @@ func (h *TmuxHandler) ExactLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.UnixUser = strings.TrimSpace(req.UnixUser)
+	if req.UnixUser == "" {
+		core.WriteError(w, http.StatusBadRequest, "EXACT_LAUNCH_USER_REQUIRED", "exact launch Unix user is required")
+		return
+	}
 	target, err := sendTargetFromRequest(h, r, req.UnixUser)
 	if err != nil {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
@@ -427,6 +489,15 @@ func (h *TmuxHandler) ExactLaunch(w http.ResponseWriter, r *http.Request) {
 	ownedByLaunchID, launchIDExists, launchIDErr := h.sessionOwnedByExactLaunchID(target, sessions, launchID)
 	if launchIDErr != nil {
 		writeExactLaunchError(w, launchIDErr)
+		return
+	}
+	foreignLaunchIDExists, launchIDErr := h.exactLaunchIDExistsOnOtherSources(target, launchID)
+	if launchIDErr != nil {
+		writeExactLaunchError(w, launchIDErr)
+		return
+	}
+	if foreignLaunchIDExists {
+		core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_IDEMPOTENCY_CONFLICT", "exact launch ID already exists on another configured source")
 		return
 	}
 	if launchIDExists {
@@ -469,6 +540,35 @@ func (h *TmuxHandler) ExactLaunch(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.ensureTmuxNameOwnershipAvailable(req.Name, target.unixUser, ownerHome); err != nil {
 		writeRecoveryOwnershipError(w, "EXACT_LAUNCH_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
+		return
+	}
+
+	refreshedSessions, sourceErr, refreshedServerIdentity := h.listSessionsForTarget(target)
+	if sourceErr != "" {
+		core.WriteError(w, http.StatusConflict, "TMUX_SOURCE_UNAVAILABLE", "exact launch source is not currently authoritative")
+		return
+	}
+	refreshedGeneration := tmuxSourceGeneration(target.unixUser, refreshedSessions, refreshedServerIdentity)
+	if req.SourceGeneration != refreshedGeneration {
+		core.WriteError(w, http.StatusConflict, "TMUX_SOURCE_CHANGED", "exact launch source changed before mutation")
+		return
+	}
+	if _, exists := exactLaunchSessionByName(refreshedSessions, req.Name); exists {
+		core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_COLLISION", "exact launch session name is already in use")
+		return
+	}
+	if _, exists, err := h.sessionOwnedByExactLaunchID(target, refreshedSessions, launchID); err != nil || exists {
+		if err != nil {
+			writeExactLaunchError(w, err)
+		} else {
+			core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_IDEMPOTENCY_CONFLICT", "exact launch ID appeared before mutation")
+		}
+		return
+	}
+	freshCWD, freshCWDErr := exactLaunchCWD(req.CWD)
+	freshArgv, freshArgvErr := exactLaunchArgv(req.Argv)
+	if freshCWDErr != nil || freshArgvErr != nil || freshCWD != cwd || !slices.Equal(freshArgv, argv) {
+		core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_PATH_CHANGED", "exact launch path identity changed before mutation")
 		return
 	}
 

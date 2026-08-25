@@ -342,8 +342,17 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     })
     return unavailable
   }, [recoveryEvidence])
-  const unavailableSessions = useMemo(() => new Set(unavailableEvidenceBySession.keys()), [unavailableEvidenceBySession])
+  const ambiguousLegacySessionNames = useMemo(() => {
+    const counts = new Map<string, number>()
+    recoveryEvidence.forEach(evidence => counts.set(evidence.name, (counts.get(evidence.name) ?? 0) + 1))
+    return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name))
+  }, [recoveryEvidence])
+  const unavailableSessions = useMemo(() => new Set([
+    ...unavailableEvidenceBySession.keys(),
+    ...ambiguousLegacySessionNames,
+  ]), [ambiguousLegacySessionNames, unavailableEvidenceBySession])
   const activeSessionEvidence = activeSession ? unavailableEvidenceBySession.get(activeSession) : undefined
+  const activeSessionAmbiguous = activeSession ? ambiguousLegacySessionNames.has(activeSession) : false
 
   // Check if active session is loaded via pool
   const activeSessionLoaded = activeSession ? pool.loadedSessions.has(activeSession) : false
@@ -445,7 +454,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
 
 
   const hasSessions = windowConfig.boundSessions.length > 0
-  const sendableSession = activeSession && activeSession !== 'INIT-PENDING' && !activeSessionEvidence ? activeSession : null
+  const sendableSession = activeSession && activeSession !== 'INIT-PENDING' && !unavailableSessions.has(activeSession) ? activeSession : null
 
   return (
     <div
@@ -506,7 +515,9 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               <Send size={12} aria-hidden="true" />
             </button>
           )}
-          {activeSessionEvidence ? (
+          {activeSessionAmbiguous ? (
+            <span className="terminal-loading-state">Ambiguous identity</span>
+          ) : activeSessionEvidence ? (
             <span className="terminal-loading-state">{activeSessionEvidence.state === 'stale' ? 'Stale evidence' : 'Offline'}</span>
           ) : activeSession && !activeSessionLoaded && (
             <span className="terminal-loading-state">Loading terminal…</span>
@@ -515,7 +526,15 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
       </div>
 
       <div ref={setBodyRef} className="terminal-window-body" onClick={handleWindowClick}>
-        {activeSessionEvidence ? (
+        {activeSessionAmbiguous ? (
+          <div className="offline-window-state">
+            <strong>Session identity is ambiguous</strong>
+            <span>Multiple unavailable sessions share this legacy name. Select a qualified session or clear this placement.</span>
+            <button type="button" onClick={() => removeSessionFromWindow(workspaceId, windowConfig.id, activeSession!)}>
+              Clear ambiguous placement
+            </button>
+          </div>
+        ) : activeSessionEvidence ? (
           <div className="offline-window-state">
             <strong>{activeSessionEvidence.state === 'stale' ? 'Session state unavailable' : 'Session is offline'}</strong>
             <span>This placement is preserved until you resolve it.</span>

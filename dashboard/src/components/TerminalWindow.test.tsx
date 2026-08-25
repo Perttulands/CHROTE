@@ -624,6 +624,27 @@ describe('TerminalWindow launch user', () => {
     expect(removeSessionFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'offline-agent')
   })
 
+  it('blocks ambiguous legacy bare bindings from claiming or acting on an iframe', () => {
+    recoveryState.evidence = [
+      { sourceId: 'tmux:alice', unixUser: 'alice', name: 'shared-offline', state: 'offline', cwd: '/srv/alice' },
+      { sourceId: 'tmux:bob', unixUser: 'bob', name: 'shared-offline', state: 'stale', cwd: '/srv/bob' },
+    ]
+
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['shared-offline'], activeSession: 'shared-offline', colorIndex: 0 }}
+      />
+    )
+
+    expect(screen.getByText('Session identity is ambiguous')).toBeInTheDocument()
+    expect(screen.queryByText('Loading terminal…')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()
+    expect(claimIframe).not.toHaveBeenCalledWith('shared-offline', expect.anything())
+    fireEvent.click(screen.getByRole('button', { name: 'Clear ambiguous placement' }))
+    expect(removeSessionFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'shared-offline')
+  })
+
   it('keeps terminal panes on the per-window opaque background palette', () => {
     const { container } = render(
       <TerminalWindow
