@@ -1476,10 +1476,9 @@ func effectiveTmuxSocket(socket string) string {
 }
 
 func isTmuxNoServerErrorForSocket(errStr, socket string) bool {
-	expected := strings.ToLower(effectiveTmuxSocket(socket))
-	lower := strings.ToLower(errStr)
-	return strings.Contains(lower, "no server running on "+expected) ||
-		strings.Contains(lower, "error connecting to "+expected+" (no such file or directory)")
+	expected := effectiveTmuxSocket(socket)
+	return strings.Contains(errStr, "no server running on "+expected) ||
+		strings.Contains(errStr, "error connecting to "+expected+" (No such file or directory)")
 }
 
 func isTmuxDuplicateSessionError(err error) bool {
