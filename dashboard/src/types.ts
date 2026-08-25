@@ -392,11 +392,41 @@ export interface SessionBankEntry extends TmuxSession {
   recoveryPlan?: WorkloadRecoveryDescriptor[]
 }
 
+export interface TmuxSourceEvidence {
+  sourceId: string
+  unixUser?: LaunchUser
+  status: 'complete' | 'failed'
+  observedAt: string
+  generation?: string
+  errorCode?: string
+  error?: string
+}
+
+export interface NativeSessionEvidence {
+  provider: string
+  nativeSessionId: string
+  evidenceSource: string
+}
+
+export interface RecoverySessionEvidence {
+  sourceId: string
+  unixUser?: LaunchUser
+  name: string
+  state: 'live' | 'offline' | 'stale'
+  tmuxSessionId?: string
+  cwd?: string
+  firstSeen?: string
+  lastSeen?: string
+  native?: NativeSessionEvidence[]
+}
+
 export interface SessionsResponse {
   sessions: TmuxSession[]
   grouped: Record<string, TmuxSession[]>
   banked?: SessionBankEntry[]
   managed?: ManagedRecoveryStatusEntry[]
+  sources?: TmuxSourceEvidence[]
+  recoveryEvidence?: RecoverySessionEvidence[]
   terminalUsers?: LaunchUser[]
   timestamp: string
   error?: string
@@ -450,6 +480,7 @@ export interface DashboardState {
   groupedSessions: Record<string, TmuxSession[]>
   sessionBank: SessionBankEntry[]
   managedSessions: ManagedRecoveryStatusEntry[]
+  recoveryEvidence: RecoverySessionEvidence[]
   loading: boolean
   error: string | null
 

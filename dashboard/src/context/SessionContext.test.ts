@@ -1575,9 +1575,9 @@ describe('refreshSessions', () => {
       requests[3].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
       await secondAuthoritativeMissing
     })
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
-    expect(result.current.floatingSession).toBeNull()
-    expect(result.current.sendToSessionTarget).toBeNull()
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:known'])
+    expect(result.current.floatingSession).toBe('alice:known')
+    expect(result.current.sendToSessionTarget).toBe('alice:known')
 
     unmount()
     expect(vi.getTimerCount()).toBe(0)
@@ -1724,9 +1724,9 @@ describe('refreshSessions', () => {
       requests[5].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
       await secondMissing
     })
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:protected'])
-    expect(result.current.floatingSession).toBeNull()
-    expect(result.current.sendToSessionTarget).toBeNull()
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:stale', 'alice:protected'])
+    expect(result.current.floatingSession).toBe('alice:stale')
+    expect(result.current.sendToSessionTarget).toBe('alice:stale')
 
     for (const requestIndex of [6, 7]) {
       const refresh = result.current.refreshSessions()
@@ -1735,7 +1735,7 @@ describe('refreshSessions', () => {
         await refresh
       })
     }
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:stale', 'alice:protected'])
 
     consoleError.mockRestore()
     vi.useRealTimers()
@@ -1834,11 +1834,11 @@ describe('refreshSessions', () => {
         await secondMissing
       })
       expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
-        boundSessions: [],
-        activeSession: null,
+        boundSessions: ['alice:known'],
+        activeSession: 'alice:known',
       })
-      expect(result.current.floatingSession).toBeNull()
-      expect(result.current.sendToSessionTarget).toBeNull()
+      expect(result.current.floatingSession).toBe('alice:known')
+      expect(result.current.sendToSessionTarget).toBe('alice:known')
 
       unmount()
       expect(vi.getTimerCount()).toBe(0)
@@ -1847,7 +1847,7 @@ describe('refreshSessions', () => {
     },
   )
 
-  it('auto-removes stale terminal bindings after repeated successful session refreshes', async () => {
+  it('preserves offline terminal placement until the operator explicitly resolves it', async () => {
     const liveSessions = [
       { name: 'alive', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
       { name: 'legacy-live', windows: 1, attached: false, group: 'shell' },
@@ -1899,6 +1899,11 @@ describe('refreshSessions', () => {
         sessions: liveSessions,
         grouped: { shell: liveSessions.slice(0, 2), agents: liveSessions.slice(2) },
         banked,
+        recoveryEvidence: [
+          { sourceId: 'tmux:alice', unixUser: 'alice', name: 'gone', state: 'offline', cwd: '/srv/chrote' },
+          { sourceId: 'tmux:alice', unixUser: 'alice', name: 'legacy-gone', state: 'offline' },
+          { sourceId: 'tmux:build', unixUser: 'build', name: 'agent-dead', state: 'offline' },
+        ],
         timestamp: new Date().toISOString(),
       }),
       text: () => Promise.resolve(''),
@@ -1915,12 +1920,13 @@ describe('refreshSessions', () => {
     })
 
     await waitFor(() => {
-      expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:alive', 'legacy-live'])
-      expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('alice:alive')
-      expect(result.current.workspaces.terminal2.windows[0].boundSessions).toEqual(['build:agent-live'])
-      expect(result.current.workspaces.terminal2.windows[0].activeSession).toBe('build:agent-live')
+      expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:alive', 'alice:gone', 'legacy-live', 'legacy-gone'])
+      expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('alice:gone')
+      expect(result.current.workspaces.terminal2.windows[0].boundSessions).toEqual(['build:agent-live', 'build:agent-dead'])
+      expect(result.current.workspaces.terminal2.windows[0].activeSession).toBe('build:agent-dead')
     })
     expect(result.current.sessionBank).toEqual(banked)
+    expect(result.current.recoveryEvidence).toHaveLength(3)
   })
 
   it('stores managed status registry entries separately from banked sessions', async () => {

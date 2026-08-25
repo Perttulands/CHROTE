@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, SessionBankEntry, ManagedRecoveryStatusEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, SendSessionPane, SendToSessionOutcome, SendToSessionPayload, SendToSessionResult, WindowRevealRequest } from '../types'
+import type { DashboardContextType, TmuxSession, SessionBankEntry, ManagedRecoveryStatusEntry, RecoverySessionEvidence, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, SendSessionPane, SendToSessionOutcome, SendToSessionPayload, SendToSessionResult, WindowRevealRequest } from '../types'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, getSessionKey, getSessionNameFromKey, getSessionPrefixForUser, getSessionUserFromKey, normalizeTerminalTabCount, normalizeTerminalUsers, resolveLaunchUser, sortTerminalWorkspaceIds, terminalWorkspaceIds } from '../types'
 import { useToast } from './ToastContext'
 import { apiErrorMessage } from '../apiErrors'
@@ -324,58 +324,17 @@ function liveSessionKeys(sessions: TmuxSession[]): Set<string> {
   return live
 }
 
-function pruneWindowToLiveSessions(window: TerminalWindow, live: Set<string>, pruneCandidates?: Set<string>): TerminalWindow {
-  const boundSessions = window.boundSessions.filter(s => (
-    s === 'INIT-PENDING' || live.has(s) || (pruneCandidates ? !pruneCandidates.has(s) : false)
-  ))
+function pruneWindowToLiveSessions(window: TerminalWindow, live: Set<string>): TerminalWindow {
+  const boundSessions = window.boundSessions.filter(s => s === 'INIT-PENDING' || live.has(s))
   const activeSession = window.activeSession && boundSessions.includes(window.activeSession)
     ? window.activeSession
-    : (pruneCandidates
-        ? (boundSessions.find(sessionName => sessionName === 'INIT-PENDING' || live.has(sessionName)) ?? null)
-        : (boundSessions[0] ?? null))
+    : (boundSessions[0] ?? null)
 
   if (boundSessions.length === window.boundSessions.length && activeSession === window.activeSession) {
     return window
   }
 
   return { ...window, boundSessions, activeSession }
-}
-
-function pruneWorkspacesToLiveSessions(
-  workspaces: Record<WorkspaceId, TerminalWorkspace>,
-  sessions: TmuxSession[],
-  pruneCandidates?: Set<string>,
-): Record<WorkspaceId, TerminalWorkspace> {
-  const live = liveSessionKeys(sessions)
-  let changed = false
-  const next: Record<WorkspaceId, TerminalWorkspace> = { ...workspaces }
-
-  idsInWorkspaces(workspaces).forEach(workspaceId => {
-    const ws = workspaces[workspaceId]
-    if (!ws) return
-    const windows = ws.windows.map(w => {
-      const pruned = pruneWindowToLiveSessions(w, live, pruneCandidates)
-      if (pruned !== w) changed = true
-      return pruned
-    })
-    next[workspaceId] = windows === ws.windows ? ws : { ...ws, windows }
-  })
-
-  return changed ? next : workspaces
-}
-
-function staleSessionKeysInWorkspaces(workspaces: Record<WorkspaceId, TerminalWorkspace>, live: Set<string>): Set<string> {
-  const stale = new Set<string>()
-  idsInWorkspaces(workspaces).forEach(workspaceId => {
-    const ws = workspaces[workspaceId]
-    if (!ws) return
-    ws.windows.forEach(w => {
-      w.boundSessions.forEach(sessionName => {
-        if (sessionName !== 'INIT-PENDING' && !live.has(sessionName)) stale.add(sessionName)
-      })
-    })
-  })
-  return stale
 }
 
 function sanitizeWorkspaceSlots(workspaceId: WorkspaceId, wsRaw: unknown): TerminalWorkspace {
@@ -580,6 +539,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [groupedSessions, setGroupedSessions] = useState<Record<string, TmuxSession[]>>({})
   const [sessionBank, setSessionBank] = useState<SessionBankEntry[]>([])
   const [managedSessions, setManagedSessions] = useState<ManagedRecoveryStatusEntry[]>([])
+  const [recoveryEvidence, setRecoveryEvidence] = useState<RecoverySessionEvidence[]>([])
   const [terminalUsers, setTerminalUsers] = useState<LaunchUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -626,8 +586,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const windowRevealRequestIdRef = useRef(0)
   // Layout presets
   const [layoutPresets, setLayoutPresets] = useState<LayoutPreset[]>(() => loadStoredPresets())
-  const staleSessionCandidatesRef = useRef<Set<string>>(new Set())
-  const staleSessionProtectionRef = useRef<Map<string, number>>(new Map())
   const refreshMountedRef = useRef(false)
   const refreshGenerationRef = useRef(0)
   const trailingRefreshRef = useRef(false)
@@ -636,11 +594,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     promise: Promise<void>
     cancel: (reason: 'timeout' | 'lifecycle') => void
   } | null>(null)
-  const protectStaleSessionAliases = useCallback((aliases: string[]) => {
-    aliases.forEach(alias => {
-      if (alias) staleSessionProtectionRef.current.set(alias, 2)
-    })
-  }, [])
 
   // Visible terminal tabs; hidden workspaces stay in the record untouched.
   const workspaceIds = useMemo(() => visibleWorkspaceIds(settings), [settings])
@@ -830,31 +783,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setGroupedSessions(isRecord(data.grouped) ? data.grouped as Record<string, TmuxSession[]> : {})
         setSessionBank(Array.isArray(data.banked) ? data.banked : [])
         setManagedSessions(Array.isArray(data.managed) ? data.managed : [])
+        setRecoveryEvidence(Array.isArray(data.recoveryEvidence) ? data.recoveryEvidence : [])
         if (Array.isArray(data.terminalUsers)) {
           setTerminalUsers(normalizeTerminalUsers(data.terminalUsers))
         }
 
-        if (Array.isArray(data.sessions)) {
-          const live = liveSessionKeys(nextSessions)
-          const protectedKeys = new Set(staleSessionProtectionRef.current.keys())
-          const pruneCandidates = new Set([...staleSessionCandidatesRef.current].filter(key => !protectedKeys.has(key)))
-          setWorkspaces(prev => {
-            const pruned = pruneWorkspacesToLiveSessions(prev, nextSessions, pruneCandidates)
-            const currentStale = staleSessionKeysInWorkspaces(pruned, live)
-            protectedKeys.forEach(key => currentStale.delete(key))
-            staleSessionCandidatesRef.current = currentStale
-            return pruned
-          })
-          setFloatingSession(prev => prev && (live.has(prev) || protectedKeys.has(prev) || !pruneCandidates.has(prev)) ? prev : null)
-          setSendToSessionTarget(prev => prev && (live.has(prev) || protectedKeys.has(prev) || !pruneCandidates.has(prev)) ? prev : null)
-          staleSessionProtectionRef.current.forEach((remaining, key) => {
-            if (remaining <= 1) {
-              staleSessionProtectionRef.current.delete(key)
-            } else {
-              staleSessionProtectionRef.current.set(key, remaining - 1)
-            }
-          })
-        }
+        // Absence may classify a binding as offline, but it never authorizes
+        // deleting the operator's placement. Explicit clear actions own that.
       } catch (e) {
         if (isAuthoritative()) {
           setError('Failed to fetch sessions')
@@ -979,9 +914,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const addSessionToWindow = useCallback((workspaceId: WorkspaceId, windowId: string, sessionName: string, unixUser?: LaunchUser) => {
     const sessionKey = getSessionKey(sessionName, unixUser)
-    const aliases = unixUser ? [sessionKey, sessionName] : [sessionKey]
-    aliases.forEach(alias => staleSessionCandidatesRef.current.delete(alias))
-    protectStaleSessionAliases(aliases)
     setWorkspaces(prev => {
       const targetWorkspace = prev[workspaceId]
       if (!targetWorkspace?.windows.some(window => window.id === windowId)) return prev
@@ -1022,7 +954,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return next
       }, {} as Record<WorkspaceId, TerminalWorkspace>)
     })
-  }, [protectStaleSessionAliases])
+  }, [])
 
   const createSession = useCallback(async (options: CreateSessionOptions = {}): Promise<string | null> => {
     const workspaceId = options.workspaceId ?? options.attachTo?.workspaceId ?? 'terminal1'
@@ -1352,7 +1284,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const qualifiedUsers = qualifiedUsersBySessionName(workspaces)
     const newKey = getSessionKey(newName, unixUser)
     const sourceAliases = safeSessionAliases(oldName, unixUser, qualifiedUsers)
-    const targetAliases = safeSessionAliases(newName, unixUser, qualifiedUsers)
     const sourceAliasSet = new Set(sourceAliases)
 
     try {
@@ -1364,8 +1295,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         signal: AbortSignal.timeout(10000),
       })
       if (response.ok) {
-        sourceAliases.concat(targetAliases).forEach(alias => staleSessionCandidatesRef.current.delete(alias))
-        protectStaleSessionAliases(targetAliases)
         // Update window bindings to use the new name/key
         setWorkspaces(prev => {
           const next: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
@@ -1396,7 +1325,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       addToast(`Failed to rename session`, 'error')
       return false
     }
-  }, [refreshSessions, addToast, protectStaleSessionAliases, workspaces])
+  }, [refreshSessions, addToast, workspaces])
 
 
   // Layout Preset Actions
@@ -1456,6 +1385,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     groupedSessions,
     sessionBank,
     managedSessions,
+    recoveryEvidence,
     terminalUsers,
     loading,
     error,
@@ -1505,6 +1435,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     groupedSessions,
     sessionBank,
     managedSessions,
+    recoveryEvidence,
     terminalUsers,
     loading,
     error,

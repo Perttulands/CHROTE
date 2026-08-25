@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import { Pin, PinOff, X } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
-import { getDefaultLaunchUser, getGroupPriority, getTerminalUserInitial } from '../types'
+import { getDefaultLaunchUser, getGroupPriority, getSessionKey, getTerminalLabel, getTerminalUserInitial } from '../types'
 import type { WorkspaceId } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import SessionGroup from './SessionGroup'
@@ -42,7 +42,7 @@ function SessionPanel({
   onSearchTermChange,
   onCollapsedGroupsChange,
 }: SessionPanelProps) {
-  const { groupedSessions, loading, error, sidebarCollapsed, refreshSessions, createSession: createSessionAction, sessionBank, terminalUsers } = useSession()
+  const { groupedSessions, loading, error, sidebarCollapsed, refreshSessions, createSession: createSessionAction, sessionBank, recoveryEvidence, assignedSessions, terminalUsers } = useSession()
   const isCollapsed = collapsed ?? sidebarCollapsed
   const [creating, setCreating] = useState(false)
   const [localSearchTerm, setLocalSearchTerm] = useState('')
@@ -100,6 +100,14 @@ function SessionPanel({
   const bankedSessionSummary = useMemo(() => (
     summarizeSessionBankCapabilities(sessionBank.filter(session => !session.live))
   ), [sessionBank])
+
+  const offlineEvidence = useMemo(() => recoveryEvidence.filter(evidence => (
+    evidence.state !== 'live' && (
+      !searchTerm ||
+      evidence.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      evidence.cwd?.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+  )), [recoveryEvidence, searchTerm])
 
   const closeNewSessionMenu = () => setNewSessionMenu({ show: false, x: 0, y: 0 })
 
@@ -348,7 +356,7 @@ function SessionPanel({
             <div className="panel-error">{error}</div>
           )}
 
-          {!loading && !error && sortedGroups.length === 0 && (
+          {!loading && !error && sortedGroups.length === 0 && offlineEvidence.length === 0 && (
             <div className="getting-started">
               <div className="getting-started-title">Getting Started</div>
               <div className="getting-started-text">
@@ -370,6 +378,31 @@ function SessionPanel({
               onExpandedChange={expanded => updateGroupExpanded(groupKey, expanded)}
             />
           ))}
+
+          {offlineEvidence.length > 0 && (
+            <section className="offline-session-group" aria-labelledby="offline-session-heading">
+              <h3 id="offline-session-heading" className="offline-session-heading">Offline work</h3>
+              {offlineEvidence.map(evidence => {
+                const location = assignedSessions.get(getSessionKey(evidence.name, evidence.unixUser))
+                  ?? assignedSessions.get(evidence.name)
+                return (
+                  <div className="offline-session-evidence" key={`${evidence.sourceId}:${evidence.unixUser ?? ''}:${evidence.name}`}>
+                    <div className="offline-session-title-row">
+                      <strong>{evidence.name}</strong>
+                      <span className={`offline-session-state ${evidence.state}`}>{evidence.state === 'stale' ? 'Stale' : 'Offline'}</span>
+                    </div>
+                    {evidence.unixUser && <div className="offline-session-meta">{evidence.unixUser}</div>}
+                    {evidence.cwd && <div className="offline-session-cwd">{evidence.cwd}</div>}
+                    {location && (
+                      <div className="offline-session-placement">
+                        {getTerminalLabel(location.workspaceId)} · Window {location.windowIndex}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </section>
+          )}
         </div>
       )}
 
