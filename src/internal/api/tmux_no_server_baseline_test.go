@@ -73,17 +73,25 @@ func TestTmuxHandler_ListSessionsRejectsNoServerForAnotherSocket(t *testing.T) {
 	}
 }
 
-func TestTmuxHandler_ListSessionsTreatsSocketPathAsCaseSensitive(t *testing.T) {
-	installFailingTmux(t, "no server running on /tmp/Selected.sock")
-	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "/tmp/selected.sock")
-	rec := httptest.NewRecorder()
-	NewTmuxHandler().ListSessions(rec, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
-	var response SessionsResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Error == "" || len(response.Sources) != 1 || response.Sources[0].Status != tmuxSourceFailed {
-		t.Fatalf("response = %+v, want case-distinct socket failure to remain non-authoritative", response)
+func TestTmuxHandler_ListSessionsTreatsSocketPathAsExactCaseSensitiveIdentity(t *testing.T) {
+	for _, stderr := range []string{
+		"no server running on /tmp/Selected.sock",
+		"no server running on /tmp/selected.sock.other",
+		"unrelated diagnostic: no server running on /tmp/selected.sock",
+	} {
+		t.Run(stderr, func(t *testing.T) {
+			installFailingTmux(t, stderr)
+			t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "/tmp/selected.sock")
+			rec := httptest.NewRecorder()
+			NewTmuxHandler().ListSessions(rec, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+			var response SessionsResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Error == "" || len(response.Sources) != 1 || response.Sources[0].Status != tmuxSourceFailed {
+				t.Fatalf("response = %+v, want non-exact socket failure to remain non-authoritative", response)
+			}
+		})
 	}
 }
 
