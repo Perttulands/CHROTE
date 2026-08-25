@@ -118,13 +118,14 @@ new bypass is a separate operator-authorized boundary change.
 | Ordinary `POST /api/tmux/sessions` fresh-shell creation | **Keep** | It remains an explicit new-shell action and is never presented as native-session recovery |
 | Session Bank observation, last-seen/cwd/native metadata, remove, and read paths | **Simplify** | Keep bounded orientation and export evidence; stop letting mere observation authorize reconstruction |
 | `recovery_descriptor.go` codec and strict validation | **Simplify** | Keep read-only legacy decoding and diagnostics during migration; remove active canonical command selection after replacement proof |
-| `UpdateBankedRecovery`, `RecoverBankedSession`, topology recreation, agent canonical argv, and the Python HTTP command special case | **Replace**, then **Delete** | `chrote-zjr.2.1` supplies evidence plus exact launch; `chrote-zjr.2.2` removes the generic executable path only after proof and rollback/export readback |
+| `UpdateBankedRecovery`, `RecoverBankedSession`, topology recreation, agent canonical argv, and the Python HTTP command special case | **Replace** | `chrote-zjr.2.1` supplies evidence plus exact launch; `chrote-zjr.2.2` then deletes the generic executable path only after proof and rollback/export readback |
 | `managed_recovery_status.go` | **Keep** | Continue exposing external-manager status as attributed read-only evidence; CHROTE never restarts it |
 | `dashboard/src/sessionBankRecovery.ts` browser capability/validator copy | **Delete** | The browser renders backend evidence and explicit action previews; it does not decide recovery safety |
 | Settings-first `SessionBankSection` recovery workflow and success-only toast | **Replace** | Sessions presents global offline orientation and action results; Settings may retain storage maintenance only |
+| Repeated-refresh placement pruning in `dashboard/src/context/SessionContext.tsx` | **Replace** | A complete inventory may classify a binding offline but cannot delete its placement; only an explicit operator/recovery disposition removes it, and partial evidence never advances disposal |
 | Legacy `resumeCommand`, recovery-plan fields, manifests, and stored descriptor rows | **Unknown** | Preserve readable/exportable state until `chrote-zjr.2.2` proves disposition; Unknown data never authorizes mutation |
 | `scripts/tmux-recovery/` snapshot/restore/verify/schema/smoke suite | **Unknown** | Keep untouched while mining conformance and rollback evidence; decide archive, shrink, or deletion only in `chrote-zjr.2.2` |
-| ADR-0001 and historical recovery records | **Keep as history** | Mark superseded authority accurately; do not rewrite history to look current |
+| ADR-0001 and historical recovery records | **Keep** | Retain them as history, mark superseded authority accurately, and do not rewrite history to look current |
 
 Unknown means preserve and exclude from active authorization. It does not mean
 keep indefinitely.
