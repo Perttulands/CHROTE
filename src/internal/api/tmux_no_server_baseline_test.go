@@ -2,11 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -107,8 +107,8 @@ func TestTmuxHandler_ListSessionsReportsBareNoSuchFileAsNonAuthoritative(t *test
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(response.Error, "No such file or directory") {
-		t.Fatalf("error = %q, want bare OS failure to remain non-authoritative", response.Error)
+	if response.Error != "tmux source unavailable" {
+		t.Fatalf("error = %q, want a redacted non-authoritative failure", response.Error)
 	}
 	if len(response.Sources) != 1 || response.Sources[0].Status != tmuxSourceFailed {
 		t.Fatalf("sources = %+v, want failed source", response.Sources)
@@ -130,8 +130,8 @@ func TestTmuxHandler_ListSessionsReportsPermissionDeniedConnectionErrors(t *test
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !strings.Contains(response.Error, "Permission denied") {
-		t.Fatalf("error = %q, want tmux permission/connectivity error to fail loud", response.Error)
+	if response.Error != "tmux source permission denied" {
+		t.Fatalf("error = %q, want a redacted permission failure", response.Error)
 	}
 }
 
@@ -150,8 +150,8 @@ func TestTmuxHandler_ListSessionsReportsUnknownConnectionErrors(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !strings.Contains(response.Error, "error connecting") {
-		t.Fatalf("error = %q, want unknown tmux connection error to fail loud", response.Error)
+	if response.Error != "tmux source unavailable" {
+		t.Fatalf("error = %q, want a redacted unknown-source failure", response.Error)
 	}
 }
 
@@ -170,8 +170,33 @@ func TestTmuxHandler_ListSessionsCurrentlyReportsServerExitedUnexpectedly(t *tes
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !strings.Contains(response.Error, "server exited unexpectedly") {
-		t.Fatalf("error = %q, want current tmux handler to report server exited unexpectedly", response.Error)
+	if response.Error != "tmux source unavailable" {
+		t.Fatalf("error = %q, want a redacted unexpected-exit failure", response.Error)
+	}
+}
+
+func TestTmuxMissingTargetClassificationIsExactAndSocketBound(t *testing.T) {
+	socket := "/tmp/selected.sock"
+	target := "$42"
+	accepted := []error{
+		fmt.Errorf("exit status 1: no server running on %s", socket),
+		fmt.Errorf("exit status 1: can't find session: %s", target),
+	}
+	for _, err := range accepted {
+		if !isTmuxMissingTargetErrorForSocket(err, socket, target) {
+			t.Fatalf("exact diagnostic rejected: %v", err)
+		}
+	}
+	rejected := []error{
+		fmt.Errorf("exit status 1: no server running on %s.other", socket),
+		fmt.Errorf("exit status 1: no server running on /tmp/Selected.sock"),
+		fmt.Errorf("exit status 1: unrelated: no server running on %s", socket),
+		fmt.Errorf("exit status 1: can't find session: $43"),
+	}
+	for _, err := range rejected {
+		if isTmuxMissingTargetErrorForSocket(err, socket, target) {
+			t.Fatalf("non-exact diagnostic accepted: %v", err)
+		}
 	}
 }
 

@@ -89,23 +89,24 @@ type SessionsResponse struct {
 // SessionBankEntry is a durable reminder of a terminal session that CHROTE has
 // seen. It survives CHROTE/tmux restarts so agent resume IDs stay visible.
 type SessionBankEntry struct {
-	ID                  string                       `json:"id,omitempty"`
-	Name                string                       `json:"name"`
-	UnixUser            string                       `json:"unixUser,omitempty"`
-	Group               string                       `json:"group"`
-	Windows             int                          `json:"windows"`
-	Attached            bool                         `json:"attached"`
-	Live                bool                         `json:"live"`
-	FirstSeen           string                       `json:"firstSeen"`
-	LastSeen            string                       `json:"lastSeen"`
-	RecoveryKind        string                       `json:"recoveryKind,omitempty"`
-	AgentKind           string                       `json:"agentKind,omitempty"`
-	AgentSessionID      string                       `json:"agentSessionId,omitempty"`
-	ResumeCommand       string                       `json:"resumeCommand"`
-	CWD                 string                       `json:"cwd,omitempty"`
-	TranscriptPath      string                       `json:"transcriptPath,omitempty"`
-	RecoveryPlan        []WorkloadRecoveryDescriptor `json:"recoveryPlan,omitempty"`
-	RecoveryPlanPresent bool                         `json:"-"`
+	ID                       string                       `json:"id,omitempty"`
+	Name                     string                       `json:"name"`
+	UnixUser                 string                       `json:"unixUser,omitempty"`
+	Group                    string                       `json:"group"`
+	Windows                  int                          `json:"windows"`
+	Attached                 bool                         `json:"attached"`
+	Live                     bool                         `json:"live"`
+	FirstSeen                string                       `json:"firstSeen"`
+	LastSeen                 string                       `json:"lastSeen"`
+	RecoveryKind             string                       `json:"recoveryKind,omitempty"`
+	AgentKind                string                       `json:"agentKind,omitempty"`
+	AgentSessionID           string                       `json:"agentSessionId,omitempty"`
+	NativeEvidenceObservedAt string                       `json:"nativeEvidenceObservedAt,omitempty"`
+	ResumeCommand            string                       `json:"resumeCommand"`
+	CWD                      string                       `json:"cwd,omitempty"`
+	TranscriptPath           string                       `json:"transcriptPath,omitempty"`
+	RecoveryPlan             []WorkloadRecoveryDescriptor `json:"recoveryPlan,omitempty"`
+	RecoveryPlanPresent      bool                         `json:"-"`
 }
 
 // CreateSessionRequest is the request body for creating a session
@@ -885,6 +886,11 @@ func sanitizeSessionBankEntry(entry SessionBankEntry) (SessionBankEntry, bool) {
 	}
 	entry.CWD = sanitizeRecoveryPath(entry.CWD, true)
 	entry.TranscriptPath = sanitizeRecoveryPath(entry.TranscriptPath, false)
+	if entry.NativeEvidenceObservedAt != "" {
+		if _, err := time.Parse(time.RFC3339, entry.NativeEvidenceObservedAt); err != nil {
+			entry.NativeEvidenceObservedAt = ""
+		}
+	}
 	if entry.RecoveryPlanPresent || len(entry.RecoveryPlan) > 0 {
 		if len(entry.RecoveryPlan) == 0 {
 			entry.RecoveryPlan = []WorkloadRecoveryDescriptor{}
@@ -1266,6 +1272,7 @@ func (s *sessionBankStore) UpsertRecovery(name, unixUser string, req UpdateBanke
 			entry.CWD = sanitizeRecoveryPath(req.CWD, true)
 		}
 		entry.TranscriptPath = sanitizeRecoveryPath(req.TranscriptPath, false)
+		entry.NativeEvidenceObservedAt = now
 		if entry.FirstSeen == "" {
 			entry.FirstSeen = now
 		}
@@ -1278,12 +1285,13 @@ func (s *sessionBankStore) UpsertRecovery(name, unixUser string, req UpdateBanke
 	}
 	if !updated {
 		entry := SessionBankEntry{
-			Name:      name,
-			UnixUser:  unixUser,
-			Group:     core.CategorizeSession(name),
-			Windows:   1,
-			FirstSeen: now,
-			LastSeen:  now,
+			Name:                     name,
+			UnixUser:                 unixUser,
+			Group:                    core.CategorizeSession(name),
+			Windows:                  1,
+			FirstSeen:                now,
+			LastSeen:                 now,
+			NativeEvidenceObservedAt: now,
 		}
 		if len(req.RecoveryPlan) > 0 {
 			entry.Windows = len(plan.Windows)
@@ -1499,7 +1507,7 @@ func isTmuxNoServerErrorForSocket(errStr, socket string) bool {
 }
 
 func isTmuxDuplicateSessionError(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate session")
+	return err != nil && strings.Contains(strings.ToLower(tmuxErrorDiagnostic(err)), "duplicate session")
 }
 
 func appendSessionResponseError(existing, next string) string {
@@ -1510,6 +1518,87 @@ func appendSessionResponseError(existing, next string) string {
 		return existing
 	}
 	return existing + "; " + next
+}
+
+const tmuxCommandOutputLimit = 1 << 20
+
+var errTmuxCommandOutputLimit = errors.New("tmux command output exceeded the 1 MiB limit")
+
+type tmuxCommandError struct {
+	cause      error
+	diagnostic string
+}
+
+func (e *tmuxCommandError) Error() string {
+	if e == nil || e.cause == nil {
+		return "tmux command failed"
+	}
+	return "tmux command failed: " + e.cause.Error()
+}
+
+func (e *tmuxCommandError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func tmuxErrorDiagnostic(err error) string {
+	var commandErr *tmuxCommandError
+	if errors.As(err, &commandErr) {
+		return commandErr.diagnostic
+	}
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+type tmuxCommandCapture struct {
+	mu        sync.Mutex
+	remaining int
+	exceeded  bool
+	stdout    bytes.Buffer
+	stderr    bytes.Buffer
+}
+
+type tmuxCommandCaptureWriter struct {
+	capture *tmuxCommandCapture
+	stderr  bool
+}
+
+func (w tmuxCommandCaptureWriter) Write(p []byte) (int, error) {
+	w.capture.mu.Lock()
+	defer w.capture.mu.Unlock()
+	if w.capture.remaining <= 0 {
+		w.capture.exceeded = true
+		return 0, errTmuxCommandOutputLimit
+	}
+	writeLen := len(p)
+	if writeLen > w.capture.remaining {
+		writeLen = w.capture.remaining
+		w.capture.exceeded = true
+	}
+	var err error
+	if w.stderr {
+		_, err = w.capture.stderr.Write(p[:writeLen])
+	} else {
+		_, err = w.capture.stdout.Write(p[:writeLen])
+	}
+	w.capture.remaining -= writeLen
+	if err != nil {
+		return writeLen, err
+	}
+	if writeLen != len(p) {
+		return writeLen, errTmuxCommandOutputLimit
+	}
+	return writeLen, nil
+}
+
+func (c *tmuxCommandCapture) values() (stdout, stderr string, exceeded bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stdout.String(), c.stderr.String(), c.exceeded
 }
 
 // runTmux executes a tmux command with proper environment
@@ -1534,15 +1623,23 @@ func (h *TmuxHandler) runTmuxOnSocketContext(parent context.Context, socket stri
 
 	cmd := exec.CommandContext(ctx, core.TmuxBin(), args...)
 	cmd.Env = core.GetTmuxEnv()
+	capture := &tmuxCommandCapture{remaining: tmuxCommandOutputLimit}
+	cmd.Stdout = tmuxCommandCaptureWriter{capture: capture}
+	cmd.Stderr = tmuxCommandCaptureWriter{capture: capture, stderr: true}
 
-	output, err := cmd.Output()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("%s: %s", err.Error(), string(exitErr.Stderr))
-		}
-		return "", err
+	err := cmd.Run()
+	output, stderr, exceeded := capture.values()
+	if exceeded {
+		return "", errTmuxCommandOutputLimit
 	}
-	return string(output), nil
+	if err != nil {
+		cause := err
+		if ctx.Err() != nil {
+			cause = ctx.Err()
+		}
+		return "", &tmuxCommandError{cause: cause, diagnostic: strings.TrimSpace(stderr)}
+	}
+	return output, nil
 }
 
 func parseSessionsOutput(output string, unixUser string) []core.Session {
@@ -1594,14 +1691,31 @@ func parseSessionsOutput(output string, unixUser string) []core.Session {
 	return sessions
 }
 
+func publicTmuxSourceError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, errTmuxCommandOutputLimit) {
+		return "tmux inventory exceeded the bounded output limit"
+	}
+	message := strings.ToLower(tmuxErrorDiagnostic(err))
+	if strings.Contains(message, "permission denied") {
+		return "tmux source permission denied"
+	}
+	if strings.Contains(message, "deadline exceeded") || strings.Contains(message, "signal: killed") {
+		return "tmux inventory timed out"
+	}
+	return "tmux source unavailable"
+}
+
 func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget) ([]core.Session, string, string) {
-	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{pid}	#{socket_path}	#{session_id}	#{session_name}	#{session_windows}	#{session_attached}	#{pane_current_path}")
+	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{pid}	#{start_time}	#{socket_path}	#{session_id}	#{session_name}	#{session_windows}	#{session_attached}	#{pane_current_path}")
 	if err != nil {
-		errStr := err.Error()
-		if isTmuxNoServerErrorForSocket(errStr, target.socket) {
+		diagnostic := tmuxErrorDiagnostic(err)
+		if isTmuxNoServerErrorForSocket(diagnostic, target.socket) {
 			return []core.Session{}, "", "absent@" + effectiveTmuxSocket(target.socket)
 		}
-		return []core.Session{}, errStr, ""
+		return []core.Session{}, publicTmuxSourceError(err), ""
 	}
 	sessions, serverIdentity, parseErr := parseAuthoritativeSessionsOutput(output, target.unixUser, target.socket)
 	if parseErr != nil {
@@ -1662,8 +1776,9 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		for _, unixUser := range configuredTerminalUsers() {
 			target, targetErr := h.targetForUnixUser(unixUser)
 			if targetErr != nil {
-				errors = append(errors, targetErr.Error())
-				response.Sources = append(response.Sources, failedTmuxSource(unixUser, observedAt, targetErr.Error()))
+				publicError := "tmux source configuration is unavailable"
+				errors = append(errors, fmt.Sprintf("%s: %s", unixUser, publicError))
+				response.Sources = append(response.Sources, failedTmuxSource(unixUser, observedAt, publicError))
 				continue
 			}
 			sessions, errStr, serverIdentity := h.listSessionsForTarget(target)
@@ -1908,14 +2023,17 @@ func newTmuxCreationToken() (string, error) {
 	return hex.EncodeToString(raw), nil
 }
 
-func isTmuxMissingTargetError(err error) bool {
+func isTmuxMissingTargetErrorForSocket(err error, socket, target string) bool {
 	if err == nil {
 		return false
 	}
-	message := strings.ToLower(err.Error())
-	return isTmuxNoServerError(err.Error()) ||
-		strings.Contains(message, "can't find session") ||
-		strings.Contains(message, "no such session")
+	diagnostic := tmuxErrorDiagnostic(err)
+	if isTmuxNoServerErrorForSocket(diagnostic, socket) {
+		return true
+	}
+	diagnostic = strings.TrimSpace(diagnostic)
+	diagnostic = strings.TrimPrefix(diagnostic, "exit status 1: ")
+	return diagnostic == "can't find session: "+target || diagnostic == "no such session: "+target
 }
 
 func (h *TmuxHandler) cleanupOwnedTmuxSession(parent context.Context, socket, target, token string) error {
@@ -1941,7 +2059,7 @@ func (h *TmuxHandler) cleanupOwnedTmuxSession(parent context.Context, socket, ta
 		condition, killCommand, mismatchCommand,
 	)
 	if err != nil {
-		if isTmuxMissingTargetError(err) {
+		if isTmuxMissingTargetErrorForSocket(err, socket, target) {
 			return nil
 		}
 		return fmt.Errorf("atomically clean owned tmux session %q: %w", target, err)
@@ -2080,7 +2198,7 @@ func (h *TmuxHandler) tmuxSessionExists(parent context.Context, socket, name str
 	if err == nil {
 		return true, nil
 	}
-	if isTmuxMissingTargetError(err) {
+	if isTmuxMissingTargetErrorForSocket(err, socket, name) {
 		return false, nil
 	}
 	return false, err
@@ -3935,8 +4053,8 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 		}
-	} else if !isTmuxNoServerError(err.Error()) {
-		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+	} else if !isTmuxNoServerErrorForSocket(tmuxErrorDiagnostic(err), target.socket) {
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", "tmux source unavailable")
 		return
 	}
 

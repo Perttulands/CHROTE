@@ -21,6 +21,14 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	originalProcessIdentity := readTmuxServerProcessIdentity
+	readTmuxServerProcessIdentity = func(pid, unixUser string) (string, error) {
+		identity, err := originalProcessIdentity(pid, unixUser)
+		if err == nil {
+			return identity, nil
+		}
+		return "test-process=" + pid + ";user=" + unixUser, nil
+	}
 	dir, err := os.MkdirTemp("", "chrote-tmux-tests-*")
 	if err != nil {
 		panic(err)
@@ -59,6 +67,16 @@ func TestTmuxHandler_NewTmuxHandler(t *testing.T) {
 	}
 	if handler.colorRegex == nil {
 		t.Error("Handler colorRegex is nil")
+	}
+}
+
+func TestTmuxHandler_RunTmuxBoundsAggregateOutput(t *testing.T) {
+	installScriptedTmux(t, `
+yes x | head -c 1049600
+`)
+	_, err := NewTmuxHandler().runTmuxOnSocket("/tmp/tmux-a", "list-sessions")
+	if !errors.Is(err, errTmuxCommandOutputLimit) {
+		t.Fatalf("error = %v, want bounded-output failure", err)
 	}
 }
 
@@ -261,7 +279,7 @@ func TestTmuxHandler_ListSessionsFiltersReservedProbeSessionsFromPublicAndBank(t
 	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
 	installScriptedTmux(t, `
 case "$*" in
-  *list-sessions*) printf '9001\t/tmp/tmux-a\t$1\tchrote-probe-123\t1\t0\t/workspaces/alice\n9001\t/tmp/tmux-a\t$2\twork\t1\t0\t/workspaces/alice\n' ;;
+  *list-sessions*) printf '9001\t1700000000\t/tmp/tmux-a\t$1\tchrote-probe-123\t1\t0\t/workspaces/alice\n9001\t1700000000\t/tmp/tmux-a\t$2\twork\t1\t0\t/workspaces/alice\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
@@ -299,7 +317,7 @@ func TestTmuxHandler_ListSessionsReportsLiveActivePaneCWD(t *testing.T) {
 	tmpDir := t.TempDir()
 	installScriptedTmux(t, `
 case "$*" in
-  *pane_current_path*) printf '9001\t/tmp/tmux-a\t$9\twork\t1\t0\t/workspaces/alice/live\n9001\t/tmp/tmux-a\t$10\tno-cwd\t1\t0\t\n' ;;
+  *pane_current_path*) printf '9001\t1700000000\t/tmp/tmux-a\t$9\twork\t1\t0\t/workspaces/alice/live\n9001\t1700000000\t/tmp/tmux-a\t$10\tno-cwd\t1\t0\t\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_SESSION_BANK_PATH", filepath.Join(tmpDir, "session-bank", "sessions.json"))
@@ -340,7 +358,7 @@ func TestTmuxHandler_ListSessionsProjectsManagedStatusSeparatelyAndSkipsBankOwne
 	writeManagedStatusSeed(t, managedPath, "systemd-worker", "alice", "worker.service")
 	installScriptedTmux(t, `
 case "$*" in
-  *list-sessions*) printf '9001\t/tmp/tmux-a\t$1\tsystemd-worker\t1\t0\t/home/alice/project\n9001\t/tmp/tmux-a\t$2\tshell-owned\t1\t0\t/home/alice/project\n' ;;
+  *list-sessions*) printf '9001\t1700000000\t/tmp/tmux-a\t$1\tsystemd-worker\t1\t0\t/home/alice/project\n9001\t1700000000\t/tmp/tmux-a\t$2\tshell-owned\t1\t0\t/home/alice/project\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
@@ -408,7 +426,7 @@ func TestTmuxHandler_ListSessionsReportsMalformedManagedStatusWithoutFailingSess
 	}
 	installScriptedTmux(t, `
 case "$*" in
-  *list-sessions*) printf '9001\t/tmp/tmux-a\t$1\tshell-owned\t1\t0\t/home/alice/project\n' ;;
+  *list-sessions*) printf '9001\t1700000000\t/tmp/tmux-a\t$1\tshell-owned\t1\t0\t/home/alice/project\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
@@ -890,9 +908,9 @@ func TestTmuxHandler_ListSessionsAggregatesConfiguredTerminalUsers(t *testing.T)
 	fakeTmux := filepath.Join(tmpDir, "tmux")
 	script := `#!/bin/sh
 case "$*" in
-  *"/tmp/tmux-p"*) printf '9001\t/tmp/tmux-p\t$1\talice-shell\t1\t0\t/home/operator\n' ;;
-  *"/tmp/tmux-t"*) printf '9002\t/tmp/tmux-t\t$2\tbuild-shell\t2\t1\t/home/secondary\n' ;;
-  *) printf '9003\t/tmp/unexpected\t$3\tunexpected\t1\t0\t/tmp\n' ;;
+  *"/tmp/tmux-p"*) printf '9001\t1700000000\t/tmp/tmux-p\t$1\talice-shell\t1\t0\t/home/operator\n' ;;
+  *"/tmp/tmux-t"*) printf '9002\t1700000000\t/tmp/tmux-t\t$2\tbuild-shell\t2\t1\t/home/secondary\n' ;;
+  *) printf '9003\t1700000000\t/tmp/unexpected\t$3\tunexpected\t1\t0\t/tmp\n' ;;
 esac
 `
 	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
@@ -994,8 +1012,8 @@ func TestTmuxHandler_DeleteAllSessionsReportsListErrors(t *testing.T) {
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusInternalServerError, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "Permission denied") {
-		t.Fatalf("body = %q, want permission error to fail loud", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "tmux source unavailable") || strings.Contains(recorder.Body.String(), "Permission denied") {
+		t.Fatalf("body = %q, want a fail-loud redacted source error", recorder.Body.String())
 	}
 }
 
@@ -1166,8 +1184,8 @@ esac
 	handler := NewTmuxHandler()
 
 	_, err := handler.createOwnedTmuxSession(context.Background(), "", "ambiguous-smoke", "/tmp")
-	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
-		t.Fatalf("create error = %v, want original ambiguous creation error", err)
+	if err == nil || !strings.Contains(err.Error(), "tmux command failed") || strings.Contains(err.Error(), "after server-side creation") {
+		t.Fatalf("create error = %v, want a redacted ambiguous creation error", err)
 	}
 	want := [][]string{
 		{"new-session", "-d", "-P", "-F", "#{session_id}", "-e", "CHROTE_CREATION_TOKEN=<token>", "-s", "ambiguous-smoke", "-c", "/tmp"},
@@ -1239,8 +1257,8 @@ esac
 	cause := errors.New("policy failed")
 
 	err := handler.cleanupOwnedTmuxSessionAfterError("", ownedTmuxSession{ID: "$42", Name: "owned-smoke", Token: "0123456789abcdef01234567"}, cause)
-	if err == nil || !strings.Contains(err.Error(), "policy failed") || !strings.Contains(err.Error(), "kill denied") {
-		t.Fatalf("cleanup error = %v, want original and cleanup failures joined", err)
+	if err == nil || !strings.Contains(err.Error(), "policy failed") || !strings.Contains(err.Error(), "tmux command failed") || strings.Contains(err.Error(), "kill denied") {
+		t.Fatalf("cleanup error = %v, want original and redacted cleanup failures joined", err)
 	}
 	want := [][]string{
 		{"if-shell", "-F", "-t", "$42", "#{==:#{CHROTE_CREATION_TOKEN},<token>}", "kill-session -t $42", "display-message -p CHROTE_OWNERSHIP_MISMATCH"},
@@ -1314,8 +1332,8 @@ func TestTmuxHandler_SessionBankDoesNotMutateOnFilteredScans(t *testing.T) {
 	fakeTmux := filepath.Join(tmpDir, "tmux")
 	script := `#!/bin/sh
 case "$*" in
-  *"/tmp/tmux-a"*list-sessions*) printf '9001\t/tmp/tmux-a\t$1\tcodex-alpha\t1\t0\t/home/alice\n' ;;
-  *"/tmp/tmux-b"*list-sessions*) printf '9002\t/tmp/tmux-b\t$2\tclaude-beta\t1\t0\t/home/bob\n' ;;
+  *"/tmp/tmux-a"*list-sessions*) printf '9001\t1700000000\t/tmp/tmux-a\t$1\tcodex-alpha\t1\t0\t/home/alice\n' ;;
+  *"/tmp/tmux-b"*list-sessions*) printf '9002\t1700000000\t/tmp/tmux-b\t$2\tclaude-beta\t1\t0\t/home/bob\n' ;;
 esac
 `
 	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
@@ -1363,7 +1381,7 @@ func TestTmuxHandler_SessionBankKeepsRestartResumeHints(t *testing.T) {
 	statePath := filepath.Join(tmpDir, "offline")
 	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
 	fakeTmux := filepath.Join(tmpDir, "tmux")
-	script := "#!/bin/sh\ncase \"$*\" in\n  *list-sessions*)\n    if [ ! -f " + statePath + " ]; then printf '%s	%s	%s	%s	%s	%s	%s\\n' '9001' '/tmp/tmux-a' '$7' 'codex-alpha' '1' '0' '/home/alice'; else printf '%s\\n' 'no server running on /tmp/tmux-a' >&2; exit 1; fi\n    ;;\nesac\n"
+	script := "#!/bin/sh\ncase \"$*\" in\n  *list-sessions*)\n    if [ ! -f " + statePath + " ]; then printf '%s	%s	%s	%s	%s	%s	%s	%s\\n' '9001' '1700000000' '/tmp/tmux-a' '$7' 'codex-alpha' '1' '0' '/home/alice'; else printf '%s\\n' 'no server running on /tmp/tmux-a' >&2; exit 1; fi\n    ;;\nesac\n"
 	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake tmux: %v", err)
 	}
@@ -1706,7 +1724,7 @@ func TestTmuxHandler_UpdateBankedRecoveryMetadataMakesLiveSessionRecoverableAfte
 	statePath := filepath.Join(tmpDir, "offline")
 	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
 	fakeTmux := filepath.Join(tmpDir, "tmux")
-	script := "#!/bin/sh\ncase \"$*\" in\n  *list-sessions*)\n    if [ ! -f " + statePath + " ]; then printf '%s	%s	%s	%s	%s	%s	%s\\n' '9001' '/tmp/tmux-a' '$7' 'codex-alpha' '1' '0' '/home/alice'; else printf '%s\\n' 'no server running on /tmp/tmux-a' >&2; exit 1; fi\n    ;;\nesac\n"
+	script := "#!/bin/sh\ncase \"$*\" in\n  *list-sessions*)\n    if [ ! -f " + statePath + " ]; then printf '%s	%s	%s	%s	%s	%s	%s	%s\\n' '9001' '1700000000' '/tmp/tmux-a' '$7' 'codex-alpha' '1' '0' '/home/alice'; else printf '%s\\n' 'no server running on /tmp/tmux-a' >&2; exit 1; fi\n    ;;\nesac\n"
 	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake tmux: %v", err)
 	}

@@ -3,18 +3,42 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	osuser "os/user"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/chrote/server/internal/core"
 )
+
+func snapshotProtectedTmuxSockets(handler *TmuxHandler, raw string) (map[string]string, error) {
+	snapshots := map[string]string{}
+	for _, socket := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' }) {
+		socket = strings.TrimSpace(socket)
+		if socket == "" {
+			continue
+		}
+		if !filepath.IsAbs(socket) {
+			return nil, fmt.Errorf("protected tmux socket is not absolute: %q", socket)
+		}
+		output, err := handler.runTmuxOnSocket(socket, "list-panes", "-a", "-F", "#{session_id}\t#{window_id}\t#{pane_id}\t#{session_name}")
+		if err != nil {
+			return nil, fmt.Errorf("snapshot protected tmux socket %q: %w", socket, err)
+		}
+		lines := strings.Split(strings.TrimSpace(output), "\n")
+		sort.Strings(lines)
+		snapshots[filepath.Clean(socket)] = strings.Join(lines, "\n")
+	}
+	return snapshots, nil
+}
 
 func TestTmuxHandler_ExactLaunchRealPrivateSocket(t *testing.T) {
 	if os.Getenv("CHROTE_REAL_EXACT_LAUNCH_TEST") != "1" {
@@ -51,6 +75,21 @@ func TestTmuxHandler_ExactLaunchRealPrivateSocket(t *testing.T) {
 	sentinelPath := filepath.Join(root, "shell-interpolation-must-not-run")
 	sessionName := "exact-launch-real"
 	tmuxBin := core.TmuxBin()
+	protectedSockets := os.Getenv("CHROTE_PROTECTED_TMUX_SOCKETS")
+	protectedBefore, err := snapshotProtectedTmuxSockets(NewTmuxHandler(), protectedSockets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		protectedAfter, snapshotErr := snapshotProtectedTmuxSockets(NewTmuxHandler(), protectedSockets)
+		if snapshotErr != nil {
+			t.Errorf("verify protected tmux sockets: %v", snapshotErr)
+			return
+		}
+		if !reflect.DeepEqual(protectedBefore, protectedAfter) {
+			t.Errorf("protected tmux inventory changed during private proof: before=%v after=%v", protectedBefore, protectedAfter)
+		}
+	})
 
 	t.Cleanup(func() {
 		deadline := time.Now().Add(5 * time.Second)

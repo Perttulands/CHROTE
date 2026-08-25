@@ -50,8 +50,14 @@ case " $* " in
     ;;
   *" new-session "*) printf '$42\t%%7\t4242\n' ;;
   *" display-message "*) printf '$42\texact-session\t%%7\t4242\t%s\n' "$TMUX_EXPECTED_CWD" ;;
-  *" show-environment "*" CHROTE_EXACT_LAUNCH_ID "*) printf 'CHROTE_EXACT_LAUNCH_ID=%s\n' "$TMUX_SHOW_LAUNCH_ID" ;;
-  *" show-environment "*" CHROTE_EXACT_LAUNCH_DIGEST "*) printf 'CHROTE_EXACT_LAUNCH_DIGEST=%s\n' "$TMUX_SHOW_DIGEST" ;;
+  *" show-environment "*" CHROTE_EXACT_LAUNCH_ID "*)
+    if [ -n "$TMUX_SHOW_ERROR" ]; then printf '%s\n' "$TMUX_SHOW_ERROR" >&2; exit 1; fi
+    printf 'CHROTE_EXACT_LAUNCH_ID=%s\n' "$TMUX_SHOW_LAUNCH_ID"
+    ;;
+  *" show-environment "*" CHROTE_EXACT_LAUNCH_DIGEST "*)
+    if [ -n "$TMUX_SHOW_ERROR" ]; then printf '%s\n' "$TMUX_SHOW_ERROR" >&2; exit 1; fi
+    printf 'CHROTE_EXACT_LAUNCH_DIGEST=%s\n' "$TMUX_SHOW_DIGEST"
+    ;;
   *" list-panes "*) printf '%b' "$TMUX_PANES_OUTPUT" ;;
   *" if-shell "*) printf '' ;;
 esac
@@ -80,6 +86,10 @@ func configureExactLaunchTarget(t *testing.T, root string) {
 	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", filepath.Join(root, "managed-status.json"))
 	core.ResetConfigForTesting()
 	t.Cleanup(core.ResetConfigForTesting)
+}
+
+func fakeAuthoritativeServerIdentity(unixUser, pid, socket string) string {
+	return pid + "@1700000000@" + socket + "@test-process=" + pid + ";user=" + unixUser
 }
 
 func exactLaunchRequest(t *testing.T, root, generation string, argv []string) *http.Request {
@@ -147,7 +157,7 @@ func TestTmuxHandler_ExactLaunchExecutesStructuredArgvAndReturnsIdentity(t *test
 
 func TestTmuxHandler_ExactLaunchRejectsStaleSourceBeforeMutation(t *testing.T) {
 	root := t.TempDir()
-	argsPath := installExactLaunchTmux(t, "9001	/tmp/fixture-alice/tmux.sock	$7	other	1	0	/srv/other\n")
+	argsPath := installExactLaunchTmux(t, "9001	1700000000	/tmp/fixture-alice/tmux.sock	$7	other	1	0	/srv/other\n")
 	configureExactLaunchTarget(t, root)
 
 	handler := NewTmuxHandler()
@@ -195,7 +205,7 @@ func TestTmuxHandler_ExactLaunchRejectsAmbiguousUserAndInvalidCWD(t *testing.T) 
 
 func TestTmuxHandler_ExactLaunchReplaysItsExactOwnedTargetIdempotently(t *testing.T) {
 	root := t.TempDir()
-	argsPath := installExactLaunchTmux(t, "9001	/tmp/fixture-alice/tmux.sock	$42	exact-session	1	0	"+root+"\n")
+	argsPath := installExactLaunchTmux(t, "9001	1700000000	/tmp/fixture-alice/tmux.sock	$42	exact-session	1	0	"+root+"\n")
 	configureExactLaunchTarget(t, root)
 	t.Setenv("TMUX_SHOW_LAUNCH_ID", "11111111-1111-4111-8111-111111111111")
 	argv := []string{"/usr/bin/true", "--"}
@@ -209,13 +219,14 @@ func TestTmuxHandler_ExactLaunchReplaysItsExactOwnedTargetIdempotently(t *testin
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, exactLaunchRequest(t, root, tmuxSourceGeneration("alice", nil, "absent@/tmp/fixture-alice/tmux.sock"), argv))
+	generation := tmuxSourceGeneration("alice", []core.Session{{ID: "$42", Name: "exact-session", UnixUser: "alice", Windows: 1, CWD: root}}, fakeAuthoritativeServerIdentity("alice", "9001", "/tmp/fixture-alice/tmux.sock"))
+	mux.ServeHTTP(rec, exactLaunchRequest(t, root, generation, argv))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want replay success; body=%s", rec.Code, rec.Body.String())
 	}
 	payload := decodeJSONMap(t, rec)
-	if payload["state"] != "replayed" || payload["sessionId"] != "$42" || payload["paneId"] != "%7" {
+	if payload["state"] != "replayed" || payload["sessionId"] != "$42" || payload["paneId"] != "%7" || payload["sourceGeneration"] != generation {
 		t.Fatalf("replay receipt = %#v", payload)
 	}
 	for _, call := range readArgvRecordingTmuxCalls(t, argsPath) {
@@ -227,7 +238,7 @@ func TestTmuxHandler_ExactLaunchReplaysItsExactOwnedTargetIdempotently(t *testin
 
 func TestTmuxHandler_ExactLaunchRejectsLaunchIDReuseWithDifferentSpec(t *testing.T) {
 	root := t.TempDir()
-	argsPath := installExactLaunchTmux(t, "9001	/tmp/fixture-alice/tmux.sock	$42	exact-session	1	0	"+root+"\n")
+	argsPath := installExactLaunchTmux(t, "9001	1700000000	/tmp/fixture-alice/tmux.sock	$42	exact-session	1	0	"+root+"\n")
 	configureExactLaunchTarget(t, root)
 	t.Setenv("TMUX_SHOW_LAUNCH_ID", "11111111-1111-4111-8111-111111111111")
 	t.Setenv("TMUX_SHOW_DIGEST", "sha256:different")
@@ -236,7 +247,8 @@ func TestTmuxHandler_ExactLaunchRejectsLaunchIDReuseWithDifferentSpec(t *testing
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, exactLaunchRequest(t, root, tmuxSourceGeneration("alice", nil, "absent@/tmp/fixture-alice/tmux.sock"), []string{"/usr/bin/true", "--"}))
+	generation := tmuxSourceGeneration("alice", []core.Session{{ID: "$42", Name: "exact-session", UnixUser: "alice", Windows: 1, CWD: root}}, fakeAuthoritativeServerIdentity("alice", "9001", "/tmp/fixture-alice/tmux.sock"))
+	mux.ServeHTTP(rec, exactLaunchRequest(t, root, generation, []string{"/usr/bin/true", "--"}))
 
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "EXACT_LAUNCH_IDEMPOTENCY_CONFLICT") {
 		t.Fatalf("status/body = %d %s, want idempotency conflict", rec.Code, rec.Body.String())
@@ -250,7 +262,7 @@ func TestTmuxHandler_ExactLaunchRejectsLaunchIDReuseWithDifferentSpec(t *testing
 
 func TestTmuxHandler_ExactLaunchIDCannotCreateAnotherSessionName(t *testing.T) {
 	root := t.TempDir()
-	argsPath := installExactLaunchTmux(t, "9001	/tmp/fixture-alice/tmux.sock	$41	original-session	1	0	"+root+"\n")
+	argsPath := installExactLaunchTmux(t, "9001	1700000000	/tmp/fixture-alice/tmux.sock	$41	original-session	1	0	"+root+"\n")
 	configureExactLaunchTarget(t, root)
 	t.Setenv("TMUX_SHOW_LAUNCH_ID", "11111111-1111-4111-8111-111111111111")
 
@@ -258,7 +270,7 @@ func TestTmuxHandler_ExactLaunchIDCannotCreateAnotherSessionName(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, exactLaunchRequest(t, root, tmuxSourceGeneration("alice", []core.Session{{ID: "$41", Name: "original-session", Windows: 1, CWD: root}}, "9001@/tmp/fixture-alice/tmux.sock"), []string{"/bin/true", "--"}))
+	mux.ServeHTTP(rec, exactLaunchRequest(t, root, tmuxSourceGeneration("alice", []core.Session{{ID: "$41", Name: "original-session", UnixUser: "alice", Windows: 1, CWD: root}}, fakeAuthoritativeServerIdentity("alice", "9001", "/tmp/fixture-alice/tmux.sock")), []string{"/bin/true", "--"}))
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "EXACT_LAUNCH_IDEMPOTENCY_CONFLICT") {
 		t.Fatalf("status/body = %d %s, want cross-name idempotency conflict", rec.Code, rec.Body.String())
 	}
@@ -273,7 +285,7 @@ func TestTmuxHandler_ExactLaunchIDCannotCrossConfiguredSources(t *testing.T) {
 	root := t.TempDir()
 	argsPath := installExactLaunchTmux(t, "")
 	configureExactLaunchTarget(t, root)
-	t.Setenv("TMUX_BUILD_LIST_OUTPUT", "9002	/tmp/fixture-build/tmux.sock	$51	foreign-session	1	0	"+root+"\n")
+	t.Setenv("TMUX_BUILD_LIST_OUTPUT", "9002	1700000000	/tmp/fixture-build/tmux.sock	$51	foreign-session	1	0	"+root+"\n")
 	t.Setenv("TMUX_SHOW_LAUNCH_ID", "11111111-1111-4111-8111-111111111111")
 
 	handler := NewTmuxHandler()
@@ -320,6 +332,49 @@ func TestTmuxHandler_ExactLaunchRevalidatesPathsImmediatelyBeforeMutation(t *tes
 		if containsArg(call, "new-session") {
 			t.Fatalf("changed path identity mutated tmux: %#v", call)
 		}
+	}
+}
+
+func TestTmuxHandler_ExactLaunchFailsClosedWhenOwnershipMarkersCannotBeRead(t *testing.T) {
+	root := t.TempDir()
+	argsPath := installExactLaunchTmux(t, "9001\t1700000000\t/tmp/fixture-alice/tmux.sock\t$42\texact-session\t1\t0\t"+root+"\\n")
+	configureExactLaunchTarget(t, root)
+	t.Setenv("TMUX_SHOW_ERROR", "permission denied: token=must-not-leak")
+	generation := tmuxSourceGeneration("alice", []core.Session{{ID: "$42", Name: "exact-session", UnixUser: "alice", Windows: 1, CWD: root}}, fakeAuthoritativeServerIdentity("alice", "9001", "/tmp/fixture-alice/tmux.sock"))
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, exactLaunchRequest(t, root, generation, []string{"/bin/true", "--"}))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "TMUX_SOURCE_UNAVAILABLE") || strings.Contains(rec.Body.String(), "must-not-leak") {
+		t.Fatalf("status/body = %d %s, want redacted authoritative-source failure", rec.Code, rec.Body.String())
+	}
+	for _, call := range readArgvRecordingTmuxCalls(t, argsPath) {
+		if containsArg(call, "new-session") {
+			t.Fatalf("unreadable ownership marker mutated tmux: %#v", call)
+		}
+	}
+}
+
+func TestExactLaunchArgvRequiresApprovedNonSetIDExecutableAndAnArgument(t *testing.T) {
+	dir := t.TempDir()
+	executable := filepath.Join(dir, "agent")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CHROTE_EXACT_LAUNCH_EXECUTABLE_ROOTS", dir)
+	if _, err := exactLaunchArgv([]string{executable}, dir); err == nil || err.Code != "EXACT_LAUNCH_ARGV_INVALID" {
+		t.Fatalf("single-argument launch error = %#v, want closed structured argv", err)
+	}
+	if _, err := exactLaunchArgv([]string{executable, "--resume"}, dir); err != nil {
+		t.Fatalf("approved executable rejected: %v", err)
+	}
+	if err := os.Chmod(executable, 0o755|os.ModeSetuid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exactLaunchArgv([]string{executable, "--resume"}, dir); err == nil || err.Code != "EXACT_LAUNCH_EXECUTABLE_INVALID" {
+		t.Fatalf("setid executable error = %#v, want rejection", err)
 	}
 }
 

@@ -11,11 +11,11 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/chrote/server/internal/core"
@@ -27,6 +27,8 @@ const (
 	exactLaunchMaxArgs       = 64
 	exactLaunchMaxArgBytes   = 16 << 10
 )
+
+var errExactLaunchEnvironmentAbsent = errors.New("exact launch session environment marker is absent")
 
 type ExactLaunchRequest struct {
 	SourceID         string   `json:"sourceId"`
@@ -144,9 +146,60 @@ func exactLaunchCWD(raw string) (string, *exactLaunchError) {
 	return filepath.Clean(resolved), nil
 }
 
-func exactLaunchArgv(raw []string) ([]string, *exactLaunchError) {
-	if len(raw) == 0 || len(raw) > exactLaunchMaxArgs {
-		return nil, &exactLaunchError{Status: http.StatusBadRequest, Code: "EXACT_LAUNCH_ARGV_INVALID", Message: "exact launch argv must contain between 1 and 64 arguments"}
+func exactLaunchExecutableRoots(ownerHome string) []string {
+	raw := strings.TrimSpace(os.Getenv("CHROTE_EXACT_LAUNCH_EXECUTABLE_ROOTS"))
+	if raw == "" {
+		raw = "/usr/bin,/bin,/usr/local/bin"
+		if strings.TrimSpace(ownerHome) != "" {
+			raw += "," + ownerHome
+		}
+	}
+	roots := []string{}
+	for _, candidate := range strings.Split(raw, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || !filepath.IsAbs(candidate) {
+			continue
+		}
+		canonical, err := filepath.EvalSymlinks(candidate)
+		if err != nil {
+			continue
+		}
+		roots = append(roots, filepath.Clean(canonical))
+	}
+	return roots
+}
+
+type exactLaunchPathIdentity struct {
+	Path     string
+	Device   uint64
+	Inode    uint64
+	Mode     uint32
+	UID      uint32
+	GID      uint32
+	Size     int64
+	Modified syscall.Timespec
+	Changed  syscall.Timespec
+}
+
+func readExactLaunchPathIdentity(path string) (exactLaunchPathIdentity, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return exactLaunchPathIdentity{}, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return exactLaunchPathIdentity{}, fmt.Errorf("path identity is unavailable")
+	}
+	return exactLaunchPathIdentity{
+		Path: filepath.Clean(path), Device: uint64(stat.Dev), Inode: stat.Ino,
+		Mode: stat.Mode, UID: stat.Uid, GID: stat.Gid, Size: stat.Size,
+		Modified: stat.Mtim, Changed: stat.Ctim,
+	}, nil
+}
+
+func exactLaunchArgv(raw []string, ownerHome string) ([]string, *exactLaunchError) {
+	if len(raw) < 2 || len(raw) > exactLaunchMaxArgs {
+		return nil, &exactLaunchError{Status: http.StatusBadRequest, Code: "EXACT_LAUNCH_ARGV_INVALID", Message: "exact launch argv must contain an executable and at least one argument, with at most 64 arguments"}
 	}
 	total := 0
 	argv := make([]string, len(raw))
@@ -174,21 +227,20 @@ func exactLaunchArgv(raw []string) ([]string, *exactLaunchError) {
 		return nil, &exactLaunchError{Status: http.StatusBadRequest, Code: "EXACT_LAUNCH_EXECUTABLE_INVALID", Message: "exact launch executable could not be resolved"}
 	}
 	info, err := os.Stat(executable)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
-		return nil, &exactLaunchError{Status: http.StatusBadRequest, Code: "EXACT_LAUNCH_EXECUTABLE_INVALID", Message: "exact launch executable is not an executable regular file"}
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 || info.Mode()&(os.ModeSetuid|os.ModeSetgid) != 0 {
+		return nil, &exactLaunchError{Status: http.StatusBadRequest, Code: "EXACT_LAUNCH_EXECUTABLE_INVALID", Message: "exact launch executable is not a non-setid executable regular file"}
 	}
-	argv[0] = executable
-	if len(argv) == 1 {
-		envBin, err := exec.LookPath("env")
-		if err != nil {
-			return nil, &exactLaunchError{Status: http.StatusNotImplemented, Code: "EXACT_LAUNCH_ARGV_UNSUPPORTED", Message: "single-argument direct launch requires env"}
+	allowed := false
+	for _, root := range exactLaunchExecutableRoots(ownerHome) {
+		if core.IsPathUnderRoot(executable, root) {
+			allowed = true
+			break
 		}
-		envBin, err = filepath.Abs(envBin)
-		if err != nil {
-			return nil, &exactLaunchError{Status: http.StatusNotImplemented, Code: "EXACT_LAUNCH_ARGV_UNSUPPORTED", Message: "single-argument direct launch helper is invalid"}
-		}
-		argv = []string{envBin, "--", executable}
 	}
+	if !allowed {
+		return nil, &exactLaunchError{Status: http.StatusForbidden, Code: "EXACT_LAUNCH_EXECUTABLE_FORBIDDEN", Message: "exact launch executable is outside configured executable roots"}
+	}
+	argv[0] = filepath.Clean(executable)
 	return argv, nil
 }
 
@@ -245,12 +297,17 @@ func exactLaunchSessionByName(sessions []core.Session, name string) (core.Sessio
 func (h *TmuxHandler) exactLaunchSessionEnvironment(target tmuxTarget, sessionID, name string) (string, error) {
 	output, err := h.runTmuxOnSocket(target.socket, "show-environment", "-t", sessionID, name)
 	if err != nil {
+		diagnostic := strings.TrimSpace(tmuxErrorDiagnostic(err))
+		diagnostic = strings.TrimPrefix(diagnostic, "exit status 1: ")
+		if diagnostic == "unknown variable: "+name {
+			return "", errExactLaunchEnvironmentAbsent
+		}
 		return "", err
 	}
 	prefix := name + "="
 	line := strings.TrimSpace(output)
 	if !strings.HasPrefix(line, prefix) {
-		return "", fmt.Errorf("tmux session environment %s is absent", name)
+		return "", fmt.Errorf("tmux session environment %s is malformed", name)
 	}
 	return strings.TrimPrefix(line, prefix), nil
 }
@@ -311,7 +368,13 @@ func (h *TmuxHandler) sessionOwnedByExactLaunchID(target tmuxTarget, sessions []
 	found := false
 	for _, session := range sessions {
 		stored, err := h.exactLaunchSessionEnvironment(target, session.ID, exactLaunchCreationIDEnv)
-		if err != nil || stored != launchID {
+		if errors.Is(err, errExactLaunchEnvironmentAbsent) {
+			continue
+		}
+		if err != nil {
+			return core.Session{}, false, &exactLaunchError{Status: http.StatusConflict, Code: "TMUX_SOURCE_UNAVAILABLE", Message: "exact launch ownership markers could not be read authoritatively"}
+		}
+		if stored != launchID {
 			continue
 		}
 		if found {
@@ -465,14 +528,25 @@ func (h *TmuxHandler) ExactLaunch(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "EXACT_LAUNCH_SOURCE_INVALID", "exact launch source does not match the configured Unix user")
 		return
 	}
+	ownerHome, err := trustedSessionBankOwnerHome(target)
+	if err != nil {
+		core.WriteError(w, http.StatusBadRequest, "EXACT_LAUNCH_OWNER_INVALID", err.Error())
+		return
+	}
 	cwd, cwdErr := exactLaunchCWD(req.CWD)
 	if cwdErr != nil {
 		writeExactLaunchError(w, cwdErr)
 		return
 	}
-	argv, argvErr := exactLaunchArgv(req.Argv)
+	argv, argvErr := exactLaunchArgv(req.Argv, ownerHome)
 	if argvErr != nil {
 		writeExactLaunchError(w, argvErr)
+		return
+	}
+	cwdIdentity, cwdIdentityErr := readExactLaunchPathIdentity(cwd)
+	executableIdentity, executableIdentityErr := readExactLaunchPathIdentity(argv[0])
+	if cwdIdentityErr != nil || executableIdentityErr != nil {
+		core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_PATH_CHANGED", "exact launch path identity could not be captured")
 		return
 	}
 	digest := exactLaunchDigest(req.SourceID, target.unixUser, req.Name, cwd, argv)
@@ -486,6 +560,10 @@ func (h *TmuxHandler) ExactLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	currentGeneration := tmuxSourceGeneration(target.unixUser, sessions, serverIdentity)
+	if strings.TrimSpace(req.SourceGeneration) == "" || req.SourceGeneration != currentGeneration {
+		core.WriteError(w, http.StatusConflict, "TMUX_SOURCE_CHANGED", "exact launch source changed after inspection")
+		return
+	}
 	ownedByLaunchID, launchIDExists, launchIDErr := h.sessionOwnedByExactLaunchID(target, sessions, launchID)
 	if launchIDErr != nil {
 		writeExactLaunchError(w, launchIDErr)
@@ -518,7 +596,7 @@ func (h *TmuxHandler) ExactLaunch(w http.ResponseWriter, r *http.Request) {
 		receipt.State = "replayed"
 		receipt.LaunchID = launchID
 		receipt.SourceID = req.SourceID
-		receipt.SourceGeneration = req.SourceGeneration
+		receipt.SourceGeneration = currentGeneration
 		receipt.UnixUser = target.unixUser
 		receipt.ArgvSHA256 = digest
 		receipt.Timestamp = time.Now().UTC().Format(time.RFC3339)
@@ -527,15 +605,6 @@ func (h *TmuxHandler) ExactLaunch(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, exists := exactLaunchSessionByName(sessions, req.Name); exists {
 		core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_COLLISION", "exact launch session name is already in use")
-		return
-	}
-	if strings.TrimSpace(req.SourceGeneration) == "" || req.SourceGeneration != currentGeneration {
-		core.WriteError(w, http.StatusConflict, "TMUX_SOURCE_CHANGED", "exact launch source changed after inspection")
-		return
-	}
-	ownerHome, err := trustedSessionBankOwnerHome(target)
-	if err != nil {
-		core.WriteError(w, http.StatusBadRequest, "EXACT_LAUNCH_OWNER_INVALID", err.Error())
 		return
 	}
 	if err := h.ensureTmuxNameOwnershipAvailable(req.Name, target.unixUser, ownerHome); err != nil {
@@ -566,9 +635,33 @@ func (h *TmuxHandler) ExactLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	freshCWD, freshCWDErr := exactLaunchCWD(req.CWD)
-	freshArgv, freshArgvErr := exactLaunchArgv(req.Argv)
-	if freshCWDErr != nil || freshArgvErr != nil || freshCWD != cwd || !slices.Equal(freshArgv, argv) {
+	freshArgv, freshArgvErr := exactLaunchArgv(req.Argv, ownerHome)
+	freshCWDIdentity, freshCWDIdentityErr := readExactLaunchPathIdentity(freshCWD)
+	freshExecutableIdentity, freshExecutableIdentityErr := exactLaunchPathIdentity{}, error(nil)
+	if len(freshArgv) > 0 {
+		freshExecutableIdentity, freshExecutableIdentityErr = readExactLaunchPathIdentity(freshArgv[0])
+	}
+	if freshCWDErr != nil || freshArgvErr != nil || freshCWDIdentityErr != nil || freshExecutableIdentityErr != nil ||
+		freshCWD != cwd || !slices.Equal(freshArgv, argv) || freshCWDIdentity != cwdIdentity || freshExecutableIdentity != executableIdentity {
 		core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_PATH_CHANGED", "exact launch path identity changed before mutation")
+		return
+	}
+
+	finalSessions, sourceErr, finalServerIdentity := h.listSessionsForTarget(target)
+	if sourceErr != "" || tmuxSourceGeneration(target.unixUser, finalSessions, finalServerIdentity) != req.SourceGeneration {
+		core.WriteError(w, http.StatusConflict, "TMUX_SOURCE_CHANGED", "exact launch source changed immediately before mutation")
+		return
+	}
+	if _, exists := exactLaunchSessionByName(finalSessions, req.Name); exists {
+		core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_COLLISION", "exact launch session name appeared immediately before mutation")
+		return
+	}
+	if _, exists, err := h.sessionOwnedByExactLaunchID(target, finalSessions, launchID); err != nil || exists {
+		if err != nil {
+			writeExactLaunchError(w, err)
+		} else {
+			core.WriteError(w, http.StatusConflict, "EXACT_LAUNCH_IDEMPOTENCY_CONFLICT", "exact launch ID appeared immediately before mutation")
+		}
 		return
 	}
 

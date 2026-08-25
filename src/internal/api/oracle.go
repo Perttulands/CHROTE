@@ -240,9 +240,10 @@ func (h *OracleHandler) getAgentSessions() ([]core.Session, error) {
 	output, err := h.runTmux("list-sessions", "-F", "#{session_name}:#{session_windows}:#{session_attached}:#{session_created}")
 	if err != nil {
 		// No tmux server is fine — just no agents
-		if strings.Contains(err.Error(), "no server running") ||
-			strings.Contains(err.Error(), "No such file or directory") ||
-			strings.Contains(err.Error(), "server exited unexpectedly") {
+		diagnostic := tmuxErrorDiagnostic(err)
+		if strings.Contains(diagnostic, "no server running") ||
+			strings.Contains(diagnostic, "No such file or directory") ||
+			strings.Contains(diagnostic, "server exited unexpectedly") {
 			return nil, nil // no error, no sessions = tmux server not running (expected when no agents active)
 		}
 		return nil, err
@@ -304,9 +305,10 @@ func (h *OracleHandler) enrichAgent(session core.Session) OracleAgent {
 func (h *OracleHandler) LiveAgentSessions() ([]formations.LiveAgentSession, error) {
 	output, err := h.runTmux("list-sessions", "-F", "#{session_name}:#{session_attached}")
 	if err != nil {
-		if strings.Contains(err.Error(), "no server running") ||
-			strings.Contains(err.Error(), "No such file or directory") ||
-			strings.Contains(err.Error(), "server exited unexpectedly") {
+		diagnostic := tmuxErrorDiagnostic(err)
+		if strings.Contains(diagnostic, "no server running") ||
+			strings.Contains(diagnostic, "No such file or directory") ||
+			strings.Contains(diagnostic, "server exited unexpectedly") {
 			return nil, nil
 		}
 		return nil, err

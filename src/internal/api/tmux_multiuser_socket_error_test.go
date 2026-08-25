@@ -34,7 +34,7 @@ func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 		"case \"$sock\" in\n" +
 		"  *" + failFor + "*) printf '%s\\n' \"$TMUX_STDERR\" >&2; exit 1 ;;\n" +
 		"esac\n" +
-		"printf '%s	%s	%s	%s	%s	%s	%s\\n' '9001' \"$sock\" '$7' 'healthy-session' '1' '0' '/workspaces/healthy'\n" +
+		"printf '%s	%s	%s	%s	%s	%s	%s	%s\\n' '9001' '1700000000' \"$sock\" '$7' 'healthy-session' '1' '0' '/workspaces/healthy'\n" +
 		"exit 0\n"
 	scriptPath := filepath.Join(dir, "tmux")
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
@@ -72,8 +72,8 @@ func TestTmuxHandler_ListSessionsNamesTheUnixUserWhoseSocketFailed(t *testing.T)
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if !strings.Contains(response.Error, "Permission denied") {
-		t.Fatalf("error = %q, want the permission failure to be visible", response.Error)
+	if !strings.Contains(response.Error, "build: tmux source permission denied") {
+		t.Fatalf("error = %q, want the redacted permission failure to be visible", response.Error)
 	}
 	// The whole point: which user is broken must be identifiable. An unattributed
 	// permission error on a host with several users is not actionable.
@@ -370,8 +370,52 @@ func TestTmuxSourceGenerationIncludesServerIdentity(t *testing.T) {
 	}
 }
 
+func TestParseAuthoritativeSessionsOutputIsBoundedAndBindsPhysicalServerIdentity(t *testing.T) {
+	if _, _, err := parseAuthoritativeSessionsOutput(strings.Repeat("x", tmuxInventoryMaxBytes+1), "alice", "/tmp/tmux-a"); err == nil || !strings.Contains(err.Error(), "bounded output") {
+		t.Fatalf("oversized inventory error = %v", err)
+	}
+	longCWD := "/" + strings.Repeat("x", tmuxInventoryMaxCWD)
+	row := "9001\t1700000000\t/tmp/tmux-a\t$7\tone\t1\t0\t" + longCWD + "\n"
+	if _, _, err := parseAuthoritativeSessionsOutput(row, "alice", "/tmp/tmux-a"); err == nil || !strings.Contains(err.Error(), "invalid cwd") {
+		t.Fatalf("oversized cwd error = %v", err)
+	}
+
+	original := readTmuxServerProcessIdentity
+	identity := "boot=a;start=1;uid=1000"
+	readTmuxServerProcessIdentity = func(_, _ string) (string, error) { return identity, nil }
+	t.Cleanup(func() { readTmuxServerProcessIdentity = original })
+	valid := "9001\t1700000000\t/tmp/tmux-a\t$7\tone\t1\t0\t/workspaces/one\n"
+	sessions, firstIdentity, err := parseAuthoritativeSessionsOutput(valid, "alice", "/tmp/tmux-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity = "boot=b;start=1;uid=1000"
+	_, secondIdentity, err := parseAuthoritativeSessionsOutput(valid, "alice", "/tmp/tmux-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstIdentity == secondIdentity || tmuxSourceGeneration("alice", sessions, firstIdentity) == tmuxSourceGeneration("alice", sessions, secondIdentity) {
+		t.Fatalf("physical server replacement did not change generation: %q %q", firstIdentity, secondIdentity)
+	}
+}
+
+func TestNativeEvidenceUsesItsOwnObservationTimestamp(t *testing.T) {
+	entry := SessionBankEntry{
+		Name: "agent", AgentKind: "codex", AgentSessionID: "11111111-1111-4111-8111-111111111111",
+		LastSeen: "2026-08-26T03:00:00Z", NativeEvidenceObservedAt: "2026-08-25T02:00:00Z",
+	}
+	evidence := nativeEvidenceFromBank(entry)
+	if len(evidence) != 1 || evidence[0].ObservedAt != entry.NativeEvidenceObservedAt {
+		t.Fatalf("native evidence = %+v, want stable native timestamp", evidence)
+	}
+	entry.NativeEvidenceObservedAt = ""
+	if evidence := nativeEvidenceFromBank(entry); len(evidence) != 1 || evidence[0].ObservedAt != "" {
+		t.Fatalf("legacy native evidence = %+v, want no fabricated timestamp", evidence)
+	}
+}
+
 func TestParseAuthoritativeSessionsOutputRejectsDuplicateIdentity(t *testing.T) {
-	output := "9001	/tmp/tmux-a	$7	one	1	0	/workspaces/one\n9001	/tmp/tmux-a	$7	two	1	0	/workspaces/two\n"
+	output := "9001	1700000000	/tmp/tmux-a	$7	one	1	0	/workspaces/one\n9001	1700000000	/tmp/tmux-a	$7	two	1	0	/workspaces/two\n"
 	if _, _, err := parseAuthoritativeSessionsOutput(output, "alice", "/tmp/tmux-a"); err == nil || !strings.Contains(err.Error(), "duplicates") {
 		t.Fatalf("error = %v, want duplicate identity rejection", err)
 	}

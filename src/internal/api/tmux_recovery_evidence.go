@@ -5,10 +5,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	osuser "os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/chrote/server/internal/core"
 )
@@ -104,7 +107,59 @@ func tmuxSourceGeneration(unixUser string, sessions []core.Session, sourceIdenti
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+const (
+	tmuxInventoryMaxBytes = 1 << 20
+	tmuxInventoryMaxRows  = 4096
+	tmuxInventoryMaxCWD   = 4096
+)
+
+var readTmuxServerProcessIdentity = readLinuxTmuxServerProcessIdentity
+
+func readLinuxTmuxServerProcessIdentity(pidText, unixUser string) (string, error) {
+	if !tmuxPIDPattern.MatchString(pidText) {
+		return "", fmt.Errorf("tmux server pid is invalid")
+	}
+	account, err := osuser.Lookup(strings.TrimSpace(unixUser))
+	if err != nil {
+		return "", fmt.Errorf("tmux server Unix user is unavailable")
+	}
+	wantUID, err := strconv.ParseUint(account.Uid, 10, 32)
+	if err != nil {
+		return "", fmt.Errorf("tmux server Unix user id is invalid")
+	}
+	procDir := filepath.Join("/proc", pidText)
+	info, err := os.Stat(procDir)
+	if err != nil {
+		return "", fmt.Errorf("tmux server process is unavailable")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || uint64(stat.Uid) != wantUID {
+		return "", fmt.Errorf("tmux server process owner does not match its configured Unix user")
+	}
+	statRaw, err := os.ReadFile(filepath.Join(procDir, "stat"))
+	if err != nil || len(statRaw) > 4096 {
+		return "", fmt.Errorf("tmux server process identity is unavailable")
+	}
+	closing := strings.LastIndex(string(statRaw), ") ")
+	if closing < 0 {
+		return "", fmt.Errorf("tmux server process identity is malformed")
+	}
+	fields := strings.Fields(string(statRaw)[closing+2:])
+	if len(fields) <= 19 || !tmuxPIDPattern.MatchString(fields[19]) {
+		return "", fmt.Errorf("tmux server process start identity is malformed")
+	}
+	bootRaw, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	bootID := strings.TrimSpace(string(bootRaw))
+	if err != nil || len(bootRaw) > 128 || bootID == "" || strings.ContainsAny(bootID, "\x00\r\n	 ;@") {
+		return "", fmt.Errorf("kernel boot identity is unavailable")
+	}
+	return fmt.Sprintf("boot=%s;start=%s;uid=%d", bootID, fields[19], wantUID), nil
+}
+
 func parseAuthoritativeSessionsOutput(output, unixUser, expectedSocket string) ([]core.Session, string, error) {
+	if len(output) > tmuxInventoryMaxBytes {
+		return nil, "", fmt.Errorf("tmux inventory protocol exceeds the bounded output limit")
+	}
 	trimmed := strings.TrimRight(output, "\r\n")
 	if strings.TrimSpace(trimmed) == "" {
 		return nil, "", fmt.Errorf("tmux inventory protocol returned empty output")
@@ -113,27 +168,37 @@ func parseAuthoritativeSessionsOutput(output, unixUser, expectedSocket string) (
 	seenIDs := map[string]bool{}
 	seenNames := map[string]bool{}
 	serverIdentity := ""
-	for lineIndex, line := range strings.Split(trimmed, "\n") {
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) > tmuxInventoryMaxRows {
+		return nil, "", fmt.Errorf("tmux inventory protocol exceeds the row limit")
+	}
+	for lineIndex, line := range lines {
 		line = strings.TrimSuffix(line, "\r")
 		parts := strings.Split(line, "	")
-		if len(parts) != 7 {
-			return nil, "", fmt.Errorf("tmux inventory protocol row %d has %d fields, want 7", lineIndex+1, len(parts))
+		if len(parts) != 8 {
+			return nil, "", fmt.Errorf("tmux inventory protocol row %d has %d fields, want 8", lineIndex+1, len(parts))
 		}
 		serverPID := strings.TrimSpace(parts[0])
-		socketPath := filepath.Clean(strings.TrimSpace(parts[1]))
-		sessionID := strings.TrimSpace(parts[2])
-		name := strings.TrimSpace(parts[3])
-		windowsText := strings.TrimSpace(parts[4])
-		attachedText := strings.TrimSpace(parts[5])
-		cwd := strings.TrimSpace(parts[6])
-		if !tmuxPIDPattern.MatchString(serverPID) || !filepath.IsAbs(socketPath) || socketPath != effectiveTmuxSocket(expectedSocket) {
+		serverStarted := strings.TrimSpace(parts[1])
+		socketPath := filepath.Clean(strings.TrimSpace(parts[2]))
+		sessionID := strings.TrimSpace(parts[3])
+		name := strings.TrimSpace(parts[4])
+		windowsText := strings.TrimSpace(parts[5])
+		attachedText := strings.TrimSpace(parts[6])
+		cwd := strings.TrimSpace(parts[7])
+		if !tmuxPIDPattern.MatchString(serverPID) || !tmuxPIDPattern.MatchString(serverStarted) || !filepath.IsAbs(socketPath) || socketPath != effectiveTmuxSocket(expectedSocket) {
 			return nil, "", fmt.Errorf("tmux inventory protocol row %d has invalid server identity", lineIndex+1)
 		}
-		rowServerIdentity := serverPID + "@" + socketPath
-		if serverIdentity != "" && serverIdentity != rowServerIdentity {
+		rowServerBase := serverPID + "@" + serverStarted + "@" + socketPath
+		if serverIdentity == "" {
+			processIdentity, err := readTmuxServerProcessIdentity(serverPID, unixUser)
+			if err != nil {
+				return nil, "", fmt.Errorf("tmux inventory protocol server identity is not authoritative: %w", err)
+			}
+			serverIdentity = rowServerBase + "@" + processIdentity
+		} else if !strings.HasPrefix(serverIdentity, rowServerBase+"@") {
 			return nil, "", fmt.Errorf("tmux inventory protocol changed server identity between rows")
 		}
-		serverIdentity = rowServerIdentity
 		if !tmuxSessionIDPattern.MatchString(sessionID) || name == "" || len(name) > 256 || strings.ContainsAny(name, "\x00\r\n	") {
 			return nil, "", fmt.Errorf("tmux inventory protocol row %d has invalid session identity", lineIndex+1)
 		}
@@ -144,8 +209,8 @@ func parseAuthoritativeSessionsOutput(output, unixUser, expectedSocket string) (
 		if attachedText != "0" && attachedText != "1" {
 			return nil, "", fmt.Errorf("tmux inventory protocol row %d has invalid attached state", lineIndex+1)
 		}
-		if cwd != "" && !filepath.IsAbs(cwd) {
-			return nil, "", fmt.Errorf("tmux inventory protocol row %d has non-absolute cwd", lineIndex+1)
+		if cwd != "" && (!filepath.IsAbs(cwd) || len(cwd) > tmuxInventoryMaxCWD || strings.ContainsRune(cwd, '\x00')) {
+			return nil, "", fmt.Errorf("tmux inventory protocol row %d has invalid cwd", lineIndex+1)
 		}
 		if seenIDs[sessionID] || seenNames[name] {
 			return nil, "", fmt.Errorf("tmux inventory protocol row %d duplicates a session identity", lineIndex+1)
@@ -179,6 +244,20 @@ func completeTmuxSource(unixUser, observedAt, serverIdentity string, sessions []
 	}
 }
 
+func boundedTmuxEvidenceError(message string) string {
+	message = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, strings.TrimSpace(message))
+	message = strings.Join(strings.Fields(message), " ")
+	if len(message) > 256 {
+		message = message[:256]
+	}
+	return message
+}
+
 func failedTmuxSource(unixUser, observedAt, message string) TmuxSourceEvidence {
 	return TmuxSourceEvidence{
 		SourceID:   tmuxSourceID(unixUser),
@@ -186,7 +265,7 @@ func failedTmuxSource(unixUser, observedAt, message string) TmuxSourceEvidence {
 		Status:     tmuxSourceFailed,
 		ObservedAt: observedAt,
 		ErrorCode:  "TMUX_SOURCE_UNAVAILABLE",
-		Error:      strings.TrimSpace(message),
+		Error:      boundedTmuxEvidenceError(message),
 	}
 }
 
@@ -205,7 +284,7 @@ func nativeEvidenceFromBank(entry SessionBankEntry) []NativeSessionEvidence {
 			return
 		}
 		seen[key] = true
-		result = append(result, NativeSessionEvidence{Provider: provider, NativeSessionID: id, EvidenceSource: source, ObservedAt: entry.LastSeen})
+		result = append(result, NativeSessionEvidence{Provider: provider, NativeSessionID: id, EvidenceSource: source, ObservedAt: entry.NativeEvidenceObservedAt})
 	}
 	if entry.AgentSessionID != "" {
 		appendEvidence(entry.AgentKind, entry.AgentSessionID, "session-bank")
