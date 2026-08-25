@@ -18,6 +18,9 @@ const triggerFit = vi.fn()
 const setFocusedWindowKey = vi.fn()
 const setActiveSession = vi.fn()
 const openSendToSession = vi.fn()
+const clearStaleSessionsFromWindow = vi.fn()
+const claimIframe = vi.fn(() => vi.fn())
+const recoveryState = vi.hoisted(() => ({ evidence: [] as Array<Record<string, unknown>> }))
 const draggableState = vi.hoisted(() => ({
   transform: null as { x: number, y: number } | null,
   isDragging: false,
@@ -62,6 +65,7 @@ vi.mock('../context/SessionContext', () => ({
       { name: 'forge-existing', unixUser: 'build', cwd: '/srv/forge' },
       { name: 'shell-existing', unixUser: 'alice', cwd: '/srv/shell' },
     ],
+    recoveryEvidence: recoveryState.evidence,
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout', createdAt: 1, workspaces: {} }],
     refreshSessions,
     createSession,
@@ -70,7 +74,7 @@ vi.mock('../context/SessionContext', () => ({
     setActiveSession,
     cycleSession: vi.fn(),
     setWindowCount: vi.fn(),
-    clearStaleSessionsFromWindow: vi.fn(),
+    clearStaleSessionsFromWindow,
     focusedWindowKey: null,
     setFocusedWindowKey,
     openSendToSession,
@@ -87,7 +91,7 @@ vi.mock('../context/ToastContext', () => ({
 
 vi.mock('./IframePool', () => ({
   useIframePool: () => ({
-    claimIframe: vi.fn(() => vi.fn()),
+    claimIframe,
     isLoaded: vi.fn(() => false),
     loadedSessions: poolState.loadedSessions,
     getIframe: vi.fn(() => null),
@@ -118,6 +122,9 @@ describe('TerminalWindow launch user', () => {
     droppableState.isOver = false
     droppableState.active = null
     poolState.loadedSessions = new Set()
+    recoveryState.evidence = []
+    clearStaleSessionsFromWindow.mockClear()
+    claimIframe.mockClear()
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as any)
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
@@ -569,6 +576,31 @@ describe('TerminalWindow launch user', () => {
       />
     )
     expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()
+  })
+
+  it('renders bounded offline evidence and clears placement only on explicit action', () => {
+    recoveryState.evidence = [{
+      sourceId: 'tmux:alice',
+      unixUser: 'alice',
+      name: 'offline-agent',
+      state: 'offline',
+      cwd: '/srv/offline-agent',
+    }]
+
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['alice:offline-agent'], activeSession: 'alice:offline-agent', colorIndex: 0 }}
+      />
+    )
+
+    expect(screen.getByText('Session is offline')).toBeInTheDocument()
+    expect(screen.getByText('/srv/offline-agent')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()
+    expect(claimIframe).not.toHaveBeenCalledWith('alice:offline-agent', expect.anything())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear offline placement' }))
+    expect(clearStaleSessionsFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0')
   })
 
   it('keeps terminal panes on the per-window opaque background palette', () => {

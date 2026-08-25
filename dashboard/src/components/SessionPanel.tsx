@@ -42,7 +42,7 @@ function SessionPanel({
   onSearchTermChange,
   onCollapsedGroupsChange,
 }: SessionPanelProps) {
-  const { groupedSessions, loading, error, sidebarCollapsed, refreshSessions, createSession: createSessionAction, sessionBank, recoveryEvidence, assignedSessions, terminalUsers } = useSession()
+  const { groupedSessions, loading, error, sidebarCollapsed, refreshSessions, createSession: createSessionAction, sessionBank, recoveryEvidence = [], assignedSessions = new Map(), terminalUsers } = useSession()
   const isCollapsed = collapsed ?? sidebarCollapsed
   const [creating, setCreating] = useState(false)
   const [localSearchTerm, setLocalSearchTerm] = useState('')

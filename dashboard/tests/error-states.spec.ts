@@ -255,7 +255,7 @@ test.describe('Error States', () => {
   })
 
   test.describe('Binding a non-existent session', () => {
-    test('should clear ghost session tag after successful API refresh confirms it is not live', async ({ page }) => {
+    test('preserves offline placement until the operator explicitly clears it', async ({ page }) => {
       // Pre-seed localStorage with a session name that does not exist in the mock API data
       const storedState = {
         workspaces: {
@@ -305,6 +305,22 @@ test.describe('Error States', () => {
       }
 
       await mockApiRoutes(page)
+      await page.route('**/api/tmux/sessions', async route => {
+        if (route.request().method() !== 'GET') return route.fallback()
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            ...mockSessions,
+            recoveryEvidence: [{
+              sourceId: 'tmux:default',
+              name: 'ghost-session-does-not-exist',
+              state: 'offline',
+              cwd: '/workspace/ghost',
+            }],
+          }),
+        })
+      })
 
       await page.addInitScript((state) => {
         localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
@@ -317,17 +333,22 @@ test.describe('Error States', () => {
       // Wait for sessions to load from API
       await page.waitForSelector('.session-panel')
 
-      // Repeated successful refreshes are authoritative. One miss is tolerated
-      // to avoid dropping sessions during transient loading/user-list races.
+      // Authoritative absence classifies the session offline but does not erase
+      // operator placement without an explicit disposition.
       const window0 = page.locator('.terminal-window:visible').nth(0)
-      await expect(window0.locator('.tag-name')).toHaveCount(0, { timeout: 12000 })
+      await expect(window0.locator('.tag-name')).toHaveText('ghost-session-does-not-exist')
+      await expect(window0.getByText('Session is offline')).toBeVisible()
+      await expect(window0.getByText('/workspace/ghost')).toBeVisible()
+
+      await window0.getByRole('button', { name: 'Clear offline placement' }).click()
+      await expect(window0.locator('.tag-name')).toHaveCount(0)
       await expect(window0.locator('button', { hasText: 'New Session' })).toBeVisible()
 
       // The ghost session should NOT appear in the sidebar session list
       // since it's not in the API response
       await expect(page.locator('.session-item:has-text("ghost-session")')).toHaveCount(0)
 
-      // The stale binding cleanup should not mark unrelated live sessions assigned.
+      // Clearing the offline placement must not mark unrelated live sessions assigned.
       const hqMayor = page.locator('.session-item:has-text("hq-mayor")')
       await expect(hqMayor).toBeVisible()
       await expect(hqMayor).not.toHaveClass(/assigned/)

@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
 import { Send } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
@@ -317,6 +317,8 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     removeSessionFromWindow,
     setActiveSession,
     cycleSession,
+    recoveryEvidence = [],
+    clearStaleSessionsFromWindow = () => {},
     focusedWindowKey,
     setFocusedWindowKey,
     openSendToSession,
@@ -327,6 +329,24 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
   const isFocused = focusedWindowKey === windowKey
 
   const activeSession = windowConfig.activeSession
+
+  const unavailableSessions = useMemo(() => {
+    const unavailable = new Set<string>()
+    recoveryEvidence.forEach(evidence => {
+      if (evidence.state === 'live') return
+      unavailable.add(getSessionKey(evidence.name, evidence.unixUser))
+      if (!evidence.unixUser) unavailable.add(evidence.name)
+    })
+    return unavailable
+  }, [recoveryEvidence])
+  const activeSessionEvidence = activeSession
+    ? recoveryEvidence.find(evidence => (
+        evidence.state !== 'live' && (
+          getSessionKey(evidence.name, evidence.unixUser) === activeSession ||
+          (!evidence.unixUser && evidence.name === activeSession)
+        )
+      ))
+    : undefined
 
   // Check if active session is loaded via pool
   const activeSessionLoaded = activeSession ? pool.loadedSessions.has(activeSession) : false
@@ -344,7 +364,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
 
     const cleanups: (() => void)[] = []
     windowConfig.boundSessions.forEach(sessionName => {
-      if (sessionName && sessionName !== 'INIT-PENDING') {
+      if (sessionName && sessionName !== 'INIT-PENDING' && !unavailableSessions.has(sessionName)) {
         const cleanup = pool.claimIframe(sessionName, body)
         cleanups.push(cleanup)
       }
@@ -354,7 +374,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
       cleanups.forEach(fn => fn())
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pool.claimIframe is a stable ref
-  }, [windowConfig.boundSessions])
+  }, [windowConfig.boundSessions, unavailableSessions])
 
   // Manage visibility of claimed iframes based on active session.
   // CSS (.terminal-window-body iframe) handles position/size via position:absolute + inset.
@@ -428,7 +448,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
 
 
   const hasSessions = windowConfig.boundSessions.length > 0
-  const sendableSession = activeSession && activeSession !== 'INIT-PENDING' ? activeSession : null
+  const sendableSession = activeSession && activeSession !== 'INIT-PENDING' && !activeSessionEvidence ? activeSession : null
 
   return (
     <div
@@ -455,7 +475,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               onClick={() => handleTagClick(sessionName)}
               onOpenFilesAtPath={onOpenFilesAtPath}
               workspaceActive={workspaceActive}
-              contextActionsEnabled={sessionName !== 'INIT-PENDING'}
+              contextActionsEnabled={sessionName !== 'INIT-PENDING' && !unavailableSessions.has(sessionName)}
             />
           ))}
         </div>
@@ -489,14 +509,25 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               <Send size={12} aria-hidden="true" />
             </button>
           )}
-          {activeSession && !activeSessionLoaded && (
+          {activeSessionEvidence ? (
+            <span className="terminal-loading-state">{activeSessionEvidence.state === 'stale' ? 'Stale evidence' : 'Offline'}</span>
+          ) : activeSession && !activeSessionLoaded && (
             <span className="terminal-loading-state">Loading terminal…</span>
           )}
         </div>
       </div>
 
       <div ref={setBodyRef} className="terminal-window-body" onClick={handleWindowClick}>
-        {activeSession === 'INIT-PENDING' ? (
+        {activeSessionEvidence ? (
+          <div className="offline-window-state">
+            <strong>{activeSessionEvidence.state === 'stale' ? 'Session state unavailable' : 'Session is offline'}</strong>
+            <span>This placement is preserved until you resolve it.</span>
+            {activeSessionEvidence.cwd && <code>{activeSessionEvidence.cwd}</code>}
+            <button type="button" onClick={() => clearStaleSessionsFromWindow(workspaceId, windowConfig.id)}>
+              Clear offline placement
+            </button>
+          </div>
+        ) : activeSession === 'INIT-PENDING' ? (
           <div style={{
             display: 'flex',
             justifyContent: 'center',
