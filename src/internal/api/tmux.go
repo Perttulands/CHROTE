@@ -242,6 +242,7 @@ func (req *UpdateBankedRecoveryRequest) UnmarshalJSON(raw []byte) error {
 func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/tmux/sessions", h.ListSessions)
 	mux.HandleFunc("POST /api/tmux/sessions", h.CreateSession)
+	mux.HandleFunc("PUT /api/tmux/recovery-launches/{launchId}", h.ExactLaunch)
 	mux.HandleFunc("GET /api/tmux/sessions/{name}/panes", h.ListSessionPanes)
 	mux.HandleFunc("POST /api/tmux/sessions/{name}/send", h.SendToSession)
 	mux.HandleFunc("POST /api/tmux/session-bank/{name}/recovery", h.UpdateBankedRecovery)
@@ -1462,9 +1463,9 @@ func (s *sessionBankStore) saveLocked(entries []SessionBankEntry) error {
 }
 
 func isTmuxNoServerError(errStr string) bool {
-	return strings.Contains(errStr, "no server running") ||
-		strings.Contains(errStr, "No such file or directory") ||
-		(strings.Contains(errStr, "error connecting to ") && strings.Contains(errStr, "(No such file or directory)"))
+	lower := strings.ToLower(errStr)
+	return strings.Contains(lower, "no server running on ") ||
+		(strings.Contains(lower, "error connecting to ") && strings.Contains(lower, "(no such file or directory)"))
 }
 
 func isTmuxDuplicateSessionError(err error) bool {
@@ -1572,7 +1573,11 @@ func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget) ([]core.Session, 
 		}
 		return []core.Session{}, errStr
 	}
-	return parseSessionsOutput(output, target.unixUser), ""
+	sessions, parseErr := parseAuthoritativeSessionsOutput(output, target.unixUser)
+	if parseErr != nil {
+		return []core.Session{}, parseErr.Error()
+	}
+	return sessions, ""
 }
 
 // ListSessions handles GET /api/tmux/sessions

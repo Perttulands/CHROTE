@@ -31,7 +31,7 @@ func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 		"case \"$sock\" in\n" +
 		"  *" + failFor + "*) printf '%s\\n' \"$TMUX_STDERR\" >&2; exit 1 ;;\n" +
 		"esac\n" +
-		"printf '$1:healthy-session:1:0\\n'\n" +
+		"printf '%s	%s	%s	%s	%s\\n' '$7' 'healthy-session' '1' '0' '/workspaces/healthy'\n" +
 		"exit 0\n"
 	scriptPath := filepath.Join(dir, "tmux")
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
@@ -303,4 +303,43 @@ func TestTmuxHandler_ListSessionsPartialFailurePreservesFailedSourceEvidence(t *
 		}
 	}
 	t.Fatal("missing persisted build/build-agent evidence")
+}
+
+func TestTmuxHandler_ListSessionsMalformedInventoryCannotOfflineEvidence(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "tmux")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nprintf 'truncated-row\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CHROTE_TMUX_BIN", scriptPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/tmux.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice")
+	t.Setenv("CHROTE_SESSION_BANK_PATH", filepath.Join(dir, "session-bank.json"))
+	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", filepath.Join(dir, "managed-status.json"))
+	seed := []SessionBankEntry{{Name: "important", UnixUser: "alice", Group: "agents", Live: true, FirstSeen: "2026-08-25T10:00:00Z", LastSeen: "2026-08-25T11:00:00Z"}}
+	raw, _ := json.Marshal(seed)
+	if err := os.WriteFile(os.Getenv("CHROTE_SESSION_BANK_PATH"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	NewTmuxHandler().ListSessions(rec, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	var response SessionsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Sources) != 1 || response.Sources[0].Status != tmuxSourceFailed || !strings.Contains(response.Sources[0].Error, "protocol") {
+		t.Fatalf("sources = %+v, want failed protocol evidence", response.Sources)
+	}
+	if len(response.RecoveryEvidence) != 1 || response.RecoveryEvidence[0].State != recoveryEvidenceStale {
+		t.Fatalf("recoveryEvidence = %+v, want stale last-known evidence", response.RecoveryEvidence)
+	}
+	persisted, err := newSessionBankStore(os.Getenv("CHROTE_SESSION_BANK_PATH")).Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted) != 1 || !persisted[0].Live || persisted[0].LastSeen != "2026-08-25T11:00:00Z" {
+		t.Fatalf("persisted evidence mutated after malformed inventory: %+v", persisted)
+	}
 }

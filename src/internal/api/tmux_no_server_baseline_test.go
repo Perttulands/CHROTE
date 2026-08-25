@@ -26,7 +26,6 @@ func installFailingTmux(t *testing.T, stderr string) {
 func TestTmuxHandler_ListSessionsTreatsKnownNoServerErrorsAsEmptyList(t *testing.T) {
 	tests := []string{
 		"no server running on /tmp/tmux-2001/default",
-		"No such file or directory",
 		"error connecting to /run/user/2001/tmux/default (No such file or directory)",
 	}
 
@@ -53,6 +52,26 @@ func TestTmuxHandler_ListSessionsTreatsKnownNoServerErrorsAsEmptyList(t *testing
 				t.Fatalf("error = %q, want no user-visible error for no-server condition", response.Error)
 			}
 		})
+	}
+}
+
+func TestTmuxHandler_ListSessionsReportsBareNoSuchFileAsNonAuthoritative(t *testing.T) {
+	installFailingTmux(t, "No such file or directory")
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ListSessions(rec, req)
+
+	var response SessionsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(response.Error, "No such file or directory") {
+		t.Fatalf("error = %q, want bare OS failure to remain non-authoritative", response.Error)
+	}
+	if len(response.Sources) != 1 || response.Sources[0].Status != tmuxSourceFailed {
+		t.Fatalf("sources = %+v, want failed source", response.Sources)
 	}
 }
 

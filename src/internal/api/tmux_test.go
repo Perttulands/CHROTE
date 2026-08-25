@@ -261,7 +261,7 @@ func TestTmuxHandler_ListSessionsFiltersReservedProbeSessionsFromPublicAndBank(t
 	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
 	installScriptedTmux(t, `
 case "$*" in
-  *list-sessions*) printf '$1:chrote-probe-123:1:0\n$2:work:1:0\n' ;;
+  *list-sessions*) printf '$1\tchrote-probe-123\t1\t0\t/workspaces/alice\n$2\twork\t1\t0\t/workspaces/alice\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
@@ -340,7 +340,7 @@ func TestTmuxHandler_ListSessionsProjectsManagedStatusSeparatelyAndSkipsBankOwne
 	writeManagedStatusSeed(t, managedPath, "systemd-worker", "alice", "worker.service")
 	installScriptedTmux(t, `
 case "$*" in
-  *list-sessions*) printf '$1:systemd-worker:1:0\n$2:shell-owned:1:0\n' ;;
+  *list-sessions*) printf '$1\tsystemd-worker\t1\t0\t/home/alice/project\n$2\tshell-owned\t1\t0\t/home/alice/project\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
@@ -408,7 +408,7 @@ func TestTmuxHandler_ListSessionsReportsMalformedManagedStatusWithoutFailingSess
 	}
 	installScriptedTmux(t, `
 case "$*" in
-  *list-sessions*) printf '$1:shell-owned:1:0\n' ;;
+  *list-sessions*) printf '$1\tshell-owned\t1\t0\t/home/alice/project\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
@@ -890,9 +890,9 @@ func TestTmuxHandler_ListSessionsAggregatesConfiguredTerminalUsers(t *testing.T)
 	fakeTmux := filepath.Join(tmpDir, "tmux")
 	script := `#!/bin/sh
 case "$*" in
-  *"/tmp/tmux-p"*) printf 'alice-shell:1:0\n' ;;
-  *"/tmp/tmux-t"*) printf 'build-shell:2:1\n' ;;
-  *) printf 'unexpected:1:0\n' ;;
+  *"/tmp/tmux-p"*) printf '$1\talice-shell\t1\t0\t/home/operator\n' ;;
+  *"/tmp/tmux-t"*) printf '$2\tbuild-shell\t2\t1\t/home/secondary\n' ;;
+  *) printf '$3\tunexpected\t1\t0\t/tmp\n' ;;
 esac
 `
 	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
@@ -1314,8 +1314,8 @@ func TestTmuxHandler_SessionBankDoesNotMutateOnFilteredScans(t *testing.T) {
 	fakeTmux := filepath.Join(tmpDir, "tmux")
 	script := `#!/bin/sh
 case "$*" in
-  *"/tmp/tmux-a"*list-sessions*) printf '$1:codex-alpha:1:0\n' ;;
-  *"/tmp/tmux-b"*list-sessions*) printf '$2:claude-beta:1:0\n' ;;
+  *"/tmp/tmux-a"*list-sessions*) printf '$1\tcodex-alpha\t1\t0\t/home/alice\n' ;;
+  *"/tmp/tmux-b"*list-sessions*) printf '$2\tclaude-beta\t1\t0\t/home/bob\n' ;;
 esac
 `
 	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
@@ -1363,7 +1363,7 @@ func TestTmuxHandler_SessionBankKeepsRestartResumeHints(t *testing.T) {
 	statePath := filepath.Join(tmpDir, "offline")
 	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
 	fakeTmux := filepath.Join(tmpDir, "tmux")
-	script := "#!/bin/sh\ncase \"$*\" in\n  *list-sessions*)\n    if [ ! -f " + statePath + " ]; then printf '$7:codex-alpha:1:0\\n'; fi\n    ;;\nesac\n"
+	script := "#!/bin/sh\ncase \"$*\" in\n  *list-sessions*)\n    if [ ! -f " + statePath + " ]; then printf '%s	%s	%s	%s	%s\\n' '$7' 'codex-alpha' '1' '0' '/home/alice'; fi\n    ;;\nesac\n"
 	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake tmux: %v", err)
 	}
@@ -1706,7 +1706,7 @@ func TestTmuxHandler_UpdateBankedRecoveryMetadataMakesLiveSessionRecoverableAfte
 	statePath := filepath.Join(tmpDir, "offline")
 	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
 	fakeTmux := filepath.Join(tmpDir, "tmux")
-	script := "#!/bin/sh\ncase \"$*\" in\n  *list-sessions*)\n    if [ ! -f " + statePath + " ]; then printf '$7:codex-alpha:1:0\\n'; fi\n    ;;\nesac\n"
+	script := "#!/bin/sh\ncase \"$*\" in\n  *list-sessions*)\n    if [ ! -f " + statePath + " ]; then printf '%s	%s	%s	%s	%s\\n' '$7' 'codex-alpha' '1' '0' '/home/alice'; fi\n    ;;\nesac\n"
 	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake tmux: %v", err)
 	}

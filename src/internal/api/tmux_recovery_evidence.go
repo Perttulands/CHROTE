@@ -4,7 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/chrote/server/internal/core"
@@ -96,6 +99,52 @@ func tmuxSourceGeneration(unixUser string, sessions []core.Session) string {
 	}{UnixUser: strings.TrimSpace(unixUser), Sessions: rows})
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func parseAuthoritativeSessionsOutput(output string, unixUser string) ([]core.Session, error) {
+	trimmed := strings.TrimRight(output, "\r\n")
+	if strings.TrimSpace(trimmed) == "" {
+		return []core.Session{}, nil
+	}
+	sessions := []core.Session{}
+	for lineIndex, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		parts := strings.Split(line, "	")
+		if len(parts) != 5 {
+			return nil, fmt.Errorf("tmux inventory protocol row %d has %d fields, want 5", lineIndex+1, len(parts))
+		}
+		sessionID := strings.TrimSpace(parts[0])
+		name := strings.TrimSpace(parts[1])
+		windowsText := strings.TrimSpace(parts[2])
+		attachedText := strings.TrimSpace(parts[3])
+		cwd := strings.TrimSpace(parts[4])
+		if !tmuxSessionIDPattern.MatchString(sessionID) || name == "" || len(name) > 256 || strings.ContainsAny(name, "\x00\r\n	") {
+			return nil, fmt.Errorf("tmux inventory protocol row %d has invalid session identity", lineIndex+1)
+		}
+		windows, err := strconv.Atoi(windowsText)
+		if err != nil || windows <= 0 {
+			return nil, fmt.Errorf("tmux inventory protocol row %d has invalid window count", lineIndex+1)
+		}
+		if attachedText != "0" && attachedText != "1" {
+			return nil, fmt.Errorf("tmux inventory protocol row %d has invalid attached state", lineIndex+1)
+		}
+		if cwd != "" && !filepath.IsAbs(cwd) {
+			return nil, fmt.Errorf("tmux inventory protocol row %d has non-absolute cwd", lineIndex+1)
+		}
+		if isReservedInternalSessionName(name) {
+			continue
+		}
+		sessions = append(sessions, core.Session{
+			ID:       sessionID,
+			Name:     name,
+			Windows:  windows,
+			Attached: attachedText == "1",
+			Group:    core.CategorizeSession(name),
+			UnixUser: unixUser,
+			CWD:      cwd,
+		})
+	}
+	return sessions, nil
 }
 
 func completeTmuxSource(unixUser, observedAt string, sessions []core.Session) TmuxSourceEvidence {
