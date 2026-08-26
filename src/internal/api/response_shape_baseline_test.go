@@ -102,7 +102,7 @@ func TestResponseShapeBaseline_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.
 			method:   http.MethodGet,
 			path:     "/api/tmux/sessions",
 			call:     handler.ListSessions,
-			wantKeys: []string{"banked", "grouped", "managed", "recoveryEvidence", "sessions", "sources", "terminalUsers", "timestamp"},
+			wantKeys: []string{"grouped", "sessions", "terminalUsers", "timestamp"},
 		},
 		{
 			name:     "create session",
@@ -300,7 +300,7 @@ func installFakeTmux(t *testing.T) (string, string) {
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_ARGS_FILE"
 case "$*" in
-  *"list-sessions -F #{pid}"*)
+  *"list-sessions -F #{session_id}"*)
     printf 'no server running on %s/default\n' "$TMUX_TMPDIR" >&2
     exit 1
     ;;
