@@ -47,10 +47,10 @@ function applyClaimedIframeStyle(iframe: HTMLIFrameElement) {
   iframe.style.overflow = 'hidden'
 }
 
-function applyParkedIframeStyle(iframe: HTMLIFrameElement) {
+function applyParkedIframeStyle(iframe: HTMLIFrameElement, width = 400, height = 300) {
   applyClaimedIframeStyle(iframe)
-  iframe.style.width = '400px'
-  iframe.style.height = '300px'
+  iframe.style.width = `${width}px`
+  iframe.style.height = `${height}px`
   iframe.style.position = 'absolute'
   iframe.style.visibility = 'hidden'
 }
@@ -109,6 +109,7 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
 
   // Refs for iframe elements and state
   const iframeRefs = useRef<Map<string, HTMLIFrameElement>>(new Map())
+  const lastClaimedSizesRef = useRef<Map<string, { width: number; height: number }>>(new Map())
   const [loadedSessions, setLoadedSessions] = useState<Set<string>>(new Set())
   const poolContainerRef = useRef<HTMLDivElement>(null)
 
@@ -133,6 +134,7 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
         iframe.parentNode.removeChild(iframe)
       }
       iframeRefs.current.delete(sessionName)
+      lastClaimedSizesRef.current.delete(sessionName)
       claimsRef.current.delete(sessionName)
       connectedRef.current.delete(sessionName)
     })
@@ -246,6 +248,12 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       // position:absolute + inset once claimed.
       placeIframe(container, iframe)
       applyClaimedIframeStyle(iframe)
+      if (iframe.offsetWidth >= 10 && iframe.offsetHeight >= 10) {
+        lastClaimedSizesRef.current.set(sessionName, {
+          width: iframe.offsetWidth,
+          height: iframe.offsetHeight,
+        })
+      }
 
       // Deferred connection: set src only on first claim into a visible container
       if (!connectedRef.current.has(sessionName)) {
@@ -260,9 +268,14 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       const iframe = iframeRefs.current.get(sessionName)
       const pool = poolContainerRef.current
       if (iframe && pool) {
-        // Move first, then park with explicit inline styles (overrides CSS positioning)
+        const liveSize = iframe.offsetWidth >= 10 && iframe.offsetHeight >= 10
+          ? { width: iframe.offsetWidth, height: iframe.offsetHeight }
+          : lastClaimedSizesRef.current.get(sessionName)
+        // Preserve the last real viewport while hidden. Resizing a connected
+        // ttyd iframe to the pool's fallback size sends that small grid to
+        // tmux even though triggerFit correctly ignores parked terminals.
+        applyParkedIframeStyle(iframe, liveSize?.width, liveSize?.height)
         placeIframe(pool, iframe)
-        applyParkedIframeStyle(iframe)
       }
     }
   }, [])
@@ -288,6 +301,10 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
     // attached client (chrote-b5o).
     if (!claimsRef.current.has(sessionName)) return
     if (iframe.offsetWidth < 10 || iframe.offsetHeight < 10) return
+    lastClaimedSizesRef.current.set(sessionName, {
+      width: iframe.offsetWidth,
+      height: iframe.offsetHeight,
+    })
     try {
       // Call the ttyd client's own fit hook directly. window.term.fit exists
       // from xterm open() onward — BEFORE the WebSocket opens — whereas a
@@ -350,7 +367,8 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
     <IframePoolContext.Provider value={contextValue}>
       {/* Pool container for released iframes that still have active ttyd connections.
           Deferred connection handles initial creation (no src until first claim).
-          The 400x300 size prevents xterm from collapsing to 2x1 while parked. */}
+          Parked iframes retain their last real viewport; 400x300 is only the
+          initial fallback before a terminal has been visibly claimed. */}
       <div
         ref={poolContainerRef}
         style={{

@@ -73,11 +73,23 @@ test.describe('Terminal reparent retention', () => {
       }))
       .toBe('alive')
 
+    const visibleViewport = await frameElement.evaluate((el: HTMLIFrameElement) => ({
+      width: el.contentWindow?.innerWidth ?? 0,
+      height: el.contentWindow?.innerHeight ?? 0,
+    }))
+    const frameHandle = await frameElement.elementHandle()
+    expect(frameHandle).not.toBeNull()
+
     const activeDock = page.locator('[data-active="true"]')
 
     // Shrink: terminal1-window-1 unmounts, its iframe parks in the pool.
     await activeDock.getByTitle('1 window').click()
     await expect(frameElement).toBeHidden()
+    const parkedViewport = await frameHandle!.evaluate((el: HTMLIFrameElement) => ({
+      width: el.contentWindow?.innerWidth ?? 0,
+      height: el.contentWindow?.innerHeight ?? 0,
+    }))
+    expect(parkedViewport).toEqual(visibleViewport)
 
     // Grow: the window remounts and re-claims the parked iframe.
     await activeDock.getByTitle('2 windows').click()
