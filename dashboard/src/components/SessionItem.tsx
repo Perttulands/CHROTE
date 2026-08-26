@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import type { TmuxSession } from '../types'
 import { useSession } from '../context/SessionContext'
-import { WINDOW_COLORS, getSessionKey, getTerminalLabel, getTerminalUserColor, getTerminalUserInitial } from '../types'
+import { WINDOW_COLORS, getForegroundCommandLabel, getSessionKey, getTerminalLabel, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import DismissiblePanel from './DismissiblePanel'
 
@@ -212,6 +212,8 @@ function SessionItem({ session }: SessionItemProps) {
   }
 
   const dragLabel = `Drag ${session.name}${session.unixUser ? ` (Unix user ${session.unixUser})` : ''}`
+  const currentCommand = session.currentCommand?.trim()
+  const foregroundCommandLabel = getForegroundCommandLabel(currentCommand)
 
   return (
     <>
@@ -257,6 +259,14 @@ function SessionItem({ session }: SessionItemProps) {
           </button>
         )}
         <span className="session-name">{session.name}</span>
+        {currentCommand && foregroundCommandLabel && (
+          <span
+            className="session-foreground-command"
+            title={`Foreground process reported by tmux: ${currentCommand}`}
+          >
+            {foregroundCommandLabel}
+          </span>
+        )}
         <button
           type="button"
           className="session-item-menu-btn"

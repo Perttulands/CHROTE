@@ -295,11 +295,11 @@ esac
 	}
 }
 
-func TestTmuxHandler_ListSessionsReportsLiveActivePaneCWD(t *testing.T) {
+func TestTmuxHandler_ListSessionsReportsLiveActivePaneCWDAndCommand(t *testing.T) {
 	tmpDir := t.TempDir()
 	installScriptedTmux(t, `
 case "$*" in
-  *pane_current_path*) printf '$9\twork\t1\t0\t/workspaces/alice/live\n$10\tno-cwd\t1\t0\t\n' ;;
+  *pane_current_path*) printf '$9\twork\t1\t0\t/workspaces/alice/live\tcodex\n$10\tno-cwd\t1\t0\t\tbash\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_SESSION_BANK_PATH", filepath.Join(tmpDir, "session-bank", "sessions.json"))
@@ -330,6 +330,12 @@ esac
 	}
 	if got := byName["no-cwd"].CWD; got != "" {
 		t.Fatalf("empty live session cwd = %q, want empty cwd without dropping session", got)
+	}
+	if got := byName["work"].CurrentCommand; got != "codex" {
+		t.Fatalf("live session command = %q, want active pane command", got)
+	}
+	if got := byName["no-cwd"].CurrentCommand; got != "bash" {
+		t.Fatalf("shell session command = %q, want shell foreground evidence", got)
 	}
 }
 

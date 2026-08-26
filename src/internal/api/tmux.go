@@ -1513,7 +1513,10 @@ func parseSessionsOutput(output string, unixUser string) []core.Session {
 		windowsText := ""
 		attachedText := ""
 		cwd := ""
-		if parts := strings.SplitN(line, "	", 5); len(parts) == 5 {
+		currentCommand := ""
+		if parts := strings.SplitN(line, "	", 6); len(parts) == 6 {
+			sessionID, name, windowsText, attachedText, cwd, currentCommand = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+		} else if len(parts) == 5 {
 			sessionID, name, windowsText, attachedText, cwd = parts[0], parts[1], parts[2], parts[3], parts[4]
 		} else {
 			parts := strings.Split(line, ":")
@@ -1537,20 +1540,21 @@ func parseSessionsOutput(output string, unixUser string) []core.Session {
 			windows = 1
 		}
 		sessions = append(sessions, core.Session{
-			ID:       sessionID,
-			Name:     name,
-			Windows:  windows,
-			Attached: attachedText == "1",
-			Group:    core.CategorizeSession(name),
-			UnixUser: unixUser,
-			CWD:      cwd,
+			ID:             sessionID,
+			Name:           name,
+			Windows:        windows,
+			Attached:       attachedText == "1",
+			Group:          core.CategorizeSession(name),
+			UnixUser:       unixUser,
+			CWD:            cwd,
+			CurrentCommand: currentCommand,
 		})
 	}
 	return sessions
 }
 
 func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget) ([]core.Session, string) {
-	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_id}	#{session_name}	#{session_windows}	#{session_attached}	#{pane_current_path}")
+	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_id}	#{session_name}	#{session_windows}	#{session_attached}	#{pane_current_path}	#{pane_current_command}")
 	if err != nil {
 		errStr := err.Error()
 		if isTmuxNoServerError(errStr) {
