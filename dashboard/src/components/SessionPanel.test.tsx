@@ -9,10 +9,7 @@ const addToast = vi.fn()
 const fetchMock = vi.fn()
 
 const mockState = vi.hoisted(() => ({
-  sessionBank: [] as Array<Record<string, unknown>>,
   sessions: [] as Array<Record<string, unknown>>,
-  recoveryEvidence: [] as Array<Record<string, unknown>>,
-  assignedSessions: new Map<string, { workspaceId: 'terminal1'; windowId: string; colorIndex: number; windowIndex: number }>(),
 }))
 
 vi.mock('../context/SessionContext', () => ({
@@ -25,9 +22,6 @@ vi.mock('../context/SessionContext', () => ({
     refreshSessions,
     createSession,
     sessions: mockState.sessions,
-    sessionBank: mockState.sessionBank,
-    recoveryEvidence: mockState.recoveryEvidence,
-    assignedSessions: mockState.assignedSessions,
     settings: {
       ...DEFAULT_SETTINGS,
       terminalSessionPrefixes: { alice: 'alice', bob: 'bob' },
@@ -44,33 +38,10 @@ vi.mock('./NukeConfirmModal', () => ({
   default: () => null,
 }))
 
-function addAgentBankedSession(overrides: Record<string, unknown> = {}) {
-  mockState.sessionBank.push({
-    id: '$7',
-    name: 'codex-alpha',
-    unixUser: 'alice',
-    windows: 1,
-    attached: false,
-    group: 'codex',
-    live: false,
-    firstSeen: '2026-07-07T20:00:00Z',
-    lastSeen: '2026-07-07T21:00:00Z',
-    recoveryKind: 'agent',
-    agentKind: 'codex',
-    agentSessionId: '019f45ec-f88b-7f70-88dc-b5b99a9e94c6',
-    resumeCommand: 'codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6',
-    cwd: '/srv/chrote',
-    ...overrides,
-  })
-}
-
 describe('SessionPanel new-session context menu', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockState.sessionBank.length = 0
     mockState.sessions.length = 0
-    mockState.recoveryEvidence.length = 0
-    mockState.assignedSessions.clear()
     createSession.mockResolvedValue('created')
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true, removed: true }) })
     vi.stubGlobal('fetch', fetchMock)
@@ -116,37 +87,6 @@ describe('SessionPanel new-session context menu', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalled())
     expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal3', unixUser: 'bob', name: 'research-agent' })
     expect(screen.queryByText('Nuke All')).not.toBeInTheDocument()
-  })
-
-  it('shows bounded offline evidence in global Sessions without exposing a resume command', () => {
-    addAgentBankedSession()
-    mockState.recoveryEvidence.push({
-      sourceId: 'tmux:alice',
-      unixUser: 'alice',
-      name: 'codex-alpha',
-      state: 'offline',
-      cwd: '/srv/chrote',
-      firstSeen: '2026-07-07T20:00:00Z',
-      lastSeen: '2026-07-07T21:00:00Z',
-      native: [{ provider: 'codex', nativeSessionId: '019f45ec-f88b-7f70-88dc-b5b99a9e94c6', evidenceSource: 'session-bank' }],
-    })
-    mockState.assignedSessions.set('alice:codex-alpha', { workspaceId: 'terminal1', windowId: 'terminal1-window-0', colorIndex: 0, windowIndex: 1 })
-    const openSessionBankSettings = vi.fn()
-
-    render(<SessionPanel activeWorkspaceId="terminal1" onOpenSessionBankSettings={openSessionBankSettings} />)
-
-    expect(screen.getByRole('heading', { name: 'Offline work' })).toBeInTheDocument()
-    expect(screen.getByText('codex-alpha')).toBeInTheDocument()
-    expect(screen.getByText('Offline')).toBeInTheDocument()
-    expect(screen.getByText('/srv/chrote')).toBeInTheDocument()
-    expect(screen.getByText('Terminal · Window 1')).toBeInTheDocument()
-    expect(screen.queryByText('codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /recover/i })).not.toBeInTheDocument()
-
-    const settingsLink = screen.getByRole('button', { name: 'Open Session Bank settings for 1 banked session' })
-    expect(settingsLink).toHaveTextContent('Session Bank · 1 banked')
-    fireEvent.click(settingsLink)
-    expect(openSessionBankSettings).toHaveBeenCalled()
   })
 
   it('keeps bulk destruction out of the primary Session panel', () => {

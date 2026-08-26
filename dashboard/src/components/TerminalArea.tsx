@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { liveSessionKeys, offlineSessionKeys, useSession } from '../context/SessionContext'
+import { useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
 import DismissiblePanel from './DismissiblePanel'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
+import { getSessionKey } from '../types'
 import type { WorkspaceId } from '../types'
 import { useIframePool } from './IframePool'
 
@@ -16,7 +17,7 @@ interface TerminalAreaProps {
 }
 
 function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspaceActive = true }: TerminalAreaProps) {
-  const { workspaces, setWindowCount, clearStaleSessionsFromWindow, sessions, recoveryEvidence, windowRevealRequest } = useSession()
+  const { workspaces, setWindowCount, clearStaleSessionsFromWindow, sessions, windowRevealRequest } = useSession()
   const pool = useIframePool()
   const workspace = workspaces[workspaceId]
   const windows = workspace.windows
@@ -32,11 +33,17 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
     { estimatedSize: { width: 220, height: 130 } },
   )
   const visibleWindows = windows.slice(0, windowCount)
-  const liveSessions = useMemo(() => liveSessionKeys(sessions, recoveryEvidence), [recoveryEvidence, sessions])
-  const clearableOfflineSessions = useMemo(() => offlineSessionKeys(recoveryEvidence), [recoveryEvidence])
+  const liveSessions = useMemo(() => {
+    const live = new Set<string>()
+    sessions.forEach(session => {
+      live.add(getSessionKey(session.name, session.unixUser))
+      live.add(session.name)
+    })
+    return live
+  }, [sessions])
   const staleSessionCount = useMemo(() => visibleWindows.reduce((count, window) => (
-    count + window.boundSessions.filter(sessionName => sessionName !== 'INIT-PENDING' && clearableOfflineSessions.has(sessionName)).length
-  ), 0), [clearableOfflineSessions, visibleWindows])
+    count + window.boundSessions.filter(sessionName => sessionName !== 'INIT-PENDING' && !liveSessions.has(sessionName)).length
+  ), 0), [liveSessions, visibleWindows])
 
   // Ensure valid mobile index when configuration changes
   useEffect(() => {
@@ -64,7 +71,7 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
   const reconnectFrames = () => {
     const sessionNames = new Set<string>()
     visibleWindows.forEach(window => window.boundSessions.forEach(sessionName => {
-      if (sessionName && sessionName !== 'INIT-PENDING' && liveSessions.has(sessionName)) sessionNames.add(sessionName)
+      if (sessionName && sessionName !== 'INIT-PENDING') sessionNames.add(sessionName)
     }))
     sessionNames.forEach(sessionName => pool.reconnectIframe(sessionName))
     closeControlsMenu()

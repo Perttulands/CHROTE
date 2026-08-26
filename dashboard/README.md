@@ -44,13 +44,13 @@ Help is an application-shell dialog, not a persistent tab.
 src/
 ├── App.tsx                         application shell and keep-alive view ownership
 ├── context/
-│   ├── SessionContext.tsx          sessions, workspaces, recovery, persistence
+│   ├── SessionContext.tsx          sessions, workspaces, and persistence
 │   └── ToastContext.tsx            operator notifications
 ├── components/
 │   ├── TabBar.tsx                  top-level navigation
 │   ├── TerminalArea.tsx            1-4 terminal-window workspace
 │   ├── TerminalWorkspaceDock.tsx   unified Sessions/Files sidecar owner
-│   ├── SessionPanel.tsx            grouped sessions, Peek, Session Bank link
+│   ├── SessionPanel.tsx            grouped sessions and Peek
 │   ├── TerminalWindow.tsx          assignment, location, and iframe surface
 │   ├── FilesView/                  full Files workspace
 │   ├── TerminalFilesPanel.tsx      terminal-companion Files sidecar
@@ -60,7 +60,7 @@ src/
 │   ├── ServicesView.tsx            configured local service adapters
 │   ├── ScheduledTasksView.tsx      schedules and run history
 │   ├── ServerStatus.tsx            health, resources, and system history
-│   └── SettingsView.tsx            appearance, flags, Session Bank, recovery
+│   └── SettingsView.tsx            appearance, flags, and session cleanup
 ├── hooks/                          keyboard, drag, polling, and layout behavior
 ├── utils/                          shared parsing and UI utilities
 └── types.ts                        dashboard contracts and persisted settings

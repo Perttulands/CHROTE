@@ -18,9 +18,6 @@ const triggerFit = vi.fn()
 const setFocusedWindowKey = vi.fn()
 const setActiveSession = vi.fn()
 const openSendToSession = vi.fn()
-const clearStaleSessionsFromWindow = vi.fn()
-const claimIframe = vi.fn(() => vi.fn())
-const recoveryState = vi.hoisted(() => ({ evidence: [] as Array<Record<string, unknown>> }))
 const draggableState = vi.hoisted(() => ({
   transform: null as { x: number, y: number } | null,
   isDragging: false,
@@ -58,14 +55,9 @@ vi.mock('../context/SessionContext', () => ({
     },
     terminalUsers: ['alice', 'build'],
     sessions: [
-      { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build' },
+      { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build', cwd: '/srv/forge' },
       { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/live-shell' },
     ],
-    sessionBank: [
-      { name: 'forge-existing', unixUser: 'build', cwd: '/srv/forge' },
-      { name: 'shell-existing', unixUser: 'alice', cwd: '/srv/shell' },
-    ],
-    recoveryEvidence: recoveryState.evidence,
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout', createdAt: 1, workspaces: {} }],
     refreshSessions,
     createSession,
@@ -74,7 +66,7 @@ vi.mock('../context/SessionContext', () => ({
     setActiveSession,
     cycleSession: vi.fn(),
     setWindowCount: vi.fn(),
-    clearStaleSessionsFromWindow,
+    clearStaleSessionsFromWindow: vi.fn(),
     focusedWindowKey: null,
     setFocusedWindowKey,
     openSendToSession,
@@ -91,7 +83,7 @@ vi.mock('../context/ToastContext', () => ({
 
 vi.mock('./IframePool', () => ({
   useIframePool: () => ({
-    claimIframe,
+    claimIframe: vi.fn(() => vi.fn()),
     isLoaded: vi.fn(() => false),
     loadedSessions: poolState.loadedSessions,
     getIframe: vi.fn(() => null),
@@ -122,9 +114,6 @@ describe('TerminalWindow launch user', () => {
     droppableState.isOver = false
     droppableState.active = null
     poolState.loadedSessions = new Set()
-    recoveryState.evidence = []
-    clearStaleSessionsFromWindow.mockClear()
-    claimIframe.mockClear()
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as any)
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
@@ -348,7 +337,7 @@ describe('TerminalWindow launch user', () => {
     expect(document.querySelector('.session-context-menu')).not.toBeInTheDocument()
   })
 
-  it('falls back to a banked cwd when the live session has no reported cwd', () => {
+  it('opens the live session working directory', () => {
     const openFilesAtPath = vi.fn()
     render(
       <TerminalWindow
@@ -576,73 +565,6 @@ describe('TerminalWindow launch user', () => {
       />
     )
     expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()
-  })
-
-  it('renders bounded offline evidence and clears placement only on explicit action', () => {
-    recoveryState.evidence = [{
-      sourceId: 'tmux:alice',
-      unixUser: 'alice',
-      name: 'offline-agent',
-      state: 'offline',
-      cwd: '/srv/offline-agent',
-    }]
-
-    render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['alice:offline-agent'], activeSession: 'alice:offline-agent', colorIndex: 0 }}
-      />
-    )
-
-    expect(screen.getByText('Session is offline')).toBeInTheDocument()
-    expect(screen.getByText('/srv/offline-agent')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()
-    expect(claimIframe).not.toHaveBeenCalledWith('alice:offline-agent', expect.anything())
-
-    fireEvent.click(screen.getByRole('button', { name: 'Clear offline placement' }))
-    expect(removeSessionFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'alice:offline-agent')
-  })
-
-  it('matches one unambiguous qualified offline identity to a legacy bare binding', () => {
-    recoveryState.evidence = [{
-      sourceId: 'tmux:alice',
-      unixUser: 'alice',
-      name: 'offline-agent',
-      state: 'offline',
-      cwd: '/srv/offline-agent',
-    }]
-
-    render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['offline-agent'], activeSession: 'offline-agent', colorIndex: 0 }}
-      />
-    )
-
-    expect(screen.getByText('Session is offline')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Clear offline placement' }))
-    expect(removeSessionFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'offline-agent')
-  })
-
-  it('blocks ambiguous legacy bare bindings from claiming or acting on an iframe', () => {
-    recoveryState.evidence = [
-      { sourceId: 'tmux:alice', unixUser: 'alice', name: 'shared-offline', state: 'offline', cwd: '/srv/alice' },
-      { sourceId: 'tmux:bob', unixUser: 'bob', name: 'shared-offline', state: 'stale', cwd: '/srv/bob' },
-    ]
-
-    render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['shared-offline'], activeSession: 'shared-offline', colorIndex: 0 }}
-      />
-    )
-
-    expect(screen.getByText('Session identity is ambiguous')).toBeInTheDocument()
-    expect(screen.queryByText('Loading terminal…')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()
-    expect(claimIframe).not.toHaveBeenCalledWith('shared-offline', expect.anything())
-    fireEvent.click(screen.getByRole('button', { name: 'Clear ambiguous placement' }))
-    expect(removeSessionFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'shared-offline')
   })
 
   it('keeps terminal panes on the per-window opaque background palette', () => {

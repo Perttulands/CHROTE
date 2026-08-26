@@ -43,7 +43,6 @@ vi.mock('../context/SessionContext', () => ({
     sidebarCollapsed: false,
     refreshSessions: vi.fn(),
     createSession: vi.fn(),
-    sessionBank: [],
     settings: DEFAULT_SETTINGS,
     terminalUsers: ['build', 'alice'],
   }),

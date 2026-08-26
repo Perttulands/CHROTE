@@ -145,7 +145,7 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.session-group').filter({ hasText: groupName }).locator('.expand-icon')).toHaveText('▶')
     })
 
-    test('shows all configured owner Files beside the one global Session Bank', async ({ page }) => {
+    test('shows all configured owner Files beside live Sessions', async ({ page }) => {
       const ownerSessions = ['alice', 'build'].map(unixUser => ({ name: `${unixUser}-shell`, windows: 1, attached: false, group: 'owners', unixUser }))
       await page.route('**/api/tmux/sessions', route => route.fulfill({
         status: 200,

@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
 import { Send } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
@@ -57,7 +57,7 @@ interface SessionTagProps {
 }
 
 function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive, contextActionsEnabled }: SessionTagProps) {
-  const { sessions, sessionBank, settings, deleteSession, renameSession, openSendToSession } = useSession()
+  const { sessions, settings, deleteSession, renameSession, openSendToSession } = useSession()
   const pool = useIframePool()
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isRenaming, setIsRenaming] = useState(false)
@@ -76,10 +76,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   const session = matchingSessions.length === 1 ? matchingSessions[0] : undefined
   const resolvedUser = session?.unixUser || unixUser
   const sessionKey = getSessionKey(actualName, resolvedUser)
-  const bankMatches = resolvedUser
-    ? sessionBank.filter(entry => getSessionKey(entry.name, entry.unixUser) === sessionKey)
-    : sessionBank.filter(entry => entry.name === actualName)
-  const workingDirectory = session?.cwd || (bankMatches.length === 1 ? bankMatches[0].cwd || null : null)
+  const workingDirectory = session?.cwd || null
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `tag-${workspaceId}-${windowId}-${sessionKey}`,
     data: { type: 'tag', sessionName: actualName, sessionKey, unixUser: resolvedUser, sourceWindowId: windowId, sourceWorkspaceId: workspaceId },
@@ -317,7 +314,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     removeSessionFromWindow,
     setActiveSession,
     cycleSession,
-    recoveryEvidence = [],
     focusedWindowKey,
     setFocusedWindowKey,
     openSendToSession,
@@ -328,31 +324,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
   const isFocused = focusedWindowKey === windowKey
 
   const activeSession = windowConfig.activeSession
-
-  const unavailableEvidenceBySession = useMemo(() => {
-    const unavailable = new Map<string, (typeof recoveryEvidence)[number]>()
-    const counts = new Map<string, number>()
-    recoveryEvidence.forEach(evidence => {
-      if (evidence.state !== 'live') counts.set(evidence.name, (counts.get(evidence.name) ?? 0) + 1)
-    })
-    recoveryEvidence.forEach(evidence => {
-      if (evidence.state === 'live') return
-      unavailable.set(getSessionKey(evidence.name, evidence.unixUser), evidence)
-      if ((counts.get(evidence.name) ?? 0) === 1) unavailable.set(evidence.name, evidence)
-    })
-    return unavailable
-  }, [recoveryEvidence])
-  const ambiguousLegacySessionNames = useMemo(() => {
-    const counts = new Map<string, number>()
-    recoveryEvidence.forEach(evidence => counts.set(evidence.name, (counts.get(evidence.name) ?? 0) + 1))
-    return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name))
-  }, [recoveryEvidence])
-  const unavailableSessions = useMemo(() => new Set([
-    ...unavailableEvidenceBySession.keys(),
-    ...ambiguousLegacySessionNames,
-  ]), [ambiguousLegacySessionNames, unavailableEvidenceBySession])
-  const activeSessionEvidence = activeSession ? unavailableEvidenceBySession.get(activeSession) : undefined
-  const activeSessionAmbiguous = activeSession ? ambiguousLegacySessionNames.has(activeSession) : false
 
   // Check if active session is loaded via pool
   const activeSessionLoaded = activeSession ? pool.loadedSessions.has(activeSession) : false
@@ -370,7 +341,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
 
     const cleanups: (() => void)[] = []
     windowConfig.boundSessions.forEach(sessionName => {
-      if (sessionName && sessionName !== 'INIT-PENDING' && !unavailableSessions.has(sessionName)) {
+      if (sessionName && sessionName !== 'INIT-PENDING') {
         const cleanup = pool.claimIframe(sessionName, body)
         cleanups.push(cleanup)
       }
@@ -380,7 +351,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
       cleanups.forEach(fn => fn())
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pool.claimIframe is a stable ref
-  }, [windowConfig.boundSessions, unavailableSessions])
+  }, [windowConfig.boundSessions])
 
   // Manage visibility of claimed iframes based on active session.
   // CSS (.terminal-window-body iframe) handles position/size via position:absolute + inset.
@@ -454,7 +425,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
 
 
   const hasSessions = windowConfig.boundSessions.length > 0
-  const sendableSession = activeSession && activeSession !== 'INIT-PENDING' && !unavailableSessions.has(activeSession) ? activeSession : null
+  const sendableSession = activeSession && activeSession !== 'INIT-PENDING' ? activeSession : null
 
   return (
     <div
@@ -481,7 +452,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               onClick={() => handleTagClick(sessionName)}
               onOpenFilesAtPath={onOpenFilesAtPath}
               workspaceActive={workspaceActive}
-              contextActionsEnabled={sessionName !== 'INIT-PENDING' && !unavailableSessions.has(sessionName)}
+              contextActionsEnabled={sessionName !== 'INIT-PENDING'}
             />
           ))}
         </div>
@@ -515,35 +486,14 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               <Send size={12} aria-hidden="true" />
             </button>
           )}
-          {activeSessionAmbiguous ? (
-            <span className="terminal-loading-state">Ambiguous identity</span>
-          ) : activeSessionEvidence ? (
-            <span className="terminal-loading-state">{activeSessionEvidence.state === 'stale' ? 'Stale evidence' : 'Offline'}</span>
-          ) : activeSession && !activeSessionLoaded && (
+          {activeSession && !activeSessionLoaded && (
             <span className="terminal-loading-state">Loading terminal…</span>
           )}
         </div>
       </div>
 
       <div ref={setBodyRef} className="terminal-window-body" onClick={handleWindowClick}>
-        {activeSessionAmbiguous ? (
-          <div className="offline-window-state">
-            <strong>Session identity is ambiguous</strong>
-            <span>Multiple unavailable sessions share this legacy name. Select a qualified session or clear this placement.</span>
-            <button type="button" onClick={() => removeSessionFromWindow(workspaceId, windowConfig.id, activeSession!)}>
-              Clear ambiguous placement
-            </button>
-          </div>
-        ) : activeSessionEvidence ? (
-          <div className="offline-window-state">
-            <strong>{activeSessionEvidence.state === 'stale' ? 'Session state unavailable' : 'Session is offline'}</strong>
-            <span>This placement is preserved until you resolve it.</span>
-            {activeSessionEvidence.cwd && <code>{activeSessionEvidence.cwd}</code>}
-            <button type="button" onClick={() => removeSessionFromWindow(workspaceId, windowConfig.id, activeSession!)}>
-              Clear offline placement
-            </button>
-          </div>
-        ) : activeSession === 'INIT-PENDING' ? (
+        {activeSession === 'INIT-PENDING' ? (
           <div style={{
             display: 'flex',
             justifyContent: 'center',

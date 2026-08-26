@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSession } from '../context/SessionContext'
 import { useToast } from '../context/ToastContext'
@@ -6,7 +6,6 @@ import type { UserSettings, TmuxAppearance, WorkspaceId, LaunchUser, FormationsT
 import { resolveFormationsTextSize } from '../types'
 import { MAX_TERMINAL_TAB_COUNT, MIN_TERMINAL_TAB_COUNT, TMUX_PRESETS, defaultSessionPrefixForUser, defaultTerminalUserColor, getSessionPrefixForUser, getTerminalLabel, getTerminalUserColor, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import FolderPickerModal from './FolderPickerModal'
-import SessionBankSection from './SessionBankSection'
 import NukeConfirmModal from './NukeConfirmModal'
 import { toDisplayPath } from './FilesView/types'
 
@@ -50,19 +49,13 @@ function normalizeProjectPath(path: string): string {
   return trimmed.replace(/\/+$/, '')
 }
 
-type SettingsViewProps = {
-  sessionBankFocusNonce?: number
-}
-
-function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
+function SettingsView() {
   const { settings, updateSettings, terminalUsers, sessions, refreshSessions, workspaceIds } = useSession()
   const { addToast } = useToast()
   const [showFolderPicker, setShowFolderPicker] = useState(false)
   const [projectPathInput, setProjectPathInput] = useState('')
-  const [sessionBankCollapsed, setSessionBankCollapsed] = useState(true)
   const [showNukeModal, setShowNukeModal] = useState(false)
   const [nuking, setNuking] = useState(false)
-  const sessionBankRef = useRef<HTMLDivElement>(null)
   const configuredUsers = normalizeTerminalUsers(terminalUsers.length > 0
     ? terminalUsers
     : [
@@ -70,14 +63,6 @@ function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
         ...Object.keys(settings.terminalSessionPrefixes),
         ...Object.keys(settings.terminalUserColors),
       ])
-
-  useEffect(() => {
-    if (!sessionBankFocusNonce) return
-    setSessionBankCollapsed(false)
-    window.requestAnimationFrame(() => {
-      sessionBankRef.current?.scrollIntoView({ block: 'start' })
-    })
-  }, [sessionBankFocusNonce])
 
   const handleAddProjectPath = (path: string) => {
     const normalizedPath = normalizeProjectPath(path)
@@ -487,17 +472,8 @@ function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
         </div>
       </section>
 
-      {/* Session Bank Section */}
-      <div ref={sessionBankRef}>
-        <SessionBankSection
-          collapsed={sessionBankCollapsed}
-          onCollapsedChange={setSessionBankCollapsed}
-          className="settings-session-bank"
-        />
-      </div>
-
       <section className="settings-section settings-danger-zone">
-        <h2 className="settings-section-title">Advanced session recovery</h2>
+        <h2 className="settings-section-title">Session cleanup</h2>
         <p className="settings-description">Bulk destruction is an emergency action. Individual session controls are safer.</p>
         <button
           className="nuke-trigger-btn"
