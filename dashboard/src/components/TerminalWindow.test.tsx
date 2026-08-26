@@ -55,8 +55,8 @@ vi.mock('../context/SessionContext', () => ({
     },
     terminalUsers: ['alice', 'build'],
     sessions: [
-      { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build', cwd: '/srv/forge' },
-      { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/live-shell' },
+      { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build', cwd: '/srv/forge', currentCommand: 'codex' },
+      { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/live-shell', currentCommand: 'bash' },
     ],
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout', createdAt: 1, workspaces: {} }],
     refreshSessions,
@@ -547,6 +547,25 @@ describe('TerminalWindow launch user', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send to session forge-existing' }))
 
     expect(openSendToSession).toHaveBeenCalledWith('build:forge-existing')
+  })
+
+  it('shows the mounted session foreground command without treating attachment as agent liveness', () => {
+    const { rerender } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
+      />
+    )
+
+    expect(screen.getByTitle('Foreground process reported by tmux: codex')).toHaveTextContent('foreground: codex')
+
+    rerender(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['alice:shell-existing'], activeSession: 'alice:shell-existing', colorIndex: 0 }}
+      />
+    )
+    expect(screen.getByTitle('Foreground process reported by tmux: bash')).toHaveTextContent('foreground: shell')
   })
 
   it('offers no Send action for empty or still-initializing windows', () => {

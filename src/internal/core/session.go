@@ -11,13 +11,14 @@ import (
 
 // Session represents a tmux session
 type Session struct {
-	ID       string `json:"id,omitempty"`
-	Name     string `json:"name"`
-	Windows  int    `json:"windows"`
-	Attached bool   `json:"attached"`
-	Group    string `json:"group"`
-	UnixUser string `json:"unixUser,omitempty"`
-	CWD      string `json:"cwd,omitempty"`
+	ID             string `json:"id,omitempty"`
+	Name           string `json:"name"`
+	Windows        int    `json:"windows"`
+	Attached       bool   `json:"attached"`
+	Group          string `json:"group"`
+	UnixUser       string `json:"unixUser,omitempty"`
+	CWD            string `json:"cwd,omitempty"`
+	CurrentCommand string `json:"currentCommand,omitempty"`
 }
 
 // GroupPriority defines the sort order for session groups

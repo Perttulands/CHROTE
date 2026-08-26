@@ -88,6 +88,23 @@ describe('SessionItem user badge and context actions', () => {
     expect(badge).toHaveStyle({ backgroundColor: '#123456' })
   })
 
+  it('shows shell-only foreground state separately from tmux attachment', () => {
+    render(
+      <SessionItem
+        session={{
+          name: 'alice-shell',
+          windows: 1,
+          attached: true,
+          group: 'main',
+          unixUser: 'alice',
+          currentCommand: 'bash',
+        }}
+      />
+    )
+
+    expect(screen.getByTitle('Foreground process reported by tmux: bash')).toHaveTextContent('shell')
+  })
+
   it('places the Unix user badge before the attached terminal/window badge', () => {
     mockState.assignedSessions.set('alice-shell', {
       workspaceId: 'terminal1',

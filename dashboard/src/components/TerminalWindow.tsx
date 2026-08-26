@@ -4,7 +4,7 @@ import { Send } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { useIframePool } from './IframePool'
-import { WINDOW_COLORS, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
+import { WINDOW_COLORS, getForegroundCommandLabel, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
 import DismissiblePanel from './DismissiblePanel'
 
@@ -317,6 +317,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     focusedWindowKey,
     setFocusedWindowKey,
     openSendToSession,
+    sessions,
   } = useSession()
 
   // Generate a unique key for this window
@@ -426,6 +427,15 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
 
   const hasSessions = windowConfig.boundSessions.length > 0
   const sendableSession = activeSession && activeSession !== 'INIT-PENDING' ? activeSession : null
+  const activeSessionName = sendableSession ? getSessionNameFromKey(sendableSession) : ''
+  const activeSessionUser = sendableSession ? getSessionUserFromKey(sendableSession) : ''
+  const activeSessionMatches = sendableSession
+    ? sessions.filter(session => activeSessionUser
+      ? getSessionKey(session.name, session.unixUser) === sendableSession
+      : session.name === activeSessionName)
+    : []
+  const currentCommand = activeSessionMatches.length === 1 ? activeSessionMatches[0].currentCommand?.trim() : undefined
+  const foregroundCommandLabel = getForegroundCommandLabel(currentCommand)
 
   return (
     <div
@@ -458,6 +468,14 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
         </div>
 
         <div className="window-controls">
+          {currentCommand && foregroundCommandLabel && (
+            <span
+              className="terminal-foreground-command"
+              title={`Foreground process reported by tmux: ${currentCommand}`}
+            >
+              foreground: {foregroundCommandLabel}
+            </span>
+          )}
           {hasSessions && windowConfig.boundSessions.length > 1 && (
             <>
               <button

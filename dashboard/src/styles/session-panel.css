@@ -309,6 +309,19 @@
   white-space: nowrap;
 }
 
+.session-foreground-command {
+  flex: 0 1 auto;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 10px;
+}
+
 .session-item.assigned {
   /* No longer greyed out - text is colored based on window assignment */
 }
