@@ -67,6 +67,16 @@ describe('qualified recovery identity sets', () => {
     expect(keys.has('alice:shared')).toBe(true)
   })
 
+  it('does not authorize bare aliases from unqualified live or offline evidence', () => {
+    expect(liveSessionKeys([{ name: 'shared' }] as any).has('shared')).toBe(false)
+    const keys = liveSessionKeys(
+      [{ name: 'shared', unixUser: 'alice' }] as any,
+      [{ sourceId: 'tmux:unknown', name: 'shared', state: 'stale' }] as any,
+    )
+    expect(keys.has('shared')).toBe(false)
+    expect(keys.has('alice:shared')).toBe(true)
+  })
+
   it('clears only authoritative offline identities and preserves failed-source ambiguity', () => {
     const keys = offlineSessionKeys([
       { sourceId: 'tmux:alice', name: 'shared', unixUser: 'alice', state: 'offline' },

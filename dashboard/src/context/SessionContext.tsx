@@ -318,22 +318,29 @@ function nextSessionNameForPrefix(sessions: TmuxSession[], prefix: string): stri
 export function liveSessionKeys(sessions: TmuxSession[], evidence: RecoverySessionEvidence[] = []): Set<string> {
   const live = new Set<string>()
   const qualifiedIdentitiesByName = new Map<string, Set<string>>()
+  const unqualifiedNames = new Set<string>()
   sessions.forEach(session => {
+    if (!session.unixUser) {
+      unqualifiedNames.add(session.name)
+      return
+    }
     const sessionKey = getSessionKey(session.name, session.unixUser)
     live.add(sessionKey)
-    if (!session.unixUser) return
     const identities = qualifiedIdentitiesByName.get(session.name) ?? new Set<string>()
     identities.add(sessionKey)
     qualifiedIdentitiesByName.set(session.name, identities)
   })
   evidence.forEach(session => {
-    if (!session.unixUser) return
+    if (!session.unixUser) {
+      unqualifiedNames.add(session.name)
+      return
+    }
     const identities = qualifiedIdentitiesByName.get(session.name) ?? new Set<string>()
     identities.add(getSessionKey(session.name, session.unixUser))
     qualifiedIdentitiesByName.set(session.name, identities)
   })
   sessions.forEach(session => {
-    if (qualifiedIdentitiesByName.get(session.name)?.size === 1) live.add(session.name)
+    if (!unqualifiedNames.has(session.name) && qualifiedIdentitiesByName.get(session.name)?.size === 1) live.add(session.name)
   })
   return live
 }
