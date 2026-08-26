@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -367,6 +368,13 @@ func TestTmuxSourceGenerationIncludesServerIdentity(t *testing.T) {
 	two := tmuxSourceGeneration("alice", sessions, "9002@/tmp/tmux-a")
 	if one == two {
 		t.Fatalf("generation = %q for distinct tmux server identities", one)
+	}
+}
+
+func TestReadLinuxTmuxServerProcessIdentityResolvesDefaultToCurrentUser(t *testing.T) {
+	identity, err := readLinuxTmuxServerProcessIdentity(fmt.Sprint(os.Getpid()), "default")
+	if err != nil || !strings.Contains(identity, "uid=") {
+		t.Fatalf("default source process identity = %q, %v", identity, err)
 	}
 }
 

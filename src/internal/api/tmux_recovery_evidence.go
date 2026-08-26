@@ -119,7 +119,14 @@ func readLinuxTmuxServerProcessIdentity(pidText, unixUser string) (string, error
 	if !tmuxPIDPattern.MatchString(pidText) {
 		return "", fmt.Errorf("tmux server pid is invalid")
 	}
-	account, err := osuser.Lookup(strings.TrimSpace(unixUser))
+	expectedUnixUser := strings.TrimSpace(unixUser)
+	var account *osuser.User
+	var err error
+	if expectedUnixUser == "" || expectedUnixUser == "default" {
+		account, err = tmuxCurrentUser()
+	} else {
+		account, err = osuser.Lookup(expectedUnixUser)
+	}
 	if err != nil {
 		return "", fmt.Errorf("tmux server Unix user is unavailable")
 	}
