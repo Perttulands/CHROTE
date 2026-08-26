@@ -1,11 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { offlineSessionKeys, useSession } from '../context/SessionContext'
+import { liveSessionKeys, offlineSessionKeys, useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
 import DismissiblePanel from './DismissiblePanel'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
-import { getSessionKey } from '../types'
 import type { WorkspaceId } from '../types'
 import { useIframePool } from './IframePool'
 
@@ -33,16 +32,7 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
     { estimatedSize: { width: 220, height: 130 } },
   )
   const visibleWindows = windows.slice(0, windowCount)
-  const liveSessions = useMemo(() => {
-    const live = new Set<string>()
-    const nameCounts = new Map<string, number>()
-    sessions.forEach(session => nameCounts.set(session.name, (nameCounts.get(session.name) ?? 0) + 1))
-    sessions.forEach(session => {
-      live.add(getSessionKey(session.name, session.unixUser))
-      if ((nameCounts.get(session.name) ?? 0) === 1) live.add(session.name)
-    })
-    return live
-  }, [sessions])
+  const liveSessions = useMemo(() => liveSessionKeys(sessions, recoveryEvidence), [recoveryEvidence, sessions])
   const clearableOfflineSessions = useMemo(() => offlineSessionKeys(recoveryEvidence), [recoveryEvidence])
   const staleSessionCount = useMemo(() => visibleWindows.reduce((count, window) => (
     count + window.boundSessions.filter(sessionName => sessionName !== 'INIT-PENDING' && clearableOfflineSessions.has(sessionName)).length

@@ -458,6 +458,14 @@ func TestTmuxHandler_ExactLaunchRejectsUnknownFieldsAndTmuxSeparatorsBeforeMutat
 	if err != nil {
 		t.Fatal(err)
 	}
+	nullArgvElement, err := json.Marshal(map[string]interface{}{
+		"sourceId": "tmux:alice", "sourceGeneration": "sha256:unused", "unixUser": "alice",
+		"name": "exact-session", "cwd": root, "argv": []interface{}{`/bin/true`, nil},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nullSourceID := bytes.Replace(valid, []byte(`"sourceId":"tmux:alice"`), []byte(`"sourceId":null`), 1)
 	rawTests := []struct {
 		name     string
 		body     []byte
@@ -465,6 +473,8 @@ func TestTmuxHandler_ExactLaunchRejectsUnknownFieldsAndTmuxSeparatorsBeforeMutat
 	}{
 		{name: "duplicate field", body: bytes.Replace(valid, []byte(`"sourceId":`), []byte(`"sourceId":"tmux:bob","sourceId":`), 1), wantCode: "BAD_REQUEST"},
 		{name: "case variant field", body: bytes.Replace(valid, []byte(`"sourceId"`), []byte(`"SourceID"`), 1), wantCode: "BAD_REQUEST"},
+		{name: "null string field", body: nullSourceID, wantCode: "BAD_REQUEST"},
+		{name: "null argv element", body: nullArgvElement, wantCode: "BAD_REQUEST"},
 		{name: "omitted Unix user", body: withoutUser, wantCode: "EXACT_LAUNCH_USER_REQUIRED"},
 	}
 	for _, tt := range rawTests {

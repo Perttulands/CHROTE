@@ -445,6 +445,38 @@ func writeExactLaunchError(w http.ResponseWriter, err error) {
 	core.WriteError(w, http.StatusInternalServerError, "EXACT_LAUNCH_FAILED", err.Error())
 }
 
+func validateExactLaunchJSONValue(key string, raw json.RawMessage) error {
+	trimmed := bytes.TrimSpace(raw)
+	if key == "argv" {
+		if len(trimmed) == 0 || trimmed[0] != '[' {
+			return fmt.Errorf("exact launch argv must be an array of strings")
+		}
+		var values []json.RawMessage
+		if err := json.Unmarshal(trimmed, &values); err != nil {
+			return err
+		}
+		for _, value := range values {
+			var decoded interface{}
+			if err := json.Unmarshal(value, &decoded); err != nil {
+				return err
+			}
+			if _, ok := decoded.(string); !ok {
+				return fmt.Errorf("exact launch argv must contain only strings")
+			}
+		}
+		return nil
+	}
+
+	var decoded interface{}
+	if err := json.Unmarshal(trimmed, &decoded); err != nil {
+		return err
+	}
+	if _, ok := decoded.(string); !ok {
+		return fmt.Errorf("exact launch field must be a string")
+	}
+	return nil
+}
+
 func decodeExactLaunchRequest(w http.ResponseWriter, r *http.Request, dest *ExactLaunchRequest) error {
 	if r == nil || r.Body == nil {
 		return fmt.Errorf("request body is required")
@@ -479,6 +511,9 @@ func decodeExactLaunchRequest(w http.ResponseWriter, r *http.Request, dest *Exac
 		seen[key] = true
 		var value json.RawMessage
 		if err := keys.Decode(&value); err != nil {
+			return err
+		}
+		if err := validateExactLaunchJSONValue(key, value); err != nil {
 			return err
 		}
 	}

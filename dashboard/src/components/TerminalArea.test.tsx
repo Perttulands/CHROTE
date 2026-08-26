@@ -19,18 +19,8 @@ const sessionState = vi.hoisted(() => ({
   firstBindings: ['alice:alpha', 'bare-session'],
 }))
 
-vi.mock('../context/SessionContext', () => ({
-  offlineSessionKeys: (evidence: Array<{ name: string; unixUser?: string; state: string }>) => {
-    const counts = new Map<string, number>()
-    const keys = new Set<string>()
-    evidence.forEach(item => counts.set(item.name, (counts.get(item.name) ?? 0) + 1))
-    evidence.forEach(item => {
-      if (item.state !== 'offline') return
-      if (item.unixUser) keys.add(`${item.unixUser}:${item.name}`)
-      if ((counts.get(item.name) ?? 0) === 1) keys.add(item.name)
-    })
-    return keys
-  },
+vi.mock('../context/SessionContext', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../context/SessionContext')>(),
   useSession: () => ({
     sessions: sessionState.sessions,
     recoveryEvidence: sessionState.recoveryEvidence,
@@ -98,6 +88,23 @@ describe('TerminalArea layout controls', () => {
     sessionState.sessions = [
       { name: 'shared', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
       { name: 'shared', windows: 1, attached: false, group: 'shell', unixUser: 'bob' },
+    ]
+    sessionState.firstBindings = ['shared']
+    render(<TerminalArea workspaceId="terminal1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal recovery actions' }))
+    fireEvent.click(screen.getByRole('button', { name: /Reconnect frames/i }))
+
+    expect(reconnectIframe).not.toHaveBeenCalledWith('shared')
+  })
+
+  it('fails closed when a bare live identity collides with offline evidence', () => {
+    sessionState.sessions = [
+      { name: 'shared', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
+    ]
+    sessionState.recoveryEvidence = [
+      { sourceId: 'tmux:alice', name: 'shared', unixUser: 'alice', state: 'live' },
+      { sourceId: 'tmux:bob', name: 'shared', unixUser: 'bob', state: 'offline' },
     ]
     sessionState.firstBindings = ['shared']
     render(<TerminalArea workspaceId="terminal1" />)
