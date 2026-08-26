@@ -52,11 +52,10 @@ jobs:
         run: bash scripts/test-tmux-grants.sh
 
       # The two gate scripts above ran in CI while their own tests never did, which is how a
-      # corrupted recovery guard and an untested neutrality gate both shipped green.
+      # corrupted guard and an untested neutrality gate both shipped green.
       - name: Python checks
         run: |
           python3 -m unittest discover -s scripts -p 'test_*.py'
-          python3 -m unittest discover -s scripts/tmux-recovery -p 'test_*.py'
 
       - name: Dashboard install dependencies
         run: |

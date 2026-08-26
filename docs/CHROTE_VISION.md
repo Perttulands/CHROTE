@@ -18,7 +18,7 @@ Everything important stays on the configured Linux or WSL host:
 - AI agents and their native harness state;
 - files, dev servers, builds, tests, and logs;
 - Beads workspaces;
-- schedules, recovery plans, and runtime history;
+- schedules and runtime history;
 - experimental Formations definitions, missions, gates, and run ledgers when in use;
 - explicitly configured local services.
 
@@ -27,11 +27,11 @@ browser is glass, not the vault.
 
 ## Product direction
 
-CHROTE grows only where it improves the operator's ability to understand,
-recover, and deliberately coordinate host-owned work:
+CHROTE grows only where it improves the operator's ability to understand and
+deliberately coordinate host-owned work:
 
 1. **Host-owned cockpit:** three terminal workspaces, unified Sessions/Files
-   sidecars, Files, Beads, Agents, scheduling, server health, and recovery.
+   sidecars, Files, Beads, Agents, scheduling, and server health.
 2. **Local capability surface:** explicit adapters for services that earn a
    first-class operator workflow.
 3. **Auditable orchestration experiment:** file-backed Formations, missions,

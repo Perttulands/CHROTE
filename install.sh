@@ -215,9 +215,7 @@ CHROTE_DEFAULT_TMUX_WORKDIR=$(quote_env_value "$WORKSPACE")
 CHROTE_LAUNCH_SCRIPT=$(quote_env_value "$launch_script")
 CHROTE_BEADS_WORKSPACES=$(quote_env_value "$WORKSPACE")
 CHROTE_AGENTS_DIR=$(quote_env_value "$state_dir/agents")
-CHROTE_SESSION_BANK_PATH=$(quote_env_value "$state_dir/session-bank/sessions.json")
 CHROTE_SESSION_DROPS_DIR=$(quote_env_value "$state_dir/session-drops")
-CHROTE_MANAGED_RECOVERY_STATUS_PATH=$(quote_env_value "$state_dir/tmux-recovery/managed-status.json")
 CHROTE_SCHEDULED_TASKS_DIR=$(quote_env_value "$state_dir/scheduled-tasks")
 PATH=$(quote_env_value "$service_path")
 EOF
@@ -302,9 +300,7 @@ main() {
   install -d -m 0700 "$config_dir" "$state_dir"
   install -d -m 0700 \
     "$state_dir/agents" \
-    "$state_dir/session-bank" \
     "$state_dir/session-drops" \
-    "$state_dir/tmux-recovery" \
     "$state_dir/scheduled-tasks"
 
   build_tmp="$(mktemp "$bin_dir/.chrote-server.XXXXXX")"

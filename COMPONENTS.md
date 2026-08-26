@@ -7,17 +7,16 @@ ACLs, and rollback layouts belong in private operator configuration.
 
 | Component | Role | Required? |
 | --- | --- | --- |
-| Go server | HTTP API, embedded dashboard, terminal proxy, operator-triggered recovery, scheduling, and optional experimental runtimes | Yes |
+| Go server | HTTP API, embedded dashboard, terminal proxy, scheduling, and optional experimental runtimes | Yes |
 | React dashboard | Browser cockpit served from the Go binary | Yes |
 | tmux | Terminal and process substrate with a lifecycle independent of the browser | Yes for terminal workspaces |
 | ttyd | Browser terminal transport behind CHROTE | Yes for interactive terminals |
-| Host filesystem | Files, schedules, recovery state, and experimental definitions when used | Yes |
+| Host filesystem | Files, schedules, and experimental definitions when used | Yes |
 
 The browser is a client of this runtime. It is not the source of truth. tmux
 sessions have a lifecycle independent of CHROTE, and a CHROTE restart must not
-deliberately terminate them. Recovery in the server is operator-triggered and
-one-shot; nothing in it loops to keep a workload alive or promises host-reboot
-recovery.
+deliberately terminate them. CHROTE does not recreate a workload after its
+process or the host exits.
 
 ## Built-in cockpit surfaces
 
@@ -31,7 +30,7 @@ recovery.
 | Formations (experimental, unreleased) | Boards, missions, ports, gates, connections, and run ledgers in development builds |
 | Scheduled | Scheduled-task definitions, locks, runs, and history |
 | Server | Health, resources, runtime events, and bounded system history |
-| Settings | Appearance, terminal behavior, Session Bank, flags, and advanced recovery |
+| Settings | Appearance, terminal behavior, flags, and session cleanup |
 
 ## Optional integrations
 

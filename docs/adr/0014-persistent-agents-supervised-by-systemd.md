@@ -7,13 +7,6 @@ Superseded 2026-08-09 by
 
 Accepted 2026-08-03 — engineering decision, recorded for `chrote-gfu.2`.
 
-Supersedes the supervision-ownership half of
-[ADR-0001 (workload-aware session recovery)](0001-workload-aware-session-recovery.md).
-That ADR's descriptor model, one-owner rule, and unresolved-not-guessed
-discipline survive unchanged; only its assignment of *continuous supervision* to
-an in-server Persistent Agents component is replaced. Its mode/owner matrix gains
-one cell, described under Decision 3.
-
 ## Context
 
 The cockpit offers a per-session lock. Locking a session means "this agent should
@@ -50,25 +43,6 @@ The pattern is not hypothetical here. Two Telegram agent lanes (`minerva`,
 unit, a per-agent config file, and one launcher that refuses to create the tmux
 server. Both survive service restart and host reboot and are observable with
 `systemctl` and `journalctl`.
-
-Two facts constrain the design more than the LOC does:
-
-1. `ADR-0001`'s mode/owner matrix has no legal cell for what this ADR builds.
-   Agent-mode descriptors require a *restarting* Session Bank or Persistent Agent
-   owner; managed descriptors require a *non-restarting* external manager. A
-   systemd-owned agent is agent-mode, externally managed, and restarting.
-   The same constraint is pinned in code at
-   `src/internal/api/managed_recovery_status.go:166-168` and in
-   `scripts/tmux-recovery/recovery-manifest.schema.json:62`.
-2. Half of the target architecture already ships. `scripts/tmux-recovery/restore.py:131-233`
-   writes a status registry the Go server already reads
-   (`managed_recovery_status.go`), enforcing `managerKind == "systemd-user"`,
-   a `*.service` reference, and atomic 0600 writes. The `external_manager` lane
-   is specified on both ends and connected on neither.
-
-Notably, systemd is **not** a rejected alternative in ADR-0001. It appears once,
-at line 72, only to say that ADR left systemd orchestration unchanged. There is
-no prior decision against it to overturn.
 
 ## Decision
 
@@ -136,38 +110,6 @@ Rejected alternatives:
   and outlives the unit by design; making systemd track it inverts the
   socket-keeper contract and re-creates the cgroup hazard of Decision 6.
 
-### Decision 3 — The mode/owner matrix gains one cell; no fourth owner class
-
-`external_manager` remains the owner kind for systemd-owned sessions. What
-changes is that an external manager may be *restart-capable* when CHROTE
-installed the unit:
-
-| descriptor mode | owner kind | restart allowed |
-| --- | --- | --- |
-| `agent` | `session_bank` | yes |
-| `agent` | `external_manager` | **yes, iff CHROTE installed the unit** (new) |
-| `command`, `topology` | `session_bank` | yes |
-| `managed` | `external_manager` | no |
-| `unresolved` | any | no |
-
-"CHROTE installed the unit" is not a claim taken on trust: it means the unit name
-matches the template CHROTE owns (`chrote-agent@*.service`) and a corresponding
-per-agent config file exists in CHROTE's state directory. A session managed by
-someone else's unit — a hand-written service, a Telegram bridge lane — stays
-`managed`/non-restarting and read-only, exactly as ADR-0001 requires.
-
-This preserves ADR-0001's actual invariant (exactly one owner performs recovery)
-while removing an accidental one (external managers are always passive). ADR-0001's
-Rejected Alternatives entry against a session "owned by both CHROTE and an
-external manager" is narrowed: CHROTE owning the *unit definition* and systemd
-owning the *process lifetime* is one owner exercised through a supervisor, not
-two competing recovery owners. Only systemd ever restarts.
-
-Rejected alternative: **a fourth owner kind** (`chrote_managed`). Rejected
-because it duplicates `external_manager`'s entire contract to change one boolean,
-and every consumer — Go validation, the Python manifest schema, the dashboard
-types — would need a new arm.
-
 ### Decision 4 — Cross-user control is permitted; the grant is narrow
 
 The owner ruled on 2026-08-03 that CHROTE may control any user's units. The
@@ -180,8 +122,7 @@ security work is therefore mechanism correctness, not authorization:
   name can never inject a second unit, a flag, or a shell metacharacter.
 - Per-agent config files are written into CHROTE's own state directory with mode
   0600, and paths are canonicalized; a symlinked or out-of-directory config is
-  refused, matching the discipline already in
-  `managed_recovery_status.go:86-94`.
+  refused, matching the repository's state-file discipline.
 - All invocation is argv-array with a timeout, per the repo's exec discipline.
   No shell.
 
@@ -227,20 +168,6 @@ the current `revivePersistentAgent` runs inside the CHROTE server process, so a
 revive against a dead socket would place a tmux server in `chrote-srv.service`'s
 cgroup. ADR-0013's reaping inventory is extended accordingly.
 
-### Decision 7 — Status source: live systemd reads, plus the existing registry
-
-Health is read live from systemd at request time (Decision 5), because a written
-registry can only ever be as fresh as its writer.
-
-The existing `managed-status.json` contract is **kept**, not replaced: it remains
-the interface for status published by *external* owners — the read-only
-`managed` sessions of Decision 3 — and `scripts/tmux-recovery/restore.py` remains
-its writer. CHROTE-installed units do not round-trip through it.
-
-Rejected alternative: **route CHROTE's own units through the registry too.** It
-would reuse a hardened serializer, but reintroduces a freshness problem the live
-read does not have, and needs a writer on a timer — a poller by another name.
-
 ### Decision 8 — UI semantics of the lock
 
 - **Lock** = write the per-agent config, then `enable --now` the unit. The badge
@@ -278,9 +205,6 @@ read does not have, and needs a writer on a timer — a poller by another name.
   manager to be running (lingering enabled for headless users). The launcher and
   the API both fail loud naming this condition rather than silently not
   supervising.
-- Session Bank is untouched. Its 279 entries, its one-shot recovery, and its
-  ownership arbitration keep working; the only change is that the persistence
-  store it consults for exclusions shrinks.
 - The scheduler's rejection of systemd *timers*
   (`docs/SCHEDULING.md`) is unaffected and not contradicted: that decision is
   about scheduling arbitrary tasks in-process, this one is about who owns a
@@ -290,8 +214,6 @@ read does not have, and needs a writer on a timer — a poller by another name.
 
 - A baseline test pins that the server starts no supervision goroutine.
 - The launcher's refusal to create a tmux server is test-pinned.
-- Descriptor validation tests cover the new matrix cell and, critically, that a
-  unit CHROTE did not install cannot claim restart capability.
 - Unit-name construction is tested against injection via session names.
 - Cross-user and reboot behavior are proven once by an operator smoke
   (`chrote-gfu.10`), not by the disposable installer test, which deliberately

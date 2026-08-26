@@ -91,7 +91,7 @@ function ShortcutsSection() {
         <h3>Terminal-safe by default</h3>
         <ul className="help-list">
           <li><kbd>Tab</kbd>, number keys, <kbd>Ctrl+S</kbd>, <kbd>Ctrl+N</kbd>, and <kbd>Ctrl+Arrow</kbd> pass through untouched.</li>
-          <li>Use visible dashboard controls for workspace, layout, session, and recovery actions.</li>
+          <li>Use visible dashboard controls for workspace, layout, session, and maintenance actions.</li>
           <li>Hold <kbd>Shift</kbd> while selecting text to bypass tmux and copy natively.</li>
         </ul>
       </div>

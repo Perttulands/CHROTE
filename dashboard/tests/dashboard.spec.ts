@@ -252,7 +252,7 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.terminal-area-controls:visible')).toBeVisible()
       await expect(page.locator('.layout-btn:visible')).toHaveCount(6)
       await expect(page.getByRole('button', { name: 'Refit terminal layout' })).toBeVisible()
-      await expect(page.getByRole('button', { name: 'Terminal recovery actions' })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Terminal maintenance actions' })).toBeVisible()
     })
 
     test('should start with 2 windows by default', async ({ page }) => {

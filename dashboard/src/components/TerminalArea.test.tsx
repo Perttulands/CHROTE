@@ -60,7 +60,7 @@ describe('TerminalArea layout controls', () => {
   it('reconnects all visible session frames from the layout controls menu', () => {
     render(<TerminalArea workspaceId="terminal1" />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal recovery actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
     fireEvent.click(screen.getByRole('button', { name: /Reconnect frames/i }))
 
     expect(reconnectIframe).toHaveBeenCalledWith('alice:alpha')
@@ -68,7 +68,7 @@ describe('TerminalArea layout controls', () => {
     expect(reconnectIframe).toHaveBeenCalledWith('bob:beta')
   })
 
-  it('keeps Refit directly visible while stale cleanup remains in the recovery menu', () => {
+  it('keeps Refit directly visible while stale cleanup remains in the maintenance menu', () => {
     render(<TerminalArea workspaceId="terminal1" />)
 
     const refit = screen.getByRole('button', { name: 'Refit terminal layout' })
@@ -79,7 +79,7 @@ describe('TerminalArea layout controls', () => {
     expect(screen.getByTestId('terminal-window-terminal1-window-1')).toHaveAttribute('data-refit-nonce', '1')
 
     expect(screen.queryByRole('button', { name: /Clean 2 stale sessions/i })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal recovery actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
     const menu = document.querySelector('.session-context-menu') as HTMLElement
     expect(within(menu).queryByRole('button', { name: /Refit terminal layout/i })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Clear 2 stale sessions/i }))

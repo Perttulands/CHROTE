@@ -4,9 +4,8 @@
 
 CHROTE is the private browser cockpit for host-owned agentic work.
 
-The host owns the terminals, agents, files, dev servers, builds, tests, Beads,
-and recovery state. Browsers and client devices are replaceable windows onto
-that work.
+The host owns the terminals, agents, files, dev servers, builds, tests, and
+Beads. Browsers and client devices are replaceable windows onto that work.
 
 The browser is disposable. Host-owned state—not browser state—is authoritative.
 
@@ -59,8 +58,8 @@ source of truth into the browser.
 | Formations | Develop and inspect file-backed orchestration contracts without presenting them as shipped product |
 | Services | Operate explicitly configured local service adapters through CHROTE-owned routes |
 | Scheduled | Inspect and manage CHROTE scheduled tasks and their run history |
-| Server | Inspect server health, resources, events, and recovery history |
-| Settings | Configure appearance, terminal behavior, Session Bank, feature flags, and recovery actions |
+| Server | Inspect server health, resources, events, and bounded history |
+| Settings | Configure appearance, terminal behavior, feature flags, and session cleanup |
 
 Help and keyboard guidance are available from the application shell rather than
 as a separate persistent workspace.
@@ -70,7 +69,7 @@ as a separate persistent workspace.
 ### Terminal panes
 
 - Each terminal workspace owns its own layout, attached sessions, labels, and
-  Files state. Sessions presentation and the Session Bank are application-global.
+  Files state. Sessions presentation is application-global.
 - A workspace can show one to four terminal windows.
 - tmux, not CHROTE, owns process and session lifetime; CHROTE does not copy shell
   state into browser storage.
@@ -78,7 +77,7 @@ as a separate persistent workspace.
   terminate tmux sessions.
 - A tmux session or workload may still exit naturally, be stopped externally,
   or be lost with the host. CHROTE does not automatically recreate it.
-- Refit and recovery controls are explicit operator actions.
+- Refit and reconnect controls are explicit operator actions.
 
 ### Sessions and Files sidecar
 
@@ -98,19 +97,6 @@ Sessions is one application-global sidecar, including when exposed from Schedule
   persist independently for each terminal workspace.
 - The `/` shortcut opens the global Sessions surface and focuses its search when
   no visible dialog or menu owns the key.
-
-### Session Bank and workload recovery
-
-- CHROTE records previously observed sessions so an operator can distinguish
-  live, offline, recoverable, and unmanaged work after a restart.
-- Typed recovery descriptors may reconstruct supported agent or command
-  workloads using canonical argument vectors and constrained paths.
-- Legacy or unsafe entries remain inspection-only or require explicit operator
-  action; CHROTE must not fabricate arbitrary shell recovery.
-- Recovery plans are host-owned state, not browser-local state.
-- Recovery is an explicit operator action, not a universal process-lifetime or
-  host-reboot guarantee.
-- Bulk destruction remains an advanced emergency action.
 
 ### Session lifetime and optional host durability
 
@@ -213,7 +199,6 @@ See `SECURITY.md` for the public security contract.
 - Three tmux-backed terminal workspaces
 - Unified Sessions/Files sidecars
 - Files, Agents, Beads, Services, Scheduled, and Server views
-- Session Bank and typed workload recovery
 
 ### Deliberate next steps
 
@@ -235,7 +220,7 @@ Roadmap text is not permission to claim unshipped behavior in the README.
 - Browser disconnects do not cause CHROTE to terminate tmux sessions.
 - Unknown or unavailable optional integrations degrade clearly.
 - File access remains under configured roots.
-- Recovery, Formations execution, and destructive actions fail loud at their
-  safety boundaries.
+- Formations execution and destructive actions fail loud at their safety
+  boundaries.
 - Public documentation describes supported generic installation and behavior,
   not one operator's private host layout.

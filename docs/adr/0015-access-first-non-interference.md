@@ -5,9 +5,8 @@
 Accepted 2026-08-09 — product and architecture decision.
 
 Supersedes [ADR-0014](0014-persistent-agents-supervised-by-systemd.md)
-entirely. It also supersedes ADR-0001's Persistent Agents owner and continuous
-supervision rules; ADR-0001's typed, explicit, unresolved-not-guessed recovery
-discipline remains in force for operator-triggered recovery.
+entirely. It also supersedes the former CHROTE workload-recovery and continuous
+supervision rules.
 
 ## Context
 
@@ -74,12 +73,6 @@ reboot.
 CHROTE does not expose a "make permanent" lock, own continuous agent desired
 state, install per-agent supervision units, publish liveness receipts, or
 control host units for ordinary sessions.
-
-Session Bank's explicit, typed recovery actions remain a separate operator tool.
-They do not imply continuous supervision or automatic reboot recovery.
-Immutable historical recovery artifacts remain readable, including the retired
-`persistent_agent` owner kind, but no current path produces it or turns it into
-a live supervisor.
 
 ### 4. Rare durable workloads stay explicit and host-owned
 
