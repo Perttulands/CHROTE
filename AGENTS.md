@@ -16,7 +16,7 @@ CHROTE is a private browser cockpit for host-owned work:
 - files under configured roots;
 - Beads through modern `bd`;
 - harness-neutral agent observability;
-- recovery, scheduling, server status, and optional local adapters.
+- scheduling, server status, and optional local adapters.
 
 CHROTE is not a hosted service, an IDE, or an OS sandbox. Do not assume Gastown, Ralph, or any single agent harness is installed.
 
