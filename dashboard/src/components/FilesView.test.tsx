@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FilesView from './FilesView'
-import { deleteItem, fetchDirectory, readTextFile, renameItem, writeTextFile } from './FilesView/fileService'
+import { MAX_TEXT_PREVIEW_BYTES } from './FileViewer'
+import { deleteItem, fetchDirectory, probeTextFile, readTextFile, renameItem, writeTextFile } from './FilesView/fileService'
 
 vi.mock('./FilesView/fileService', async () => {
   const actual = await vi.importActual<typeof import('./FilesView/fileService')>('./FilesView/fileService')
@@ -11,6 +12,7 @@ vi.mock('./FilesView/fileService', async () => {
     createFile: vi.fn(),
     createFolder: vi.fn(),
     deleteItem: vi.fn(),
+    probeTextFile: vi.fn(),
     readTextFile: vi.fn(),
     renameItem: vi.fn(),
     uploadFiles: vi.fn(),
@@ -20,6 +22,7 @@ vi.mock('./FilesView/fileService', async () => {
 })
 
 const mockFetchDirectory = vi.mocked(fetchDirectory)
+const mockProbeTextFile = vi.mocked(probeTextFile)
 const mockReadTextFile = vi.mocked(readTextFile)
 const mockWriteTextFile = vi.mocked(writeTextFile)
 
@@ -123,8 +126,23 @@ beforeEach(() => {
   window.localStorage.clear()
   installClipboardMock()
   mockFetchDirectory.mockResolvedValue([])
+  mockProbeTextFile.mockResolvedValue(null)
   mockReadTextFile.mockResolvedValue('')
   mockWriteTextFile.mockResolvedValue(undefined)
+})
+
+describe('FilesView fallback text preview', () => {
+  it('previews an unknown small UTF-8 file without treating binary formats as editable', async () => {
+    mockRootFiles({ 'events.records': 'ignored direct read' })
+    mockProbeTextFile.mockResolvedValueOnce('detected text content')
+
+    render(<FilesView />)
+    await openRootFile('events.records')
+
+    expect(await screen.findByText('detected text content')).toBeInTheDocument()
+    expect(mockProbeTextFile).toHaveBeenCalledWith('/events.records', MAX_TEXT_PREVIEW_BYTES)
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+  })
 })
 
 describe('FilesView editor tab bulk close', () => {

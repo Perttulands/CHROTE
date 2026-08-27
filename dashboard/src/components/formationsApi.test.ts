@@ -1,12 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiRequestError,
+  createBoard,
+  deleteBoard,
   fetchApi,
   fetchBoardChanged,
   fetchBoardDocument,
+  fetchBoardNotes,
+  fetchBoardWithLayout,
   normalizeBoard,
   normalizeLayout,
   patchBoardDocument,
+  patchBoardNote,
   startRun,
 } from './formationsApi'
 import type { BoardDocument, LayoutDocument, ToolNode } from './formationsTypes'
@@ -164,6 +169,101 @@ describe('formations API helpers', () => {
       tools: [],
       formations: [],
       connections: [],
+    })
+  })
+
+  it('creates a board from its human name', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return Promise.resolve(jsonResponse({
+        success: true,
+        data: { board: { id: 'brd_new', slug: 'release-plan', title: 'Release Plan', rev: 1, etag: 'created-etag' } },
+      }, { status: 201, etag: 'created-etag' }))
+    }) as unknown as typeof fetch)
+
+    await expect(createBoard('Release Plan')).resolves.toMatchObject({
+      slug: 'release-plan',
+      etag: 'created-etag',
+      formations: [],
+    })
+    expect(calls[0].url).toBe('/api/formations/boards')
+    expect(calls[0].init?.method).toBe('POST')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ title: 'Release Plan' })
+  })
+
+  it('loads a fresh board with a synthetic empty layout when no sidecar exists yet', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/layout')) {
+        return Promise.resolve(jsonResponse({ success: false, error: { code: 'NOT_FOUND', message: 'layout missing' } }, { ok: false, status: 404 }))
+      }
+      return Promise.resolve(jsonResponse({
+        success: true,
+        data: { board: { id: 'brd_new', slug: 'release-plan', title: 'Release Plan', rev: 1, etag: 'created-etag' } },
+      }, { etag: 'created-etag' }))
+    }) as unknown as typeof fetch)
+
+    await expect(fetchBoardWithLayout('release-plan')).resolves.toEqual({
+      board: expect.objectContaining({ id: 'brd_new', formations: [] }),
+      layout: { boardId: 'brd_new', boardRev: 1, etag: '*', nodes: [], edges: [] },
+    })
+  })
+
+  it('deletes a board with exact optimistic concurrency inputs', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return Promise.resolve(jsonResponse({
+        success: true,
+        data: { deletion: { id: 'brd_1', slug: 'session-search', title: 'Session search', archiveId: 'archive_1' } },
+      }))
+    }) as unknown as typeof fetch)
+
+    await expect(deleteBoard('session-search', 'board-etag', 7)).resolves.toMatchObject({ archiveId: 'archive_1' })
+    expect(calls[0].url).toBe('/api/formations/boards/session-search')
+    expect(calls[0].init?.method).toBe('DELETE')
+    expect(calls[0].init?.headers).toMatchObject({ 'If-Match': 'board-etag' })
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ expectedRev: 7 })
+  })
+
+  it('reads and updates board notes through the shared ETag-fenced sidecar', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({ url, init })
+      const text = init?.method === 'PATCH' ? 'shared plan' : ''
+      return Promise.resolve(new Response(JSON.stringify({
+        success: true,
+        data: {
+          notes: {
+            schema: 1,
+            boardId: 'brd_1',
+            rev: text ? 1 : 0,
+            updatedAt: '2026-08-18T13:00:00Z',
+            board: text,
+            elements: null,
+            etag: text ? 'body-etag' : '*',
+          },
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ETag: text ? 'header-etag' : '*' },
+      }))
+    }))
+
+    const empty = await fetchBoardNotes('board one')
+    expect(empty.elements).toEqual([])
+    expect(empty.etag).toBe('*')
+
+    const updated = await patchBoardNote('board one', empty.etag, 'board', 'shared plan')
+    expect(updated.board).toBe('shared plan')
+    expect(updated.etag).toBe('header-etag')
+    expect(calls[1]).toMatchObject({ url: '/api/formations/boards/board%20one/notes' })
+    expect(calls[1].init).toMatchObject({
+      method: 'PATCH',
+      headers: { 'If-Match': '*' },
+      body: JSON.stringify({ target: 'board', text: 'shared plan', updatedBy: 'human:ui' }),
     })
   })
 

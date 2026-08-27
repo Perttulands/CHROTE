@@ -341,7 +341,7 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
   // out-of-order, superseded, and post-move reads harmless.
   const readIntoBuffer = useCallback(async (path: string, readToken: number) => {
     try {
-      const content = await readTextFile(path)
+      const content = await readTextFile(path, MAX_TEXT_PREVIEW_BYTES)
       setOpenFilesState(previous => applyRead(previous, path, readToken, { content }))
     } catch (readError) {
       setOpenFilesState(previous => applyRead(previous, path, readToken, { error: getErrorMessage(readError, 'read') }))

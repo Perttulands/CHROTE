@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import FormationsCockpit from './FormationsCockpit'
+import type { AgentProjection } from './formationsTypes'
 
 /* First direct cockpit coverage: pins the reference-parity behaviors that the
    prototype (03-formations.js) defines — judge wires render, the right-click
@@ -113,7 +114,7 @@ const layout = {
   edges: [],
 }
 
-const agents = [
+const agents: AgentProjection[] = [
   { id: 'mason', displayName: 'Mason', harnessDefault: 'codex', liveness: 'live', assignable: true, unbound: false },
   { id: 'hazel', displayName: 'Hazel', harnessDefault: 'claude', liveness: 'live', assignable: true, unbound: false },
   { id: 'scratch', displayName: 'scratch', liveness: 'live', assignable: false, unbound: true },
@@ -138,12 +139,27 @@ function installFetchMock(options: {
   runEvents?: TestRunEvent[]
   escalations?: TestEscalation[]
   runStatus?: TestRunStatus
+  boardNotes?: { board?: string; elements?: Array<{ nodeId: string; text: string }> }
+  notePatchConflict?: boolean
+  agents?: typeof agents
+  agentDetailGate?: Promise<void>
 } = {}) {
   const patches: RecordedPatch[] = []
   recordedMutations = []
-  const availableBoards = options.boards?.length ? options.boards : [makeBoard()]
-  let board = availableBoards[0]
+  let availableBoards = options.emptyBoards ? [] : (options.boards?.length ? options.boards : [makeBoard()])
+  let board = availableBoards[0] || makeBoard()
+  let availableAgents = options.agents || agents
   let currentLayout = layout
+  let boardNotes = {
+    schema: 1,
+    boardId: board.id,
+    rev: options.boardNotes ? 1 : 0,
+    updatedAt: '2026-08-18T13:00:00Z',
+    updatedBy: 'human:test',
+    board: options.boardNotes?.board || '',
+    elements: options.boardNotes?.elements || [],
+    etag: options.boardNotes ? 'notes-etag' : '*',
+  }
   ;(globalThis as Record<string, unknown>).fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = (init?.method || 'GET').toUpperCase()
@@ -161,9 +177,109 @@ function installFetchMock(options: {
       json: () => Promise.resolve({ success: false, error: { code: 'BAD_REQUEST', message } }),
       text: () => Promise.resolve(message),
     })
+    const conflict = (message: string) => Promise.resolve({
+      ok: false,
+      status: 409,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ success: false, error: { code: 'CONFLICT', message } }),
+      text: () => Promise.resolve(message),
+    })
+    if (method === 'POST' && url === '/api/formations/boards') {
+      const body = JSON.parse(String(init?.body)) as { title: string }
+      const created = {
+        ...makeBoard(),
+        id: 'brd_created',
+        slug: 'release-plan',
+        title: body.title,
+        rev: 1,
+        etag: 'created-board-etag',
+        missions: [],
+        formations: [],
+        gates: [],
+        connections: [],
+      }
+      availableBoards = [...availableBoards, created]
+      board = created
+      currentLayout = { schema: 1, boardId: created.id, boardRev: created.rev, etag: '*', nodes: [], edges: [] }
+      boardNotes = { ...boardNotes, boardId: created.id, rev: 0, board: '', elements: [], etag: '*' }
+      return respond({ board: created }, created.etag)
+    }
+    if (method === 'DELETE' && url.includes('/api/formations/boards/')) {
+      availableBoards = availableBoards.filter(item => item.slug !== board.slug)
+      return respond({ deletion: { id: board.id, slug: board.slug, title: board.title, archiveId: 'archive_test' } })
+    }
+    if (method === 'GET' && /^\/api\/formations\/boards\/[^/]+\/notes$/.test(url)) {
+      return respond({ notes: boardNotes }, boardNotes.etag)
+    }
+    if (method === 'PATCH' && /^\/api\/formations\/boards\/[^/]+\/notes$/.test(url)) {
+      if (options.notePatchConflict) return conflict('Shared notes changed; reload and retry')
+      const body = JSON.parse(String(init?.body)) as { target: string; text: string }
+      boardNotes = {
+        ...boardNotes,
+        rev: boardNotes.rev + 1,
+        updatedBy: 'human:ui',
+        etag: `notes-etag-${boardNotes.rev + 1}`,
+        board: body.target === 'board' ? body.text : boardNotes.board,
+        elements: body.target === 'board'
+          ? boardNotes.elements
+          : body.text
+            ? [...boardNotes.elements.filter(note => note.nodeId !== body.target), { nodeId: body.target, text: body.text }]
+            : boardNotes.elements.filter(note => note.nodeId !== body.target),
+      }
+      return respond({ notes: boardNotes }, boardNotes.etag)
+    }
+    const agentMatch = url.match(/^\/api\/agents\/([^/]+)$/)
+    if (agentMatch) {
+      const id = decodeURIComponent(agentMatch[1])
+      const agent = availableAgents.find(candidate => candidate.id === id)
+      if (!agent) return reject('Agent not found')
+      const harness = agent.harnessDefault || 'claude-code'
+      const defaultVariant = {
+        id: harness,
+        sessionStem: agent.id,
+        launch: harness === 'openai-codex'
+          ? 'codex --yolo -c check_for_update_on_startup=false'
+          : 'claude --dangerously-skip-permissions --effort="max"',
+      }
+      if (method === 'PATCH') {
+        const payload = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+        const updated = {
+          ...agent,
+          displayName: String(payload.displayName || agent.displayName || agent.id),
+          kind: String(payload.kind || agent.kind || 'specialist'),
+          tags: Array.isArray(payload.capabilities) ? payload.capabilities.map(String) : (agent.tags || []),
+          customized: true,
+        }
+        availableAgents = availableAgents.map(candidate => candidate.id === id ? updated : candidate)
+        return respond({
+          ...updated,
+          summary: String(payload.summary || ''),
+          harnessVariants: [{
+            ...defaultVariant,
+            sessionStem: String(payload.sessionStem || defaultVariant.sessionStem),
+            launch: String(payload.launch || defaultVariant.launch),
+          }],
+          etag: `${id}-etag-2`,
+        }, `${id}-etag-2`)
+      }
+      const respondWithAgent = () => respond({
+          ...agent,
+          kind: agent.kind || 'specialist',
+          summary: `${agent.displayName || agent.id} summary`,
+          tags: agent.tags || [],
+          harnessVariants: [defaultVariant],
+          etag: `${id}-etag`,
+        }, `${id}-etag`)
+      return options.agentDetailGate ? options.agentDetailGate.then(respondWithAgent) : respondWithAgent()
+    }
     if (init?.method === 'PATCH') {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>
       patches.push({ url, body })
+      if (!url.endsWith('/layout') && typeof body.title === 'string') {
+        board = { ...board, title: body.title, rev: board.rev + 1, etag: 'board-etag-2' }
+        availableBoards = availableBoards.map(item => item.slug === board.slug ? board : item)
+        return respond({ board }, board.etag)
+      }
       if (!url.endsWith('/layout') && body.createMission) {
         if (options.missionCreateFailure) return reject('Mission create failed')
         const requested = body.createMission as { title: string; goal: string; beadId: string; x: number; y: number }
@@ -238,7 +354,7 @@ function installFetchMock(options: {
         },
       ] })
     }
-    if (url === '/api/formations/boards') return respond({ boards: options.emptyBoards ? [] : availableBoards.map(item => ({ slug: item.slug, title: item.title })) })
+    if (url === '/api/formations/boards') return respond({ boards: availableBoards.map(item => ({ id: item.id, slug: item.slug, title: item.title, rev: item.rev, etag: item.etag })) })
     if (url.includes('/changes')) {
       const refreshedBoard = options.sameBoardRefreshes?.shift()
       if (!refreshedBoard) return respond({ signal: { changed: false } })
@@ -260,7 +376,7 @@ function installFetchMock(options: {
         : availableBoards.find(item => url.includes(`/boards/${item.slug}`)) || board
       return respond({ board: requested }, requested.etag)
     }
-    if (url === '/api/agents') return respond({ agents })
+    if (url === '/api/agents') return respond({ agents: availableAgents })
     return respond({})
   }) as unknown as typeof fetch
   return patches
@@ -296,8 +412,222 @@ describe('FormationsCockpit reference parity', () => {
     expect(await screen.findByTestId('formations-empty-board')).toHaveTextContent('No persisted formation boards')
     expect(screen.getByTestId('board-picker')).toHaveTextContent('No boards')
     expect(screen.queryByText('Improve session search')).toBeNull()
+    expect(screen.getByTestId('new-board')).toBeEnabled()
     expect(screen.getByTestId('new-formation')).toBeDisabled()
     expect(patches).toEqual([])
+  })
+
+  it('creates and selects a named blank board from the Formations top bar', async () => {
+    patches = installFetchMock({ emptyBoards: true })
+    render(<FormationsCockpit />)
+    await screen.findByTestId('formations-empty-board')
+
+    fireEvent.click(screen.getByTestId('new-board'))
+    const dialog = await screen.findByRole('dialog', { name: 'Create board' })
+    fireEvent.change(within(dialog).getByLabelText('Board name'), { target: { value: 'Release Plan' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create board' }))
+
+    await waitFor(() => expect(screen.getByTestId('board-picker')).toHaveValue('release-plan'))
+    expect(screen.getByTestId('board-picker')).toHaveTextContent('Release Plan')
+    expect(screen.getByTestId('formations-empty-board')).toHaveTextContent('This board is empty')
+    expect(recordedMutations).toContainEqual({ method: 'POST', url: '/api/formations/boards' })
+  })
+
+  it('renames the selected board through the top-bar board controls', async () => {
+    await renderCockpit()
+    fireEvent.click(screen.getByRole('button', { name: 'Rename board' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Rename board' })
+    expect(screen.getByTestId('board-picker')).toBeDisabled()
+    const input = within(dialog).getByLabelText('Board name')
+    expect(input).toHaveValue('Test board')
+    fireEvent.change(input, { target: { value: 'Delivery map' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save board name' }))
+
+    await waitFor(() => expect(screen.getByTestId('board-picker')).toHaveTextContent('Delivery map'))
+    expect(patches.some(patch => patch.body.title === 'Delivery map')).toBe(true)
+  })
+
+  it('archives a board only after explicit confirmation', async () => {
+    await renderCockpit()
+    const trigger = screen.getByRole('button', { name: 'Delete board' })
+    fireEvent.click(trigger)
+    const dialog = await screen.findByRole('dialog', { name: 'Delete board' })
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    expect(dialog).toHaveTextContent('archived')
+    expect(recordedMutations.some(mutation => mutation.method === 'DELETE')).toBe(false)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive board' }))
+    await waitFor(() => expect(screen.getByTestId('board-picker')).toHaveTextContent('No boards'))
+    expect(recordedMutations).toContainEqual({ method: 'DELETE', url: '/api/formations/boards/test-board' })
+  })
+
+  it('restores board-dialog trigger focus after Escape', async () => {
+    await renderCockpit()
+    const trigger = screen.getByTestId('new-board')
+    fireEvent.click(trigger)
+    expect(await screen.findByLabelText('Board name')).toHaveFocus()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create board' })).toBeNull())
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
+  it('rechecks note drafts before creating a board from an open dialog', async () => {
+    await renderCockpit()
+    fireEvent.click(screen.getByRole('button', { name: 'Expand shared notepad' }))
+    const boardNote = await screen.findByRole('textbox', { name: 'Board note' })
+    fireEvent.click(screen.getByTestId('new-board'))
+    const dialog = await screen.findByRole('dialog', { name: 'Create board' })
+    fireEvent.change(within(dialog).getByLabelText('Board name'), { target: { value: 'Should not create' } })
+    fireEvent.change(boardNote, { target: { value: 'Draft made after dialog opened' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create board' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create board' })).toBeNull())
+    expect(boardNote).toHaveValue('Draft made after dialog opened')
+    expect(recordedMutations.some(mutation => mutation.method === 'POST' && mutation.url === '/api/formations/boards')).toBe(false)
+  })
+
+  it('rechecks note drafts before archiving from an open dialog', async () => {
+    await renderCockpit()
+    fireEvent.click(screen.getByRole('button', { name: 'Expand shared notepad' }))
+    const boardNote = await screen.findByRole('textbox', { name: 'Board note' })
+    fireEvent.click(screen.getByRole('button', { name: 'Delete board' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Delete board' })
+    fireEvent.change(boardNote, { target: { value: 'Draft made after delete opened' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive board' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete board' })).toBeNull())
+    expect(boardNote).toHaveValue('Draft made after delete opened')
+    expect(recordedMutations.some(mutation => mutation.method === 'DELETE')).toBe(false)
+  })
+
+  it('shares board and element notes through a collapsible right-side notepad', async () => {
+    patches = installFetchMock({
+      boardNotes: {
+        board: 'Preserve the API contract.',
+        elements: [{ nodeId: 'fmn_frame', text: 'Builder owns this element.' }],
+      },
+    })
+    await renderCockpit()
+
+    const notepad = await screen.findByRole('complementary', { name: 'Shared board notepad' })
+    fireEvent.click(within(notepad).getByRole('button', { name: 'Expand shared notepad' }))
+    expect(await within(notepad).findByLabelText('Board note')).toHaveValue('Preserve the API contract.')
+    expect(screen.getByTestId('formation-node-fmn_frame')).toHaveClass('has-note')
+    expect(screen.getByRole('note', { name: 'Note for Frame' })).toHaveTextContent('Builder owns this element.')
+
+    fireEvent.click(within(screen.getByTestId('formation-node-fmn_frame')).getByRole('button', { name: 'Edit note for Frame' }))
+    expect(within(notepad).getByLabelText('Element')).toHaveValue('fmn_frame')
+    const elementNote = within(notepad).getByLabelText('Element note')
+    expect(elementNote).toHaveValue('Builder owns this element.')
+    fireEvent.change(elementNote, { target: { value: 'Builder and reviewer own this.' } })
+    fireEvent.click(within(notepad).getByRole('button', { name: 'Save element note' }))
+
+    await waitFor(() => expect(recordedMutations).toContainEqual({ method: 'PATCH', url: '/api/formations/boards/test-board/notes' }))
+    expect(screen.getByTestId('formation-node-fmn_frame')).toHaveClass('has-note')
+
+    fireEvent.click(within(notepad).getByRole('button', { name: 'Collapse shared notepad' }))
+    expect(screen.queryByLabelText('Board note')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Expand shared notepad' })).toBeInTheDocument()
+  })
+
+  it('adds a new element note from the sticky-note affordance', async () => {
+    await renderCockpit()
+    const judge = screen.getByTestId('formation-node-fmn_judge')
+    expect(judge).not.toHaveClass('has-note')
+
+    fireEvent.click(within(judge).getByRole('button', { name: 'Add note for Judge' }))
+    const elementNote = screen.getByLabelText('Element note')
+    fireEvent.change(elementNote, { target: { value: 'Use this as the release judge.' } })
+    fireEvent.click(within(judge).getByRole('button', { name: 'Add note for Judge' }))
+    expect(elementNote).toHaveValue('Use this as the release judge.')
+    const saveElementNote = screen.getByRole('button', { name: 'Save element note' })
+    await waitFor(() => expect(saveElementNote).toBeEnabled())
+    fireEvent.click(saveElementNote)
+
+    await waitFor(() => expect(judge).toHaveClass('has-note'))
+  })
+
+  it('preserves a stale local note draft and offers an explicit reload after conflict', async () => {
+    patches = installFetchMock({ boardNotes: { board: 'Server version' }, notePatchConflict: true })
+    await renderCockpit()
+    fireEvent.click(screen.getByRole('button', { name: 'Expand shared notepad' }))
+    const boardNote = await screen.findByRole('textbox', { name: 'Board note' })
+    fireEvent.change(boardNote, { target: { value: 'Local draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save board note' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Shared notes changed')
+    expect(boardNote).toHaveValue('Local draft')
+    expect(screen.getByRole('button', { name: 'Reload shared notes (discard local draft)' })).toBeEnabled()
+  })
+
+  it('protects unsaved notes from board switches, creation, and deletion', async () => {
+    const second = { ...makeBoard(), id: 'board-2', slug: 'second-board', title: 'Second board', etag: 'board-2-etag' }
+    patches = installFetchMock({ boards: [makeBoard(), second] })
+    await renderCockpit()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand shared notepad' }))
+    const boardNote = await screen.findByRole('textbox', { name: 'Board note' })
+    fireEvent.change(boardNote, { target: { value: 'Unsaved local context' } })
+    fireEvent.change(screen.getByTestId('board-picker'), { target: { value: 'second-board' } })
+
+    expect(screen.getByTestId('board-picker')).toHaveValue('test-board')
+    expect(screen.getByRole('alert')).toHaveTextContent('Save the current notes before leaving this board')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete board' }))
+    expect(screen.queryByRole('dialog', { name: 'Delete board' })).toBeNull()
+    fireEvent.click(screen.getByTestId('new-board'))
+    expect(screen.queryByRole('dialog', { name: 'Create board' })).toBeNull()
+  })
+
+  it('keeps loading agent dialogs focused and restores their trigger on Escape', async () => {
+    let releaseDetail: (() => void) | undefined
+    const detailGate = new Promise<void>(resolve => { releaseDetail = resolve })
+    patches = installFetchMock({ agentDetailGate: detailGate })
+    await renderCockpit()
+    const trigger = screen.getByRole('button', { name: 'Edit Mason' })
+    fireEvent.click(trigger)
+    const dialog = await screen.findByRole('dialog', { name: 'Edit agent' })
+    expect(within(dialog).getByRole('button', { name: 'Close agent editor' })).toHaveFocus()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit agent' })).toBeNull())
+    await waitFor(() => expect(trigger).toHaveFocus())
+    await act(async () => { releaseDetail?.(); await detailGate })
+  })
+
+  it('shows Codex role presets beside Claude personas and persists UI overrides', async () => {
+    const presetAgents: AgentProjection[] = [
+      { id: 'claude-existing', displayName: 'Claude Existing', kind: 'builder', harnessDefault: 'claude-code', liveness: 'offline', assignable: true },
+      ...['scout', 'planner', 'builder', 'judge', 'orchestrator', 'debugger', 'reviewer'].map(role => ({
+        id: `codex-${role}`,
+        displayName: `Codex ${role[0].toUpperCase()}${role.slice(1)}`,
+        kind: role,
+        tags: [`role:${role}`],
+        harnessDefault: 'openai-codex',
+        liveness: 'offline',
+        assignable: true,
+        preset: true,
+      })),
+    ]
+    patches = installFetchMock({ agents: presetAgents })
+    await renderCockpit()
+
+    const roster = screen.getByLabelText('Agent roster')
+    expect(within(roster).getByText('Codex')).toBeInTheDocument()
+    expect(within(roster).getByText('Claude')).toBeInTheDocument()
+    for (const role of ['Scout', 'Planner', 'Builder', 'Judge', 'Orchestrator', 'Debugger', 'Reviewer']) {
+      expect(within(roster).getByText(`Codex ${role}`)).toBeInTheDocument()
+    }
+
+    const editTrigger = within(roster).getByRole('button', { name: 'Edit Codex Builder' })
+    fireEvent.click(editTrigger)
+    const dialog = await screen.findByRole('dialog', { name: 'Edit agent preset' })
+    expect(await within(dialog).findByLabelText('Agent display name')).toHaveFocus()
+    fireEvent.change(within(dialog).getByLabelText('Agent display name'), { target: { value: 'Repository Builder' } })
+    fireEvent.change(within(dialog).getByLabelText('Agent capabilities'), { target: { value: 'implement, test, refactor' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save agent override' }))
+
+    await waitFor(() => expect(within(roster).getByText('Repository Builder')).toBeInTheDocument())
+    await waitFor(() => expect(editTrigger).toHaveFocus())
+    expect(recordedMutations).toContainEqual({ method: 'PATCH', url: '/api/agents/codex-builder' })
   })
 
   it('shows only assignable persona cards in the formation staffing roster', async () => {
@@ -344,6 +674,7 @@ describe('FormationsCockpit reference parity', () => {
     await waitFor(() => expect(screen.getByTestId('formation-wire-edge_tool_chain')).toBeInTheDocument())
     await waitFor(() => expect(screen.getByTestId('formation-wire-edge_tool_gate')).toBeInTheDocument())
     expect(within(card).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual([
+      'Add note for Normalize report',
       'Inspect Tool Normalize report',
     ])
     fireEvent.contextMenu(card)
@@ -673,7 +1004,8 @@ describe('FormationsCockpit reference parity', () => {
     const { container } = await renderCockpit()
     const viewport = container.querySelector('.viewport') as HTMLElement
     fireEvent.contextMenu(viewport, { clientX: 300, clientY: 300 })
-    await screen.findByRole('menu', { name: 'New' })
+    const menu = await screen.findByRole('menu', { name: 'New' })
+    expect(menu.parentElement).toBe(document.body)
     fireEvent.keyDown(window, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('menu', { name: 'New' })).toBeNull())
 

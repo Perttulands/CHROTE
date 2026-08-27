@@ -57,14 +57,17 @@ interface SessionTagProps {
 }
 
 function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive, contextActionsEnabled }: SessionTagProps) {
-  const { sessions, sessionBank, settings, deleteSession, openSendToSession } = useSession()
+  const { sessions, settings, deleteSession, renameSession, openSendToSession } = useSession()
   const pool = useIframePool()
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
   const contextMenuPosition = useViewportMenuPosition<HTMLDivElement>(contextMenu, {
-    estimatedSize: { width: 240, height: 230 },
+    estimatedSize: { width: 240, height: 270 },
   })
   const tagRef = useRef<HTMLDivElement | null>(null)
   const firstActionRef = useRef<HTMLButtonElement | null>(null)
+  const renameInputRef = useRef<HTMLInputElement | null>(null)
   const actualName = getSessionNameFromKey(sessionName)
   const unixUser = getSessionUserFromKey(sessionName)
   const matchingSessions = unixUser
@@ -73,10 +76,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   const session = matchingSessions.length === 1 ? matchingSessions[0] : undefined
   const resolvedUser = session?.unixUser || unixUser
   const sessionKey = getSessionKey(actualName, resolvedUser)
-  const bankMatches = resolvedUser
-    ? sessionBank.filter(entry => getSessionKey(entry.name, entry.unixUser) === sessionKey)
-    : sessionBank.filter(entry => entry.name === actualName)
-  const workingDirectory = session?.cwd || (bankMatches.length === 1 ? bankMatches[0].cwd || null : null)
+  const workingDirectory = session?.cwd || null
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `tag-${workspaceId}-${windowId}-${sessionKey}`,
     data: { type: 'tag', sessionName: actualName, sessionKey, unixUser: resolvedUser, sourceWindowId: windowId, sourceWorkspaceId: workspaceId },
@@ -122,9 +122,19 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   const openContextMenu = useCallback((x: number, y: number) => {
     setContextMenu({ x, y })
   }, [])
-  const runContextAction = (action: () => void) => {
-    closeContextMenu()
+  const runContextAction = (action: () => void, restoreFocus = true) => {
+    closeContextMenu(restoreFocus)
     action()
+  }
+  const startRename = () => {
+    setRenameValue(actualName)
+    setIsRenaming(true)
+  }
+  const submitRename = async () => {
+    if (renameValue && renameValue !== actualName) {
+      await renameSession(actualName, renameValue, resolvedUser)
+    }
+    setIsRenaming(false)
   }
 
   useEffect(() => {
@@ -134,6 +144,12 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   useEffect(() => {
     if (contextMenu) firstActionRef.current?.focus()
   }, [contextMenu])
+
+  useEffect(() => {
+    if (!isRenaming) return
+    renameInputRef.current?.focus()
+    renameInputRef.current?.select()
+  }, [isRenaming])
 
   return (
     <>
@@ -163,7 +179,28 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
             {getTerminalUserInitial(resolvedUser)}
           </span>
         )}
-        <span className="tag-name">{displayName}</span>
+        {isRenaming ? (
+          <input
+            ref={renameInputRef}
+            className="session-tag-rename-input"
+            aria-label={`Rename session ${displayName}`}
+            value={renameValue}
+            onPointerDown={event => event.stopPropagation()}
+            onClick={event => event.stopPropagation()}
+            onChange={event => setRenameValue(event.target.value)}
+            onKeyDown={event => {
+              event.stopPropagation()
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                void submitRename()
+              } else if (event.key === 'Escape') {
+                event.preventDefault()
+                setIsRenaming(false)
+              }
+            }}
+            onBlur={() => void submitRename()}
+          />
+        ) : <span className="tag-name">{displayName}</span>}
         <button
           className="tag-remove"
           onPointerDown={event => event.stopPropagation()}
@@ -221,6 +258,10 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
             >
               <span className="session-context-icon" aria-hidden="true">▣</span>
               Open files in working directory
+            </button>
+            <button role="menuitem" className="session-context-item" onClick={() => runContextAction(startRename, false)}>
+              <span className="session-context-icon" aria-hidden="true">✎</span>
+              Rename session
             </button>
             <div className="session-context-divider" />
             <button

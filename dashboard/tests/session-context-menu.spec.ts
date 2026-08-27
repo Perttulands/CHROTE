@@ -159,7 +159,34 @@ test.describe('Session Context Menu', () => {
   })
 
   // -------------------------------------------------------
-  // 3. Rename cancel via Escape reverts name
+  // 3. Rename from the attached session tag menu
+  // -------------------------------------------------------
+  test('rename an attached session from its terminal header tag menu', async ({ page }) => {
+    await dragAndDrop(page, '.session-panel .session-item:has-text("hq-mayor")', '.terminal-window')
+
+    const window = page.locator('.terminal-window').first()
+    const tag = window.locator('.session-tag:has-text("hq-mayor")')
+    await expect(tag).toBeVisible()
+    await tag.click({ button: 'right' })
+
+    const menu = page.getByRole('menu', { name: 'Session actions for hq-mayor' })
+    await expect(menu.getByRole('menuitem', { name: 'Rename session' })).toBeVisible()
+    await menu.getByRole('menuitem', { name: 'Rename session' }).click()
+
+    const input = window.getByRole('textbox', { name: 'Rename session hq-mayor' })
+    await expect(input).toBeFocused()
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    await expect(input).toBeFocused()
+    await expect(input).toHaveValue('hq-mayor')
+    await input.fill('hq-commander')
+    await input.press('Enter')
+
+    await expect(window.locator('.session-tag:has-text("hq-commander")')).toBeVisible()
+    await expect(window.locator('.session-tag:has-text("hq-mayor")')).not.toBeVisible()
+  })
+
+  // -------------------------------------------------------
+  // 4. Rename cancel via Escape reverts name
   // -------------------------------------------------------
   test('rename cancel via Escape reverts name', async ({ page }) => {
     const session = page.locator('.session-item:has-text("hq-mayor")')

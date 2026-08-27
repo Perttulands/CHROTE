@@ -6,6 +6,29 @@ export interface BoardSummary {
   etag: string
 }
 
+export interface BoardDeletion {
+  id: string
+  slug: string
+  title: string
+  archiveId: string
+}
+
+export interface ElementNote {
+  nodeId: string
+  text: string
+}
+
+export interface BoardNotesDocument {
+  schema: number
+  boardId: string
+  rev: number
+  updatedAt: string
+  updatedBy?: string
+  board: string
+  elements: ElementNote[]
+  etag: string
+}
+
 export interface FormationPort {
   id: string
   label: string
@@ -196,10 +219,35 @@ export interface ContextMenuState {
 export interface AgentProjection {
   id: string
   displayName?: string
+  kind?: string
+  tags?: string[]
   harnessDefault?: string
   assignable: boolean
   unbound?: boolean
   liveness?: string
+  preset?: boolean
+  customized?: boolean
+}
+
+export interface PersonaHarnessVariant {
+  id: string
+  sessionStem?: string
+  launch?: string
+  source?: string
+}
+
+export interface PersonaCard {
+  id: string
+  displayName?: string
+  kind: string
+  summary?: string
+  tags: string[]
+  status?: string
+  harnessDefault: string
+  harnessVariants: PersonaHarnessVariant[]
+  etag: string
+  preset?: boolean
+  customized?: boolean
 }
 
 export interface BriefDraft {

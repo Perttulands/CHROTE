@@ -1,6 +1,8 @@
 import type {
   AgentProjection,
+  BoardDeletion,
   BoardDocument,
+  BoardNotesDocument,
   BoardSummary,
   CodeGateProfileDescriptor,
   FormationNode,
@@ -8,6 +10,7 @@ import type {
   LayoutEdge,
   LayoutNode,
   OpenEscalation,
+  PersonaCard,
   RunEvent,
   RunStartResult,
   RunStatusProjection,
@@ -98,17 +101,86 @@ export async function fetchBoardLayout(slug: string): Promise<LayoutDocument> {
   return normalizeLayout(result.data.layout, result.etag)
 }
 
-export async function createBoard(title: string, template: string): Promise<BoardDocument> {
+export async function fetchBoardWithLayout(slug: string): Promise<{ board: BoardDocument; layout: LayoutDocument }> {
+  const board = await fetchBoardDocument(slug)
+  try {
+    return { board, layout: await fetchBoardLayout(slug) }
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 404) {
+      return { board, layout: missingLayoutForBoard(board) }
+    }
+    throw error
+  }
+}
+
+export async function createBoard(title: string): Promise<BoardDocument> {
   const result = await fetchApi<{ board: BoardDocument }>('/api/formations/boards', {
     method: 'POST',
-    body: JSON.stringify({ title, template }),
+    body: JSON.stringify({ title }),
   })
   return normalizeBoard(result.data.board, result.etag)
+}
+
+export async function deleteBoard(slug: string, etag: string, rev: number): Promise<BoardDeletion> {
+  const result = await fetchApi<{ deletion: BoardDeletion }>(
+    `/api/formations/boards/${encodeURIComponent(slug)}`,
+    {
+      method: 'DELETE',
+      headers: { 'If-Match': etag },
+      body: JSON.stringify({ expectedRev: rev }),
+    },
+  )
+  return result.data.deletion
+}
+
+export async function fetchBoardNotes(slug: string): Promise<BoardNotesDocument> {
+  const result = await fetchApi<{ notes: BoardNotesDocument }>(`/api/formations/boards/${encodeURIComponent(slug)}/notes`)
+  return {
+    ...result.data.notes,
+    board: result.data.notes.board || '',
+    elements: result.data.notes.elements || [],
+    etag: result.etag || result.data.notes.etag,
+  }
+}
+
+export async function patchBoardNote(slug: string, etag: string, target: string, text: string): Promise<BoardNotesDocument> {
+  const result = await fetchApi<{ notes: BoardNotesDocument }>(`/api/formations/boards/${encodeURIComponent(slug)}/notes`, {
+    method: 'PATCH',
+    headers: { 'If-Match': etag },
+    body: JSON.stringify({ target, text, updatedBy: 'human:ui' }),
+  })
+  return {
+    ...result.data.notes,
+    board: result.data.notes.board || '',
+    elements: result.data.notes.elements || [],
+    etag: result.etag || result.data.notes.etag,
+  }
 }
 
 export async function fetchAgents(): Promise<AgentProjection[]> {
   const result = await fetchApi<{ agents: AgentProjection[] }>('/api/agents')
   return result.data.agents || []
+}
+
+export async function fetchAgentCard(agentID: string): Promise<PersonaCard> {
+  const result = await fetchApi<PersonaCard>(`/api/agents/${encodeURIComponent(agentID)}`)
+  return { ...result.data, etag: result.etag || result.data.etag }
+}
+
+export async function overrideAgentCard(agentID: string, etag: string, patch: {
+  displayName: string
+  kind: string
+  summary: string
+  capabilities: string[]
+  sessionStem: string
+  launch: string
+}): Promise<PersonaCard> {
+  const result = await fetchApi<PersonaCard>(`/api/agents/${encodeURIComponent(agentID)}`, {
+    method: 'PATCH',
+    headers: { 'If-Match': etag },
+    body: JSON.stringify(patch),
+  })
+  return { ...result.data, etag: result.etag || result.data.etag }
 }
 
 export async function fetchBoardChanged(slug: string, etag: string): Promise<boolean> {

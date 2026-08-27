@@ -31,7 +31,7 @@ func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 		"case \"$sock\" in\n" +
 		"  *" + failFor + "*) printf '%s\\n' \"$TMUX_STDERR\" >&2; exit 1 ;;\n" +
 		"esac\n" +
-		"printf '$1:healthy-session:1:0\\n'\n" +
+		"printf '%s	%s	%s	%s	%s\\n' '$7' 'healthy-session' '1' '0' '/workspaces/healthy'\n" +
 		"exit 0\n"
 	scriptPath := filepath.Join(dir, "tmux")
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
@@ -39,8 +39,6 @@ func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 	}
 	t.Setenv("TMUX_STDERR", stderr)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("CHROTE_SESSION_BANK_PATH", filepath.Join(dir, "session-bank.json"))
-	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", filepath.Join(dir, "managed-status.json"))
 }
 
 // The production path on a multi-user host is the CHROTE_TERMINAL_USERS loop, and
@@ -69,8 +67,8 @@ func TestTmuxHandler_ListSessionsNamesTheUnixUserWhoseSocketFailed(t *testing.T)
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if !strings.Contains(response.Error, "Permission denied") {
-		t.Fatalf("error = %q, want the permission failure to be visible", response.Error)
+	if !strings.Contains(response.Error, "build: tmux source permission denied") {
+		t.Fatalf("error = %q, want the redacted permission failure to be visible", response.Error)
 	}
 	// The whole point: which user is broken must be identifiable. An unattributed
 	// permission error on a host with several users is not actionable.
@@ -150,46 +148,8 @@ func TestTmuxHandler_ListSessionsDoesNotMarkTotalMultiUserFailurePartial(t *test
 // A per-user partial marker covers only tmux socket failures. If another
 // sessions-response subsystem also fails, the combined payload is not
 // authoritative and must retain total-failure semantics.
-func TestTmuxHandler_ListSessionsDoesNotMarkGlobalFailurePartial(t *testing.T) {
-	tests := []struct {
-		name          string
-		pathEnv       string
-		errorFragment string
-	}{
-		{name: "managed status", pathEnv: "CHROTE_MANAGED_RECOVERY_STATUS_PATH", errorFragment: "managed status:"},
-		{name: "session bank", pathEnv: "CHROTE_SESSION_BANK_PATH", errorFragment: "session bank:"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			installSelectiveTmux(t, "denied", "error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)")
-			t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
-			t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/denied.sock")
-			t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
-			t.Setenv(test.pathEnv, t.TempDir())
-
-			handler := NewTmuxHandler()
-			req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
-			rec := httptest.NewRecorder()
-
-			handler.ListSessions(rec, req)
-
-			payload := decodeJSONMap(t, rec)
-			if _, ok := payload["partial"]; ok {
-				t.Fatalf("partial = %#v, want the marker omitted when a global subsystem also failed", payload["partial"])
-			}
-			errorText, _ := payload["error"].(string)
-			if !strings.Contains(errorText, test.errorFragment) || !strings.Contains(errorText, "build:") {
-				t.Fatalf("error = %q, want both the global and per-user failures preserved", errorText)
-			}
-		})
-	}
-}
-
-// A genuinely absent server is not an error. Same loop, so this asserts the
-// no-server path stays quiet in the multi-user branch too -- otherwise a user who
-// simply has no tmux running would raise a permanent cockpit error.
 func TestTmuxHandler_ListSessionsMultiUserNoServerIsNotAnError(t *testing.T) {
-	installSelectiveTmux(t, "empty", "no server running on /tmp/chrote-tmux-test/empty.sock")
+	installSelectiveTmux(t, "empty", "no server running on /tmp/fixture-build/empty.sock")
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/empty.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")

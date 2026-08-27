@@ -14,16 +14,23 @@
  */
 import { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
+  ApiRequestError,
   abortRunRequest,
+  createBoard,
+  deleteBoard,
   fetchAgents,
+  fetchAgentCard,
   fetchBoardChanged,
-  fetchBoardDocument,
-  fetchBoardLayout,
+  fetchBoardNotes,
   fetchBoardSummaries,
+  fetchBoardWithLayout,
   fetchCodeGateProfiles,
   fetchRunEscalations,
   fetchRunEvents,
   fetchRunStatus,
+  missingLayoutForBoard,
+  overrideAgentCard,
+  patchBoardNote,
   patchBoardDocument,
   patchBoardLayout,
   recordGateVerdict,
@@ -41,6 +48,7 @@ import {
 } from './formationsRunState'
 import { clampScale, displayLayoutFor, fallbackNodePosition, freeGridPosition, snapToGrid, zoomTransform } from './formationsCanvas'
 import { GATE_SVG, PLAY_SVG, TYPE_TAG, agentRole, agentState, harnessGlyph, initials } from './formationsCockpitVisuals'
+import DismissiblePanel from './DismissiblePanel'
 import { useSessionOptional } from '../context/SessionContext'
 import { resolveFormationsTextSize } from '../types'
 import { connectionKind, findInputPortAt, findOutputPortAt, isTextEditingTarget, laneYFrom, splitList } from './formationsCockpitDom'
@@ -54,6 +62,7 @@ import type {
   AgentProjection,
   BoardConnection,
   BoardDocument,
+  BoardNotesDocument,
   BoardSummary,
   CodeGateProfileDescriptor,
   FormationBrief,
@@ -116,6 +125,28 @@ type BriefEditorState = {
   files: string
   links: string
 }
+type BoardDialogState = {
+  mode: 'create' | 'rename' | 'delete'
+  title: string
+  target?: Pick<BoardDocument, 'id' | 'slug' | 'etag' | 'rev'>
+  saving: boolean
+  error: string
+}
+type AgentEditorState = {
+  id: string
+  preset: boolean
+  customized: boolean
+  displayName: string
+  kind: string
+  summary: string
+  capabilities: string
+  sessionStem: string
+  launch: string
+  etag: string
+  loading: boolean
+  saving: boolean
+  error: string
+}
 type CockpitUndo =
   | { kind: 'clearBrief'; formationId: string }
   | { kind: 'setBrief'; formationId: string; brief: FormationBrief }
@@ -164,6 +195,18 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [gateProfiles, setGateProfiles] = useState<CodeGateProfileDescriptor[]>([])
   const [gateEditor, setGateEditor] = useState<GateEditorState | null>(null)
   const [briefEditor, setBriefEditor] = useState<BriefEditorState | null>(null)
+  const [boardDialog, setBoardDialog] = useState<BoardDialogState | null>(null)
+  const [agentEditor, setAgentEditor] = useState<AgentEditorState | null>(null)
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [notes, setNotes] = useState<BoardNotesDocument | null>(null)
+  const [boardNoteDraft, setBoardNoteDraft] = useState('')
+  const [elementNoteTarget, setElementNoteTarget] = useState('')
+  const [elementNoteDraft, setElementNoteDraft] = useState('')
+  const [boardNoteDirty, setBoardNoteDirty] = useState(false)
+  const [elementNoteDirty, setElementNoteDirty] = useState(false)
+  const [noteSaving, setNoteSaving] = useState<'board' | 'element' | ''>('')
+  const [noteError, setNoteError] = useState('')
+  const [notesConflict, setNotesConflict] = useState(false)
   const [legacyVerification, setLegacyVerification] = useState<LegacyVerificationState | null>(null)
   const legacyVerificationOpen = legacyVerification !== null
   const [inspectedToolId, setInspectedToolId] = useState<string | null>(null)
@@ -173,6 +216,10 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
 
   const boardRef = useRef<BoardDocument | null>(null)
   const layoutRef = useRef<LayoutDocument | null>(null)
+  const notesRef = useRef<BoardNotesDocument | null>(null)
+  const boardNoteDirtyRef = useRef(false)
+  const elementNoteDirtyRef = useRef(false)
+  const elementNoteTargetRef = useRef('')
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const worldRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<ViewTransform>(view)
@@ -188,11 +235,43 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const legacyVerificationWasOpenRef = useRef(false)
   const legacyVerificationPendingRef = useRef(false)
   const legacyVerificationRequestRef = useRef<symbol | null>(null)
+  const boardDialogReturnFocusRef = useRef<HTMLElement | null>(null)
+  const agentEditorReturnFocusRef = useRef<HTMLElement | null>(null)
+
+  const closeBoardDialog = useCallback(() => {
+    const trigger = boardDialogReturnFocusRef.current
+    boardDialogReturnFocusRef.current = null
+    setBoardDialog(null)
+    window.setTimeout(() => { if (trigger?.isConnected) trigger.focus() }, 0)
+  }, [])
+
+  const closeAgentEditor = useCallback(() => {
+    const trigger = agentEditorReturnFocusRef.current
+    agentEditorReturnFocusRef.current = null
+    setAgentEditor(null)
+    window.setTimeout(() => { if (trigger?.isConnected) trigger.focus() }, 0)
+  }, [])
 
   viewRef.current = view
   useEffect(() => { boardRef.current = board }, [board])
   useEffect(() => { layoutRef.current = layout }, [layout])
+  useEffect(() => { notesRef.current = notes }, [notes])
+  useEffect(() => { boardNoteDirtyRef.current = boardNoteDirty }, [boardNoteDirty])
+  useEffect(() => { elementNoteDirtyRef.current = elementNoteDirty }, [elementNoteDirty])
+  useEffect(() => { elementNoteTargetRef.current = elementNoteTarget }, [elementNoteTarget])
   useEffect(() => { judgeHoverRef.current = judgeHover }, [judgeHover])
+
+  useEffect(() => {
+    if (!boardDialog && !agentEditor) return
+    const closeDialog = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || boardDialog?.saving || agentEditor?.saving) return
+      event.preventDefault()
+      if (boardDialog) closeBoardDialog()
+      if (agentEditor) closeAgentEditor()
+    }
+    window.addEventListener('keydown', closeDialog)
+    return () => window.removeEventListener('keydown', closeDialog)
+  }, [agentEditor, boardDialog, closeAgentEditor, closeBoardDialog])
 
   useEffect(() => {
     legacyVerificationRequestRef.current = null
@@ -254,8 +333,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   useEffect(() => {
     if (!selectedSlug) return
     let cancelled = false
-    Promise.all([fetchBoardDocument(selectedSlug), fetchBoardLayout(selectedSlug)])
-      .then(([nextBoard, nextLayout]) => {
+    fetchBoardWithLayout(selectedSlug)
+      .then(({ board: nextBoard, layout: nextLayout }) => {
         if (cancelled) return
         setBoard(nextBoard)
         setLayout(nextLayout)
@@ -266,6 +345,54 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [selectedSlug])
 
   useEffect(() => {
+    notesRef.current = null
+    boardNoteDirtyRef.current = false
+    elementNoteDirtyRef.current = false
+    elementNoteTargetRef.current = ''
+    setNotes(null)
+    setBoardNoteDraft('')
+    setElementNoteTarget('')
+    setElementNoteDraft('')
+    setBoardNoteDirty(false)
+    setElementNoteDirty(false)
+    setNoteError('')
+    setNotesConflict(false)
+  }, [selectedSlug])
+
+  useEffect(() => {
+    if (!selectedSlug) return
+    let cancelled = false
+    const loadNotes = async () => {
+      try {
+        const next = await fetchBoardNotes(selectedSlug)
+        if (cancelled) return
+        const current = notesRef.current
+        const dirty = boardNoteDirtyRef.current || elementNoteDirtyRef.current
+        if (dirty && current && current.etag !== next.etag) {
+          setNotesConflict(true)
+          setNoteError('Shared notes changed elsewhere. Your draft is preserved; reload notes or copy it before retrying.')
+          return
+        }
+        notesRef.current = next
+        setNotes(next)
+        if (!boardNoteDirtyRef.current) setBoardNoteDraft(next.board)
+        const target = elementNoteTargetRef.current
+        if (target && !elementNoteDirtyRef.current) {
+          setElementNoteDraft(next.elements.find(note => note.nodeId === target)?.text || '')
+        }
+      } catch (err) {
+        if (!cancelled) setNoteError(err instanceof Error ? err.message : 'Failed to load board notes')
+      }
+    }
+    if (!notesRef.current) void loadNotes()
+    const timer = active && notesOpen ? window.setInterval(() => { void loadNotes() }, 3000) : 0
+    return () => {
+      cancelled = true
+      if (timer) window.clearInterval(timer)
+    }
+  }, [active, notesOpen, selectedSlug])
+
+  useEffect(() => {
     // Paused while the tab is hidden (keep-alive); reactivation re-runs this
     // effect and refreshes immediately via the leading checkChanges() call.
     if (!active || !selectedSlug || !board?.etag) return
@@ -274,7 +401,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       try {
         const changed = await fetchBoardChanged(selectedSlug, board.etag)
         if (cancelled || !changed) return
-        const [nextBoard, nextLayout] = await Promise.all([fetchBoardDocument(selectedSlug), fetchBoardLayout(selectedSlug)])
+        const { board: nextBoard, layout: nextLayout } = await fetchBoardWithLayout(selectedSlug)
         if (cancelled) return
         setBoard(nextBoard)
         setLayout(nextLayout)
@@ -503,6 +630,126 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       return null
     }
   }, [])
+
+  const blockBoardExitForDirtyNotes = useCallback(() => {
+    if (!boardNoteDirtyRef.current && !elementNoteDirtyRef.current) return false
+    setNotesOpen(true)
+    setNoteError('Save the current notes before leaving this board.')
+    return true
+  }, [])
+
+  const selectBoard = useCallback((slug: string) => {
+    if (boardDialog || slug === boardRef.current?.slug || blockBoardExitForDirtyNotes()) return
+    setSelectedSlug(slug)
+  }, [blockBoardExitForDirtyNotes, boardDialog])
+
+  const openCreateBoard = useCallback((trigger?: HTMLElement) => {
+    if (blockBoardExitForDirtyNotes()) return
+    boardDialogReturnFocusRef.current = trigger || null
+    setBoardDialog({ mode: 'create', title: '', saving: false, error: '' })
+  }, [blockBoardExitForDirtyNotes])
+
+  const openRenameBoard = useCallback((trigger?: HTMLElement) => {
+    const current = boardRef.current
+    if (!current) return
+    boardDialogReturnFocusRef.current = trigger || null
+    setBoardDialog({ mode: 'rename', title: current.title, target: { id: current.id, slug: current.slug, etag: current.etag, rev: current.rev }, saving: false, error: '' })
+  }, [])
+
+  const openDeleteBoard = useCallback((trigger?: HTMLElement) => {
+    if (blockBoardExitForDirtyNotes()) return
+    const current = boardRef.current
+    if (!current) return
+    boardDialogReturnFocusRef.current = trigger || null
+    setBoardDialog({ mode: 'delete', title: current.title, target: { id: current.id, slug: current.slug, etag: current.etag, rev: current.rev }, saving: false, error: '' })
+  }, [blockBoardExitForDirtyNotes])
+
+  const saveBoardName = useCallback(async () => {
+    if (!boardDialog || boardDialog.mode === 'delete') return
+    const title = boardDialog.title.trim()
+    if (!title) {
+      setBoardDialog(current => current ? { ...current, error: 'Board name is required.' } : current)
+      return
+    }
+    if (boardDialog.mode === 'create' && blockBoardExitForDirtyNotes()) {
+      closeBoardDialog()
+      return
+    }
+    setBoardDialog(current => current ? { ...current, saving: true, error: '' } : current)
+    try {
+      if (boardDialog.mode === 'create') {
+        const created = await createBoard(title)
+        const createdLayout = missingLayoutForBoard(created)
+        boardRef.current = created
+        layoutRef.current = createdLayout
+        setBoard(created)
+        setLayout(createdLayout)
+        setBoards(current => [...current.filter(item => item.slug !== created.slug), {
+          id: created.id,
+          slug: created.slug,
+          title: created.title,
+          rev: created.rev,
+          etag: created.etag,
+        }].sort((a, b) => a.slug.localeCompare(b.slug)))
+        setSelectedSlug(created.slug)
+      } else {
+        const target = boardDialog.target
+        if (!target) throw new Error('Board target is missing; close and retry')
+        const result = await patchBoardDocument(target.slug, target.etag, target.rev, { title })
+        if (boardRef.current?.id === target.id) {
+          boardRef.current = result.board
+          setBoard(result.board)
+        }
+        setBoards(items => items.map(item => item.slug === result.board.slug ? {
+          ...item,
+          title: result.board.title,
+          rev: result.board.rev,
+          etag: result.board.etag,
+        } : item))
+      }
+      closeBoardDialog()
+      setError('')
+    } catch (err) {
+      setBoardDialog(current => current ? {
+        ...current,
+        saving: false,
+        error: err instanceof Error ? err.message : 'Board update failed',
+      } : current)
+    }
+  }, [blockBoardExitForDirtyNotes, boardDialog, closeBoardDialog])
+
+  const archiveSelectedBoard = useCallback(async () => {
+    const target = boardDialog?.target
+    if (!target || boardDialog?.mode !== 'delete') return
+    if (blockBoardExitForDirtyNotes()) {
+      closeBoardDialog()
+      return
+    }
+    setBoardDialog(dialog => dialog ? { ...dialog, saving: true, error: '' } : dialog)
+    try {
+      await deleteBoard(target.slug, target.etag, target.rev)
+      const remaining = await fetchBoardSummaries()
+      setBoards(remaining)
+      if (boardRef.current?.id === target.id) {
+        boardRef.current = null
+        layoutRef.current = null
+        setBoard(null)
+        setLayout(null)
+        setSelectedSlug(remaining[0]?.slug || '')
+        setActiveRun(null)
+        setRunEvents([])
+        setEscalations([])
+      }
+      closeBoardDialog()
+      setError('')
+    } catch (err) {
+      setBoardDialog(dialog => dialog ? {
+        ...dialog,
+        saving: false,
+        error: err instanceof Error ? err.message : 'Board deletion failed',
+      } : dialog)
+    }
+  }, [blockBoardExitForDirtyNotes, boardDialog, closeBoardDialog])
 
   const patchLayoutEdge = useCallback(async (edgeId: string, lane: string) => {
     const currentBoard = boardRef.current
@@ -1276,7 +1523,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const beginNodeDrag = useCallback((event: ReactPointerEvent, id: string, index: number) => {
     if (event.button !== 0) return
     const target = event.target as HTMLElement
-    if (target.closest('.port,.frun,.mrun')) return
+    if (target.closest('.port,.frun,.mrun,.note-pin')) return
     event.stopPropagation()
     const pos = positionOf(id, index)
     const drag: DragNode = { id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: pos.x, originY: pos.y, moved: false }
@@ -1701,7 +1948,210 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     return <div className="solo-body">{slots[0] ? renderSlot(formation, slots[0]) : null}</div>
   }
 
+  const noteByNode = useMemo(
+    () => new Map((notes?.elements || []).filter(note => note.text).map(note => [note.nodeId, note.text])),
+    [notes?.elements],
+  )
+  const noteElements = useMemo(() => {
+    if (!board) return []
+    return [
+      ...(board.missions || []).map(node => ({ id: node.id, title: node.title, kind: 'Mission' })),
+      ...(board.formations || []).map(node => ({ id: node.id, title: node.title, kind: 'Formation' })),
+      ...(board.gates || []).map(node => ({ id: node.id, title: node.title || 'Gate', kind: 'Gate' })),
+      ...(board.tools || []).map(node => ({ id: node.id, title: node.title, kind: 'Tool' })),
+    ]
+  }, [board])
+
+  const selectElementNote = useCallback((target: string) => {
+    if (elementNoteDirtyRef.current) {
+      if (target === elementNoteTargetRef.current) {
+        setNotesOpen(true)
+        return
+      }
+      setNoteError('Save or revert the current element note before switching.')
+      return
+    }
+    elementNoteTargetRef.current = target
+    elementNoteDirtyRef.current = false
+    setElementNoteTarget(target)
+    setElementNoteDraft(notesRef.current?.elements.find(note => note.nodeId === target)?.text || '')
+    setElementNoteDirty(false)
+    setNoteError('')
+    setNotesOpen(true)
+  }, [])
+
+  const saveBoardNote = useCallback(async () => {
+    const currentBoard = boardRef.current
+    const currentNotes = notesRef.current
+    if (!currentBoard || !currentNotes) return
+    setNoteSaving('board')
+    setNoteError('')
+    try {
+      const updated = await patchBoardNote(currentBoard.slug, currentNotes.etag, 'board', boardNoteDraft)
+      notesRef.current = updated
+      boardNoteDirtyRef.current = false
+      setNotes(updated)
+      setBoardNoteDraft(updated.board)
+      setBoardNoteDirty(false)
+      setNotesConflict(false)
+      if (!elementNoteDirtyRef.current && elementNoteTargetRef.current) {
+        setElementNoteDraft(updated.elements.find(note => note.nodeId === elementNoteTargetRef.current)?.text || '')
+      }
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 409) setNotesConflict(true)
+      setNoteError(err instanceof Error ? err.message : 'Failed to save board note')
+    } finally {
+      setNoteSaving('')
+    }
+  }, [boardNoteDraft])
+
+  const saveElementNote = useCallback(async () => {
+    const currentBoard = boardRef.current
+    const currentNotes = notesRef.current
+    const target = elementNoteTargetRef.current
+    if (!currentBoard || !currentNotes || !target) return
+    setNoteSaving('element')
+    setNoteError('')
+    try {
+      const updated = await patchBoardNote(currentBoard.slug, currentNotes.etag, target, elementNoteDraft)
+      notesRef.current = updated
+      elementNoteDirtyRef.current = false
+      setNotes(updated)
+      setElementNoteDraft(updated.elements.find(note => note.nodeId === target)?.text || '')
+      setElementNoteDirty(false)
+      setNotesConflict(false)
+      if (!boardNoteDirtyRef.current) setBoardNoteDraft(updated.board)
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 409) setNotesConflict(true)
+      setNoteError(err instanceof Error ? err.message : 'Failed to save element note')
+    } finally {
+      setNoteSaving('')
+    }
+  }, [elementNoteDraft])
+
+  const reloadSharedNotes = useCallback(async () => {
+    const currentBoard = boardRef.current
+    if (!currentBoard) return
+    setNoteSaving('board')
+    try {
+      const fresh = await fetchBoardNotes(currentBoard.slug)
+      notesRef.current = fresh
+      boardNoteDirtyRef.current = false
+      elementNoteDirtyRef.current = false
+      setNotes(fresh)
+      setBoardNoteDraft(fresh.board)
+      setBoardNoteDirty(false)
+      setElementNoteDraft(fresh.elements.find(note => note.nodeId === elementNoteTargetRef.current)?.text || '')
+      setElementNoteDirty(false)
+      setNotesConflict(false)
+      setNoteError('')
+    } catch (err) {
+      setNoteError(err instanceof Error ? err.message : 'Failed to reload shared notes')
+    } finally {
+      setNoteSaving('')
+    }
+  }, [])
+
+  const renderNotePin = (nodeID: string, title: string) => {
+    const noteText = noteByNode.get(nodeID) || ''
+    const hasNote = noteText !== ''
+    return (
+      <>
+        <button
+          type="button"
+          className={`note-pin${hasNote ? ' filled' : ''}`}
+          aria-label={`${hasNote ? 'Edit' : 'Add'} note for ${title}`}
+          title={`${hasNote ? 'Edit' : 'Add'} shared note`}
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => { event.stopPropagation(); selectElementNote(nodeID) }}
+        >
+          <span aria-hidden="true">{hasNote ? '▰' : '+'}</span>
+        </button>
+        {hasNote ? <div className="note-preview" role="note" aria-label={`Note for ${title}`}>{noteText}</div> : null}
+      </>
+    )
+  }
+
+  const openAgentEditor = useCallback(async (agent: AgentProjection, trigger?: HTMLElement) => {
+    agentEditorReturnFocusRef.current = trigger || null
+    setAgentEditor({
+      id: agent.id,
+      preset: Boolean(agent.preset),
+      customized: Boolean(agent.customized),
+      displayName: agent.displayName || agent.id,
+      kind: agent.kind || agentRole(agent),
+      summary: '',
+      capabilities: (agent.tags || []).filter(tag => !tag.includes(':')).join(', '),
+      sessionStem: agent.id,
+      launch: '',
+      etag: '',
+      loading: true,
+      saving: false,
+      error: '',
+    })
+    try {
+      const card = await fetchAgentCard(agent.id)
+      const variant = card.harnessVariants.find(candidate => candidate.id === card.harnessDefault) || card.harnessVariants[0]
+      setAgentEditor(current => current?.id === agent.id ? {
+        ...current,
+        preset: Boolean(card.preset),
+        customized: Boolean(card.customized),
+        displayName: card.displayName || card.id,
+        kind: card.kind,
+        summary: card.summary || '',
+        capabilities: (card.tags || []).filter(tag => !tag.includes(':')).join(', '),
+        sessionStem: variant?.sessionStem || card.id,
+        launch: variant?.launch || '',
+        etag: card.etag,
+        loading: false,
+      } : current)
+    } catch (err) {
+      setAgentEditor(current => current?.id === agent.id ? {
+        ...current,
+        loading: false,
+        error: err instanceof Error ? err.message : 'Failed to load agent card',
+      } : current)
+    }
+  }, [])
+
+  const saveAgentOverride = useCallback(async () => {
+    if (!agentEditor || agentEditor.loading || !agentEditor.etag) return
+    if (!agentEditor.displayName.trim() || !agentEditor.kind.trim()) {
+      setAgentEditor(current => current ? { ...current, error: 'Display name and role are required.' } : current)
+      return
+    }
+    setAgentEditor(current => current ? { ...current, saving: true, error: '' } : current)
+    try {
+      await overrideAgentCard(agentEditor.id, agentEditor.etag, {
+        displayName: agentEditor.displayName.trim(),
+        kind: agentEditor.kind.trim(),
+        summary: agentEditor.summary.trim(),
+        capabilities: agentEditor.capabilities.split(',').map(value => value.trim()).filter(Boolean),
+        sessionStem: agentEditor.sessionStem.trim(),
+        launch: agentEditor.launch.trim(),
+      })
+      setAgents(await fetchAgents())
+      closeAgentEditor()
+    } catch (err) {
+      setAgentEditor(current => current ? {
+        ...current,
+        saving: false,
+        error: err instanceof Error ? err.message : 'Failed to save agent override',
+      } : current)
+    }
+  }, [agentEditor, closeAgentEditor])
+
   const rosterAgents = useMemo(() => agents.filter(agent => agent.assignable && !agent.unbound), [agents])
+  const rosterSections = useMemo(() => {
+    const codex = rosterAgents.filter(agent => (agent.harnessDefault || '').toLowerCase().includes('codex'))
+    const claude = rosterAgents.filter(agent => (agent.harnessDefault || '').toLowerCase().includes('claude'))
+    const other = rosterAgents.filter(agent => !codex.includes(agent) && !claude.includes(agent))
+    return [
+      { id: 'codex', label: 'Codex', agents: codex },
+      { id: 'claude', label: 'Claude', agents: claude },
+      { id: 'other', label: 'Other', agents: other },
+    ].filter(section => section.agents.length > 0)
+  }, [rosterAgents])
   const deployedAgentCount = useMemo(
     () => new Set((board?.formations || []).flatMap(f => f.slots.map(s => s.agentId).filter(Boolean))).size,
     [board?.formations],
@@ -1756,12 +2206,18 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       <div className="topbar">
         <div className="boardpick">
           board
-          <select value={selectedSlug} onChange={event => setSelectedSlug(event.target.value)} data-testid="board-picker" disabled={boards.length === 0}>
+          <select value={selectedSlug} onChange={event => selectBoard(event.target.value)} data-testid="board-picker" disabled={boards.length === 0 || Boolean(boardDialog)}>
             {boards.length === 0 ? <option value="">No boards</option> : null}
             {boards.map(summary => <option key={summary.slug} value={summary.slug}>{summary.title || summary.slug}</option>)}
           </select>
           {board ? <span className="rev">rev {board.rev}</span> : null}
         </div>
+        <button className="newbtn board-new" type="button" onClick={event => openCreateBoard(event.currentTarget)} data-testid="new-board" disabled={Boolean(boardDialog)}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+          New board
+        </button>
+        <button className="board-action" type="button" aria-label="Rename board" disabled={!board || Boolean(boardDialog)} onClick={event => openRenameBoard(event.currentTarget)}>Rename</button>
+        <button className="board-action danger" type="button" aria-label="Delete board" disabled={!board || Boolean(boardDialog)} onClick={event => openDeleteBoard(event.currentTarget)}>Delete</button>
         <div className="sep" />
         <button className="newbtn" onClick={createSolo} data-testid="new-formation" disabled={!board}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
@@ -1775,7 +2231,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       </div>
 
       <div className="main">
-        <aside className="roster" data-testid="agent-roster">
+        <aside className="roster" data-testid="agent-roster" aria-label="Agent roster">
           <div className="roster-hd">
             <div className="t">Agents</div>
             <span className="s" data-testid="roster-count" title={`${rosterAgents.length} catalog agents · ${deployedAgentCount} deployed on this board`}>
@@ -1785,24 +2241,37 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           <div className="roster-list">
             {rosterAgents.length === 0
               ? <div className="roster-empty">No assignable catalog agents. Add persona cards in ~/agents to staff formations.</div>
-              : rosterAgents.map(agent => {
-                const deployed = (board?.formations || []).some(f => f.slots.some(s => s.agentId === agent.id))
-                return (
-                  <div
-                    key={agent.id}
-                    className={`ragent${deployed ? ' deployed' : ''}${agent.unbound ? ' unbound' : ''}`}
-                    data-agent={agent.id}
-                    data-testid={`roster-agent-${agent.id}`}
-                    onPointerDown={event => beginStaff(event, agent.id, agent.harnessDefault || '')}
-                  >
-                    <span className="av">{harnessGlyph(agent.harnessDefault) ?? initials(agent.id)}</span>
-                    <div className="ri">
-                      <div className="n">{agent.displayName || agent.id}</div>
-                      <div className="r">{agentRole(agent)}{agentState(agent) === 'idle' ? ' · idle' : ''}</div>
-                    </div>
-                  </div>
-                )
-              })}
+              : rosterSections.map(section => (
+                <section className="roster-group" key={section.id} data-provider={section.id}>
+                  <div className="roster-group-label">{section.label}</div>
+                  {section.agents.map(agent => {
+                    const deployed = (board?.formations || []).some(f => f.slots.some(s => s.agentId === agent.id))
+                    return (
+                      <div
+                        key={agent.id}
+                        className={`ragent${deployed ? ' deployed' : ''}${agent.unbound ? ' unbound' : ''}`}
+                        data-agent={agent.id}
+                        data-testid={`roster-agent-${agent.id}`}
+                        onPointerDown={event => beginStaff(event, agent.id, agent.harnessDefault || '')}
+                      >
+                        <span className="av">{harnessGlyph(agent.harnessDefault) ?? initials(agent.id)}</span>
+                        <div className="ri">
+                          <div className="n">{agent.displayName || agent.id}</div>
+                          <div className="r">{agentRole(agent)}{agent.preset ? ` · ${agent.customized ? 'custom' : 'preset'}` : ''}{agentState(agent) === 'idle' ? ' · idle' : ''}</div>
+                        </div>
+                        <button
+                          type="button"
+                          className="agent-edit"
+                          aria-label={`Edit ${agent.displayName || agent.id}`}
+                          title="Edit persona override"
+                          onPointerDown={event => event.stopPropagation()}
+                          onClick={event => { event.stopPropagation(); void openAgentEditor(agent, event.currentTarget) }}
+                        >•••</button>
+                      </div>
+                    )
+                  })}
+                </section>
+              ))}
           </div>
         </aside>
 
@@ -1841,7 +2310,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
             {!board ? (
               <div className="empty-board" data-testid="formations-empty-board">
                 <div className="empty-title">No persisted formation boards</div>
-                <div className="empty-copy">Seed a real board with Archon or create one through the API. The cockpit no longer shows fake starter missions.</div>
+                <div className="empty-copy">Create a board from the top bar to start sketching a mission.</div>
+              </div>
+            ) : (board.missions || []).length + board.formations.length + (board.gates || []).length + (board.tools || []).length === 0 ? (
+              <div className="empty-board" data-testid="formations-empty-board">
+                <div className="empty-title">This board is empty</div>
+                <div className="empty-copy">Add a formation, Gate, Mission, or Tool to sketch the workflow.</div>
               </div>
             ) : null}
 
@@ -1851,13 +2325,14 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               return (
                 <div
                   key={mission.id}
-                  className="missioncard"
+                  className={`missioncard${noteByNode.has(mission.id) ? ' has-note' : ''}`}
                   data-node={mission.id}
                   data-testid={`mission-node-${mission.id}`}
                   style={{ left: pos.x, top: pos.y }}
                   onPointerDown={event => beginNodeDrag(event, mission.id, index)}
                   onContextMenu={event => missionMenu(event, mission)}
                 >
+                  {renderNotePin(mission.id, mission.title)}
                   <div className="mhd">
                     <span className="meyebrow">◆ Mission</span>
                     <button className="mrun" title="Start mission" onClick={() => void runMission(mission)} data-testid={`run-mission-${mission.id}`}>{PLAY_SVG}</button>
@@ -1876,12 +2351,13 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               return (
                 <div
                   key={formation.id}
-                  className={`formation type-${formation.type}${state === 'running' ? ' running' : ''}${judgeHover === formation.id ? ' judgehover' : ''}${needsYouNodeIds.has(formation.id) ? ' needs-you' : ''}`}
+                  className={`formation type-${formation.type}${state === 'running' ? ' running' : ''}${judgeHover === formation.id ? ' judgehover' : ''}${needsYouNodeIds.has(formation.id) ? ' needs-you' : ''}${noteByNode.has(formation.id) ? ' has-note' : ''}`}
                   data-node={formation.id}
                   data-testid={`formation-node-${formation.id}`}
                   style={{ left: pos.x, top: pos.y }}
                   onContextMenu={event => formationMenu(event, formation)}
                 >
+                  {renderNotePin(formation.id, formation.title)}
                   {formation.inputs.map((port, portIndex) => {
                     const endpoint = `${formation.id}:${port.id}`
                     const incoming = (board?.connections || []).find(connection => connection.to === endpoint)
@@ -1969,7 +2445,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               return (
                 <div
                   key={gate.id}
-                  className={`gatecard${state ? ` ${state}` : ''}${gateHasJudge(gate.id) ? ' hasjudge' : ''}${needsYouNodeIds.has(gate.id) ? ' needs-you' : ''}`}
+                  className={`gatecard${state ? ` ${state}` : ''}${gateHasJudge(gate.id) ? ' hasjudge' : ''}${needsYouNodeIds.has(gate.id) ? ' needs-you' : ''}${noteByNode.has(gate.id) ? ' has-note' : ''}`}
                   data-node={gate.id}
                   data-gate={gate.id}
                   data-testid={`gate-node-${gate.id}`}
@@ -1977,6 +2453,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                   onPointerDown={event => beginNodeDrag(event, gate.id, nodeIndex)}
                   onContextMenu={event => gateMenu(event, gate)}
                 >
+                  {renderNotePin(gate.id, gate.title || 'Gate')}
                   <span
                     className={`port pin${hoverPort === inputEndpoint ? ' snaptarget' : ''}${incoming ? ' has' : ''}`}
                     data-port-in={inputEndpoint}
@@ -2024,7 +2501,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               return (
                 <div
                   key={tool.id}
-                  className="toolcard"
+                  className={`toolcard${noteByNode.has(tool.id) ? ' has-note' : ''}`}
                   data-kind="tool"
                   data-node={tool.id}
                   data-execution-state="unavailable"
@@ -2032,6 +2509,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                   style={{ left: pos.x, top: pos.y }}
                   onPointerDown={event => beginNodeDrag(event, tool.id, nodeIndex)}
                 >
+                  {renderNotePin(tool.id, tool.title)}
                   <div className="tool-head">
                     <div className="tool-heading">
                       <span className="tool-kind">Tool</span>
@@ -2141,7 +2619,204 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           </div>
           {error ? <div className="errbar" data-testid="formations-error">{error}</div> : null}
         </div>
+
+        <aside className={`board-notes${notesOpen ? ' open' : ' collapsed'}`} aria-label="Shared board notepad">
+          <div className="board-notes-head">
+            {notesOpen ? (
+              <div>
+                <div className="board-notes-title">Shared notepad</div>
+                <div className="board-notes-meta">human + agent · {notes?.rev ? `rev ${notes.rev}` : 'not saved'}</div>
+              </div>
+            ) : <span className="board-notes-rail">notes</span>}
+            <button
+              type="button"
+              className="board-notes-toggle"
+              aria-label={notesOpen ? 'Collapse shared notepad' : 'Expand shared notepad'}
+              onClick={() => setNotesOpen(open => !open)}
+            >{notesOpen ? '›' : '‹'}</button>
+          </div>
+          {notesOpen ? (
+            board ? (
+              <div className="board-notes-body">
+                <section className="note-section">
+                  <div className="note-section-head">
+                    <label htmlFor="formations-board-note">Board note</label>
+                    <button
+                      type="button"
+                      aria-label="Save board note"
+                      disabled={!boardNoteDirty || noteSaving !== '' || !notes}
+                      onClick={() => void saveBoardNote()}
+                    >{noteSaving === 'board' ? 'saving…' : 'save'}</button>
+                  </div>
+                  <textarea
+                    id="formations-board-note"
+                    value={boardNoteDraft}
+                    placeholder="Shared mission context, constraints, implementation notes…"
+                    onChange={event => {
+                      boardNoteDirtyRef.current = true
+                      setBoardNoteDirty(true)
+                      setBoardNoteDraft(event.target.value)
+                    }}
+                  />
+                </section>
+
+                <section className="note-section element-note-section">
+                  <div className="note-section-head"><label htmlFor="formations-element-note-target">Element</label></div>
+                  <select
+                    id="formations-element-note-target"
+                    value={elementNoteTarget}
+                    disabled={elementNoteDirty}
+                    onChange={event => selectElementNote(event.target.value)}
+                  >
+                    <option value="">Select an element…</option>
+                    {noteElements.map(element => (
+                      <option key={element.id} value={element.id}>{element.kind} · {element.title}</option>
+                    ))}
+                  </select>
+                  {elementNoteTarget ? (
+                    <>
+                      <div className="note-section-head element-editor-head">
+                        <label htmlFor="formations-element-note">Element note</label>
+                        <button
+                          type="button"
+                          aria-label="Save element note"
+                          disabled={!elementNoteDirty || noteSaving !== '' || !notes}
+                          onClick={() => void saveElementNote()}
+                        >{noteSaving === 'element' ? 'saving…' : 'save'}</button>
+                      </div>
+                      <textarea
+                        id="formations-element-note"
+                        value={elementNoteDraft}
+                        placeholder="What should the implementer know about this element?"
+                        onChange={event => {
+                          elementNoteDirtyRef.current = true
+                          setElementNoteDirty(true)
+                          setElementNoteDraft(event.target.value)
+                        }}
+                      />
+                      {elementNoteDirty ? <div className="note-dirty">save before switching elements</div> : null}
+                    </>
+                  ) : <div className="note-empty">Use a card's post-it button or choose an element.</div>}
+                </section>
+                {noteError ? <div className="note-error" role="alert">{noteError}</div> : null}
+                {notesConflict ? (
+                  <button type="button" className="note-reload" disabled={noteSaving !== ''} onClick={() => void reloadSharedNotes()}>
+                    Reload shared notes (discard local draft)
+                  </button>
+                ) : null}
+              </div>
+            ) : <div className="note-empty boardless">Create or select a board to use the shared notepad.</div>
+          ) : null}
+        </aside>
       </div>
+
+      {agentEditor ? (
+        <div
+          className="pop agent-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label={agentEditor.preset ? 'Edit agent preset' : 'Edit agent'}
+          onPointerDown={event => event.stopPropagation()}
+        >
+          <form onSubmit={event => { event.preventDefault(); void saveAgentOverride() }}>
+            <div className="phd">
+              <span>{agentEditor.preset ? 'Codex preset override' : 'Agent override'}</span>
+              <button autoFocus={agentEditor.loading} type="button" className="x" aria-label="Close agent editor" disabled={agentEditor.saving} onClick={closeAgentEditor}>×</button>
+            </div>
+            <div className="agent-dialog-id">{agentEditor.id}{agentEditor.customized ? ' · customized' : ' · built-in default'}</div>
+            {agentEditor.loading ? <div className="agent-dialog-loading">Loading persona card…</div> : (
+              <div className="agent-dialog-fields">
+                <label>
+                  <span>Display name</span>
+                  <input autoFocus aria-label="Agent display name" value={agentEditor.displayName} onChange={event => setAgentEditor(current => current ? { ...current, displayName: event.target.value } : current)} />
+                </label>
+                <label>
+                  <span>Role</span>
+                  <input aria-label="Agent role" value={agentEditor.kind} onChange={event => setAgentEditor(current => current ? { ...current, kind: event.target.value } : current)} />
+                </label>
+                <label className="wide">
+                  <span>Summary</span>
+                  <textarea aria-label="Agent summary" value={agentEditor.summary} onChange={event => setAgentEditor(current => current ? { ...current, summary: event.target.value } : current)} />
+                </label>
+                <label className="wide">
+                  <span>Capabilities</span>
+                  <input aria-label="Agent capabilities" value={agentEditor.capabilities} placeholder="implement, test, review" onChange={event => setAgentEditor(current => current ? { ...current, capabilities: event.target.value } : current)} />
+                </label>
+                <label>
+                  <span>Session stem</span>
+                  <input aria-label="Agent session stem" value={agentEditor.sessionStem} onChange={event => setAgentEditor(current => current ? { ...current, sessionStem: event.target.value } : current)} />
+                </label>
+                <label className="wide">
+                  <span>Launch command</span>
+                  <input aria-label="Agent launch command" value={agentEditor.launch} onChange={event => setAgentEditor(current => current ? { ...current, launch: event.target.value } : current)} />
+                </label>
+              </div>
+            )}
+            {agentEditor.preset ? <div className="agent-dialog-note">Saving materializes a local persona TOML override; the built-in default remains the fallback.</div> : null}
+            {agentEditor.error ? <div className="dialog-error" role="alert">{agentEditor.error}</div> : null}
+            <div className="board-dialog-actions">
+              <button type="button" disabled={agentEditor.saving} onClick={closeAgentEditor}>Cancel</button>
+              <button className="primary" type="submit" aria-label="Save agent override" disabled={agentEditor.loading || agentEditor.saving || !agentEditor.etag}>{agentEditor.saving ? 'Saving…' : 'Save override'}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {boardDialog ? (
+        <div
+          className="pop board-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label={boardDialog.mode === 'create' ? 'Create board' : boardDialog.mode === 'rename' ? 'Rename board' : 'Delete board'}
+          onPointerDown={event => event.stopPropagation()}
+        >
+          <div className="pop-head">
+            <span className="pt">{boardDialog.mode === 'create' ? 'Create board' : boardDialog.mode === 'rename' ? 'Rename board' : 'Delete board'}</span>
+            <button className="x" type="button" aria-label="Close board dialog" disabled={boardDialog.saving} onClick={closeBoardDialog}>x</button>
+          </div>
+          {boardDialog.mode === 'delete' ? (
+            <div className="pop-body">
+              <p className="board-delete-warning">
+                <strong>{boardDialog.title}</strong> will be removed from the live board list. Its definition and layout are archived, not destroyed; run history is untouched.
+              </p>
+              {boardDialog.error ? <p className="field-note error">{boardDialog.error}</p> : null}
+              <div className="pop-actions">
+                <button autoFocus className="cancel" type="button" disabled={boardDialog.saving} onClick={closeBoardDialog}>Cancel</button>
+                <button className="retire" type="button" disabled={boardDialog.saving} onClick={() => void archiveSelectedBoard()}>
+                  {boardDialog.saving ? 'Archiving…' : 'Archive board'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form
+              className="pop-body"
+              onSubmit={event => {
+                event.preventDefault()
+                void saveBoardName()
+              }}
+            >
+              <label htmlFor="formations-board-name">Board name</label>
+              <input
+                id="formations-board-name"
+                className="f"
+                autoFocus
+                value={boardDialog.title}
+                aria-invalid={boardDialog.error ? 'true' : undefined}
+                disabled={boardDialog.saving}
+                onChange={event => setBoardDialog(current => current ? { ...current, title: event.target.value, error: '' } : current)}
+              />
+              <p className="field-note">The board slug is derived from this name and remains stable after renaming.</p>
+              {boardDialog.error ? <p className="field-note error">{boardDialog.error}</p> : null}
+              <div className="pop-actions">
+                <button className="cancel" type="button" disabled={boardDialog.saving} onClick={closeBoardDialog}>Cancel</button>
+                <button className="save" type="submit" disabled={boardDialog.saving || !boardDialog.title.trim()}>
+                  {boardDialog.saving ? 'Saving…' : boardDialog.mode === 'create' ? 'Create board' : 'Save board name'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      ) : null}
 
       {inspectedTool ? (
         <div
@@ -2589,32 +3264,34 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       ) : null}
 
       {menu ? (
-        <div
-          className="ctxmenu"
-          role="menu"
-          aria-label={menu.label}
-          style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 80) }}
-          onPointerDown={event => event.stopPropagation()}
-        >
-          <div className="mhead">{menu.label}</div>
-          {menu.items.map((item, itemIndex) => item.head ? (
-            <div key={`${item.label}-${itemIndex}`} className="msection">{item.label}</div>
-          ) : (
-            <button
-              key={`${item.label}-${itemIndex}`}
-              type="button"
-              role="menuitem"
-              disabled={item.disabled}
-              className={item.destructive ? 'danger' : undefined}
-              onClick={() => {
-                closeMenu()
-                item.action?.()
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <DismissiblePanel onDismiss={closeMenu} panelPosition="fixed">
+          <div
+            className="formations-context-menu ctxmenu"
+            role="menu"
+            aria-label={menu.label}
+            style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 80) }}
+            onPointerDown={event => event.stopPropagation()}
+          >
+            <div className="mhead">{menu.label}</div>
+            {menu.items.map((item, itemIndex) => item.head ? (
+              <div key={`${item.label}-${itemIndex}`} className="msection">{item.label}</div>
+            ) : (
+              <button
+                key={`${item.label}-${itemIndex}`}
+                type="button"
+                role="menuitem"
+                disabled={item.disabled}
+                className={item.destructive ? 'danger' : undefined}
+                onClick={() => {
+                  closeMenu()
+                  item.action?.()
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </DismissiblePanel>
       ) : null}
 
       {ghost ? (

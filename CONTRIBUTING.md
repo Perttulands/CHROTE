@@ -19,7 +19,7 @@ operator data into a product change.
 - Go 1.26.6+
 - Node.js 20.19+ or 22.12+
 - npm
-- Python 3 for documentation and recovery-tool checks
+- Python 3 for documentation checks
 - tmux and ttyd only for approved live terminal integration work
 
 ## Setup
@@ -67,13 +67,6 @@ go test -race ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 go build -o /tmp/chrote-server-contributor ./cmd/server
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 -mode=binary /tmp/chrote-server-contributor
-```
-
-If you changed workload-recovery tooling, also run its Python test suite from the
-repository root:
-
-```bash
-python3 -m unittest discover -s scripts/tmux-recovery -p 'test_*.py'
 ```
 
 Live browser/terminal tests are separate because they operate an actual CHROTE

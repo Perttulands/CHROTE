@@ -14,7 +14,6 @@ release.
 - Unified default-closed Sessions/Files sidecars with Peek and explicit
   attached-window navigation.
 - Files workbench and terminal-companion file sidecar.
-- Session Bank with typed workload descriptors and workload-aware recovery.
 - Scheduled tasks and Server health/history cockpit views.
 - Documentation source-truth index and contract lint.
 
@@ -33,7 +32,7 @@ release.
   hardened for dense multi-window use.
 - Session rows now Peek without changing assignment metadata; location chips
   perform explicit attached-window navigation.
-- Bulk session destruction moved to advanced recovery settings.
+- Bulk session destruction moved to advanced Settings.
 - Optional services and workspaces degrade explicitly instead of silently
   fabricating data.
 
@@ -48,8 +47,6 @@ release.
 
 - Fresh terminal sidecars persist their default-closed state across reloads.
 - `/` opens Sessions for the active closed sidecar and focuses search.
-- Workload recovery records and restores supported agent, shell, and server
-  identities without claiming arbitrary shell-state resurrection.
 - Hidden keep-alive views no longer steal Escape from the visible interaction
   surface.
 
@@ -57,8 +54,8 @@ release.
 
 - Removed the revoked access-token/authentication experiment; CHROTE retains its
   documented localhost/private-network trust model.
-- Tightened file-root, symlink, terminal-origin, command-argument, gate-output,
-  and recovery-descriptor boundaries.
+- Tightened file-root, symlink, terminal-origin, command-argument, and gate-output
+  boundaries.
 - Release builds are being moved to a patched Go baseline with blocking source
   and binary vulnerability scans before the next tagged alpha.
 

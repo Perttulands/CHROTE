@@ -375,7 +375,7 @@ func (f *samePoolInputFenceFixture) cleanup(t *testing.T) {
 				continue
 			}
 			for _, sessionName := range sessions {
-				if _, err := f.handler.runTmuxOnSocketContext(context.Background(), target.socket, "kill-session", "-t", sessionName); err != nil && !isTmuxNoServerError(err.Error()) {
+				if _, err := f.handler.runTmuxOnSocketContext(context.Background(), target.socket, "kill-session", "-t", sessionName); err != nil && !isTmuxNoServerError(tmuxErrorDiagnostic(err)) {
 					t.Errorf("stop disposable session %q on %q: %v", sessionName, unixUser, err)
 				}
 			}

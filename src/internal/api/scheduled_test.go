@@ -721,8 +721,8 @@ exit 0
 	if err == nil {
 		t.Fatal("SendPrompt returned nil after guarded paste timeout and cleanup failure")
 	}
-	if !strings.Contains(err.Error(), "buffer cleanup failed") || !strings.Contains(err.Error(), "delete denied") {
-		t.Fatalf("error = %v, want fail-loud delete-buffer failure", err)
+	if !strings.Contains(err.Error(), "buffer cleanup failed") || !strings.Contains(err.Error(), "tmux command failed") || strings.Contains(err.Error(), "delete denied") {
+		t.Fatalf("error = %v, want fail-loud redacted delete-buffer failure", err)
 	}
 	if elapsed := time.Since(started); elapsed > 600*time.Millisecond {
 		t.Fatalf("cleanup failure escaped the caller deadline: elapsed %s", elapsed)

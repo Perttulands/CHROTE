@@ -164,6 +164,10 @@ func runWithRuntimeStoreFactory(args []string, stdout, stderr io.Writer, runner 
 			return runBoardList(store, args[2:], stdout, stderr)
 		case "inspect":
 			return runBoardInspect(store, args[2:], stdout, stderr)
+		case "notes":
+			return runBoardNotes(store, args[2:], stdout, stderr)
+		case "note":
+			return runBoardNote(store, args[2:], stdout, stderr)
 		case "validate":
 			return runBoardValidate(store, args[2:], stdout, stderr)
 		case "arrange":
@@ -402,27 +406,58 @@ func runAgentEdit(store *formations.PersonaStore, args []string, stdout, stderr 
 	removeCapability := fs.String("remove-capability", "", "remove bare capability")
 	addHarness := fs.String("add-harness", "", "add harness variant")
 	sessionStem := fs.String("session-stem", "", "session stem for added harness")
+	launch := fs.String("launch", "", "default or added-harness launch command")
+	displayName := fs.String("display-name", "", "replace display name")
+	kind := fs.String("kind", "", "replace role kind")
+	summary := fs.String("summary", "", "replace summary")
+	capable := fs.String("capable", "", "replace comma-separated bare capabilities")
 	note := fs.String("note", "", "append note")
 	jsonOut := fs.Bool("json", false, "write JSON")
 	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: archon agent edit <id> [--add-capability t|--remove-capability t|--add-harness h --session-stem s|--note text]")
+		fmt.Fprintln(stderr, "usage: archon agent edit <id> [--display-name n] [--kind k] [--summary s] [--capable a,b] [--session-stem s] [--launch command] [--add-capability t|--remove-capability t|--add-harness h|--note text]")
 		return 2
 	}
 	before, err := store.ReadPersona(fs.Arg(0))
 	if err != nil {
 		return fail(stderr, err)
 	}
-	card, err := store.EditPersona(fs.Arg(0), formations.EditPersonaRequest{
+	edit := formations.EditPersonaRequest{
 		AddCapability:    *addCapability,
 		RemoveCapability: *removeCapability,
 		AddHarness:       *addHarness,
-		SessionStem:      *sessionStem,
 		Note:             *note,
 		ExpectedETag:     before.ETag,
-	})
+	}
+	setFlags := map[string]bool{}
+	fs.Visit(func(current *flag.Flag) { setFlags[current.Name] = true })
+	if setFlags["display-name"] {
+		edit.SetDisplayName = displayName
+	}
+	if setFlags["kind"] {
+		edit.SetKind = kind
+	}
+	if setFlags["summary"] {
+		edit.SetSummary = summary
+	}
+	if setFlags["capable"] {
+		capabilities := splitCSV(*capable)
+		edit.SetCapabilities = &capabilities
+	}
+	if *addHarness != "" {
+		edit.SessionStem = *sessionStem
+		edit.Launch = *launch
+	} else {
+		if setFlags["session-stem"] {
+			edit.SetSessionStem = sessionStem
+		}
+		if setFlags["launch"] {
+			edit.SetLaunch = launch
+		}
+	}
+	card, err := store.EditPersona(fs.Arg(0), edit)
 	if err != nil {
 		return fail(stderr, err)
 	}
@@ -1867,6 +1902,111 @@ func runBoardInspect(store *formations.Store, args []string, stdout, stderr io.W
 	}
 	fmt.Fprintf(stdout, "%s	%s	%d	%d formations\n", board.Slug, board.Title, board.Rev, len(board.Formations))
 	return 0
+}
+
+func runBoardNotes(store *formations.Store, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("board notes", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	jsonOut := fs.Bool("json", false, "write JSON")
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: archon board notes <board> [--json]")
+		return 2
+	}
+	slug, err := store.ResolveBoardSelector(fs.Arg(0))
+	if err != nil {
+		return failSelector(stderr, err, *jsonOut, "board", fs.Arg(0))
+	}
+	notes, err := store.ReadBoardNotes(slug)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	if *jsonOut {
+		return writeJSON(stdout, notes)
+	}
+	if notes.Board == "" && len(notes.Elements) == 0 {
+		fmt.Fprintf(stdout, "%s\tno notes\n", slug)
+		return 0
+	}
+	if notes.Board != "" {
+		fmt.Fprintf(stdout, "[board]\n%s\n", notes.Board)
+	}
+	for _, note := range notes.Elements {
+		fmt.Fprintf(stdout, "\n[%s]\n%s\n", note.NodeID, note.Text)
+	}
+	return 0
+}
+
+func runBoardNote(store *formations.Store, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("board note", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	text := fs.String("text", "", "note text")
+	file := fs.String("file", "", "read note text from file")
+	node := fs.String("node", "", "element id; omit for the board note")
+	clear := fs.Bool("clear", false, "clear the selected note")
+	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
+	jsonOut := fs.Bool("json", false, "write JSON")
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"clear": true, "json": true})); err != nil {
+		return 2
+	}
+	textSet := false
+	fs.Visit(func(flagValue *flag.Flag) {
+		if flagValue.Name == "text" {
+			textSet = true
+		}
+	})
+	if fs.NArg() != 1 || boolCount(textSet, *file != "", *clear) != 1 {
+		fmt.Fprintln(stderr, "usage: archon board note <board> (--text <text> | --file <path> | --clear) [--node <element-id>] [--json]")
+		return 2
+	}
+	slug, err := store.ResolveBoardSelector(fs.Arg(0))
+	if err != nil {
+		return failSelector(stderr, err, *jsonOut, "board", fs.Arg(0))
+	}
+	value := *text
+	if *file != "" {
+		raw, err := os.ReadFile(*file)
+		if err != nil {
+			return fail(stderr, err)
+		}
+		value = string(raw)
+	}
+	if *clear {
+		value = ""
+	}
+	target := strings.TrimSpace(*node)
+	if target == "" {
+		target = formations.BoardNoteTarget
+	}
+	current, err := store.ReadBoardNotes(slug)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	updated, err := store.UpdateBoardNote(slug, formations.BoardNotePatch{
+		Target:    target,
+		Text:      value,
+		UpdatedBy: *updatedBy,
+	}, formations.NoteWriteOptions{ExpectedETag: current.ETag})
+	if err != nil {
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
+	}
+	if *jsonOut {
+		return writeJSON(stdout, updated)
+	}
+	fmt.Fprintf(stdout, "updated %s note on %s (notes rev %d)\n", target, slug, updated.Rev)
+	return 0
+}
+
+func boolCount(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
+		}
+	}
+	return count
 }
 
 func runBoardValidate(store *formations.Store, args []string, stdout, stderr io.Writer) int {

@@ -94,6 +94,32 @@ test.describe('terminal workspace sidecars', () => {
     expect(reopened.width).toBeLessThan(initial.width - 200)
   })
 
+  test('paints session context menus above the adjacent Files sidecar', async ({ page }) => {
+    await openFreshTerminal(page, { width: 1280, height: 800 })
+    await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
+    await page.getByRole('button', { name: 'Files sidecar' }).click()
+    await page.getByRole('button', { name: 'Session creation options' }).click()
+
+    const menu = page.locator('.session-context-menu')
+    const files = page.locator('.terminal-files-panel.sidecar-pinned')
+    await expect(menu).toBeVisible()
+    await expect(files).toBeVisible()
+
+    const menuBox = await box(menu)
+    const filesBox = await box(files)
+    const overlapLeft = Math.max(menuBox.x, filesBox.x)
+    const overlapRight = Math.min(menuBox.x + menuBox.width, filesBox.x + filesBox.width)
+    expect(overlapRight - overlapLeft).toBeGreaterThan(4)
+
+    const menuWinsHitTest = await page.evaluate(({ x, y }) => (
+      document.elementFromPoint(x, y)?.closest('.session-context-menu') !== null
+    ), {
+      x: overlapLeft + 2,
+      y: menuBox.y + Math.min(20, menuBox.height / 2),
+    })
+    expect(menuWinsHitTest).toBe(true)
+  })
+
   test('uses icon-only hit-testable launchers and independent overlay drawers on narrow screens', async ({ page }) => {
     await openFreshTerminal(page, { width: 700, height: 800 })
 

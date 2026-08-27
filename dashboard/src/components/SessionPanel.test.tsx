@@ -9,7 +9,6 @@ const addToast = vi.fn()
 const fetchMock = vi.fn()
 
 const mockState = vi.hoisted(() => ({
-  sessionBank: [] as Array<Record<string, unknown>>,
   sessions: [] as Array<Record<string, unknown>>,
 }))
 
@@ -23,7 +22,6 @@ vi.mock('../context/SessionContext', () => ({
     refreshSessions,
     createSession,
     sessions: mockState.sessions,
-    sessionBank: mockState.sessionBank,
     settings: {
       ...DEFAULT_SETTINGS,
       terminalSessionPrefixes: { alice: 'alice', bob: 'bob' },
@@ -40,30 +38,9 @@ vi.mock('./NukeConfirmModal', () => ({
   default: () => null,
 }))
 
-function addAgentBankedSession(overrides: Record<string, unknown> = {}) {
-  mockState.sessionBank.push({
-    id: '$7',
-    name: 'codex-alpha',
-    unixUser: 'alice',
-    windows: 1,
-    attached: false,
-    group: 'codex',
-    live: false,
-    firstSeen: '2026-07-07T20:00:00Z',
-    lastSeen: '2026-07-07T21:00:00Z',
-    recoveryKind: 'agent',
-    agentKind: 'codex',
-    agentSessionId: '019f45ec-f88b-7f70-88dc-b5b99a9e94c6',
-    resumeCommand: 'codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6',
-    cwd: '/srv/chrote',
-    ...overrides,
-  })
-}
-
 describe('SessionPanel new-session context menu', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockState.sessionBank.length = 0
     mockState.sessions.length = 0
     createSession.mockResolvedValue('created')
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true, removed: true }) })
@@ -101,7 +78,7 @@ describe('SessionPanel new-session context menu', () => {
     expect(popup).toHaveClass('session-named-popup')
     const layers = document.querySelectorAll('.floating-panel-dismiss-layer')
     expect(layers).toHaveLength(1)
-    expect(container.querySelectorAll('.session-context-menu')).toHaveLength(1)
+    expect(document.querySelectorAll('.session-context-menu')).toHaveLength(1)
     expect(Number(popup.style.zIndex)).toBeGreaterThan(Number((layers[0] as HTMLElement).style.zIndex))
     expect(container.querySelector('.session-panel-content .session-named-create')).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('New session name'), { target: { value: 'research-agent' } })
@@ -110,22 +87,6 @@ describe('SessionPanel new-session context menu', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalled())
     expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal3', unixUser: 'bob', name: 'research-agent' })
     expect(screen.queryByText('Nuke All')).not.toBeInTheDocument()
-  })
-
-  it('keeps banked session cards out of the Terminal tab and exposes only a compact Settings affordance', () => {
-    addAgentBankedSession()
-    const openSessionBankSettings = vi.fn()
-
-    render(<SessionPanel activeWorkspaceId="terminal1" onOpenSessionBankSettings={openSessionBankSettings} />)
-
-    expect(screen.queryByRole('heading', { name: /Session bank/i })).not.toBeInTheDocument()
-    expect(screen.queryByText('codex-alpha')).not.toBeInTheDocument()
-    expect(screen.queryByText('codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6')).not.toBeInTheDocument()
-
-    const settingsLink = screen.getByRole('button', { name: 'Open Session Bank settings for 1 banked session' })
-    expect(settingsLink).toHaveTextContent('Session Bank · 1 banked')
-    fireEvent.click(settingsLink)
-    expect(openSessionBankSettings).toHaveBeenCalled()
   })
 
   it('keeps bulk destruction out of the primary Session panel', () => {

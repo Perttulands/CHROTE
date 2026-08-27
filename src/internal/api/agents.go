@@ -106,29 +106,47 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 
 func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		AddCapability    string `json:"addCapability"`
-		RemoveCapability string `json:"removeCapability"`
-		AddHarness       string `json:"addHarness"`
-		SessionStem      string `json:"sessionStem"`
-		Launch           string `json:"launch"`
-		Source           string `json:"source"`
-		Note             string `json:"note"`
-		Retire           bool   `json:"retire"`
+		AddCapability    string    `json:"addCapability"`
+		RemoveCapability string    `json:"removeCapability"`
+		AddHarness       string    `json:"addHarness"`
+		SessionStem      *string   `json:"sessionStem"`
+		Launch           *string   `json:"launch"`
+		Source           string    `json:"source"`
+		Note             string    `json:"note"`
+		Retire           bool      `json:"retire"`
+		DisplayName      *string   `json:"displayName"`
+		Kind             *string   `json:"kind"`
+		Summary          *string   `json:"summary"`
+		Capabilities     *[]string `json:"capabilities"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
-	card, err := h.store.EditPersona(r.PathValue("agentId"), formations.EditPersonaRequest{
+	edit := formations.EditPersonaRequest{
 		AddCapability:    req.AddCapability,
 		RemoveCapability: req.RemoveCapability,
 		AddHarness:       req.AddHarness,
-		SessionStem:      req.SessionStem,
-		Launch:           req.Launch,
 		Source:           req.Source,
 		Note:             req.Note,
 		Retire:           req.Retire,
 		ExpectedETag:     r.Header.Get("If-Match"),
-	})
+		SetDisplayName:   req.DisplayName,
+		SetKind:          req.Kind,
+		SetSummary:       req.Summary,
+		SetCapabilities:  req.Capabilities,
+	}
+	if req.AddHarness != "" {
+		if req.SessionStem != nil {
+			edit.SessionStem = *req.SessionStem
+		}
+		if req.Launch != nil {
+			edit.Launch = *req.Launch
+		}
+	} else {
+		edit.SetSessionStem = req.SessionStem
+		edit.SetLaunch = req.Launch
+	}
+	card, err := h.store.EditPersona(r.PathValue("agentId"), edit)
 	if err != nil {
 		writeAgentError(w, err)
 		return

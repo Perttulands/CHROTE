@@ -1166,7 +1166,7 @@ describe('refreshSessions', () => {
     expect(requests).toHaveLength(1)
 
     await act(async () => {
-      requests[0].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
+      requests[0].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: ['alice'] }))
       await Promise.resolve()
     })
     expect(requests).toHaveLength(2)
@@ -1180,14 +1180,14 @@ describe('refreshSessions', () => {
     expect(requests).toHaveLength(2)
 
     await act(async () => {
-      requests[1].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
+      requests[1].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: ['alice'] }))
       await Promise.resolve()
     })
     expect(requests).toHaveLength(3)
     expect(coalescedSettled).toBe(true)
 
     await act(async () => {
-      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
+      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: ['alice'] }))
       await Promise.resolve()
     })
     expect(requests).toHaveLength(3)
@@ -1219,13 +1219,13 @@ describe('refreshSessions', () => {
     expect(requests).toHaveLength(1)
 
     await act(async () => {
-      requests[0].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      requests[0].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
       await Promise.resolve()
     })
     expect(requests).toHaveLength(2)
 
     await act(async () => {
-      requests[1].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      requests[1].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
       await Promise.resolve()
     })
     expect(requests).toHaveLength(2)
@@ -1246,7 +1246,7 @@ describe('refreshSessions', () => {
     })
 
     await act(async () => {
-      requests[0].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      requests[0].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
       await Promise.resolve()
     })
     expect(requests).toHaveLength(2)
@@ -1261,14 +1261,14 @@ describe('refreshSessions', () => {
     expect(refreshSettled).toBe(false)
 
     await act(async () => {
-      requests[1].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      requests[1].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
       await Promise.resolve()
     })
     expect(requests).toHaveLength(3)
     expect(refreshSettled).toBe(false)
 
     await act(async () => {
-      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
       await refreshDuringTrailing
     })
     expect(refreshSettled).toBe(true)
@@ -1324,7 +1324,6 @@ describe('refreshSessions', () => {
         requests[1].response.resolve(sessionResponse({
           sessions: [{ name: 'trailing' }],
           grouped: {},
-          banked: [],
           terminalUsers: [],
         }))
         await queuedRefresh
@@ -1339,7 +1338,6 @@ describe('refreshSessions', () => {
         requests[2].response.resolve(sessionResponse({
           sessions: [{ name: 'later' }],
           grouped: {},
-          banked: [],
           terminalUsers: [],
         }))
         await laterRefresh
@@ -1390,7 +1388,6 @@ describe('refreshSessions', () => {
       requests[1].response.resolve(sessionResponse({
         sessions: [{ name: 'newer' }],
         grouped: {},
-        banked: [],
         terminalUsers: [],
       }))
       await flushPromises()
@@ -1458,7 +1455,6 @@ describe('refreshSessions', () => {
       requests[1].response.resolve(sessionResponse({
         sessions: [{ name: 'current-generation' }],
         grouped: {},
-        banked: [],
         terminalUsers: [],
       }))
       await flushPromises()
@@ -1509,13 +1505,11 @@ describe('refreshSessions', () => {
     const { result, unmount } = renderSession()
     const knownSession = { name: 'known', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
     const knownGrouped = { shell: [knownSession] }
-    const knownBank = [{ name: 'banked', unixUser: 'alice', live: false }]
 
     await act(async () => {
       requests[0].response.resolve(sessionResponse({
         sessions: [knownSession],
         grouped: knownGrouped,
-        banked: knownBank,
         terminalUsers: ['alice'],
       }))
       await flushPromises()
@@ -1547,7 +1541,6 @@ describe('refreshSessions', () => {
     expect(result.current).toMatchObject({
       sessions: [knownSession],
       groupedSessions: knownGrouped,
-      sessionBank: knownBank,
       terminalUsers: ['alice'],
       floatingSession: 'alice:known',
       sendToSessionTarget: 'alice:known',
@@ -1563,7 +1556,7 @@ describe('refreshSessions', () => {
     const firstAuthoritativeMissing = result.current.refreshSessions()
     expect(requests).toHaveLength(3)
     await act(async () => {
-      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
       await firstAuthoritativeMissing
     })
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:known'])
@@ -1572,7 +1565,7 @@ describe('refreshSessions', () => {
 
     const secondAuthoritativeMissing = result.current.refreshSessions()
     await act(async () => {
-      requests[3].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      requests[3].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
       await secondAuthoritativeMissing
     })
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
@@ -1595,7 +1588,6 @@ describe('refreshSessions', () => {
       requests[0].response.resolve(sessionResponse({
         sessions: [knownSession],
         grouped: { shell: [knownSession] },
-        banked: [{ name: 'known-banked', unixUser: 'alice', live: false }],
         terminalUsers: ['alice'],
       }))
       await flushPromises()
@@ -1609,7 +1601,6 @@ describe('refreshSessions', () => {
         error: 'build: error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)',
         sessions: [healthySession],
         grouped: { shell: [healthySession] },
-        banked: [],
         terminalUsers: ['alice', 'build'],
       }))
       await partialRefresh
@@ -1652,13 +1643,11 @@ describe('refreshSessions', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { result } = renderSession()
     const staleSession = { name: 'stale', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
-    const knownBank = [{ name: 'banked', unixUser: 'alice', live: false }]
 
     await act(async () => {
       requests[0].response.resolve(sessionResponse({
         sessions: [staleSession],
         grouped: { shell: [staleSession] },
-        banked: knownBank,
         terminalUsers: ['alice'],
       }))
       await Promise.resolve()
@@ -1672,7 +1661,6 @@ describe('refreshSessions', () => {
     const knownState = {
       sessions: result.current.sessions,
       groupedSessions: result.current.groupedSessions,
-      sessionBank: result.current.sessionBank,
       terminalUsers: result.current.terminalUsers,
       floatingSession: result.current.floatingSession,
       sendToSessionTarget: result.current.sendToSessionTarget,
@@ -1681,7 +1669,6 @@ describe('refreshSessions', () => {
       error: 'tmux unavailable',
       sessions: [{ name: 'not-authoritative' }],
       grouped: { bad: [{ name: 'not-authoritative' }] },
-      banked: [{ name: 'not-authoritative' }],
       terminalUsers: ['not-authoritative'],
     }
 
@@ -1712,7 +1699,7 @@ describe('refreshSessions', () => {
 
     const firstMissing = result.current.refreshSessions()
     await act(async () => {
-      requests[4].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
+      requests[4].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: ['alice'] }))
       await firstMissing
     })
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:stale', 'alice:protected'])
@@ -1721,7 +1708,7 @@ describe('refreshSessions', () => {
 
     const secondMissing = result.current.refreshSessions()
     await act(async () => {
-      requests[5].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
+      requests[5].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: ['alice'] }))
       await secondMissing
     })
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:protected'])
@@ -1731,7 +1718,7 @@ describe('refreshSessions', () => {
     for (const requestIndex of [6, 7]) {
       const refresh = result.current.refreshSessions()
       await act(async () => {
-        requests[requestIndex].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
+        requests[requestIndex].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: ['alice'] }))
         await refresh
       })
     }
@@ -1771,13 +1758,11 @@ describe('refreshSessions', () => {
       const { result, unmount } = renderSession()
       const knownSession = { name: 'known', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
       const knownGrouped = { shell: [knownSession] }
-      const knownBank = [{ name: 'banked', unixUser: 'alice', live: false }]
 
       await act(async () => {
         requests[0].response.resolve(sessionResponse({
           sessions: [knownSession],
           grouped: knownGrouped,
-          banked: knownBank,
           terminalUsers: ['alice'],
         }))
         await Promise.resolve()
@@ -1806,7 +1791,6 @@ describe('refreshSessions', () => {
       expect(result.current).toMatchObject({
         sessions: [knownSession],
         groupedSessions: knownGrouped,
-        sessionBank: knownBank,
         terminalUsers: ['alice'],
         floatingSession: 'alice:known',
         sendToSessionTarget: 'alice:known',
@@ -1818,7 +1802,7 @@ describe('refreshSessions', () => {
 
       const firstMissing = result.current.refreshSessions()
       await act(async () => {
-        requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+        requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
         await firstMissing
       })
       expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
@@ -1830,7 +1814,7 @@ describe('refreshSessions', () => {
 
       const secondMissing = result.current.refreshSessions()
       await act(async () => {
-        requests[3].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+        requests[3].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
         await secondMissing
       })
       expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
@@ -1852,12 +1836,6 @@ describe('refreshSessions', () => {
       { name: 'alive', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
       { name: 'legacy-live', windows: 1, attached: false, group: 'shell' },
       { name: 'agent-live', windows: 1, attached: false, group: 'agents', unixUser: 'build' },
-    ]
-    const banked = [
-      {
-        name: 'gone', windows: 1, attached: false, group: 'shell', unixUser: 'alice', live: false,
-        firstSeen: '2026-07-10T10:00:00Z', lastSeen: '2026-07-10T10:05:00Z', recoveryKind: 'shell',
-      },
     ]
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
       version: 3,
@@ -1898,7 +1876,6 @@ describe('refreshSessions', () => {
       json: () => Promise.resolve({
         sessions: liveSessions,
         grouped: { shell: liveSessions.slice(0, 2), agents: liveSessions.slice(2) },
-        banked,
         timestamp: new Date().toISOString(),
       }),
       text: () => Promise.resolve(''),
@@ -1920,41 +1897,6 @@ describe('refreshSessions', () => {
       expect(result.current.workspaces.terminal2.windows[0].boundSessions).toEqual(['build:agent-live'])
       expect(result.current.workspaces.terminal2.windows[0].activeSession).toBe('build:agent-live')
     })
-    expect(result.current.sessionBank).toEqual(banked)
-  })
-
-  it('stores managed status registry entries separately from banked sessions', async () => {
-    const banked = [{ name: 'banked-agent', unixUser: 'alice', live: false }]
-    const managed = [{
-      name: 'systemd-worker',
-      sessionName: 'systemd-worker',
-      unixUser: 'alice',
-      owner: { kind: 'external_manager', ref: 'systemd:user/worker.service', mayRestart: false },
-      managerKind: 'systemd-user',
-      managerRef: 'worker.service',
-      status: { ok: true, activeState: 'active', checkedAt: '2026-07-15T10:00:00Z' },
-      storageKind: 'managed-status',
-      sourceKind: 'restore',
-    }]
-    const fetchMock = vi.fn((): Promise<any> => Promise.resolve({
-      ok: true,
-      json: () => Promise.resolve({
-        sessions: [],
-        grouped: {},
-        banked,
-        managed,
-        terminalUsers: ['alice'],
-        timestamp: new Date().toISOString(),
-      }),
-      text: () => Promise.resolve(''),
-    }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const { result } = renderSession()
-
-    await waitFor(() => expect(result.current.sessionBank).toEqual(banked))
-    expect(result.current.managedSessions).toEqual(managed)
-    expect(result.current.sessionBank).not.toContainEqual(expect.objectContaining({ name: 'systemd-worker' }))
   })
 
   it('preserves terminal bindings when a refresh fails instead of sweeping on uncertainty', async () => {

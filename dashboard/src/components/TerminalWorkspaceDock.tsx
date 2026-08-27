@@ -21,7 +21,6 @@ interface TerminalWorkspaceDockProps {
   onSessionsDockStateChange: Dispatch<SetStateAction<SessionsDockState>>
   sessionsForcedPinned: boolean
   onFilesOpenChange: (workspaceId: WorkspaceId, open: boolean) => void
-  onOpenSessionBankSettings: () => void
   onOpenInFiles: (path: string) => void
 }
 
@@ -56,7 +55,6 @@ function TerminalWorkspaceDock({
   sessionsDockState,
   onSessionsDockStateChange,
   onFilesOpenChange,
-  onOpenSessionBankSettings,
   onOpenInFiles,
 }: TerminalWorkspaceDockProps) {
   const { sessions } = useSession()
@@ -193,7 +191,6 @@ function TerminalWorkspaceDock({
       {active && sessionsOpen && (
         <SessionPanel
           activeWorkspaceId={workspaceId}
-          onOpenSessionBankSettings={onOpenSessionBankSettings}
           collapsed={false}
           width={sessionsDockState.width}
           pinned={sessionsPinned}

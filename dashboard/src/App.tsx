@@ -154,7 +154,6 @@ function DashboardContent() {
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [showPresets, setShowPresets] = useState(false)
-  const [settingsSessionBankFocusNonce, setSettingsSessionBankFocusNonce] = useState(0)
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
   const [formationsVisited, setFormationsVisited] = useState(false)
   const {
@@ -225,11 +224,6 @@ function DashboardContent() {
     setFilesNavigateRequest({ path, nonce: Date.now() })
     setActiveTab('files')
   }, [])
-  const handleOpenSessionBankSettings = useCallback(() => {
-    setSettingsSessionBankFocusNonce(Date.now())
-    setActiveTab('settings')
-  }, [])
-
   useEffect(() => {
     if (windowRevealRequest) {
       setActiveTab(windowRevealRequest.workspaceId)
@@ -330,7 +324,6 @@ function DashboardContent() {
               onSessionsDockStateChange={setSessionsDockState}
               sessionsForcedPinned={sessionsForcedPinned}
               onFilesOpenChange={handleFilesOpenChange}
-              onOpenSessionBankSettings={handleOpenSessionBankSettings}
               onOpenInFiles={handleOpenProjectInFiles}
             />
           ))}
@@ -425,7 +418,7 @@ function DashboardContent() {
           {activeTab === 'settings' && (
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
-                <SettingsView sessionBankFocusNonce={settingsSessionBankFocusNonce} />
+                <SettingsView />
               </Suspense>
             </ErrorBoundary>
           )}

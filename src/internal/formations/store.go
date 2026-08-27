@@ -36,8 +36,10 @@ type Store struct {
 	Workspace string
 	Now       func() time.Time
 
-	runtimeAuthority    *runtimeAuthorityBoundary
-	newToolDefinitionID func(string) string
+	runtimeAuthority                     *runtimeAuthorityBoundary
+	newToolDefinitionID                  func(string) string
+	deleteBoardAfterLayoutArchiveForTest func()
+	archiveDirectorySyncForTest          func() error
 }
 
 type BoardDocument struct {
@@ -93,6 +95,13 @@ type BoardCreateRequest struct {
 	Slug      string
 	Title     string
 	UpdatedBy string
+}
+
+type BoardDeletion struct {
+	ID        string `json:"id"`
+	Slug      string `json:"slug"`
+	Title     string `json:"title"`
+	ArchiveID string `json:"archiveId"`
 }
 
 type LayoutMetadataPatch struct {
@@ -199,6 +208,69 @@ func (s *Store) CreateBoard(req BoardCreateRequest) (*BoardDocument, error) {
 		return nil, err
 	}
 	return created, nil
+}
+
+func (s *Store) DeleteBoard(slug string, opts WriteOptions) (*BoardDeletion, error) {
+	if err := validateSlug(slug); err != nil {
+		return nil, err
+	}
+	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
+		return nil, ErrPreconditionRequired
+	}
+
+	var deleted *BoardDeletion
+	err := s.withBoardDefinitionLock(slug, func(boardDefinition *definitionFile) error {
+		raw, err := boardDefinition.readBytes()
+		if err != nil {
+			return err
+		}
+		board, err := parseBoardForWrite(raw)
+		if err != nil {
+			return err
+		}
+		if board.ETag != opts.ExpectedETag || board.Rev != opts.ExpectedRev {
+			return ErrConflict
+		}
+
+		archiveID := newPrefixedID("archive")
+		return s.withLayoutDefinitionLock(slug, func(layoutDefinition *definitionFile) error {
+			layoutArchive := ""
+			exists, err := layoutDefinition.exists()
+			if err != nil {
+				return err
+			}
+			if exists {
+				layoutArchive, err = layoutDefinition.archiveWithSync(archiveID, s.archiveDirectorySyncForTest)
+				if err != nil {
+					return err
+				}
+			}
+			if s.deleteBoardAfterLayoutArchiveForTest != nil {
+				s.deleteBoardAfterLayoutArchiveForTest()
+			}
+
+			boardArchive, err := boardDefinition.archiveWithSync(archiveID, s.archiveDirectorySyncForTest)
+			if err != nil {
+				// A non-empty archive name means rename committed but directory
+				// durability is uncertain. Do not invent a rollback outcome.
+				if boardArchive != "" {
+					return err
+				}
+				if layoutArchive != "" {
+					if restoreErr := layoutDefinition.restoreArchived(layoutArchive); restoreErr != nil {
+						return fmt.Errorf("archive board: %v; restore layout: %w", err, restoreErr)
+					}
+				}
+				return err
+			}
+			deleted = &BoardDeletion{ID: board.ID, Slug: board.Slug, Title: board.Title, ArchiveID: archiveID}
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return deleted, nil
 }
 
 func (s *Store) BoardChangeSince(slug, previousETag string) (*BoardChangeSignal, error) {

@@ -12,7 +12,7 @@ describe('DismissiblePanel', () => {
     )
 
     const panel = screen.getByTestId('panel-content')
-    const layer = container.querySelector('.floating-panel-dismiss-layer') as HTMLElement
+    const layer = document.querySelector('.floating-panel-dismiss-layer') as HTMLElement
     expect(panel.style.position).toBe('fixed')
     expect(Number(panel.style.zIndex)).toBeGreaterThan(Number(layer.style.zIndex))
 
@@ -24,6 +24,17 @@ describe('DismissiblePanel', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onDismiss).toHaveBeenCalledTimes(2)
-    expect(container).toContainElement(panel)
+    expect(container).not.toContainElement(panel)
+    expect(document.body).toContainElement(panel)
+  })
+
+  it('keeps absolute dropdowns in their positioning container', () => {
+    const { container } = render(
+      <DismissiblePanel onDismiss={vi.fn()} panelPosition="absolute">
+        <div data-testid="anchored-panel">Panel</div>
+      </DismissiblePanel>
+    )
+
+    expect(container).toContainElement(screen.getByTestId('anchored-panel'))
   })
 })

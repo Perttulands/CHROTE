@@ -1,6 +1,8 @@
 import { FileItem, FileOperationError, DirectoryResponse, RawFileItem } from './types'
 
 const API_BASE = '/api/files'
+const TEXT_FILE_ACCEPT = 'text/plain, text/*, application/json, */*'
+export const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024
 
 // ============================================
 // FILENAME SANITIZATION (security)
@@ -191,12 +193,19 @@ export async function createFolder(path: string, name: string): Promise<void> {
  * Read a file as text for the editor/preview pane.
  * Throws on all non-OK responses so callers can surface the real failure.
  */
-export async function readTextFile(path: string): Promise<string> {
+export async function readTextFile(path: string, maxBytes = MAX_TEXT_PREVIEW_BYTES): Promise<string> {
+  const response = await fetchRawFile(path)
+  const bytes = await readBoundedBytes(response, maxBytes)
+  if (bytes === null) throw new FileOperationError('File too large', 'STORAGE', 413)
+  return new TextDecoder().decode(bytes)
+}
+
+async function fetchRawFile(path: string): Promise<Response> {
   let response: Response
   try {
     response = await fetch(getDownloadUrl(path), {
       headers: {
-        'Accept': 'text/plain, text/*, application/json, */*',
+        'Accept': TEXT_FILE_ACCEPT,
       },
       signal: AbortSignal.timeout(10000),
     })
@@ -208,7 +217,67 @@ export async function readTextFile(path: string): Promise<string> {
   }
 
   throwForStatus(response, 'Failed to read file')
-  return response.text()
+  return response
+}
+
+async function readBoundedBytes(response: Response, maxBytes: number): Promise<Uint8Array | null> {
+  const contentLength = Number(response.headers.get('Content-Length'))
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    await response.body?.cancel()
+    return null
+  }
+  if (!response.body) return new Uint8Array()
+
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      if (total + value.byteLength > maxBytes) {
+        await reader.cancel()
+        return null
+      }
+      chunks.push(value)
+      total += value.byteLength
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
+}
+
+/**
+ * Probe an otherwise unknown file without turning binary data into mojibake or
+ * buffering beyond the preview limit, even when listing metadata is stale.
+ */
+export async function probeTextFile(path: string, maxBytes = MAX_TEXT_PREVIEW_BYTES): Promise<string | null> {
+  const response = await fetchRawFile(path)
+  const bytes = await readBoundedBytes(response, maxBytes)
+  if (bytes === null) return null
+  if (bytes.includes(0)) return null
+
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    return null
+  }
+
+  for (const character of text) {
+    const codePoint = character.codePointAt(0) || 0
+    if (codePoint < 32 && codePoint !== 9 && codePoint !== 10 && codePoint !== 13) return null
+  }
+  return text
 }
 
 /**

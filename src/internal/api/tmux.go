@@ -30,37 +30,11 @@ import (
 
 // TmuxHandler handles tmux-related API endpoints
 type TmuxHandler struct {
-	cache      *sessionsCache
-	colorRegex *regexp.Regexp
-	socket     string
-	workDir    string
-	bank       *sessionBankStore
-	managed    *managedRecoveryStatusStore
-	// recoveryMu serializes recovery-owner checks with the store or tmux
-	// mutation that makes the winning claim observable.
-	recoveryMu     sync.Mutex
+	cache          *sessionsCache
+	colorRegex     *regexp.Regexp
+	socket         string
+	workDir        string
 	sessionDropSem chan struct{}
-}
-
-type recoveryOwnershipConflict struct {
-	OwnerKind string
-	OwnerRef  string
-}
-
-func (e *recoveryOwnershipConflict) Error() string {
-	if e == nil {
-		return "recovery ownership conflict"
-	}
-	return fmt.Sprintf("%s owns recovery: owner kind %q, ref %q", strings.ReplaceAll(e.OwnerKind, "_", " "), e.OwnerKind, e.OwnerRef)
-}
-
-func writeRecoveryOwnershipError(w http.ResponseWriter, conflictCode, failureCode string, err error) {
-	var conflict *recoveryOwnershipConflict
-	if errors.As(err, &conflict) {
-		core.WriteError(w, http.StatusConflict, conflictCode, conflict.Error())
-		return
-	}
-	core.WriteError(w, http.StatusInternalServerError, failureCode, err.Error())
 }
 
 type sessionsCache struct {
@@ -72,38 +46,14 @@ type sessionsCache struct {
 
 // SessionsResponse is the response for listing sessions
 type SessionsResponse struct {
-	Sessions      []core.Session               `json:"sessions"`
-	Grouped       map[string][]core.Session    `json:"grouped"`
-	Banked        []SessionBankEntry           `json:"banked"`
-	Managed       []ManagedRecoveryStatusEntry `json:"managed"`
-	TerminalUsers []string                     `json:"terminalUsers"`
-	Timestamp     string                       `json:"timestamp"`
-	Error         string                       `json:"error,omitempty"`
+	Sessions      []core.Session            `json:"sessions"`
+	Grouped       map[string][]core.Session `json:"grouped"`
+	TerminalUsers []string                  `json:"terminalUsers"`
+	Timestamp     string                    `json:"timestamp"`
+	Error         string                    `json:"error,omitempty"`
 	// Partial is true only when configured-user tmux collection is the sole
 	// source of errors and at least one configured user succeeded.
 	Partial bool `json:"partial,omitempty"`
-}
-
-// SessionBankEntry is a durable reminder of a terminal session that CHROTE has
-// seen. It survives CHROTE/tmux restarts so agent resume IDs stay visible.
-type SessionBankEntry struct {
-	ID                  string                       `json:"id,omitempty"`
-	Name                string                       `json:"name"`
-	UnixUser            string                       `json:"unixUser,omitempty"`
-	Group               string                       `json:"group"`
-	Windows             int                          `json:"windows"`
-	Attached            bool                         `json:"attached"`
-	Live                bool                         `json:"live"`
-	FirstSeen           string                       `json:"firstSeen"`
-	LastSeen            string                       `json:"lastSeen"`
-	RecoveryKind        string                       `json:"recoveryKind,omitempty"`
-	AgentKind           string                       `json:"agentKind,omitempty"`
-	AgentSessionID      string                       `json:"agentSessionId,omitempty"`
-	ResumeCommand       string                       `json:"resumeCommand"`
-	CWD                 string                       `json:"cwd,omitempty"`
-	TranscriptPath      string                       `json:"transcriptPath,omitempty"`
-	RecoveryPlan        []WorkloadRecoveryDescriptor `json:"recoveryPlan,omitempty"`
-	RecoveryPlanPresent bool                         `json:"-"`
 }
 
 // CreateSessionRequest is the request body for creating a session
@@ -111,24 +61,6 @@ type CreateSessionRequest struct {
 	Name        string `json:"name"`
 	UnixUser    string `json:"unixUser,omitempty"`
 	MouseScroll *bool  `json:"mouseScroll,omitempty"`
-}
-
-// RecoverBankedSessionRequest is the request body for recovering a banked agent session.
-type RecoverBankedSessionRequest struct {
-	UnixUser     string `json:"unixUser,omitempty"`
-	MouseScroll  *bool  `json:"mouseScroll,omitempty"`
-	TopologyOnly bool   `json:"topologyOnly,omitempty"`
-}
-
-// UpdateBankedRecoveryRequest records agent recovery metadata for a banked session.
-type UpdateBankedRecoveryRequest struct {
-	UnixUser            string                       `json:"unixUser,omitempty"`
-	AgentKind           string                       `json:"agentKind"`
-	AgentSessionID      string                       `json:"agentSessionId"`
-	CWD                 string                       `json:"cwd,omitempty"`
-	TranscriptPath      string                       `json:"transcriptPath,omitempty"`
-	RecoveryPlan        []WorkloadRecoveryDescriptor `json:"recoveryPlan,omitempty"`
-	RecoveryPlanPresent bool                         `json:"-"`
 }
 
 // RenameSessionRequest is the request body for renaming a session
@@ -168,72 +100,8 @@ func NewTmuxHandler() *TmuxHandler {
 		colorRegex:     regexp.MustCompile(`^#[0-9A-Fa-f]{3,6}$|^[a-zA-Z]+$|^default$`),
 		socket:         strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_SOCKET")),
 		workDir:        strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_WORKDIR")),
-		bank:           newSessionBankStore(defaultSessionBankPath()),
-		managed:        newManagedRecoveryStatusStore(defaultManagedRecoveryStatusPath()),
 		sessionDropSem: newSessionDropSemaphore(),
 	}
-}
-
-func (entry *SessionBankEntry) UnmarshalJSON(raw []byte) error {
-	type alias SessionBankEntry
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return err
-	}
-	var decoded alias
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return err
-	}
-	*entry = SessionBankEntry(decoded)
-	_, entry.RecoveryPlanPresent = fields["recoveryPlan"]
-	if entry.RecoveryPlanPresent && bytes.Equal(bytes.TrimSpace(fields["recoveryPlan"]), []byte("null")) {
-		entry.RecoveryPlan = nil
-	}
-	return nil
-}
-
-func (entry SessionBankEntry) MarshalJSON() ([]byte, error) {
-	type alias SessionBankEntry
-	encoded, err := json.Marshal(alias(entry))
-	if err != nil {
-		return nil, err
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &fields); err != nil {
-		return nil, err
-	}
-	if entry.RecoveryPlanPresent {
-		plan := entry.RecoveryPlan
-		if plan == nil {
-			plan = []WorkloadRecoveryDescriptor{}
-		}
-		planRaw, err := json.Marshal(plan)
-		if err != nil {
-			return nil, err
-		}
-		fields["recoveryPlan"] = planRaw
-	} else if len(entry.RecoveryPlan) == 0 {
-		delete(fields, "recoveryPlan")
-	}
-	return json.Marshal(fields)
-}
-
-func (req *UpdateBankedRecoveryRequest) UnmarshalJSON(raw []byte) error {
-	type alias UpdateBankedRecoveryRequest
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return err
-	}
-	var decoded alias
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return err
-	}
-	*req = UpdateBankedRecoveryRequest(decoded)
-	_, req.RecoveryPlanPresent = fields["recoveryPlan"]
-	if req.RecoveryPlanPresent && bytes.Equal(bytes.TrimSpace(fields["recoveryPlan"]), []byte("null")) {
-		req.RecoveryPlan = nil
-	}
-	return nil
 }
 
 // RegisterRoutes registers the tmux routes on the given mux
@@ -242,10 +110,6 @@ func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/tmux/sessions", h.CreateSession)
 	mux.HandleFunc("GET /api/tmux/sessions/{name}/panes", h.ListSessionPanes)
 	mux.HandleFunc("POST /api/tmux/sessions/{name}/send", h.SendToSession)
-	mux.HandleFunc("POST /api/tmux/session-bank/{name}/recovery", h.UpdateBankedRecovery)
-	mux.HandleFunc("POST /api/tmux/session-bank/{name}/recover", h.RecoverBankedSession)
-	mux.HandleFunc("PUT /api/tmux/session-bank/{name}/entry", h.RestoreBankedSessionEntry)
-	mux.HandleFunc("DELETE /api/tmux/session-bank/{name}", h.ForgetBankedSession)
 	mux.HandleFunc("DELETE /api/tmux/sessions/all", h.DeleteAllSessions)
 	mux.HandleFunc("DELETE /api/tmux/sessions/{name}", h.DeleteSession)
 	mux.HandleFunc("PATCH /api/tmux/sessions/{name}", h.RenameSession)
@@ -260,10 +124,9 @@ func (h *TmuxHandler) RunTmux(args ...string) (string, error) {
 }
 
 type tmuxTarget struct {
-	socket    string
-	workDir   string
-	ownerHome string
-	unixUser  string
+	socket   string
+	workDir  string
+	unixUser string
 }
 
 var (
@@ -356,7 +219,6 @@ func parseUserValueMap(raw string) map[string]string {
 var terminalUserMapEnvVars = []string{
 	"CHROTE_TERMINAL_USER_SOCKETS",
 	"CHROTE_TERMINAL_USER_WORKDIRS",
-	"CHROTE_TERMINAL_USER_HOMES",
 }
 
 // ValidateTerminalUserEnv rejects a Unix user appearing twice in any
@@ -463,16 +325,6 @@ func (h *TmuxHandler) resolveTargetForUnixUser(ctx context.Context, unixUser str
 	unixUser = strings.TrimSpace(unixUser)
 	if unixUser == "" {
 		target := tmuxTarget{socket: h.socket, workDir: h.workDir}
-		current, err := currentTmuxUserContext(ctx)
-		if err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return tmuxTarget{}, ctxErr
-			}
-			return target, nil
-		}
-		if current != nil {
-			target.ownerHome = strings.TrimSpace(current.HomeDir)
-		}
 		return target, nil
 	}
 
@@ -486,12 +338,10 @@ func (h *TmuxHandler) resolveTargetForUnixUser(ctx context.Context, unixUser str
 
 	socketMap := parseUserValueMap(os.Getenv("CHROTE_TERMINAL_USER_SOCKETS"))
 	workDirMap := parseUserValueMap(os.Getenv("CHROTE_TERMINAL_USER_WORKDIRS"))
-	homeMap := parseUserValueMap(os.Getenv("CHROTE_TERMINAL_USER_HOMES"))
 	target := tmuxTarget{
-		socket:    socketMap[unixUser],
-		workDir:   workDirMap[unixUser],
-		ownerHome: homeMap[unixUser],
-		unixUser:  unixUser,
+		socket:   socketMap[unixUser],
+		workDir:  workDirMap[unixUser],
+		unixUser: unixUser,
 	}
 	if configuredFastPath && target.socket != "" && target.workDir != "" {
 		return target, nil
@@ -519,9 +369,6 @@ func (h *TmuxHandler) resolveTargetForUnixUser(ctx context.Context, unixUser str
 		} else {
 			target.workDir = account.HomeDir
 		}
-	}
-	if target.ownerHome == "" {
-		target.ownerHome = account.HomeDir
 	}
 	if target.socket == "" {
 		if currentUser == unixUser {
@@ -568,7 +415,6 @@ func sendTargetFromRequest(h *TmuxHandler, r *http.Request, bodyUnixUser string)
 	return h.targetForUnixUser(unixUser)
 }
 
-const defaultSessionBankFile = "/srv/data/chrote/session-bank/sessions.json"
 const defaultSessionDropsDir = "/srv/data/chrote/session-drops"
 const defaultSessionDropRetention = 7 * 24 * time.Hour
 const defaultSessionDropMaintenanceInterval = time.Hour
@@ -588,13 +434,6 @@ func validSessionDropID(name string) bool {
 
 func isReservedInternalSessionName(name string) bool {
 	return strings.HasPrefix(strings.TrimSpace(name), reservedInternalSessionPrefix)
-}
-
-func defaultSessionBankPath() string {
-	if override := strings.TrimSpace(os.Getenv("CHROTE_SESSION_BANK_PATH")); override != "" {
-		return override
-	}
-	return defaultSessionBankFile
 }
 
 func defaultSessionDropsPath() string {
@@ -680,781 +519,29 @@ func uniqueDropFileName(used map[string]int, name string) string {
 	}
 }
 
-type sessionBankStore struct {
-	path string
-	mu   sync.Mutex
-}
-
-func newSessionBankStore(path string) *sessionBankStore {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		path = defaultSessionBankFile
-	}
-	return &sessionBankStore{path: path}
-}
-
-func sessionBankKey(name, unixUser string) string {
-	return strings.TrimSpace(unixUser) + "\x00" + strings.TrimSpace(name)
-}
-
-var agentSessionIDRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
-
-const (
-	sessionBankRecoveryMaxRequestBytes   int64 = 1 << 20
-	sessionBankRecoveryMaxDescriptors          = 128
-	sessionBankRecoveryMaxWindows              = 32
-	sessionBankRecoveryMaxPanesPerWindow       = 32
-)
-
-var errRecoveryRequestBodyTooLarge = errors.New("recovery request body too large")
-
-func resumeCommandForSession(session core.Session) string {
-	name := strings.TrimSpace(session.Name)
-	if name == "" {
-		return ""
-	}
-	return "/resume " + name
-}
-
-func canonicalAgentResumeCommand(kind, sessionID string) (string, bool) {
-	kind = strings.ToLower(strings.TrimSpace(kind))
-	sessionID = strings.TrimSpace(sessionID)
-	if !agentSessionIDRegex.MatchString(sessionID) {
-		return "", false
-	}
-	switch kind {
-	case "codex":
-		return "codex resume " + sessionID, true
-	case "claude":
-		return "claude --resume " + sessionID, true
-	default:
-		return "", false
-	}
-}
-
-func sanitizeRecoveryPath(value string, requireAbs bool) string {
-	value = strings.TrimSpace(value)
-	if value == "" || strings.ContainsAny(value, "\x00\n\r#") {
-		return ""
-	}
-	if requireAbs && !filepath.IsAbs(value) {
-		return ""
-	}
-	return value
-}
-
-func sessionBankOwnerRef(unixUser, sessionName string) string {
-	unixUser = strings.TrimSpace(unixUser)
-	sessionName = strings.TrimSpace(sessionName)
-	if unixUser == "" {
-		return sessionName
-	}
-	return unixUser + "/" + sessionName
-}
-
-func (h *TmuxHandler) ensureExternalRecoveryOwnershipAvailable(name, unixUser string) error {
-	if h == nil || h.managed == nil {
-		return nil
-	}
-	entries, err := h.managed.Read()
-	if err != nil {
-		return fmt.Errorf("managed status registry: %w", err)
-	}
-	key := sessionBankKey(name, unixUser)
-	for _, entry := range entries {
-		if sessionBankKey(entry.Name, entry.UnixUser) == key {
-			return &recoveryOwnershipConflict{OwnerKind: entry.Owner.Kind, OwnerRef: entry.Owner.Ref}
-		}
-	}
-	return nil
-}
-
-func (h *TmuxHandler) ensureSessionBankOwnershipAvailable(name, unixUser string) error {
-	if h == nil {
-		return nil
-	}
-	return h.ensureExternalRecoveryOwnershipAvailable(name, unixUser)
-}
-
-func sessionBankRecoveryConflict(entry SessionBankEntry, ownerHome string) error {
-	if len(entry.RecoveryPlan) == 0 {
-		if _, ok := canonicalAgentResumeCommand(entry.AgentKind, entry.AgentSessionID); ok {
-			return &recoveryOwnershipConflict{
-				OwnerKind: RecoveryOwnerSessionBank,
-				OwnerRef:  sessionBankOwnerRef(entry.UnixUser, entry.Name),
-			}
-		}
-		return nil
-	}
-	expectedOwnerRef := sessionBankOwnerRef(entry.UnixUser, entry.Name)
-	owners := map[string]bool{}
-	for i, raw := range entry.RecoveryPlan {
-		desc, err := CanonicalizeWorkloadRecoveryDescriptor(raw, ownerHome)
-		if err != nil {
-			return fmt.Errorf("session bank recovery plan descriptor %d is unsafe: %w", i, err)
-		}
-		ownerKey := desc.Owner.Kind + "\x00" + desc.Owner.Ref
-		owners[ownerKey] = true
-		if len(owners) > 1 {
-			return fmt.Errorf("session bank recovery plan has conflicting recovery owners")
-		}
-		if desc.Owner.Kind == RecoveryOwnerSessionBank && desc.Owner.Ref == expectedOwnerRef {
-			return &recoveryOwnershipConflict{OwnerKind: desc.Owner.Kind, OwnerRef: desc.Owner.Ref}
-		}
-		if desc.Owner.Kind == RecoveryOwnerPersistentAgent {
-			return &recoveryOwnershipConflict{OwnerKind: desc.Owner.Kind, OwnerRef: desc.Owner.Ref}
-		}
-		if desc.Owner.Kind == RecoveryOwnerExternalManager || desc.Mode == RecoveryModeManaged {
-			return &recoveryOwnershipConflict{OwnerKind: desc.Owner.Kind, OwnerRef: desc.Owner.Ref}
-		}
-	}
-	return nil
-}
-
-func (h *TmuxHandler) ensureTmuxNameOwnershipAvailable(name, unixUser, ownerHome string) error {
-	if h == nil {
-		return nil
-	}
-	if err := h.ensureExternalRecoveryOwnershipAvailable(name, unixUser); err != nil {
-		return err
-	}
-	// Legacy recovery descriptors need a trusted owner home to canonicalize.
-	// Keep ordinary creation compatible for targets where that home is unavailable.
-	if strings.TrimSpace(ownerHome) == "" {
-		return nil
-	}
-	if h.bank == nil {
-		return nil
-	}
-	entry, found, err := h.bank.Find(name, unixUser)
-	if err != nil {
-		return fmt.Errorf("session bank: %w", err)
-	}
-	if !found {
-		return nil
-	}
-	return sessionBankRecoveryConflict(entry, ownerHome)
-}
-
-func trustedSessionBankOwnerHome(target tmuxTarget) (string, error) {
-	ownerHome := strings.TrimSpace(target.ownerHome)
-	if ownerHome == "" {
-		return "", fmt.Errorf("trusted owner home is required for descriptor recovery")
-	}
-	path, err := canonicalPath(ownerHome)
-	if err != nil {
-		return "", fmt.Errorf("trusted owner home is unsafe: %w", err)
-	}
-	return path, nil
-}
-
-func recoveryKindForStoredPlan(plan []WorkloadRecoveryDescriptor) string {
-	if len(plan) == 0 {
-		return ""
-	}
-	allTopology := true
-	for _, desc := range plan {
-		switch strings.ToLower(strings.TrimSpace(desc.Mode)) {
-		case RecoveryModeUnresolved:
-			return RecoveryModeUnresolved
-		case RecoveryModeTopology:
-		default:
-			allTopology = false
-		}
-	}
-	if allTopology {
-		return RecoveryModeTopology
-	}
-	return "descriptor-plan"
-}
-
-func sanitizeSessionBankEntry(entry SessionBankEntry) (SessionBankEntry, bool) {
-	entry.Name = strings.TrimSpace(entry.Name)
-	entry.UnixUser = strings.TrimSpace(entry.UnixUser)
-	if isReservedInternalSessionName(entry.Name) {
-		return SessionBankEntry{}, false
-	}
-	if valid, _ := core.ValidateSessionName(entry.Name, "session name"); !valid {
-		return SessionBankEntry{}, false
-	}
-	if entry.Group == "" {
-		entry.Group = core.CategorizeSession(entry.Name)
-	}
-	entry.CWD = sanitizeRecoveryPath(entry.CWD, true)
-	entry.TranscriptPath = sanitizeRecoveryPath(entry.TranscriptPath, false)
-	if entry.RecoveryPlanPresent || len(entry.RecoveryPlan) > 0 {
-		if len(entry.RecoveryPlan) == 0 {
-			entry.RecoveryPlan = []WorkloadRecoveryDescriptor{}
-			entry.AgentKind = ""
-			entry.AgentSessionID = ""
-			entry.ResumeCommand = ""
-			entry.RecoveryKind = RecoveryModeUnresolved
-			return entry, true
-		}
-		entry.RecoveryPlanPresent = true
-		entry.AgentKind = ""
-		entry.AgentSessionID = ""
-		entry.RecoveryKind = recoveryKindForStoredPlan(entry.RecoveryPlan)
-		entry.ResumeCommand = ""
-		return entry, true
-	}
-	if command, ok := canonicalAgentResumeCommand(entry.AgentKind, entry.AgentSessionID); ok {
-		entry.AgentKind = strings.ToLower(strings.TrimSpace(entry.AgentKind))
-		entry.AgentSessionID = strings.TrimSpace(entry.AgentSessionID)
-		entry.ResumeCommand = command
-		entry.RecoveryKind = "agent"
-		return entry, true
-	}
-	entry.AgentKind = ""
-	entry.AgentSessionID = ""
-	entry.RecoveryKind = "shell"
-	entry.ResumeCommand = resumeCommandForSession(core.Session{Name: entry.Name})
-	return entry, true
-}
-
-func (s *sessionBankStore) Read() ([]SessionBankEntry, error) {
-	if s == nil {
-		return []SessionBankEntry{}, nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	entries, err := s.loadLocked()
-	if err != nil {
-		return nil, err
-	}
-	return sanitizeSessionBankEntries(entries), nil
-}
-
-func (s *sessionBankStore) Forget(name, unixUser string) (bool, error) {
-	if s == nil {
-		return false, nil
-	}
-	name = strings.TrimSpace(name)
-	unixUser = strings.TrimSpace(unixUser)
-	if valid, _ := core.ValidateSessionName(name, "session name"); !valid {
-		return false, nil
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	entries, err := s.loadLocked()
-	if err != nil {
-		return false, err
-	}
-	entries = sanitizeSessionBankEntries(entries)
-	key := sessionBankKey(name, unixUser)
-	filtered := make([]SessionBankEntry, 0, len(entries))
-	removed := false
-	for _, entry := range entries {
-		if sessionBankKey(entry.Name, entry.UnixUser) == key {
-			removed = true
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-	if !removed {
-		return false, nil
-	}
-	if err := s.saveLocked(filtered); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func (s *sessionBankStore) Find(name, unixUser string) (SessionBankEntry, bool, error) {
-	if s == nil {
-		return SessionBankEntry{}, false, nil
-	}
-	name = strings.TrimSpace(name)
-	unixUser = strings.TrimSpace(unixUser)
-	if valid, _ := core.ValidateSessionName(name, "session name"); !valid {
-		return SessionBankEntry{}, false, nil
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	entries, err := s.loadLocked()
-	if err != nil {
-		return SessionBankEntry{}, false, err
-	}
-	key := sessionBankKey(name, unixUser)
-	for _, entry := range sanitizeSessionBankEntries(entries) {
-		if sessionBankKey(entry.Name, entry.UnixUser) == key {
-			return entry, true, nil
-		}
-	}
-	return SessionBankEntry{}, false, nil
-}
-
-func (s *sessionBankStore) RestoreEntry(name, unixUser string, entry SessionBankEntry, ownerHome string) (SessionBankEntry, error) {
-	if s == nil {
-		return SessionBankEntry{}, fmt.Errorf("session bank is unavailable")
-	}
-	name = strings.TrimSpace(name)
-	unixUser = strings.TrimSpace(unixUser)
-	if valid, errMsg := core.ValidateSessionName(name, "session name"); !valid {
-		return SessionBankEntry{}, fmt.Errorf("%s", errMsg)
-	}
-	entry.Name = strings.TrimSpace(entry.Name)
-	entry.UnixUser = strings.TrimSpace(entry.UnixUser)
-	if entry.Name != name {
-		return SessionBankEntry{}, fmt.Errorf("entry name %q does not match route %q", entry.Name, name)
-	}
-	if entry.UnixUser != unixUser {
-		return SessionBankEntry{}, fmt.Errorf("entry unixUser %q does not match route %q", entry.UnixUser, unixUser)
-	}
-	if entry.RecoveryPlanPresent && len(entry.RecoveryPlan) > 0 {
-		plan, err := validateSessionBankRecoveryPlan(entry.Name, entry.UnixUser, ownerHome, entry.RecoveryPlan, true)
-		if err != nil {
-			return SessionBankEntry{}, err
-		}
-		entry.RecoveryPlan = plan.Descriptors
-	}
-	entry, ok := sanitizeSessionBankEntry(entry)
-	if !ok {
-		return SessionBankEntry{}, fmt.Errorf("session bank entry is unsafe")
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	entries, err := s.loadLocked()
-	if err != nil {
-		return SessionBankEntry{}, err
-	}
-	entries = sanitizeSessionBankEntries(entries)
-	key := sessionBankKey(name, unixUser)
-	replaced := false
-	for i := range entries {
-		if sessionBankKey(entries[i].Name, entries[i].UnixUser) == key {
-			entries[i] = entry
-			replaced = true
-			break
-		}
-	}
-	if !replaced {
-		entries = append(entries, entry)
-	}
-	if err := s.saveLocked(entries); err != nil {
-		return SessionBankEntry{}, err
-	}
-	return entry, nil
-}
-
-type sessionBankRecoveryPane struct {
-	Index      int
-	CWD        string
-	Descriptor WorkloadRecoveryDescriptor
-	Command    string
-}
-
-type sessionBankRecoveryWindow struct {
-	Index  int
-	Name   string
-	Layout string
-	CWD    string
-	Panes  []sessionBankRecoveryPane
-}
-
-type validatedSessionBankRecoveryPlan struct {
-	Descriptors []WorkloadRecoveryDescriptor
-	Windows     []sessionBankRecoveryWindow
-}
-
-func validateSessionBankRecoveryPlan(name, unixUser, ownerHome string, descriptors []WorkloadRecoveryDescriptor, topologyOnly bool) (validatedSessionBankRecoveryPlan, error) {
-	name = strings.TrimSpace(name)
-	unixUser = strings.TrimSpace(unixUser)
-	ownerHome = strings.TrimSpace(ownerHome)
-	if len(descriptors) == 0 {
-		return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery plan is empty")
-	}
-	if len(descriptors) > sessionBankRecoveryMaxDescriptors {
-		return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery plan descriptors %d exceeds max %d", len(descriptors), sessionBankRecoveryMaxDescriptors)
-	}
-	if valid, errMsg := core.ValidateSessionName(name, "session name"); !valid {
-		return validatedSessionBankRecoveryPlan{}, fmt.Errorf("%s", errMsg)
-	}
-	expectedOwnerRef := sessionBankOwnerRef(unixUser, name)
-	var owner *WorkloadRecoveryOwner
-	targets := map[string]bool{}
-	paneIDs := map[string]bool{}
-	windows := map[int]*sessionBankRecoveryWindow{}
-	result := validatedSessionBankRecoveryPlan{
-		Descriptors: make([]WorkloadRecoveryDescriptor, 0, len(descriptors)),
-	}
-
-	for i, raw := range descriptors {
-		desc, err := CanonicalizeWorkloadRecoveryDescriptor(raw, ownerHome)
-		if err != nil {
-			return validatedSessionBankRecoveryPlan{}, fmt.Errorf("unsafe recovery descriptor %d: %w", i, err)
-		}
-		if desc.Owner.Kind != RecoveryOwnerSessionBank {
-			return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery descriptor %d must be session_bank-owned", i)
-		}
-		if desc.Owner.Ref != expectedOwnerRef {
-			return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery owner ref %q does not match target %q", desc.Owner.Ref, expectedOwnerRef)
-		}
-		if owner == nil {
-			ownerCopy := desc.Owner
-			owner = &ownerCopy
-		} else if desc.Owner.Kind != owner.Kind || desc.Owner.Ref != owner.Ref {
-			return validatedSessionBankRecoveryPlan{}, fmt.Errorf("conflicting recovery owners")
-		}
-		if desc.Topology.SessionName != name {
-			return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery descriptor %d targets session %q, want %q", i, desc.Topology.SessionName, name)
-		}
-		if desc.Topology.PaneCurrentPath == "" {
-			return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery descriptor %d requires pane cwd", i)
-		}
-		if desc.Mode == RecoveryModeUnresolved && !topologyOnly {
-			return validatedSessionBankRecoveryPlan{}, fmt.Errorf("unresolved recovery descriptor requires topologyOnly")
-		}
-		targetKey := fmt.Sprintf("%d.%d", desc.Topology.WindowIndex, desc.Topology.PaneIndex)
-		if targets[targetKey] {
-			return validatedSessionBankRecoveryPlan{}, fmt.Errorf("duplicate recovery pane target %s", targetKey)
-		}
-		targets[targetKey] = true
-		if desc.Topology.PaneID != "" {
-			if paneIDs[desc.Topology.PaneID] {
-				return validatedSessionBankRecoveryPlan{}, fmt.Errorf("duplicate recovery pane id %s", desc.Topology.PaneID)
-			}
-			paneIDs[desc.Topology.PaneID] = true
-		}
-
-		window := windows[desc.Topology.WindowIndex]
-		if window == nil {
-			window = &sessionBankRecoveryWindow{
-				Index:  desc.Topology.WindowIndex,
-				Name:   desc.Topology.WindowName,
-				Layout: desc.Topology.WindowLayout,
-			}
-			windows[window.Index] = window
-		} else {
-			if window.Name != desc.Topology.WindowName {
-				return validatedSessionBankRecoveryPlan{}, fmt.Errorf("conflicting recovery window name for index %d", window.Index)
-			}
-			if window.Layout != desc.Topology.WindowLayout {
-				return validatedSessionBankRecoveryPlan{}, fmt.Errorf("conflicting recovery window layout for index %d", window.Index)
-			}
-		}
-		if desc.Topology.PaneIndex == 0 {
-			window.CWD = desc.Topology.PaneCurrentPath
-		}
-		command := ""
-		if !topologyOnly {
-			if desc.Mode == RecoveryModeAgent || desc.Mode == RecoveryModeCommand {
-				var ok bool
-				command, ok = desc.CanonicalCommand(ownerHome)
-				if !ok {
-					return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery descriptor %d has no canonical command", i)
-				}
-			}
-		}
-		window.Panes = append(window.Panes, sessionBankRecoveryPane{
-			Index:      desc.Topology.PaneIndex,
-			CWD:        desc.Topology.PaneCurrentPath,
-			Descriptor: desc,
-			Command:    command,
-		})
-		result.Descriptors = append(result.Descriptors, desc)
-	}
-
-	if len(windows) == 0 {
-		return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery plan has no windows")
-	}
-	if len(windows) > sessionBankRecoveryMaxWindows {
-		return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery plan windows %d exceeds max %d", len(windows), sessionBankRecoveryMaxWindows)
-	}
-	windowIndexes := make([]int, 0, len(windows))
-	for index := range windows {
-		windowIndexes = append(windowIndexes, index)
-	}
-	sort.Ints(windowIndexes)
-	firstWindowIndex := windowIndexes[0]
-	for windowOrdinal, index := range windowIndexes {
-		if index != firstWindowIndex+windowOrdinal {
-			return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery windows must be contiguous")
-		}
-		window := windows[index]
-		sort.Slice(window.Panes, func(i, j int) bool { return window.Panes[i].Index < window.Panes[j].Index })
-		if len(window.Panes) == 0 {
-			return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery panes for window %d are empty", index)
-		}
-		if len(window.Panes) > sessionBankRecoveryMaxPanesPerWindow {
-			return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery panes for window %d count %d exceeds max %d", index, len(window.Panes), sessionBankRecoveryMaxPanesPerWindow)
-		}
-		firstPaneIndex := window.Panes[0].Index
-		for paneOrdinal, pane := range window.Panes {
-			if pane.Index != firstPaneIndex+paneOrdinal {
-				return validatedSessionBankRecoveryPlan{}, fmt.Errorf("recovery panes for window %d must be contiguous", index)
-			}
-		}
-		if window.CWD == "" {
-			window.CWD = window.Panes[0].CWD
-		}
-		normalizedWindow := *window
-		normalizedWindow.Index = windowOrdinal
-		normalizedWindow.Panes = make([]sessionBankRecoveryPane, len(window.Panes))
-		for paneOrdinal, pane := range window.Panes {
-			pane.Index = paneOrdinal
-			normalizedWindow.Panes[paneOrdinal] = pane
-		}
-		result.Windows = append(result.Windows, normalizedWindow)
-	}
-
-	return result, nil
-}
-
-func (s *sessionBankStore) UpsertRecovery(name, unixUser string, req UpdateBankedRecoveryRequest, ownerHome string) (SessionBankEntry, error) {
-	if s == nil {
-		return SessionBankEntry{}, fmt.Errorf("session bank is unavailable")
-	}
-	name = strings.TrimSpace(name)
-	unixUser = strings.TrimSpace(unixUser)
-	if valid, errMsg := core.ValidateSessionName(name, "session name"); !valid {
-		return SessionBankEntry{}, fmt.Errorf("%s", errMsg)
-	}
-	var plan validatedSessionBankRecoveryPlan
-	if req.RecoveryPlanPresent && len(req.RecoveryPlan) == 0 {
-		return SessionBankEntry{}, fmt.Errorf("recovery plan is empty")
-	}
-	if req.RecoveryPlanPresent || len(req.RecoveryPlan) > 0 {
-		var err error
-		plan, err = validateSessionBankRecoveryPlan(name, unixUser, ownerHome, req.RecoveryPlan, true)
-		if err != nil {
-			return SessionBankEntry{}, err
-		}
-	}
-	command, ok := canonicalAgentResumeCommand(req.AgentKind, req.AgentSessionID)
-	if len(req.RecoveryPlan) == 0 && !ok {
-		return SessionBankEntry{}, fmt.Errorf("unsafe or unsupported agent recovery metadata")
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	entries, err := s.loadLocked()
-	if err != nil {
-		return SessionBankEntry{}, err
-	}
-	entries = sanitizeSessionBankEntries(entries)
-	key := sessionBankKey(name, unixUser)
-	updated := false
-	var resultEntry SessionBankEntry
-	for i, entry := range entries {
-		if sessionBankKey(entry.Name, entry.UnixUser) != key {
-			continue
-		}
-		if len(req.RecoveryPlan) > 0 {
-			entry.AgentKind = ""
-			entry.AgentSessionID = ""
-			entry.ResumeCommand = ""
-			entry.RecoveryKind = recoveryKindForStoredPlan(plan.Descriptors)
-			entry.RecoveryPlan = plan.Descriptors
-			entry.RecoveryPlanPresent = true
-			entry.Windows = len(plan.Windows)
-			entry.CWD = plan.Windows[0].CWD
-		} else {
-			entry.AgentKind = strings.ToLower(strings.TrimSpace(req.AgentKind))
-			entry.AgentSessionID = strings.TrimSpace(req.AgentSessionID)
-			entry.ResumeCommand = command
-			entry.RecoveryKind = "agent"
-			entry.RecoveryPlan = nil
-			entry.RecoveryPlanPresent = false
-			entry.CWD = sanitizeRecoveryPath(req.CWD, true)
-		}
-		entry.TranscriptPath = sanitizeRecoveryPath(req.TranscriptPath, false)
-		if entry.FirstSeen == "" {
-			entry.FirstSeen = now
-		}
-		entry.LastSeen = now
-		entry, _ = sanitizeSessionBankEntry(entry)
-		entries[i] = entry
-		resultEntry = entry
-		updated = true
-		break
-	}
-	if !updated {
-		entry := SessionBankEntry{
-			Name:      name,
-			UnixUser:  unixUser,
-			Group:     core.CategorizeSession(name),
-			Windows:   1,
-			FirstSeen: now,
-			LastSeen:  now,
-		}
-		if len(req.RecoveryPlan) > 0 {
-			entry.Windows = len(plan.Windows)
-			entry.RecoveryKind = recoveryKindForStoredPlan(plan.Descriptors)
-			entry.CWD = plan.Windows[0].CWD
-			entry.RecoveryPlan = plan.Descriptors
-			entry.RecoveryPlanPresent = true
-		} else {
-			entry.AgentKind = strings.ToLower(strings.TrimSpace(req.AgentKind))
-			entry.AgentSessionID = strings.TrimSpace(req.AgentSessionID)
-			entry.ResumeCommand = command
-			entry.RecoveryKind = "agent"
-			entry.RecoveryPlanPresent = false
-			entry.CWD = sanitizeRecoveryPath(req.CWD, true)
-		}
-		entry.TranscriptPath = sanitizeRecoveryPath(req.TranscriptPath, false)
-		entry, _ = sanitizeSessionBankEntry(entry)
-		entries = append(entries, entry)
-		resultEntry = entry
-	}
-	if err := s.saveLocked(entries); err != nil {
-		return SessionBankEntry{}, err
-	}
-	return resultEntry, nil
-}
-
-func (s *sessionBankStore) Snapshot(liveSessions []core.Session) ([]SessionBankEntry, error) {
-	if s == nil {
-		return []SessionBankEntry{}, nil
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entries, err := s.loadLocked()
-	if err != nil {
-		return nil, err
-	}
-	entries = sanitizeSessionBankEntries(entries)
-	byKey := map[string]SessionBankEntry{}
-	for _, entry := range entries {
-		entry, ok := sanitizeSessionBankEntry(entry)
-		if !ok {
-			continue
-		}
-		byKey[sessionBankKey(entry.Name, entry.UnixUser)] = entry
-	}
-
-	liveKeys := map[string]bool{}
-	for _, session := range liveSessions {
-		if session.Name == "" {
-			continue
-		}
-		key := sessionBankKey(session.Name, session.UnixUser)
-		liveKeys[key] = true
-		entry := byKey[key]
-		if entry.FirstSeen == "" {
-			entry.FirstSeen = now
-		}
-		entry.Name = session.Name
-		entry.ID = session.ID
-		entry.UnixUser = session.UnixUser
-		entry.Group = session.Group
-		if entry.Group == "" {
-			entry.Group = core.CategorizeSession(session.Name)
-		}
-		entry.Windows = session.Windows
-		entry.Attached = session.Attached
-		entry.Live = true
-		entry.LastSeen = now
-		entry, _ = sanitizeSessionBankEntry(entry)
-		byKey[key] = entry
-	}
-
-	result := make([]SessionBankEntry, 0, len(byKey))
-	for key, entry := range byKey {
-		entry.Live = liveKeys[key]
-		result = append(result, entry)
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Live != result[j].Live {
-			return result[i].Live
-		}
-		if result[i].LastSeen != result[j].LastSeen {
-			return result[i].LastSeen > result[j].LastSeen
-		}
-		if result[i].UnixUser != result[j].UnixUser {
-			return result[i].UnixUser < result[j].UnixUser
-		}
-		return result[i].Name < result[j].Name
-	})
-	if err := s.saveLocked(result); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-func sanitizeSessionBankEntries(entries []SessionBankEntry) []SessionBankEntry {
-	result := make([]SessionBankEntry, 0, len(entries))
-	for _, entry := range entries {
-		entry, ok := sanitizeSessionBankEntry(entry)
-		if !ok {
-			continue
-		}
-		result = append(result, entry)
-	}
-	return result
-}
-
-func (s *sessionBankStore) loadLocked() ([]SessionBankEntry, error) {
-	raw, err := os.ReadFile(s.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []SessionBankEntry{}, nil
-		}
-		return nil, err
-	}
-	if len(strings.TrimSpace(string(raw))) == 0 {
-		return []SessionBankEntry{}, nil
-	}
-	var entries []SessionBankEntry
-	if err := json.Unmarshal(raw, &entries); err != nil {
-		return nil, fmt.Errorf("read session bank %s: %w", s.path, err)
-	}
-	return entries, nil
-}
-
-func (s *sessionBankStore) saveLocked(entries []SessionBankEntry) error {
-	raw, err := json.MarshalIndent(entries, "", "  ")
-	if err != nil {
-		return err
-	}
-	raw = append(raw, '\n')
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o2770); err != nil {
-		return err
-	}
-	_ = os.Chmod(dir, 0o2770)
-	tmp, err := os.CreateTemp(dir, ".tmp-session-bank-*.json")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o660); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, s.path); err != nil {
-		return err
-	}
-	_ = os.Chmod(s.path, 0o660)
-	return core.FsyncDir(dir)
-}
-
 func isTmuxNoServerError(errStr string) bool {
-	return strings.Contains(errStr, "no server running") ||
-		strings.Contains(errStr, "No such file or directory") ||
-		(strings.Contains(errStr, "error connecting to ") && strings.Contains(errStr, "(No such file or directory)"))
+	lower := strings.ToLower(errStr)
+	return strings.Contains(lower, "no server running on ") ||
+		(strings.Contains(lower, "error connecting to ") && strings.Contains(lower, "(no such file or directory)"))
+}
+
+func effectiveTmuxSocket(socket string) string {
+	if socket = strings.TrimSpace(socket); socket != "" {
+		return filepath.Clean(socket)
+	}
+	return filepath.Join(core.GetTmuxTmpdir(), "default")
+}
+
+func isTmuxNoServerErrorForSocket(errStr, socket string) bool {
+	expected := effectiveTmuxSocket(socket)
+	diagnostic := strings.TrimSpace(errStr)
+	diagnostic = strings.TrimPrefix(diagnostic, "exit status 1: ")
+	return diagnostic == "no server running on "+expected ||
+		diagnostic == "error connecting to "+expected+" (No such file or directory)"
 }
 
 func isTmuxDuplicateSessionError(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate session")
+	return err != nil && strings.Contains(strings.ToLower(tmuxErrorDiagnostic(err)), "duplicate session")
 }
 
 func appendSessionResponseError(existing, next string) string {
@@ -1465,6 +552,87 @@ func appendSessionResponseError(existing, next string) string {
 		return existing
 	}
 	return existing + "; " + next
+}
+
+const tmuxCommandOutputLimit = 1 << 20
+
+var errTmuxCommandOutputLimit = errors.New("tmux command output exceeded the 1 MiB limit")
+
+type tmuxCommandError struct {
+	cause      error
+	diagnostic string
+}
+
+func (e *tmuxCommandError) Error() string {
+	if e == nil || e.cause == nil {
+		return "tmux command failed"
+	}
+	return "tmux command failed: " + e.cause.Error()
+}
+
+func (e *tmuxCommandError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func tmuxErrorDiagnostic(err error) string {
+	var commandErr *tmuxCommandError
+	if errors.As(err, &commandErr) {
+		return commandErr.diagnostic
+	}
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+type tmuxCommandCapture struct {
+	mu        sync.Mutex
+	remaining int
+	exceeded  bool
+	stdout    bytes.Buffer
+	stderr    bytes.Buffer
+}
+
+type tmuxCommandCaptureWriter struct {
+	capture *tmuxCommandCapture
+	stderr  bool
+}
+
+func (w tmuxCommandCaptureWriter) Write(p []byte) (int, error) {
+	w.capture.mu.Lock()
+	defer w.capture.mu.Unlock()
+	if w.capture.remaining <= 0 {
+		w.capture.exceeded = true
+		return 0, errTmuxCommandOutputLimit
+	}
+	writeLen := len(p)
+	if writeLen > w.capture.remaining {
+		writeLen = w.capture.remaining
+		w.capture.exceeded = true
+	}
+	var err error
+	if w.stderr {
+		_, err = w.capture.stderr.Write(p[:writeLen])
+	} else {
+		_, err = w.capture.stdout.Write(p[:writeLen])
+	}
+	w.capture.remaining -= writeLen
+	if err != nil {
+		return writeLen, err
+	}
+	if writeLen != len(p) {
+		return writeLen, errTmuxCommandOutputLimit
+	}
+	return writeLen, nil
+}
+
+func (c *tmuxCommandCapture) values() (stdout, stderr string, exceeded bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stdout.String(), c.stderr.String(), c.exceeded
 }
 
 // runTmux executes a tmux command with proper environment
@@ -1489,15 +657,23 @@ func (h *TmuxHandler) runTmuxOnSocketContext(parent context.Context, socket stri
 
 	cmd := exec.CommandContext(ctx, core.TmuxBin(), args...)
 	cmd.Env = core.GetTmuxEnv()
+	capture := &tmuxCommandCapture{remaining: tmuxCommandOutputLimit}
+	cmd.Stdout = tmuxCommandCaptureWriter{capture: capture}
+	cmd.Stderr = tmuxCommandCaptureWriter{capture: capture, stderr: true}
 
-	output, err := cmd.Output()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("%s: %s", err.Error(), string(exitErr.Stderr))
-		}
-		return "", err
+	err := cmd.Run()
+	output, stderr, exceeded := capture.values()
+	if exceeded {
+		return "", errTmuxCommandOutputLimit
 	}
-	return string(output), nil
+	if err != nil {
+		cause := err
+		if ctx.Err() != nil {
+			cause = ctx.Err()
+		}
+		return "", &tmuxCommandError{cause: cause, diagnostic: strings.TrimSpace(stderr)}
+	}
+	return output, nil
 }
 
 func parseSessionsOutput(output string, unixUser string) []core.Session {
@@ -1553,14 +729,31 @@ func parseSessionsOutput(output string, unixUser string) []core.Session {
 	return sessions
 }
 
+func publicTmuxSourceError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, errTmuxCommandOutputLimit) {
+		return "tmux inventory exceeded the bounded output limit"
+	}
+	message := strings.ToLower(tmuxErrorDiagnostic(err))
+	if strings.Contains(message, "permission denied") {
+		return "tmux source permission denied"
+	}
+	if strings.Contains(message, "deadline exceeded") || strings.Contains(message, "signal: killed") {
+		return "tmux inventory timed out"
+	}
+	return "tmux source unavailable"
+}
+
 func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget) ([]core.Session, string) {
 	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_id}	#{session_name}	#{session_windows}	#{session_attached}	#{pane_current_path}	#{pane_current_command}")
 	if err != nil {
-		errStr := err.Error()
-		if isTmuxNoServerError(errStr) {
+		diagnostic := tmuxErrorDiagnostic(err)
+		if isTmuxNoServerErrorForSocket(diagnostic, target.socket) {
 			return []core.Session{}, ""
 		}
-		return []core.Session{}, errStr
+		return []core.Session{}, publicTmuxSourceError(err)
 	}
 	return parseSessionsOutput(output, target.unixUser), ""
 }
@@ -1589,23 +782,11 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	response := &SessionsResponse{
 		Sessions:      []core.Session{},
 		Grouped:       make(map[string][]core.Session),
-		Banked:        []SessionBankEntry{},
-		Managed:       []ManagedRecoveryStatusEntry{},
 		TerminalUsers: advertisedTerminalUsers(),
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 	}
-	var managedEntries []ManagedRecoveryStatusEntry
-	var managedErr error
 	var multiUserError string
 	multiUserPartialCandidate := false
-	if h.managed != nil {
-		managedEntries, managedErr = h.managed.Read()
-		if managedErr != nil {
-			response.Error = appendSessionResponseError(response.Error, "managed status: "+managedErr.Error())
-		} else {
-			response.Managed = managedEntries
-		}
-	}
 
 	if useConfiguredUsers {
 		var errors []string
@@ -1613,7 +794,8 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		for _, unixUser := range configuredTerminalUsers() {
 			target, targetErr := h.targetForUnixUser(unixUser)
 			if targetErr != nil {
-				errors = append(errors, targetErr.Error())
+				publicError := "tmux source configuration is unavailable"
+				errors = append(errors, fmt.Sprintf("%s: %s", unixUser, publicError))
 				continue
 			}
 			sessions, errStr := h.listSessionsForTarget(target)
@@ -1642,32 +824,8 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if managedErr == nil {
-		response.Sessions = filterLiveSessionsForManagedStatus(response.Sessions, managedEntries)
-	}
 	core.SortSessions(response.Sessions)
 	response.Grouped = core.GroupSessions(response.Sessions)
-	if h.bank != nil {
-		var banked []SessionBankEntry
-		var bankErr error
-		if queryUnixUser == "" && response.Error == "" {
-			liveForBank := response.Sessions
-			if managedErr == nil {
-				liveForBank = filterLiveSessionsForManagedStatus(liveForBank, managedEntries)
-			}
-			banked, bankErr = h.bank.Snapshot(liveForBank)
-		} else {
-			banked, bankErr = h.bank.Read()
-		}
-		if bankErr != nil {
-			response.Error = appendSessionResponseError(response.Error, "session bank: "+bankErr.Error())
-		} else {
-			if managedErr == nil {
-				banked = filterBankedForManagedStatus(banked, managedEntries)
-			}
-			response.Banked = banked
-		}
-	}
 	response.Partial = multiUserPartialCandidate && response.Error == multiUserError
 
 	// Update cache
@@ -1681,133 +839,6 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, http.StatusOK, response)
 }
 
-// ForgetBankedSession handles DELETE /api/tmux/session-bank/{name}.
-// It removes a durable offline resume hint from the session bank without
-// touching live tmux sessions. A later full scan will re-add a session if it is
-// still live.
-func (h *TmuxHandler) ForgetBankedSession(w http.ResponseWriter, r *http.Request) {
-	sessionName := strings.TrimSpace(r.PathValue("name"))
-	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
-	if !valid {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
-		return
-	}
-	unixUser := ""
-	if r != nil {
-		unixUser = strings.TrimSpace(r.URL.Query().Get("unixUser"))
-	}
-	if h.bank == nil {
-		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
-			"success":   true,
-			"removed":   false,
-			"session":   sessionName,
-			"unixUser":  unixUser,
-			"timestamp": time.Now().UTC().Format(time.RFC3339),
-		})
-		return
-	}
-
-	removed, err := h.bank.Forget(sessionName, unixUser)
-	if err != nil {
-		core.WriteError(w, http.StatusInternalServerError, "SESSION_BANK_ERROR", err.Error())
-		return
-	}
-	h.invalidateCache()
-	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"success":   true,
-		"removed":   removed,
-		"session":   sessionName,
-		"unixUser":  unixUser,
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-	})
-}
-
-// RestoreBankedSessionEntry replaces one Session Bank entry from a previously
-// accepted API response. It is used only for snapshot rollback compensation and
-// never touches tmux.
-func (h *TmuxHandler) RestoreBankedSessionEntry(w http.ResponseWriter, r *http.Request) {
-	sessionName := strings.TrimSpace(r.PathValue("name"))
-	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
-	if !valid {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
-		return
-	}
-	unixUser := ""
-	if r != nil {
-		unixUser = strings.TrimSpace(r.URL.Query().Get("unixUser"))
-	}
-	if h.bank == nil {
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Session bank is unavailable")
-		return
-	}
-
-	var entry SessionBankEntry
-	if err := decodeOptionalJSONBodyLimited(w, r, &entry, sessionBankRecoveryMaxRequestBytes); err != nil {
-		if errors.Is(err, errRecoveryRequestBodyTooLarge) {
-			core.WriteError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", fmt.Sprintf("Session Bank entry body exceeds %d bytes", sessionBankRecoveryMaxRequestBytes))
-			return
-		}
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
-		return
-	}
-	if strings.TrimSpace(entry.Name) == "" {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Session Bank entry name is required")
-		return
-	}
-	if strings.TrimSpace(entry.Name) != sessionName {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Session Bank entry name does not match route")
-		return
-	}
-	if strings.TrimSpace(entry.UnixUser) != unixUser {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Session Bank entry unixUser does not match route")
-		return
-	}
-
-	ownerHome := ""
-	if entry.RecoveryPlanPresent && len(entry.RecoveryPlan) > 0 {
-		target, targetErr := h.targetForUnixUser(unixUser)
-		if targetErr != nil {
-			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
-			return
-		}
-		var ownerHomeErr error
-		ownerHome, ownerHomeErr = trustedSessionBankOwnerHome(target)
-		if ownerHomeErr != nil {
-			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", ownerHomeErr.Error())
-			return
-		}
-	}
-	h.recoveryMu.Lock()
-	defer h.recoveryMu.Unlock()
-	if err := h.ensureSessionBankOwnershipAvailable(sessionName, unixUser); err != nil {
-		writeRecoveryOwnershipError(w, "SESSION_BANK_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
-		return
-	}
-	restored, err := h.bank.RestoreEntry(sessionName, unixUser, entry, ownerHome)
-	if err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
-		return
-	}
-	h.invalidateCache()
-	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"success":      true,
-		"session":      restored.Name,
-		"unixUser":     restored.UnixUser,
-		"recoveryKind": restored.RecoveryKind,
-		"timestamp":    time.Now().UTC().Format(time.RFC3339),
-	})
-}
-
-func bankedRecoveryWorkDir(entry SessionBankEntry, target tmuxTarget) string {
-	if entry.CWD != "" {
-		return entry.CWD
-	}
-	if target.workDir != "" {
-		return target.workDir
-	}
-	return core.GetWorkDir()
-}
-
 const (
 	tmuxCreationTokenEnv          = "CHROTE_CREATION_TOKEN"
 	tmuxOwnershipMismatchResponse = "CHROTE_OWNERSHIP_MISMATCH"
@@ -1815,7 +846,6 @@ const (
 
 var (
 	tmuxSessionIDPattern     = regexp.MustCompile(`^\$[0-9]+$`)
-	tmuxWindowIDPattern      = regexp.MustCompile(`^@[0-9]+$`)
 	tmuxPaneIDPattern        = regexp.MustCompile(`^%[0-9]+$`)
 	tmuxPIDPattern           = regexp.MustCompile(`^[1-9][0-9]*$`)
 	tmuxCreationTokenPattern = regexp.MustCompile(`^[0-9a-f]{24}$`)
@@ -1827,17 +857,6 @@ type ownedTmuxSession struct {
 	Token string
 }
 
-type ownedTmuxRecoverySession struct {
-	ownedTmuxSession
-	WindowID string
-	PaneID   string
-}
-
-type createdRecoveryWindow struct {
-	ID    string
-	Panes map[int]string
-}
-
 func newTmuxCreationToken() (string, error) {
 	raw := make([]byte, 12)
 	if _, err := rand.Read(raw); err != nil {
@@ -1846,14 +865,17 @@ func newTmuxCreationToken() (string, error) {
 	return hex.EncodeToString(raw), nil
 }
 
-func isTmuxMissingTargetError(err error) bool {
+func isTmuxMissingTargetErrorForSocket(err error, socket, target string) bool {
 	if err == nil {
 		return false
 	}
-	message := strings.ToLower(err.Error())
-	return isTmuxNoServerError(err.Error()) ||
-		strings.Contains(message, "can't find session") ||
-		strings.Contains(message, "no such session")
+	diagnostic := tmuxErrorDiagnostic(err)
+	if isTmuxNoServerErrorForSocket(diagnostic, socket) {
+		return true
+	}
+	diagnostic = strings.TrimSpace(diagnostic)
+	diagnostic = strings.TrimPrefix(diagnostic, "exit status 1: ")
+	return diagnostic == "can't find session: "+target || diagnostic == "no such session: "+target
 }
 
 func (h *TmuxHandler) cleanupOwnedTmuxSession(parent context.Context, socket, target, token string) error {
@@ -1879,7 +901,7 @@ func (h *TmuxHandler) cleanupOwnedTmuxSession(parent context.Context, socket, ta
 		condition, killCommand, mismatchCommand,
 	)
 	if err != nil {
-		if isTmuxMissingTargetError(err) {
+		if isTmuxMissingTargetErrorForSocket(err, socket, target) {
 			return nil
 		}
 		return fmt.Errorf("atomically clean owned tmux session %q: %w", target, err)
@@ -1934,479 +956,6 @@ func (h *TmuxHandler) createOwnedTmuxSessionWithWindow(parent context.Context, s
 	}
 	session.ID = createdID
 	return session, nil
-}
-
-func parseTmuxRecoverySessionOutput(output string) (string, string, string, error) {
-	parts := strings.Split(strings.TrimSpace(output), "\t")
-	if len(parts) != 3 {
-		return "", "", "", fmt.Errorf("tmux recovery session output should contain session, window, and pane IDs")
-	}
-	sessionID := strings.TrimSpace(parts[0])
-	windowID := strings.TrimSpace(parts[1])
-	paneID := strings.TrimSpace(parts[2])
-	if !tmuxSessionIDPattern.MatchString(sessionID) {
-		return "", "", "", fmt.Errorf("tmux recovery session output has invalid session ID %q", sessionID)
-	}
-	if !tmuxWindowIDPattern.MatchString(windowID) {
-		return "", "", "", fmt.Errorf("tmux recovery session output has invalid window ID %q", windowID)
-	}
-	if !tmuxPaneIDPattern.MatchString(paneID) {
-		return "", "", "", fmt.Errorf("tmux recovery session output has invalid pane ID %q", paneID)
-	}
-	return sessionID, windowID, paneID, nil
-}
-
-func parseTmuxRecoveryWindowOutput(output string) (string, string, error) {
-	parts := strings.Split(strings.TrimSpace(output), "\t")
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("tmux recovery window output should contain window and pane IDs")
-	}
-	windowID := strings.TrimSpace(parts[0])
-	paneID := strings.TrimSpace(parts[1])
-	if !tmuxWindowIDPattern.MatchString(windowID) {
-		return "", "", fmt.Errorf("tmux recovery window output has invalid window ID %q", windowID)
-	}
-	if !tmuxPaneIDPattern.MatchString(paneID) {
-		return "", "", fmt.Errorf("tmux recovery window output has invalid pane ID %q", paneID)
-	}
-	return windowID, paneID, nil
-}
-
-func parseTmuxRecoveryPaneOutput(output string) (string, error) {
-	paneID := strings.TrimSpace(output)
-	if !tmuxPaneIDPattern.MatchString(paneID) {
-		return "", fmt.Errorf("tmux recovery pane output has invalid pane ID %q", paneID)
-	}
-	return paneID, nil
-}
-
-func (h *TmuxHandler) createOwnedTmuxRecoverySessionWithWindow(parent context.Context, socket, name, workDir, windowName string) (ownedTmuxRecoverySession, error) {
-	token, err := newTmuxCreationToken()
-	if err != nil {
-		return ownedTmuxRecoverySession{}, fmt.Errorf("generate tmux creation token: %w", err)
-	}
-	session := ownedTmuxRecoverySession{
-		ownedTmuxSession: ownedTmuxSession{Name: name, Token: token},
-	}
-	args := []string{
-		"new-session", "-d", "-P", "-F", "#{session_id}\t#{window_id}\t#{pane_id}",
-		"-e", tmuxCreationTokenEnv + "=" + token,
-		"-s", name, "-c", workDir,
-	}
-	if strings.TrimSpace(windowName) != "" {
-		args = append(args, "-n", strings.TrimSpace(windowName))
-	}
-	output, createErr := h.runTmuxOnSocketContext(parent, socket, args...)
-	if createErr != nil {
-		return ownedTmuxRecoverySession{}, h.cleanupOwnedTmuxSessionAfterError(socket, session.ownedTmuxSession, createErr)
-	}
-	sessionID, windowID, paneID, parseErr := parseTmuxRecoverySessionOutput(output)
-	if parseErr != nil {
-		return ownedTmuxRecoverySession{}, h.cleanupOwnedTmuxSessionAfterError(socket, session.ownedTmuxSession, parseErr)
-	}
-	session.ID = sessionID
-	session.WindowID = windowID
-	session.PaneID = paneID
-	return session, nil
-}
-
-func (h *TmuxHandler) tmuxSessionExists(parent context.Context, socket, name string) (bool, error) {
-	if parent == nil {
-		parent = context.Background()
-	}
-	_, err := h.runTmuxOnSocketContext(parent, socket, "has-session", "-t", name)
-	if err == nil {
-		return true, nil
-	}
-	if isTmuxMissingTargetError(err) {
-		return false, nil
-	}
-	return false, err
-}
-
-func (h *TmuxHandler) recoverSessionBankPlan(parent context.Context, target tmuxTarget, entry SessionBankEntry, plan validatedSessionBankRecoveryPlan, mouseScroll bool) (int, error) {
-	if len(plan.Windows) == 0 {
-		return 0, fmt.Errorf("recovery plan has no windows")
-	}
-	session, err := h.createOwnedTmuxRecoverySessionWithWindow(parent, target.socket, entry.Name, plan.Windows[0].CWD, plan.Windows[0].Name)
-	if err != nil {
-		return 0, err
-	}
-	createdWindows := map[int]createdRecoveryWindow{
-		plan.Windows[0].Index: {
-			ID:    session.WindowID,
-			Panes: map[int]string{0: session.PaneID},
-		},
-	}
-
-	for _, window := range plan.Windows[1:] {
-		args := []string{"new-window", "-d", "-P", "-F", "#{window_id}\t#{pane_id}", "-t", session.ID}
-		if window.Name != "" {
-			args = append(args, "-n", window.Name)
-		}
-		args = append(args, "-c", window.CWD)
-		output, err := h.runTmuxOnSocketContext(parent, target.socket, args...)
-		if err != nil {
-			return 0, h.cleanupOwnedTmuxSessionAfterError(target.socket, session.ownedTmuxSession, err)
-		}
-		windowID, paneID, err := parseTmuxRecoveryWindowOutput(output)
-		if err != nil {
-			return 0, h.cleanupOwnedTmuxSessionAfterError(target.socket, session.ownedTmuxSession, err)
-		}
-		createdWindows[window.Index] = createdRecoveryWindow{
-			ID:    windowID,
-			Panes: map[int]string{0: paneID},
-		}
-	}
-
-	for _, window := range plan.Windows {
-		created := createdWindows[window.Index]
-		basePaneID := created.Panes[0]
-		if basePaneID == "" {
-			return 0, h.cleanupOwnedTmuxSessionAfterError(target.socket, session.ownedTmuxSession, fmt.Errorf("missing base pane ID for recovery window %d", window.Index))
-		}
-		for _, pane := range window.Panes {
-			if pane.Index == 0 {
-				continue
-			}
-			output, err := h.runTmuxOnSocketContext(parent, target.socket,
-				"split-window", "-d", "-P", "-F", "#{pane_id}", "-t", basePaneID, "-c", pane.CWD,
-			)
-			if err != nil {
-				return 0, h.cleanupOwnedTmuxSessionAfterError(target.socket, session.ownedTmuxSession, err)
-			}
-			paneID, err := parseTmuxRecoveryPaneOutput(output)
-			if err != nil {
-				return 0, h.cleanupOwnedTmuxSessionAfterError(target.socket, session.ownedTmuxSession, err)
-			}
-			created.Panes[pane.Index] = paneID
-		}
-		createdWindows[window.Index] = created
-	}
-
-	for _, window := range plan.Windows {
-		if window.Layout == "" {
-			continue
-		}
-		windowID := createdWindows[window.Index].ID
-		if windowID == "" {
-			return 0, h.cleanupOwnedTmuxSessionAfterError(target.socket, session.ownedTmuxSession, fmt.Errorf("missing window ID for recovery window %d", window.Index))
-		}
-		if _, err := h.runTmuxOnSocketContext(parent, target.socket, "select-layout", "-t", windowID, window.Layout); err != nil {
-			return 0, h.cleanupOwnedTmuxSessionAfterError(target.socket, session.ownedTmuxSession, err)
-		}
-	}
-
-	mouseValue := "off"
-	if mouseScroll {
-		mouseValue = "on"
-	}
-	if err := h.applyMouseMode(parent, target.socket, mouseValue); err != nil {
-		return 0, h.cleanupOwnedTmuxSessionAfterError(target.socket, session.ownedTmuxSession, err)
-	}
-
-	launched := 0
-	for _, window := range plan.Windows {
-		for _, pane := range window.Panes {
-			if pane.Command == "" {
-				continue
-			}
-			paneTarget := createdWindows[window.Index].Panes[pane.Index]
-			if paneTarget == "" {
-				return launched, h.cleanupOwnedTmuxSessionAfterError(target.socket, session.ownedTmuxSession, fmt.Errorf("missing pane ID for recovery target %d.%d", window.Index, pane.Index))
-			}
-			if _, err := h.runTmuxOnSocketContext(parent, target.socket, "send-keys", "-t", paneTarget, "-l", pane.Command); err != nil {
-				return launched, h.cleanupOwnedTmuxSessionAfterError(target.socket, session.ownedTmuxSession, err)
-			}
-			if _, err := h.runTmuxOnSocketContext(parent, target.socket, "send-keys", "-t", paneTarget, "Enter"); err != nil {
-				return launched, h.cleanupOwnedTmuxSessionAfterError(target.socket, session.ownedTmuxSession, err)
-			}
-			launched++
-		}
-	}
-
-	return launched, nil
-}
-
-func decodeOptionalJSONBody(r *http.Request, dest any) error {
-	return decodeOptionalJSONBodyLimited(nil, r, dest, 0)
-}
-
-func decodeOptionalJSONBodyLimited(w http.ResponseWriter, r *http.Request, dest any, maxBytes int64) error {
-	if r == nil || r.Body == nil {
-		return nil
-	}
-	if maxBytes <= 0 {
-		if err := json.NewDecoder(r.Body).Decode(dest); err != nil && err != io.EOF {
-			return err
-		}
-		return nil
-	}
-	if r.ContentLength > maxBytes {
-		return errRecoveryRequestBodyTooLarge
-	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
-	if err != nil {
-		return err
-	}
-	if int64(len(raw)) > maxBytes {
-		return errRecoveryRequestBodyTooLarge
-	}
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return nil
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	if err := decoder.Decode(dest); err != nil {
-		return err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("request body must contain exactly one JSON value")
-		}
-		return err
-	}
-	return nil
-}
-
-// UpdateBankedRecovery handles POST /api/tmux/session-bank/{name}/recovery.
-// It records safe agent resume metadata captured outside the tmux listing path.
-func (h *TmuxHandler) UpdateBankedRecovery(w http.ResponseWriter, r *http.Request) {
-	sessionName := strings.TrimSpace(r.PathValue("name"))
-	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
-	if !valid {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
-		return
-	}
-	var req UpdateBankedRecoveryRequest
-	if err := decodeOptionalJSONBodyLimited(w, r, &req, sessionBankRecoveryMaxRequestBytes); err != nil {
-		if errors.Is(err, errRecoveryRequestBodyTooLarge) {
-			core.WriteError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", fmt.Sprintf("Recovery request body exceeds %d bytes", sessionBankRecoveryMaxRequestBytes))
-			return
-		}
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
-		return
-	}
-	unixUser := strings.TrimSpace(req.UnixUser)
-	if r != nil {
-		if queryUser := strings.TrimSpace(r.URL.Query().Get("unixUser")); queryUser != "" {
-			unixUser = queryUser
-		}
-	}
-	if h.bank == nil {
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Session bank is unavailable")
-		return
-	}
-	ownerHome := ""
-	if len(req.RecoveryPlan) > 0 {
-		target, targetErr := h.targetForUnixUser(unixUser)
-		if targetErr != nil {
-			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
-			return
-		}
-		var ownerHomeErr error
-		ownerHome, ownerHomeErr = trustedSessionBankOwnerHome(target)
-		if ownerHomeErr != nil {
-			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", ownerHomeErr.Error())
-			return
-		}
-	}
-	h.recoveryMu.Lock()
-	defer h.recoveryMu.Unlock()
-	if err := h.ensureSessionBankOwnershipAvailable(sessionName, unixUser); err != nil {
-		writeRecoveryOwnershipError(w, "SESSION_BANK_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
-		return
-	}
-	entry, err := h.bank.UpsertRecovery(sessionName, unixUser, req, ownerHome)
-	if err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
-		return
-	}
-	h.invalidateCache()
-	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"success":        true,
-		"session":        entry.Name,
-		"unixUser":       entry.UnixUser,
-		"recoveryKind":   entry.RecoveryKind,
-		"agentKind":      entry.AgentKind,
-		"agentSessionId": entry.AgentSessionID,
-		"resumeCommand":  entry.ResumeCommand,
-		"cwd":            entry.CWD,
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
-	})
-}
-
-// RecoverBankedSession handles POST /api/tmux/session-bank/{name}/recover.
-// It creates fresh tmux transport for a durable Codex/Claude agent transcript.
-func (h *TmuxHandler) RecoverBankedSession(w http.ResponseWriter, r *http.Request) {
-	sessionName := strings.TrimSpace(r.PathValue("name"))
-	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
-	if !valid {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
-		return
-	}
-
-	var req RecoverBankedSessionRequest
-	if err := decodeOptionalJSONBodyLimited(w, r, &req, sessionBankRecoveryMaxRequestBytes); err != nil {
-		if errors.Is(err, errRecoveryRequestBodyTooLarge) {
-			core.WriteError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", fmt.Sprintf("Recovery request body exceeds %d bytes", sessionBankRecoveryMaxRequestBytes))
-			return
-		}
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
-		return
-	}
-	unixUser := strings.TrimSpace(req.UnixUser)
-	if r != nil {
-		if queryUser := strings.TrimSpace(r.URL.Query().Get("unixUser")); queryUser != "" {
-			unixUser = queryUser
-		}
-	}
-	if h.bank == nil {
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Session bank is unavailable")
-		return
-	}
-	h.recoveryMu.Lock()
-	defer h.recoveryMu.Unlock()
-	if err := h.ensureSessionBankOwnershipAvailable(sessionName, unixUser); err != nil {
-		writeRecoveryOwnershipError(w, "SESSION_BANK_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
-		return
-	}
-	entry, found, err := h.bank.Find(sessionName, unixUser)
-	if err != nil {
-		core.WriteError(w, http.StatusInternalServerError, "SESSION_BANK_ERROR", err.Error())
-		return
-	}
-	if !found {
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Session bank entry not found")
-		return
-	}
-	if entry.RecoveryPlanPresent && len(entry.RecoveryPlan) == 0 {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "recovery plan is empty")
-		return
-	}
-
-	target, targetErr := h.targetForUnixUser(entry.UnixUser)
-	if targetErr != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
-		return
-	}
-	mouseScroll := true
-	if req.MouseScroll != nil {
-		mouseScroll = *req.MouseScroll
-	}
-
-	if len(entry.RecoveryPlan) > 0 {
-		ownerHome, ownerHomeErr := trustedSessionBankOwnerHome(target)
-		if ownerHomeErr != nil {
-			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", ownerHomeErr.Error())
-			return
-		}
-		plan, err := validateSessionBankRecoveryPlan(entry.Name, entry.UnixUser, ownerHome, entry.RecoveryPlan, req.TopologyOnly)
-		if err != nil {
-			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
-			return
-		}
-		exists, err := h.tmuxSessionExists(r.Context(), target.socket, entry.Name)
-		if err != nil {
-			core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
-			return
-		}
-		if exists {
-			core.WriteJSON(w, http.StatusOK, map[string]interface{}{
-				"success":      true,
-				"action":       "skip-live",
-				"session":      entry.Name,
-				"unixUser":     entry.UnixUser,
-				"topologyOnly": req.TopologyOnly,
-				"launched":     0,
-				"timestamp":    time.Now().UTC().Format(time.RFC3339),
-			})
-			return
-		}
-		launched, err := h.recoverSessionBankPlan(r.Context(), target, entry, plan, mouseScroll)
-		if err != nil {
-			core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
-			return
-		}
-		h.invalidateCache()
-		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
-			"success":      true,
-			"action":       "recovered",
-			"session":      entry.Name,
-			"unixUser":     entry.UnixUser,
-			"topologyOnly": req.TopologyOnly,
-			"launched":     launched,
-			"windows":      len(plan.Windows),
-			"timestamp":    time.Now().UTC().Format(time.RFC3339),
-		})
-		return
-	}
-
-	resumeCommand, ok := canonicalAgentResumeCommand(entry.AgentKind, entry.AgentSessionID)
-	if !ok {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Session bank entry has no safe agent resume metadata")
-		return
-	}
-	exists, err := h.tmuxSessionExists(r.Context(), target.socket, entry.Name)
-	if err != nil {
-		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
-		return
-	}
-	if exists {
-		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
-			"success":        true,
-			"action":         "skip-live",
-			"session":        entry.Name,
-			"unixUser":       entry.UnixUser,
-			"agentKind":      entry.AgentKind,
-			"agentSessionId": entry.AgentSessionID,
-			"resumeCommand":  resumeCommand,
-			"timestamp":      time.Now().UTC().Format(time.RFC3339),
-		})
-		return
-	}
-	workDir := bankedRecoveryWorkDir(entry, target)
-	if workDir == "" {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "No recovery working directory available")
-		return
-	}
-
-	session, err := h.createOwnedTmuxSession(r.Context(), target.socket, entry.Name, workDir)
-	if err != nil {
-		core.WriteError(w, http.StatusBadRequest, "TMUX_ERROR", err.Error())
-		return
-	}
-	mouseValue := "off"
-	if mouseScroll {
-		mouseValue = "on"
-	}
-	if err := h.applyMouseMode(r.Context(), target.socket, mouseValue); err != nil {
-		err = h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
-		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
-		return
-	}
-	if _, err := h.runTmuxOnSocketContext(r.Context(), target.socket, "send-keys", "-t", session.ID, "-l", resumeCommand); err != nil {
-		err = h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
-		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
-		return
-	}
-	if _, err := h.runTmuxOnSocketContext(r.Context(), target.socket, "send-keys", "-t", session.ID, "Enter"); err != nil {
-		err = h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
-		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
-		return
-	}
-
-	h.invalidateCache()
-	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"success":        true,
-		"session":        entry.Name,
-		"unixUser":       entry.UnixUser,
-		"agentKind":      entry.AgentKind,
-		"agentSessionId": entry.AgentSessionID,
-		"resumeCommand":  resumeCommand,
-		"cwd":            workDir,
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
-	})
 }
 
 func parseSessionDropForm(w http.ResponseWriter, r *http.Request) error {
@@ -3740,19 +2289,6 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 		return
 	}
-	ownerHome := ""
-	if strings.TrimSpace(target.ownerHome) != "" {
-		var ownerHomeErr error
-		ownerHome, ownerHomeErr = trustedSessionBankOwnerHome(target)
-		if ownerHomeErr != nil {
-			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", ownerHomeErr.Error())
-			return
-		}
-	}
-	if err := h.ensureTmuxNameOwnershipAvailable(name, target.unixUser, ownerHome); err != nil {
-		writeRecoveryOwnershipError(w, "SESSION_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
-		return
-	}
 
 	workDir := target.workDir
 	if workDir == "" {
@@ -3806,10 +2342,6 @@ func (h *TmuxHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 		return
 	}
-	if err := h.ensureManagedRecoveryOwnershipAvailable(sessionName, target.unixUser); err != nil {
-		core.WriteError(w, http.StatusConflict, "SESSION_OWNERSHIP_CONFLICT", err.Error())
-		return
-	}
 
 	_, err := h.runTmuxOnSocket(target.socket, "kill-session", "-t", sessionName)
 	if err != nil {
@@ -3843,20 +2375,6 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 		return
 	}
-	managedNames := map[string]bool{}
-	if h.managed != nil {
-		managedEntries, managedErr := h.managed.Read()
-		if managedErr != nil {
-			core.WriteError(w, http.StatusConflict, "SESSION_OWNERSHIP_CONFLICT", "managed status registry: "+managedErr.Error())
-			return
-		}
-		for _, entry := range managedEntries {
-			if strings.TrimSpace(entry.UnixUser) == strings.TrimSpace(target.unixUser) {
-				managedNames[entry.Name] = true
-			}
-		}
-	}
-
 	// Get list of all sessions first.
 	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_name}")
 	var sessionNames []string
@@ -3866,15 +2384,15 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if line != "" {
-				if protectedSessions[line] || managedNames[line] {
+				if protectedSessions[line] {
 					protectedNames = append(protectedNames, line)
 				} else {
 					sessionNames = append(sessionNames, line)
 				}
 			}
 		}
-	} else if !isTmuxNoServerError(err.Error()) {
-		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+	} else if !isTmuxNoServerErrorForSocket(tmuxErrorDiagnostic(err), target.socket) {
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", "tmux source unavailable")
 		return
 	}
 
@@ -3950,26 +2468,6 @@ func (h *TmuxHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 	target, targetErr := targetFromRequest(h, r, "")
 	if targetErr != nil {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
-		return
-	}
-	h.recoveryMu.Lock()
-	defer h.recoveryMu.Unlock()
-	if oldName != req.NewName {
-		ownerHome, ownerHomeErr := trustedSessionBankOwnerHome(target)
-		if ownerHomeErr != nil {
-			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", ownerHomeErr.Error())
-			return
-		}
-		if err := h.ensureTmuxNameOwnershipAvailable(oldName, target.unixUser, ownerHome); err != nil {
-			writeRecoveryOwnershipError(w, "SESSION_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
-			return
-		}
-		if err := h.ensureTmuxNameOwnershipAvailable(req.NewName, target.unixUser, ownerHome); err != nil {
-			writeRecoveryOwnershipError(w, "SESSION_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
-			return
-		}
-	} else if err := h.ensureExternalRecoveryOwnershipAvailable(oldName, target.unixUser); err != nil {
-		writeRecoveryOwnershipError(w, "SESSION_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
 		return
 	}
 

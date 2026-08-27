@@ -135,6 +135,47 @@ func TestArchonAgentNewListInspectAndEditUsePersonaStore(t *testing.T) {
 	}
 }
 
+func TestArchonAgentEditOverridesBuiltInCodexPreset(t *testing.T) {
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "agent", "list", "--json")
+	if code != 0 || stderr != "" {
+		t.Fatalf("list presets code=%d stderr=%q", code, stderr)
+	}
+	for _, id := range []string{"codex-scout", "codex-planner", "codex-builder", "codex-judge", "codex-orchestrator", "codex-debugger", "codex-reviewer"} {
+		if !strings.Contains(stdout, `"id": "`+id+`"`) {
+			t.Fatalf("preset list missing %s: %s", id, stdout)
+		}
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "agent", "edit", "codex-builder",
+		"--display-name", "Repository Builder",
+		"--kind", "implementer",
+		"--summary", "Builds this repository",
+		"--capable", "implement,test,refactor",
+		"--session-stem", "builder-main",
+		"--launch", "codex --yolo --model gpt-5.6-codex",
+		"--json")
+	if code != 0 || stderr != "" {
+		t.Fatalf("override preset code=%d stderr=%q stdout=%q", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"displayName": "Repository Builder"`) || !strings.Contains(stdout, `"customized": true`) {
+		t.Fatalf("override output = %s", stdout)
+	}
+	raw, err := os.ReadFile(filepath.Join(agentsDir, "codex-builder.toml"))
+	if err != nil {
+		t.Fatalf("read materialized preset: %v", err)
+	}
+	text := string(raw)
+	for _, want := range []string{`kind = "implementer"`, `summary = "Builds this repository"`, `session_stem = "builder-main"`, `launch = "codex --yolo --model gpt-5.6-codex"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("materialized preset missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestArchonAgentNewDuplicateFailsWithoutChangingCard(t *testing.T) {
 	agentsDir := t.TempDir()
 	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
@@ -894,6 +935,68 @@ to = "gate_review:in"
 		if strings.Contains(stdout, browserOnly) {
 			t.Fatalf("board inspect leaked browser-only/raw field %q: %s", browserOnly, stdout)
 		}
+	}
+}
+
+func TestArchonBoardNotesRoundTripThroughSharedStore(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_notes"
+slug = "session-search"
+title = "Session search"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[formation]]
+id = "fmn_frame"
+type = "solo"
+title = "Frame"
+
+[[formation.slot]]
+id = "slot_frame"
+label = "Builder"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "note", "session-search", "--text", "Shared plan\nShip tests", "--json")
+	if code != 0 {
+		t.Fatalf("board note code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var boardNote formations.BoardNotesDocument
+	if err := json.Unmarshal([]byte(stdout), &boardNote); err != nil {
+		t.Fatalf("decode board note: %v\n%s", err, stdout)
+	}
+	if boardNote.Board != "Shared plan\nShip tests" || boardNote.Rev != 1 || boardNote.ETag == "*" {
+		t.Fatalf("board note = %+v", boardNote)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "note", "session-search", "--node", "fmn_frame", "--text", "Builder owns this", "--json")
+	if code != 0 {
+		t.Fatalf("element note code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "notes", "session-search", "--json")
+	if code != 0 {
+		t.Fatalf("board notes code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var notes formations.BoardNotesDocument
+	if err := json.Unmarshal([]byte(stdout), &notes); err != nil {
+		t.Fatalf("decode board notes: %v\n%s", err, stdout)
+	}
+	if notes.Board != "Shared plan\nShip tests" || len(notes.Elements) != 1 || notes.Elements[0].NodeID != "fmn_frame" || notes.Elements[0].Text != "Builder owns this" {
+		t.Fatalf("board notes = %+v", notes)
+	}
+	if strings.Contains(stdout, "toml") {
+		t.Fatalf("board notes leaked raw TOML: %s", stdout)
+	}
+
+	_, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "note", "session-search", "--node", "fmn_frame", "--clear")
+	if code != 0 {
+		t.Fatalf("clear element note code=%d stderr=%s", code, stderr)
+	}
+	stored, err := store.ReadBoardNotes("session-search")
+	if err != nil || len(stored.Elements) != 0 {
+		t.Fatalf("cleared notes = %+v err=%v", stored, err)
 	}
 }
 

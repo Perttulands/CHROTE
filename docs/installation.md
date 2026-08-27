@@ -57,8 +57,7 @@ The installer:
 1. builds the dashboard and exact embedded Go binary from the checkout;
 2. injects the version from `VERSION`;
 3. installs `chrote-server`, ttyd, and `terminal-launch.sh` under the user prefix;
-4. writes XDG-scoped state paths for Session Bank, schedules, recovery status,
-   and agent cards;
+4. writes XDG-scoped state paths for schedules, session drops, and agent cards;
 5. writes the `chrote.service` user unit that runs the cockpit itself;
 6. enables, starts, and health-checks the service.
 

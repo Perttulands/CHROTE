@@ -12,7 +12,6 @@ import (
 func TestValidateTerminalUserEnv_RejectsDuplicateUserSocketKey(t *testing.T) {
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/run/user/2001/chrote-tmux/tmux-1000/default,build=/tmp/tmux-2002/default,alice=/run/user/2001/chrote-formations-tmux/default")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "")
-	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "")
 
 	err := ValidateTerminalUserEnv()
 	if err == nil {
@@ -34,7 +33,6 @@ func TestValidateTerminalUserEnv_RejectsDuplicateUserSocketKey(t *testing.T) {
 func TestValidateTerminalUserEnv_RejectsDuplicateWorkdirKey(t *testing.T) {
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice,alice=/srv")
-	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "")
 
 	if err := ValidateTerminalUserEnv(); err == nil {
 		t.Fatal("duplicate alice entry in CHROTE_TERMINAL_USER_WORKDIRS was accepted")
@@ -44,7 +42,6 @@ func TestValidateTerminalUserEnv_RejectsDuplicateWorkdirKey(t *testing.T) {
 func TestValidateTerminalUserEnv_AcceptsOneEntryPerUser(t *testing.T) {
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", " alice=/run/user/2001/chrote-tmux/tmux-1000/default, build = /tmp/tmux-2002/default ,")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice,build=/home/build")
-	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "")
 
 	if err := ValidateTerminalUserEnv(); err != nil {
 		t.Fatalf("valid one-entry-per-user configuration rejected: %v", err)
