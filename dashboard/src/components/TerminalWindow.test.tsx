@@ -55,8 +55,10 @@ vi.mock('../context/SessionContext', () => ({
     },
     terminalUsers: ['alice', 'build'],
     sessions: [
-      { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build' },
-      { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/live-shell' },
+      { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build', currentCommand: 'codex' },
+      { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/live-shell', currentCommand: 'bash' },
+      { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', currentCommand: 'codex' },
+      { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'build', currentCommand: 'bash' },
     ],
     sessionBank: [
       { name: 'forge-existing', unixUser: 'build', cwd: '/srv/forge' },
@@ -512,6 +514,43 @@ describe('TerminalWindow launch user', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send to session forge-existing' }))
 
     expect(openSendToSession).toHaveBeenCalledWith('build:forge-existing')
+  })
+
+  it('shows the mounted session foreground command without treating attachment as agent liveness', () => {
+    const { rerender } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
+      />
+    )
+
+    expect(screen.getByTitle('Foreground process reported by tmux: codex')).toHaveTextContent('foreground: codex')
+
+    rerender(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['alice:shell-existing'], activeSession: 'alice:shell-existing', colorIndex: 0 }}
+      />
+    )
+    expect(screen.getByTitle('Foreground process reported by tmux: bash')).toHaveTextContent('foreground: shell')
+  })
+
+  it('does not invent foreground evidence for unknown or user-ambiguous session bindings', () => {
+    const { rerender } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['missing'], activeSession: 'missing', colorIndex: 0 }}
+      />
+    )
+    expect(screen.queryByTitle(/Foreground process reported by tmux:/)).not.toBeInTheDocument()
+
+    rerender(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['shared-existing'], activeSession: 'shared-existing', colorIndex: 0 }}
+      />
+    )
+    expect(screen.queryByTitle(/Foreground process reported by tmux:/)).not.toBeInTheDocument()
   })
 
   it('offers no Send action for empty or still-initializing windows', () => {

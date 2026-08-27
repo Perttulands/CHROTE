@@ -275,8 +275,11 @@ describe('IframePool attached terminal rendering', () => {
     const harness = renderPoolHarness()
     const iframe = await harness.claimedIframe()
 
+    Object.defineProperty(iframe, 'offsetWidth', { configurable: true, value: 760 })
+    Object.defineProperty(iframe, 'offsetHeight', { configurable: true, value: 520 })
+
     act(() => { harness.release() })
-    await waitFor(() => expect(iframe.style.width).toBe('400px'))
+    await waitFor(() => expect(iframe.style.width).toBe('760px'))
 
     const widthAtMove: string[] = []
     const target = harness.container
@@ -290,9 +293,28 @@ describe('IframePool attached terminal rendering', () => {
     expect((target as HTMLElement & { moveBefore?: unknown }).moveBefore).toHaveBeenCalledTimes(1)
     expect(iframe.parentElement).toBe(target)
     // Park styles must still be in place at move time; restyle happens after
-    // the move so a style change never lays out inside the 400x300 pool.
-    expect(widthAtMove).toEqual(['400px'])
+    // the move so a style change never lays out inside the pool.
+    expect(widthAtMove).toEqual(['760px'])
     expect(iframe.style.width).toBe('100%')
+  })
+
+  it('parks a hidden iframe at its last fitted size instead of the fixed pool size', async () => {
+    const harness = renderPoolHarness()
+    const iframe = await harness.claimedIframe()
+    Object.defineProperty(iframe, 'offsetWidth', { configurable: true, value: 760 })
+    Object.defineProperty(iframe, 'offsetHeight', { configurable: true, value: 520 })
+    const term = installTermStub(iframe)
+
+    act(() => { harness.pool!.triggerFit('alice:smooth-scroll') })
+    expect(term.fit).toHaveBeenCalledTimes(1)
+
+    iframe.style.display = 'none'
+    Object.defineProperty(iframe, 'offsetWidth', { configurable: true, value: 0 })
+    Object.defineProperty(iframe, 'offsetHeight', { configurable: true, value: 0 })
+    act(() => { harness.release() })
+
+    expect(iframe.style.width).toBe('760px')
+    expect(iframe.style.height).toBe('520px')
   })
 
   it('falls back to appendChild when moveBefore is unavailable', async () => {

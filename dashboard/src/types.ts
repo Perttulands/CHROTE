@@ -228,6 +228,15 @@ export interface TmuxSession {
   group: string
   unixUser?: LaunchUser
   cwd?: string
+  currentCommand?: string
+}
+
+const SHELL_COMMANDS = new Set(['sh', 'bash', 'dash', 'fish', 'ksh', 'zsh'])
+
+export function getForegroundCommandLabel(command?: string): string | null {
+  const trimmed = command?.trim()
+  if (!trimmed) return null
+  return SHELL_COMMANDS.has(trimmed) ? 'shell' : trimmed
 }
 
 export type WorkloadRecoveryMode =

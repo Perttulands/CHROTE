@@ -294,6 +294,18 @@
   flex: 0 0 auto;
 }
 
+.terminal-foreground-command {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  padding: 2px 5px;
+  font-size: 10px;
+}
+
 .cycle-btn,
 .window-send-btn {
   background: transparent;
