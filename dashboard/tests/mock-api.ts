@@ -358,6 +358,16 @@ export async function mockFormationsApiRoutes(page: Page, options?: {
     eventCount: runEvents.length,
     resumeAllowed: true,
   }
+  let notes = {
+    schema: 1,
+    boardId: board.id,
+    rev: 0,
+    updatedAt: '2026-08-18T14:00:00Z',
+    updatedBy: 'human:playwright',
+    board: '',
+    elements: [] as Array<{ nodeId: string; text: string }>,
+    etag: '*',
+  }
 
   await page.route('**/api/agents**', async route => {
     await fulfillJson(route, { agents, count: agents.length })
@@ -405,6 +415,28 @@ export async function mockFormationsApiRoutes(page: Page, options?: {
           etag: board.etag,
         },
       })
+      return
+    }
+
+    if (request.method() === 'GET' && path === `/api/formations/boards/${board.slug}/notes`) {
+      await fulfillJson(route, { notes }, { ETag: notes.etag })
+      return
+    }
+
+    if (request.method() === 'PATCH' && path === `/api/formations/boards/${board.slug}/notes`) {
+      const body = request.postDataJSON() as { target: string; text: string }
+      notes = {
+        ...notes,
+        rev: notes.rev + 1,
+        etag: `notes-playwright-${notes.rev + 1}`,
+        board: body.target === 'board' ? body.text : notes.board,
+        elements: body.target === 'board'
+          ? notes.elements
+          : body.text
+            ? [...notes.elements.filter(note => note.nodeId !== body.target), { nodeId: body.target, text: body.text }]
+            : notes.elements.filter(note => note.nodeId !== body.target),
+      }
+      await fulfillJson(route, { notes }, { ETag: notes.etag })
       return
     }
 

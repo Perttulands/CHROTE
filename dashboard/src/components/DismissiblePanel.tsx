@@ -1,5 +1,6 @@
 import { cloneElement, useEffect } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 
 interface DismissiblePanelProps {
   children: ReactElement<{ style?: CSSProperties }>
@@ -34,7 +35,7 @@ function DismissiblePanel({
     },
   })
 
-  return (
+  const content = (
     <>
       <div
         className="floating-panel-dismiss-layer"
@@ -49,6 +50,13 @@ function DismissiblePanel({
       {panel}
     </>
   )
+
+  // Viewport-positioned panels must live at the document overlay root. Keeping
+  // them under a pane traps even a large z-index inside that pane's stacking
+  // context. Absolute dropdowns intentionally remain locally anchored.
+  return panelPosition === 'fixed' && typeof document !== 'undefined'
+    ? createPortal(content, document.body)
+    : content
 }
 
 export default DismissiblePanel

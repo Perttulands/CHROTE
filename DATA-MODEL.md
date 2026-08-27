@@ -26,6 +26,7 @@ or narrower docs, but they should not contradict this file.
 | service data | upstream local services | CHROTE proxies and displays selected operations |
 | formation boards | `.formations/boards/` | TOML structural definitions |
 | formation layout | `.formations/layout/` | TOML sidecars for visual placement/routing |
+| formation notes | `.formations/notes/` | ETag-fenced TOML sidecars for shared board and element annotations; never execution input by implication |
 | agent personas | configured persona roots | TOML cards with stable ids and harness variants |
 | canonical run authority (accepted target) | fenced CHROTE coordinator under one configured lane-independent Formations host-authority root outside every Files root | Workspace command journal, writer-only ledger, immutable graph snapshot and run bootstrap, private binding/result authority, raw pending-redaction state, and run-private Tool materializations |
 | run inspection | canonical projection APIs plus authorized `.formations/artifacts/` files | Sanitized events, opaque binding projection, and registered safe artifacts; never replay authority |
@@ -1180,6 +1181,25 @@ A board definition contains structural state:
   replacement-Gate-bound removal but rejected from every new execution path by
   ADR-0008.
 
+Board notes are a separate revisioned sidecar keyed by board slug and bound to
+the board's stable id. One Markdown-capable board note and zero or more
+node-id-keyed element notes are visible and writable through both the dashboard
+and Archon. Notes do not change board or layout revisions, do not enter a run
+snapshot, and never authorize execution or agent handoff by their mere
+presence. Every update requires the current notes ETag; stale human/agent writes
+conflict rather than overwrite. Removing an element leaves its note preserved
+as orphaned sidecar data until an explicit note update removes it. A recreated
+board with the same slug receives an empty note view because the sidecar's
+stable board id no longer matches.
+
+Board titles are mutable; slugs and stable board ids are not. Board deletion is
+an ETag-and-revision-fenced removal from the live namespace. The writer archives
+the exact board and any layout definition under one deletion id instead of
+destroying their bytes. Run history and the board-id-bound notes sidecar remain
+available for explicit recovery/audit and are not treated as live board state.
+The writer holds the board/layout lock pair through the visible deletion commit;
+publication uncertainty fails loud and requires a reload before retry.
+
 All workflow payload ports are directional. A Gate's reserved `judge` socket is
 an evaluation-control relationship rather than a typed payload port; it permits
 one judge send and one return and never routes downstream work.
@@ -1407,6 +1427,16 @@ A persona card contains stable assignment identity:
 - harness variants;
 - default cwd/root constraints;
 - optional safety notes.
+
+CHROTE also projects seven immutable built-in OpenAI Codex persona defaults:
+`codex-scout`, `codex-planner`, `codex-builder`, `codex-judge`,
+`codex-orchestrator`, `codex-debugger`, and `codex-reviewer`. They use the
+canonical `openai-codex` harness and are available even when the configured
+persona root is empty. A persisted card with the same exact id is a local
+override and replaces that default in reads and roster projection. The first
+ETag-fenced edit materializes such a card through the normal atomic persona
+writer; a stale edit creates no file. Existing non-preset cards, including
+Claude cards, are never rewritten or shadowed.
 
 ### Run binding authority and safe projection
 

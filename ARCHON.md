@@ -54,7 +54,7 @@ close.
 
 ```text
 archon agent      list | inspect | new | edit | spawn | attach | retire
-archon board      new | list | inspect | validate | arrange
+archon board      new | list | inspect | notes | note | validate | arrange
 archon formation  create | list | inspect | assign | unassign | set-brief | remove-verification | add-input | add-output | wire | unwire | run
 archon gate       create | update | judge | approve | reject
 archon mission    create | list | inspect | wire | run
@@ -179,6 +179,19 @@ implementations and runtime execution. `ctx-ug7.30` owns pure code-Gate profiles
 and the later explicit Tool-plus-pure-Gate apply path; no migration-apply or
 Tool-runtime command surface ships here.
 
+Shared board annotations use the same ETag-fenced notes sidecar as the cockpit:
+
+```text
+archon board notes <board> [--json]
+archon board note <board> [--node <node-id>] (--text <markdown> | --file <path> | --clear) [--updated-by <actor>] [--json]
+```
+
+Without `--node`, `board note` updates the board-level notepad. A node id targets
+the Mission, Formation, Gate, or Tool with that exact stable id. Archon reads the
+current notes revision and supplies its ETag before writing; a concurrent human
+or agent edit fails loud instead of being clobbered. Notes are authoring context,
+not execution authority and not an implicit agent handoff.
+
 ## Output modes
 
 - Human text for direct operator use.
@@ -187,6 +200,23 @@ Tool-runtime command surface ships here.
 - Non-zero exit codes for failures.
 
 ## Agent/persona resolution
+
+The default roster includes built-in `openai-codex` presets for Scout, Planner,
+Builder, Judge, Orchestrator, Debugger, and Reviewer under stable
+`codex-<role>` ids. `agent list` and `agent inspect` expose them like other
+personas. The first successful edit creates a normal local TOML override under
+the configured persona root; unchanged presets remain code-owned defaults.
+
+```text
+archon agent edit <codex-preset-id> [--display-name n] [--kind role]
+  [--summary text] [--capable a,b] [--session-stem stem]
+  [--launch command] [--json]
+```
+
+Archon reads the current built-in or persisted ETag and supplies it to the
+shared writer. A stale edit fails without materializing or changing an override.
+The dashboard's Formations roster uses the same endpoint and groups Codex and
+Claude cards without changing existing Claude persona files.
 
 Current main stores stable agent ids and harness/session-stem compatibility
 evidence, then re-reads mutable persona data and resolves again at dispatch. It

@@ -97,7 +97,6 @@ function DockHarness() {
       onSessionsDockStateChange={setSessionsDockState}
       sessionsForcedPinned={filesOpen}
       onFilesOpenChange={handleFilesOpenChange}
-      onOpenSessionBankSettings={vi.fn()}
       onOpenInFiles={vi.fn()}
     />
   )

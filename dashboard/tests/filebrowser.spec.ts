@@ -422,6 +422,23 @@ test.describe('Filebrowser Workbench', () => {
   })
 })
 
+test.describe('Filebrowser preview formats', () => {
+  test('opens JSONL inline instead of falling back to download', async ({ page }) => {
+    const jsonl = '{"event":"started"}\n{"event":"finished"}\n'
+    await mockFilebrowserApi(page, {
+      rootItems: [{ name: 'events.jsonl', size: jsonl.length, modified: '2026-08-18T00:00:00Z', isDir: false, type: 'jsonl' }],
+      rawBody: jsonl,
+    })
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    await page.click('.tab:has-text("Files")')
+    await page.click('.fb-row:has-text("events.jsonl")')
+
+    await expect(page.locator('.fb-editor-textarea')).toHaveValue(jsonl)
+    await expect(page.getByText('No inline preview is available for this file type.')).toHaveCount(0)
+  })
+})
+
 test.describe('Filebrowser layout regressions', () => {
   test('Markdown Source fills the artifact viewport instead of collapsing to textarea rows', async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 760 })

@@ -32,7 +32,7 @@ Anyone who can reach the dashboard holds, at once:
   arbitrary command execution as each of those users, not just one;
 - the file APIs across everything under `CHROTE_ROOTS` with the service
   identity's Unix permissions — deployments may configure broad roots, up to `/`;
-- Beads data, local service proxies, schedules, recovery actions, and any
+- Beads data, local service proxies, schedules, and any
   experimental Formations surface included in that build.
 
 The control is the network perimeter, not application authentication and not
@@ -115,8 +115,8 @@ Optional service URLs and tokens are server-side runtime configuration. Browser
 clients call CHROTE-owned proxy routes and must never receive service bearer
 tokens.
 
-Scheduled tasks, recovery actions, and experimental Formations executors cross
-from observation into host mutation. Their contracts must:
+Scheduled tasks and experimental Formations executors cross from observation
+into host mutation. Their contracts must:
 
 - require explicit configuration and operator intent;
 - use argument vectors instead of implicit shell parsing where possible;
@@ -136,7 +136,6 @@ Never commit:
 - bearer tokens or API keys;
 - private service environment files;
 - tmux socket grants or sudoers fragments for a specific host;
-- recovery manifests containing private command lines or paths;
 - terminal transcripts;
 - private screenshot content.
 

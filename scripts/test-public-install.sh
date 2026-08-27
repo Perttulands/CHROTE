@@ -23,7 +23,6 @@ tmux_bin_dir="$(dirname "$tmux_bin")"
 grep -q -- '--binary)' "$installer"
 grep -q -- '--no-enable)' "$installer"
 grep -q -- '--no-start)' "$installer"
-grep -q 'CHROTE_SESSION_BANK_PATH' "$installer"
 ! grep -q 'CHROTE_PERSISTENT_AGENTS_PATH' "$installer"
 grep -q 'CHROTE_SCHEDULED_TASKS_DIR' "$installer"
 if grep -q 'chrote-ttyd.service' "$installer" "$uninstaller"; then
@@ -288,7 +287,6 @@ done
 [ ! -e "$service_dir/chrote-ttyd.service" ]
 
 grep -F 'CHROTE_ROOTS=' "$env_file" | grep -Fq "$workspace"
-grep -F 'CHROTE_SESSION_BANK_PATH=' "$env_file" | grep -Fq "$state_home/chrote/session-bank/sessions.json"
 grep -F 'CHROTE_SCHEDULED_TASKS_DIR=' "$env_file" | grep -Fq "$state_home/chrote/scheduled-tasks"
 grep -Fq "ExecStart=$installed_binary" "$unit_file"
 ! grep -Fq 'Environment=TMUX_TMPDIR=' "$unit_file"
@@ -360,7 +358,6 @@ for path in "$installed_binary" "$prefix/bin/ttyd" "$launch_script" "$env_file" 
   [ ! -e "$path" ] || { echo "uninstaller left managed path: $path" >&2; exit 1; }
 done
 [ -d "$workspace" ]
-[ -d "$state_home/chrote/session-bank" ]
 [ -f "$config_home/chrote/secrets.env" ]
 
 HOME="$home" \

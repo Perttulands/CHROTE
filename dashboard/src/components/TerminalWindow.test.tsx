@@ -55,14 +55,10 @@ vi.mock('../context/SessionContext', () => ({
     },
     terminalUsers: ['alice', 'build'],
     sessions: [
-      { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build', currentCommand: 'codex' },
+      { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build', cwd: '/srv/forge', currentCommand: 'codex' },
       { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/live-shell', currentCommand: 'bash' },
       { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', currentCommand: 'codex' },
       { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'build', currentCommand: 'bash' },
-    ],
-    sessionBank: [
-      { name: 'forge-existing', unixUser: 'build', cwd: '/srv/forge' },
-      { name: 'shell-existing', unixUser: 'alice', cwd: '/srv/shell' },
     ],
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout', createdAt: 1, workspaces: {} }],
     refreshSessions,
@@ -145,7 +141,7 @@ describe('TerminalWindow launch user', () => {
   })
 
   it('does not intercept right-click on the empty-window new-session button', async () => {
-    const { container } = render(
+    render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
@@ -155,7 +151,7 @@ describe('TerminalWindow launch user', () => {
     const event = dispatchContextMenu(screen.getByRole('button', { name: /New Session/i }))
 
     expect(event.defaultPrevented).toBe(false)
-    expect(container.querySelector('.session-context-menu')).toBeNull()
+    expect(document.querySelector('.session-context-menu')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /New Session/i }))
     await waitFor(() => expect(createSession).toHaveBeenCalled())
   })
@@ -180,12 +176,13 @@ describe('TerminalWindow launch user', () => {
     const sendEvent = openInactiveMenu()
     expect(sendEvent.defaultPrevented).toBe(true)
     const menuButtons = screen.getAllByRole('menuitem')
-    expect(menuButtons).toHaveLength(5)
+    expect(menuButtons).toHaveLength(6)
     for (const label of [
       'Send to session',
       'Reconnect frame',
       'Refit frame',
       'Open files in working directory',
+      'Rename session',
       'Kill session',
     ]) {
       expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument()
@@ -209,8 +206,46 @@ describe('TerminalWindow launch user', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Kill session' }))
     expect(deleteSession).toHaveBeenCalledWith('shell-existing', 'alice')
 
-    expect(screen.queryByRole('button', { name: /Rename/i })).not.toBeInTheDocument()
     expect(setActiveSession).not.toHaveBeenCalled()
+  })
+
+  it('renames the exact qualified session from its attached tag menu and cancels with Escape', async () => {
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{
+          id: 'terminal3-window-0',
+          boundSessions: ['build:forge-existing', 'alice:shell-existing'],
+          activeSession: 'build:forge-existing',
+          colorIndex: 0,
+        }}
+      />
+    )
+
+    const openMenu = () => dispatchContextMenu(screen.getByText('shell-existing'))
+
+    openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename session' }))
+    const renameInput = screen.getByRole('textbox', { name: 'Rename session shell-existing' })
+    expect(renameInput).toHaveFocus()
+    expect(renameInput).toHaveValue('shell-existing')
+    fireEvent.change(renameInput, { target: { value: 'shell-renamed' } })
+    fireEvent.keyDown(renameInput, { key: 'Enter' })
+
+    await waitFor(() => expect(renameSession).toHaveBeenCalledWith('shell-existing', 'shell-renamed', 'alice'))
+    expect(renameSession).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename session shell-existing' })).not.toBeInTheDocument())
+
+    renameSession.mockClear()
+    openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename session' }))
+    const cancelledInput = screen.getByRole('textbox', { name: 'Rename session shell-existing' })
+    fireEvent.change(cancelledInput, { target: { value: 'discard-this' } })
+    fireEvent.keyDown(cancelledInput, { key: 'Escape' })
+
+    expect(renameSession).not.toHaveBeenCalled()
+    expect(screen.queryByRole('textbox', { name: 'Rename session shell-existing' })).not.toBeInTheDocument()
+    expect(screen.getByText('shell-existing')).toBeInTheDocument()
   })
 
   it('uses the original bound key for iframe actions on supported bare legacy tags', () => {
@@ -257,7 +292,7 @@ describe('TerminalWindow launch user', () => {
   })
 
   it('does not expose session actions for the INIT-PENDING placeholder', () => {
-    const { container } = render(
+    render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: ['INIT-PENDING'], activeSession: 'INIT-PENDING', colorIndex: 0 }}
@@ -267,7 +302,7 @@ describe('TerminalWindow launch user', () => {
     const event = dispatchContextMenu(screen.getByText('INIT-PENDING'))
 
     expect(event.defaultPrevented).toBe(false)
-    expect(container.querySelector('.session-context-menu')).toBeNull()
+    expect(document.querySelector('.session-context-menu')).toBeNull()
   })
 
   it('does not open tag actions from Shift+F10 on the nested remove control', () => {
@@ -288,7 +323,7 @@ describe('TerminalWindow launch user', () => {
     act(() => remove.dispatchEvent(event))
 
     expect(event.defaultPrevented).toBe(false)
-    expect(container.querySelector('.session-context-menu')).toBeNull()
+    expect(document.querySelector('.session-context-menu')).toBeNull()
   })
 
   it('clears an open tag menu when its keep-alive workspace becomes inactive', () => {
@@ -304,7 +339,7 @@ describe('TerminalWindow launch user', () => {
     expect(document.querySelector('.session-context-menu')).not.toBeInTheDocument()
   })
 
-  it('falls back to a banked cwd when the live session has no reported cwd', () => {
+  it('opens the live session working directory', () => {
     const openFilesAtPath = vi.fn()
     render(
       <TerminalWindow
@@ -359,7 +394,7 @@ describe('TerminalWindow launch user', () => {
     const event = dispatchContextMenu(container.querySelector('.terminal-window-header') as HTMLElement)
 
     expect(event.defaultPrevented).toBe(false)
-    expect(container.querySelector('.session-context-menu')).toBeNull()
+    expect(document.querySelector('.session-context-menu')).toBeNull()
   })
 
   it('uses the whole mounted session tag as the drag surface and keeps a stationary invisible placeholder', () => {

@@ -165,9 +165,9 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
           Refit
         </button>
         <button
-          className="layout-btn terminal-recovery-btn"
-          aria-label="Terminal recovery actions"
-          title="Terminal recovery actions"
+          className="layout-btn terminal-maintenance-btn"
+          aria-label="Terminal maintenance actions"
+          title="Terminal maintenance actions"
           onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect()
             setControlsMenu({ show: true, x: rect.right, y: rect.bottom + 4 })

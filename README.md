@@ -14,8 +14,8 @@
 
 CHROTE is a browser cockpit for durable, host-owned AI development work: the
 place where one person runs a workforce of agents and trusts what they see.
-Your terminal sessions, files, Beads, agents, workflows, and recovery state
-live on the host. The browser is just glass.
+Your terminal sessions, files, Beads, agents, and workflows live on the host.
+The browser is just glass.
 
 Close the laptop. Change devices. Reconnect later. The work should still be
 there, because a browser tab was never qualified to own it.
@@ -28,8 +28,8 @@ there, because a browser tab was never qualified to own it.
 
 One agent in one terminal is a workflow.
 
-Five agents across tmux sessions, a Beads backlog, a file tree, recovery state,
-and three half-finished builds is a control-room problem.
+Five agents across tmux sessions, a Beads backlog, a file tree, and three
+half-finished builds is a control-room problem.
 
 CHROTE is the control room. It does not replace the terminal, move durable state
 into the browser, or pretend agent work is calm and linear. It gives the mess
@@ -88,7 +88,6 @@ The specs behind this live in [FORMATIONS.md](FORMATIONS.md) (the run model),
 | **Files** | Browse, inspect, edit, compare, and send configured workspace files to a session |
 | **Beads** | Inspect configured `bd` workspaces, issues, ready work, triage, and health |
 | **Agents** | Observe agent-like tmux sessions without requiring one blessed harness |
-| **Recovery** | Distinguish live, offline, recoverable, and unmanaged work through Session Bank and typed recovery plans |
 | **Scheduled / Server** | Inspect scheduled tasks, health, resources, runtime events, and bounded history |
 | **Services** | Host optional server-side adapters without putting private tokens in the browser |
 
@@ -128,7 +127,7 @@ CHROTE does not invent a second issue database.
 
 - you already run agent CLIs in tmux;
 - closing a laptop should not kill the work;
-- you want terminals, files, Beads, workflows, recovery, and local services in
+- you want terminals, files, Beads, workflows, and local services in
   one private browser surface;
 - you think agents need supervision, not mythology;
 - you want your own cockpit, not somebody else's control plane.
@@ -210,8 +209,7 @@ release, and an older downloadable binary is not equivalent to current source.
 
 CHROTE is a Go server with an embedded React dashboard. The dashboard is built,
 copied into the Go tree, and baked into the server binary with `go:embed`. One
-process serves the UI, API, recovery state, workflow runs, and loopback terminal
-proxy.
+process serves the UI, API, workflow runs, and loopback terminal proxy.
 
 The hard state stays boring and inspectable:
 
@@ -219,7 +217,7 @@ The hard state stays boring and inspectable:
 - files under configured roots;
 - `bd` workspaces for issue state;
 - append-only run ledgers for workflow evidence;
-- host-owned configuration and recovery records;
+- host-owned configuration;
 - Git for source and history.
 
 The browser is disposable. Host-owned state—not browser state—is authoritative.

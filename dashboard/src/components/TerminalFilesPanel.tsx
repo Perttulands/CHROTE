@@ -253,7 +253,7 @@ function TerminalFilesPanel({
   navigateRequest,
   onNavigateRequestHandled,
 }: TerminalFilesPanelProps) {
-  const { workspaces, focusedWindowKey, sessionBank, openSendToSession } = useSession()
+  const { workspaces, focusedWindowKey, sessions, openSendToSession } = useSession()
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const [filesState, setFilesState] = useState<WorkspaceFilesState>(() => readWorkspaceFilesState(workspaceId))
   const [pathDraft, setPathDraft] = useState(filesState.currentPath)
@@ -295,8 +295,8 @@ function TerminalFilesPanel({
   const sendTargetLabel = sendTarget ? getSessionNameFromKey(sendTarget) : null
   const sessionCwd = useMemo(() => {
     if (!sendTarget) return null
-    return sessionBank.find(entry => getSessionKey(entry.name, entry.unixUser) === sendTarget)?.cwd || null
-  }, [sendTarget, sessionBank])
+    return sessions.find(entry => getSessionKey(entry.name, entry.unixUser) === sendTarget)?.cwd || null
+  }, [sendTarget, sessions])
 
   const navigateTo = useCallback((path: string) => {
     const normalized = normalizeFilePath(path)

@@ -60,7 +60,7 @@ npm run test:unit -- --coverage
 npm audit --audit-level=moderate
 ```
 
-Unit tests own component behavior, state normalization, API clients, routing, recovery helpers, and interaction contracts that do not need a real browser process.
+Unit tests own component behavior, state normalization, API clients, routing, and interaction contracts that do not need a real browser process.
 
 ### Deterministic browser tests
 
@@ -79,8 +79,8 @@ CHROTE_PLAYWRIGHT_PORT=5279 npm test
 
 The default suite covers desktop and mobile layouts, terminal workspace persistence, Sessions/Files sidecars, Peek and location-chip behavior, drag/drop, Files, Beads, settings, destructive-action confirmation, and error states.
 
-The owner-access journey keeps the global Session Bank visible while navigating
-owner-private Files; backend tests prove deny/Formations/canonical precedence.
+The owner-access journey keeps live Sessions usable while navigating owner-private
+Files; backend tests prove deny/Formations/canonical precedence.
 
 Experimental Formations browser specs are separate:
 
@@ -102,7 +102,7 @@ go test -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
 ```
 
-Go unit and package tests own API contracts, path authorization, tmux command construction, terminal proxy lifecycle, operator-triggered recovery, schedules, and experimental orchestration internals. Terminal lifecycle tests distinguish non-interference with external tmux work from the explicitly transient CHROTE-owned ttyd attach processes.
+Go unit and package tests own API contracts, path authorization, tmux command construction, terminal proxy lifecycle, schedules, and experimental orchestration internals. Terminal lifecycle tests distinguish non-interference with external tmux work from the explicitly transient CHROTE-owned ttyd attach processes.
 
 ### Vulnerability and release-binary checks
 
@@ -121,14 +121,6 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 \
 ```
 
 Source scanning and binary scanning prove different things. Releases require both.
-
-### Operator tooling tests
-
-```bash
-python3 -m unittest discover -s scripts/tmux-recovery -p 'test_*.py'
-```
-
-These tests cover the operator-side recovery clients: manifest validation, owner rules, and the snapshot/restore/verify CLIs. They do not establish continuous supervision or host-reboot recovery.
 
 ### Disposable installer smoke
 
@@ -165,7 +157,7 @@ Before a live run:
 1. identify the exact approved endpoint and service;
 2. inspect current health and existing tmux state;
 3. create only isolated test-owned sessions and files;
-4. avoid destructive or bulk-recovery actions;
+4. avoid destructive or bulk session actions;
 5. clean up test-owned state;
 6. verify the original service and tmux sessions remain healthy.
 
@@ -183,7 +175,7 @@ A manual smoke should verify the user-visible contract rather than every control
 6. confirm Sessions open/pin/width/filter/group-collapse remains global across terminal switches and Scheduled, including a consistent pinned rail and width while any workspace's Files panel is open; confirm session creation from Scheduled targets the last active terminal workspace, Files state remains per workspace, and narrow layouts overlay at `768px` and below;
 7. inspect one configured file root and one configured Beads workspace;
 8. verify optional integrations degrade clearly when unavailable;
-9. inspect Server and recovery status without triggering destructive actions.
+9. inspect Server status without triggering destructive actions.
 
 Formations is excluded from the supported product smoke until its release gate passes.
 

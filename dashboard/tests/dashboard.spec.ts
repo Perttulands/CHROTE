@@ -145,7 +145,7 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.session-group').filter({ hasText: groupName }).locator('.expand-icon')).toHaveText('▶')
     })
 
-    test('shows all configured owner Files beside the one global Session Bank', async ({ page }) => {
+    test('shows all configured owner Files beside live Sessions', async ({ page }) => {
       const ownerSessions = ['alice', 'build'].map(unixUser => ({ name: `${unixUser}-shell`, windows: 1, attached: false, group: 'owners', unixUser }))
       await page.route('**/api/tmux/sessions', route => route.fulfill({
         status: 200,
@@ -252,7 +252,7 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.terminal-area-controls:visible')).toBeVisible()
       await expect(page.locator('.layout-btn:visible')).toHaveCount(6)
       await expect(page.getByRole('button', { name: 'Refit terminal layout' })).toBeVisible()
-      await expect(page.getByRole('button', { name: 'Terminal recovery actions' })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Terminal maintenance actions' })).toBeVisible()
     })
 
     test('should start with 2 windows by default', async ({ page }) => {

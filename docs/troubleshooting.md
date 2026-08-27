@@ -135,22 +135,7 @@ available; execution promotion is separately gated.
 Check `FORMATIONS.md` and the relevant ledger events. Do not enable script gates
 or live tmux execution merely to make a button look green.
 
-## 8. Recovery entries are limited or blocked
-
-Session Bank distinguishes supported typed recovery from unmanaged or unsafe
-entries.
-
-- `Recover workload` appears only when CHROTE has a valid typed descriptor.
-- Managed external supervisors remain read-only; operate them through their
-  explicit host-owned control path.
-- Arbitrary shell state cannot be reconstructed safely.
-- Recovery failures should appear in the API response, supervisor status, or
-  durable recovery evidence.
-
-Use explicit Refit/reconnect actions before deleting stale sessions. Bulk
-session destruction is an advanced emergency action in Settings.
-
-## 9. Scheduled task is stuck
+## 8. Scheduled task is stuck
 
 Inspect the Scheduled view and service logs for lock age, last run, and failure
 history. CHROTE may reclaim a stale lock according to its scheduling contract;
@@ -159,7 +144,7 @@ it must not silently double-run a task with a fresh lock.
 Do not delete lock/state files until you understand whether another process is
 still running.
 
-## 10. Browser state looks stale
+## 9. Browser state looks stale
 
 First:
 
@@ -172,7 +157,7 @@ Only then consider clearing CHROTE local storage. Local storage owns presentatio
 preferences and workspace assignments; clearing it should not kill tmux sessions
 or delete host files, but it will reset layout state.
 
-## 11. Reinstall without losing work
+## 10. Reinstall without losing work
 
 ```bash
 cd CHROTE
@@ -186,6 +171,6 @@ Uninstall also preserves them by default:
 ./uninstall.sh
 ```
 
-Never use `--purge-state` unless you deliberately want to remove Session Bank,
-schedules, recovery records, and other CHROTE-owned state. Purging CHROTE state
-does not stop externally managed workloads.
+Never use `--purge-state` unless you deliberately want to remove schedules and
+other CHROTE-owned state. Purging CHROTE state does not stop externally managed
+workloads.

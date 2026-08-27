@@ -20,6 +20,7 @@ type definitionKind struct {
 var (
 	boardDefinitionKind  = definitionKind{directory: "boards", suffix: ".formation.toml"}
 	layoutDefinitionKind = definitionKind{directory: "layout", suffix: ".layout.toml"}
+	notesDefinitionKind  = definitionKind{directory: "notes", suffix: ".notes.toml"}
 )
 
 type definitionFile struct {
@@ -42,12 +43,20 @@ func (s *Store) openLayoutDefinition(slug string, createDirectory bool) (*defini
 	return s.openDefinition(layoutDefinitionKind, slug, createDirectory)
 }
 
+func (s *Store) openNotesDefinition(slug string, createDirectory bool) (*definitionFile, error) {
+	return s.openDefinition(notesDefinitionKind, slug, createDirectory)
+}
+
 func (s *Store) withBoardDefinitionLock(slug string, fn func(*definitionFile) error) error {
 	return s.withDefinitionLock(boardDefinitionKind, slug, fn)
 }
 
 func (s *Store) withLayoutDefinitionLock(slug string, fn func(*definitionFile) error) error {
 	return s.withDefinitionLock(layoutDefinitionKind, slug, fn)
+}
+
+func (s *Store) withNotesDefinitionLock(slug string, fn func(*definitionFile) error) error {
+	return s.withDefinitionLock(notesDefinitionKind, slug, fn)
 }
 
 func (s *Store) withDefinitionLock(kind definitionKind, slug string, fn func(*definitionFile) error) error {
@@ -342,6 +351,56 @@ func (f *definitionFile) writeAtomic(raw []byte) error {
 		return definitionPathError(&os.PathError{Op: "renameat", Path: f.name, Err: err})
 	}
 	temporaryExists = false
+	if err := f.directory.Sync(); err != nil {
+		return definitionPathError(err)
+	}
+	return nil
+}
+
+func (f *definitionFile) archive(marker string) (string, error) {
+	return f.archiveWithSync(marker, nil)
+}
+
+func (f *definitionFile) archiveWithSync(marker string, syncDirectory func() error) (string, error) {
+	file, err := openDefinitionRegularFileAt(f.directory, f.name, syscall.O_RDONLY, false)
+	if err != nil {
+		return "", definitionPathError(err)
+	}
+	if err := file.Close(); err != nil {
+		return "", definitionPathError(err)
+	}
+	archiveName := f.name + ".deleted-" + marker
+	archive, err := openDefinitionRegularFileAt(f.directory, archiveName, syscall.O_RDONLY, false)
+	if err == nil {
+		_ = archive.Close()
+		return "", ErrAlreadyExists
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", definitionPathError(err)
+	}
+	if err := syscall.Renameat(int(f.directory.Fd()), f.name, int(f.directory.Fd()), archiveName); err != nil {
+		return "", definitionPathError(&os.PathError{Op: "renameat", Path: f.name, Err: err})
+	}
+	if syncDirectory == nil {
+		syncDirectory = f.directory.Sync
+	}
+	if err := syncDirectory(); err != nil {
+		return archiveName, fmt.Errorf("%w: archive %q directory sync failed: %v", ErrDefinitionPublicationUncertain, f.name, definitionPathError(err))
+	}
+	return archiveName, nil
+}
+
+func (f *definitionFile) restoreArchived(archiveName string) error {
+	archive, err := openDefinitionRegularFileAt(f.directory, archiveName, syscall.O_RDONLY, false)
+	if err != nil {
+		return definitionPathError(err)
+	}
+	if err := archive.Close(); err != nil {
+		return definitionPathError(err)
+	}
+	if err := syscall.Renameat(int(f.directory.Fd()), archiveName, int(f.directory.Fd()), f.name); err != nil {
+		return definitionPathError(&os.PathError{Op: "renameat", Path: f.name, Err: err})
+	}
 	if err := f.directory.Sync(); err != nil {
 		return definitionPathError(err)
 	}

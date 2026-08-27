@@ -43,7 +43,6 @@ PUBLIC_PRODUCT_DOCS = [
     "docs/troubleshooting.md",
     "docs/adr/0004-mission-rooms-agent-team-ledgers.md",
     "dashboard/README.md",
-    "scripts/tmux-recovery/README.md",
     "Perttus_vision_for_agent_orchestration/spec/contracts.md",
 ]
 HOST_LOCAL_EXEMPT = {

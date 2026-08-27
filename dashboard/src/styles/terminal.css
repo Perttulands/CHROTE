@@ -269,6 +269,18 @@
   min-width: 0;
 }
 
+.session-tag-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 5px;
+  border: 1px solid var(--window-accent, var(--accent));
+  border-radius: 3px;
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  outline: none;
+}
+
 .tag-remove {
   background: transparent;
   border: none;

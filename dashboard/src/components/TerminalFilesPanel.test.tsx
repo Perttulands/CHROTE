@@ -48,8 +48,7 @@ vi.mock('../context/SessionContext', () => ({
       terminal3: { windowCount: 1, windows: [] },
     },
     focusedWindowKey: 'terminal1-terminal1-window-0',
-    sessions: [{ name: 'shell', unixUser: 'alice', windows: 1, attached: true, group: 'shell' }],
-    sessionBank: [{ name: 'shell', unixUser: 'alice', cwd: '/srv/chrote', live: true }],
+    sessions: [{ name: 'shell', unixUser: 'alice', windows: 1, attached: true, group: 'shell', cwd: '/srv/chrote' }],
     openSendToSession: sessionMocks.openSendToSession,
   }),
 }))

@@ -7,10 +7,8 @@ import type { WorkspaceId } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import SessionGroup from './SessionGroup'
 import DismissiblePanel from './DismissiblePanel'
-import { summarizeSessionBankCapabilities } from '../sessionBankRecovery'
 
 type SessionPanelProps = {
-  onOpenSessionBankSettings?: () => void
   activeWorkspaceId: WorkspaceId
   collapsed?: boolean
   width?: number
@@ -27,7 +25,6 @@ type SessionPanelProps = {
 }
 
 function SessionPanel({
-  onOpenSessionBankSettings,
   activeWorkspaceId,
   collapsed,
   width = 260,
@@ -42,7 +39,7 @@ function SessionPanel({
   onSearchTermChange,
   onCollapsedGroupsChange,
 }: SessionPanelProps) {
-  const { groupedSessions, loading, error, sidebarCollapsed, refreshSessions, createSession: createSessionAction, sessionBank, terminalUsers } = useSession()
+  const { groupedSessions, loading, error, sidebarCollapsed, refreshSessions, createSession: createSessionAction, terminalUsers } = useSession()
   const isCollapsed = collapsed ?? sidebarCollapsed
   const [creating, setCreating] = useState(false)
   const [localSearchTerm, setLocalSearchTerm] = useState('')
@@ -96,10 +93,6 @@ function SessionPanel({
       return a.localeCompare(b)
     })
   }, [groupedSessions, searchTerm])
-
-  const bankedSessionSummary = useMemo(() => (
-    summarizeSessionBankCapabilities(sessionBank.filter(session => !session.live))
-  ), [sessionBank])
 
   const closeNewSessionMenu = () => setNewSessionMenu({ show: false, x: 0, y: 0 })
 
@@ -373,18 +366,6 @@ function SessionPanel({
         </div>
       )}
 
-      {!isCollapsed && bankedSessionSummary.total > 0 && (
-        <div className="session-panel-footer">
-          <button
-            type="button"
-            className="session-bank-settings-link"
-            onClick={onOpenSessionBankSettings}
-            aria-label={`Open Session Bank settings for ${bankedSessionSummary.total} banked ${bankedSessionSummary.total === 1 ? 'session' : 'sessions'}`}
-          >
-            Session Bank · {bankedSessionSummary.total} banked
-          </button>
-        </div>
-      )}
       {!isCollapsed && onWidthChange && (
         <div
           className="dock-resizer"

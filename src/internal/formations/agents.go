@@ -41,6 +41,8 @@ type PersonaCard struct {
 	Notes           []PersonaNote    `json:"notes,omitempty"`
 	ETag            string           `json:"etag"`
 	TOML            string           `json:"toml,omitempty"`
+	Preset          bool             `json:"preset,omitempty"`
+	Customized      bool             `json:"customized,omitempty"`
 }
 
 type HarnessVariant struct {
@@ -79,6 +81,12 @@ type EditPersonaRequest struct {
 	Note             string
 	Retire           bool
 	ExpectedETag     string
+	SetDisplayName   *string
+	SetKind          *string
+	SetSummary       *string
+	SetCapabilities  *[]string
+	SetSessionStem   *string
+	SetLaunch        *string
 }
 
 type AgentRosterFilter struct {
@@ -112,6 +120,8 @@ type AgentProjection struct {
 	Attached       bool     `json:"attached"`
 	Assignable     bool     `json:"assignable"`
 	Unbound        bool     `json:"unbound,omitempty"`
+	Preset         bool     `json:"preset,omitempty"`
+	Customized     bool     `json:"customized,omitempty"`
 }
 
 type AgentSessionBinding struct {
@@ -146,14 +156,14 @@ func (s *PersonaStore) PersonaPath(id string) string {
 }
 
 func (s *PersonaStore) ListPersonas() ([]PersonaCard, error) {
-	entries, err := os.ReadDir(s.AgentsDir)
+	cardsByID := make(map[string]PersonaCard, len(codexPersonaPresetCatalog))
+	for _, card := range codexPresetPersonas() {
+		cardsByID[card.ID] = card
+	}
+	entries, err := s.listPersonaEntries()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []PersonaCard{}, nil
-		}
 		return nil, err
 	}
-	cards := make([]PersonaCard, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".toml") {
 			continue
@@ -163,7 +173,11 @@ func (s *PersonaStore) ListPersonas() ([]PersonaCard, error) {
 		if err != nil {
 			return nil, err
 		}
-		cards = append(cards, *card)
+		cardsByID[id] = *card
+	}
+	cards := make([]PersonaCard, 0, len(cardsByID))
+	for _, card := range cardsByID {
+		cards = append(cards, card)
 	}
 	sort.Slice(cards, func(i, j int) bool {
 		return cards[i].ID < cards[j].ID
@@ -175,27 +189,42 @@ func (s *PersonaStore) ReadPersona(id string) (*PersonaCard, error) {
 	if err := validatePersonaID(id); err != nil {
 		return nil, err
 	}
-	raw, err := os.ReadFile(s.PersonaPath(id))
+	raw, err := s.readPersonaRaw(id)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if preset, ok := codexPresetPersona(id); ok {
+				return preset, nil
+			}
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	return parsePersonaCard(id, raw)
+	card, err := parsePersonaCard(id, raw)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := codexPresetPersona(id); ok {
+		card.Preset = true
+		card.Customized = true
+	}
+	return card, nil
 }
 
 func (s *PersonaStore) CreatePersona(req CreatePersonaRequest) (*PersonaCard, error) {
 	if err := validatePersonaID(req.ID); err != nil {
 		return nil, err
 	}
-	path := s.PersonaPath(req.ID)
+	if _, ok := codexPresetPersona(req.ID); ok {
+		return nil, ErrAlreadyExists
+	}
 	var created *PersonaCard
-	err := withFileLock(path, func() error {
-		if _, err := os.Stat(path); err == nil {
-			return ErrAlreadyExists
-		} else if err != nil && !os.IsNotExist(err) {
+	err := s.withPersonaLock(req.ID, func() error {
+		exists, err := s.personaExists(req.ID)
+		if err != nil {
 			return err
+		}
+		if exists {
+			return ErrAlreadyExists
 		}
 		if req.Kind == "" {
 			return fmt.Errorf("%w: kind is required", ErrInvalidSlug)
@@ -221,7 +250,7 @@ func (s *PersonaStore) CreatePersona(req CreatePersonaRequest) (*PersonaCard, er
 		}
 		req.Launch = launch
 		raw := renderPersona(req, harness, sessionStem, tags)
-		if err := writeAtomic(path, []byte(raw)); err != nil {
+		if err := s.writePersonaAtomic(req.ID, []byte(raw)); err != nil {
 			return err
 		}
 		card, err := parsePersonaCard(req.ID, []byte(raw))
@@ -241,15 +270,21 @@ func (s *PersonaStore) EditPersona(id string, req EditPersonaRequest) (*PersonaC
 	if err := validatePersonaID(id); err != nil {
 		return nil, err
 	}
-	path := s.PersonaPath(id)
 	var updated *PersonaCard
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withPersonaLock(id, func() error {
+		preset := false
+		raw, err := s.readPersonaRaw(id)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return ErrNotFound
+				builtin, ok := codexPresetPersona(id)
+				if !ok {
+					return ErrNotFound
+				}
+				raw = []byte(builtin.TOML)
+				preset = true
+			} else {
+				return err
 			}
-			return err
 		}
 		card, err := parsePersonaCard(id, raw)
 		if err != nil {
@@ -262,6 +297,45 @@ func (s *PersonaStore) EditPersona(id string, req EditPersonaRequest) (*PersonaC
 			return ErrConflict
 		}
 		next := string(raw)
+		if req.SetDisplayName != nil {
+			next = setSectionScalar(next, "card", "display_name", renderString(strings.TrimSpace(*req.SetDisplayName)))
+		}
+		if req.SetKind != nil {
+			kind := strings.TrimSpace(*req.SetKind)
+			if kind == "" {
+				return fmt.Errorf("%w: kind is required", ErrInvalidSlug)
+			}
+			next = setSectionScalar(next, "card", "kind", renderString(kind))
+		}
+		if req.SetSummary != nil {
+			next = setSectionScalar(next, "card", "summary", renderString(strings.TrimSpace(*req.SetSummary)))
+		}
+		if req.SetCapabilities != nil {
+			tags := make([]string, 0, len(card.Tags)+len(*req.SetCapabilities))
+			for _, tag := range card.Tags {
+				if !isBareCapability(tag) {
+					tags = appendUnique(tags, tag)
+				}
+			}
+			for _, capability := range normalizeTags(*req.SetCapabilities) {
+				if isBareCapability(capability) {
+					tags = appendUnique(tags, capability)
+				}
+			}
+			next = setSectionScalar(next, "card", "tags", "["+renderStringList(tags)+"]")
+		}
+		if req.SetSessionStem != nil {
+			next, err = setHarnessVariantScalar(next, card.HarnessDefault, "session_stem", strings.TrimSpace(*req.SetSessionStem))
+			if err != nil {
+				return err
+			}
+		}
+		if req.SetLaunch != nil {
+			next, err = setHarnessVariantScalar(next, card.HarnessDefault, "launch", strings.TrimSpace(*req.SetLaunch))
+			if err != nil {
+				return err
+			}
+		}
 		if req.AddCapability != "" || req.RemoveCapability != "" {
 			tags := append([]string{}, card.Tags...)
 			if req.AddCapability != "" && isBareCapability(req.AddCapability) {
@@ -298,10 +372,16 @@ func (s *PersonaStore) EditPersona(id string, req EditPersonaRequest) (*PersonaC
 				Text:      req.Note,
 			})
 		}
-		if err := writeAtomic(path, []byte(next)); err != nil {
+		if err := s.writePersonaAtomic(id, []byte(next)); err != nil {
 			return err
 		}
 		updated, err = parsePersonaCard(id, []byte(next))
+		if err == nil {
+			if _, ok := codexPresetPersona(id); ok || preset {
+				updated.Preset = true
+				updated.Customized = true
+			}
+		}
 		return err
 	})
 	if err != nil {
@@ -450,6 +530,8 @@ func projectCard(card PersonaCard, live []LiveAgentSession) AgentProjection {
 		HarnessDefault: card.HarnessDefault,
 		Liveness:       AgentLivenessOffline,
 		Assignable:     card.Status != "retired",
+		Preset:         card.Preset,
+		Customized:     card.Customized,
 	}
 	defaultVariant := card.DefaultVariant()
 	for _, session := range live {
@@ -686,6 +768,53 @@ func setSectionScalar(raw, section, key, value string) string {
 	copy(lines[insertAt+1:], lines[insertAt:])
 	lines[insertAt] = newLine
 	return renderLines(lines)
+}
+
+func setHarnessVariantScalar(raw, variantID, key, value string) (string, error) {
+	lines := splitLines([]byte(raw))
+	for start := 0; start < len(lines); start++ {
+		if strings.TrimSpace(lines[start].body) != "[[harness.variant]]" {
+			continue
+		}
+		end := len(lines)
+		for next := start + 1; next < len(lines); next++ {
+			if strings.HasPrefix(strings.TrimSpace(lines[next].body), "[") {
+				end = next
+				break
+			}
+		}
+		currentID := ""
+		fieldIndex := -1
+		insertAt := start + 1
+		for index := start + 1; index < end; index++ {
+			field, ok := topLevelKey(lines[index].body)
+			if !ok {
+				continue
+			}
+			insertAt = index + 1
+			if field == "id" {
+				currentID = parseString(valuePart(lines[index].body))
+			}
+			if field == key {
+				fieldIndex = index
+			}
+		}
+		if currentID != variantID {
+			start = end - 1
+			continue
+		}
+		rendered := renderString(value)
+		if fieldIndex >= 0 {
+			lines[fieldIndex].body = replaceScalarValue(lines[fieldIndex].body, rendered)
+			return renderLines(lines), nil
+		}
+		newLine := tomlLine{body: key + " = " + rendered, newline: "\n"}
+		lines = append(lines, tomlLine{})
+		copy(lines[insertAt+1:], lines[insertAt:])
+		lines[insertAt] = newLine
+		return renderLines(lines), nil
+	}
+	return "", fmt.Errorf("%w: harness variant %q", ErrNotFound, variantID)
 }
 
 func renderLines(lines []tomlLine) string {
