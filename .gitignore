@@ -35,7 +35,8 @@ chrote-server-integ
 chrote-server.*
 *.exe
 
-# Vite cache
+# Vite / TypeScript incremental build caches
+*.tsbuildinfo
 dashboard/.vite/
 dashboard/dist/
 dashboard/coverage/
