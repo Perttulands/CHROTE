@@ -1,7 +1,6 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const liveBackend = process.env.CHROTE_PLAYWRIGHT_LIVE === '1'
-const formationsOnly = process.env.CHROTE_PLAYWRIGHT_FORMATIONS === '1'
 const serverContract = process.env.CHROTE_PLAYWRIGHT_SERVER_CONTRACT === '1'
 const externalServer = liveBackend || serverContract
 const devServerPort = process.env.CHROTE_PLAYWRIGHT_PORT ?? '5173'
@@ -18,7 +17,6 @@ const reuseExistingDevServer = process.env.CHROTE_PLAYWRIGHT_REUSE_SERVER === '1
 const localOnlyIgnores = [
   '**/integration/**',
   '**/contract/**',
-  ...(formationsOnly ? [] : ['**/formations/**']),
 ]
 
 export default defineConfig({
@@ -51,17 +49,11 @@ export default defineConfig({
       name: 'live-backend',
       use: { ...devices['Desktop Chrome'] },
     },
-  ] : formationsOnly ? [
-    {
-      name: 'formations',
-      use: { ...devices['Desktop Chrome'] },
-      testMatch: 'formations/**/*.spec.ts',
-    },
   ] : [
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: ['**/mobile.spec.ts', '**/integration/**', '**/contract/**', '**/formations/**'],
+      testIgnore: ['**/mobile.spec.ts', '**/integration/**', '**/contract/**'],
     },
     {
       name: 'mobile',

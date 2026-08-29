@@ -64,7 +64,7 @@ Read [`docs/source-truth-index.md`](docs/source-truth-index.md) before changing 
 
 - [`PRD.md`](PRD.md) owns the current product and roadmap boundary.
 - [`SECURITY.md`](SECURITY.md) owns the public trust boundary.
-- [`FORMATIONS.md`](FORMATIONS.md), [`ARCHON.md`](ARCHON.md), and [`DATA-MODEL.md`](DATA-MODEL.md) own experimental orchestration contracts.
+- [chrote-agent-formations](https://github.com/Perttulands/chrote-agent-formations) owns experimental orchestration contracts.
 - Plans and archives are context, not current authority.
 
 ## Work state

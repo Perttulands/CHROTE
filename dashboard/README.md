@@ -100,8 +100,7 @@ sidebar. `TerminalWorkspaceDock` is the layout owner.
 - Destructive operations require visible operator intent and fail-loud feedback.
 
 See [`../docs/PRD-terminal-lifecycle.md`](../docs/PRD-terminal-lifecycle.md),
-[`../DESIGN-SYSTEM.md`](../DESIGN-SYSTEM.md), and
-[`../DATA-MODEL.md`](../DATA-MODEL.md).
+and [`../DESIGN-SYSTEM.md`](../DESIGN-SYSTEM.md).
 
 ## Files
 

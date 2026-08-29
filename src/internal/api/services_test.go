@@ -88,29 +88,6 @@ func TestServicesHandlerCatalogRedactsTokenAndShowsDegradedContext(t *testing.T)
 	}
 }
 
-func TestServicesHandlerCatalogAdvertisesNonAuthorizingRuntimeGuardCapability(t *testing.T) {
-	handler := NewServicesHandler(ServiceConfig{})
-	req := httptest.NewRequest(http.MethodGet, "/api/services", nil)
-	rec := httptest.NewRecorder()
-	handler.Catalog(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	var response struct {
-		Data struct {
-			Capabilities []string `json:"capabilities"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode catalog response: %v", err)
-	}
-	want := []string{"formations.runtime-authority-read-guard.v1"}
-	if len(response.Data.Capabilities) != len(want) || response.Data.Capabilities[0] != want[0] {
-		t.Fatalf("binary capabilities = %q, want exact non-authorizing guard capability %q", response.Data.Capabilities, want)
-	}
-}
-
 func TestServicesHandlerCatalogShowsMissingTokenAsDegraded(t *testing.T) {
 	handler := NewServicesHandler(ServiceConfig{
 		TTSBaseURL:     "http://127.0.0.1:3100",

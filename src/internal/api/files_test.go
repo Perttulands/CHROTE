@@ -27,88 +27,37 @@ func TestFilesHandler_NewFilesHandler(t *testing.T) {
 	}
 }
 
-func TestFilesHandlerNewFilesHandlerUsesConfiguredFormationsDataRoot(t *testing.T) {
-	allowedRoot := t.TempDir()
-	privateRoot := filepath.Join(allowedRoot, "formations-private")
-	if err := os.Mkdir(privateRoot, 0755); err != nil {
-		t.Fatal(err)
-	}
+func newFilesHandlerForRoots(t *testing.T, allowedRoots []string, deniedRoot string) *FilesHandler {
+	t.Helper()
 	core.ResetConfigForTesting()
 	t.Cleanup(core.ResetConfigForTesting)
-	t.Setenv("CHROTE_ROOTS", allowedRoot)
-	t.Setenv("CHROTE_FORMATIONS_DATA_ROOT", privateRoot)
-
-	result := NewFilesHandler().resolveSafePath(privateRoot)
-	if result.Error != "Sensitive path not available in CHROTE Files" {
-		t.Fatalf("configured Formations root resolved as %#v, want protected root rejection", result)
-	}
+	t.Setenv("CHROTE_ROOTS", strings.Join(allowedRoots, ","))
+	t.Setenv("CHROTE_WRITE_ROOTS", strings.Join(allowedRoots, ","))
+	t.Setenv("CHROTE_FILE_DENY_PATHS", deniedRoot)
+	return NewFilesHandler()
 }
 
-func TestFilesHandlerFormationsDataRootDeniesConfiguredAndCanonicalAliases(t *testing.T) {
-	allowedRoot := t.TempDir()
-	privateRoot := filepath.Join(allowedRoot, "formations-private")
-	if err := os.Mkdir(privateRoot, 0755); err != nil {
-		t.Fatal(err)
+func fileItemNames(items []FileItem) []string {
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, item.Name)
 	}
-	if err := os.WriteFile(filepath.Join(privateRoot, "authority.json"), []byte("private"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	configuredRoot := filepath.Join(allowedRoot, "configured-formations-root")
-	if err := os.Symlink(privateRoot, configuredRoot); err != nil {
-		t.Fatal(err)
-	}
-	aliasRoot := filepath.Join(allowedRoot, "another-formations-alias")
-	if err := os.Symlink(privateRoot, aliasRoot); err != nil {
-		t.Fatal(err)
-	}
-
-	handler := newFilesHandlerForRoots(t, []string{allowedRoot}, configuredRoot)
-	for _, path := range []string{
-		configuredRoot,
-		filepath.Join(configuredRoot, "authority.json"),
-		privateRoot,
-		filepath.Join(privateRoot, "authority.json"),
-		aliasRoot,
-		filepath.Join(aliasRoot, "authority.json"),
-	} {
-		t.Run(path, func(t *testing.T) {
-			result := handler.resolveSafePath(path)
-			if result.Error != "Sensitive path not available in CHROTE Files" {
-				t.Fatalf("resolveSafePath(%q) = %#v, want protected Formations root rejection", path, result)
-			}
-		})
-	}
-
-	ordinaryPath := filepath.Join(allowedRoot, "ordinary.txt")
-	if err := os.WriteFile(ordinaryPath, []byte("visible"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if result := handler.resolveSafePath(ordinaryPath); result.Error != "" {
-		t.Fatalf("ordinary sibling rejected: %#v", result)
-	}
-	if result := handler.resolveMutationPath(aliasRoot); result.Error != "Sensitive path not available in CHROTE Files" {
-		t.Fatalf("resolveMutationPath(%q) = %#v, want protected symlink alias rejection", aliasRoot, result)
-	}
+	sort.Strings(names)
+	return names
 }
 
-func TestFilesHandlerFormationsDataRootIsFilteredFromListings(t *testing.T) {
+// A configured deny root must not be disclosed through either the virtual root
+// or a parent directory listing.
+func TestFilesHandlerConfiguredDenyRootIsFilteredFromListings(t *testing.T) {
 	parentRoot := t.TempDir()
-	privateRoot := filepath.Join(parentRoot, "formations-private")
+	deniedRoot := filepath.Join(parentRoot, "protected-private")
 	ordinaryRoot := filepath.Join(parentRoot, "ordinary")
-	for _, path := range []string{privateRoot, ordinaryRoot} {
+	for _, path := range []string{deniedRoot, ordinaryRoot} {
 		if err := os.Mkdir(path, 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	configuredRoot := filepath.Join(parentRoot, "configured-formations-root")
-	aliasRoot := filepath.Join(parentRoot, "another-formations-alias")
-	for _, path := range []string{configuredRoot, aliasRoot} {
-		if err := os.Symlink(privateRoot, path); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	handler := newFilesHandlerForRoots(t, []string{ordinaryRoot, configuredRoot, privateRoot, aliasRoot}, configuredRoot)
+	handler := newFilesHandlerForRoots(t, []string{ordinaryRoot, deniedRoot}, deniedRoot)
 	req := httptest.NewRequest(http.MethodGet, "/api/files/resources/", nil)
 	rec := httptest.NewRecorder()
 	handler.ListRoot(rec, req)
@@ -123,7 +72,7 @@ func TestFilesHandlerFormationsDataRootIsFilteredFromListings(t *testing.T) {
 		t.Fatalf("root listing names = %q, want only ordinary root", got)
 	}
 
-	parentHandler := newFilesHandlerForRoots(t, []string{parentRoot}, configuredRoot)
+	parentHandler := newFilesHandlerForRoots(t, []string{parentRoot}, deniedRoot)
 	parentReq := httptest.NewRequest(http.MethodGet, "/api/files/resources/ignored", nil)
 	parentReq.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(parentRoot), "/"))
 	parentRec := httptest.NewRecorder()
@@ -138,24 +87,6 @@ func TestFilesHandlerFormationsDataRootIsFilteredFromListings(t *testing.T) {
 	if got := fileItemNames(parentResponse.Items); len(got) != 1 || got[0] != "ordinary" {
 		t.Fatalf("parent listing names = %q, want only ordinary", got)
 	}
-}
-
-func newFilesHandlerForRoots(t *testing.T, allowedRoots []string, formationsDataRoot string) *FilesHandler {
-	t.Helper()
-	core.ResetConfigForTesting()
-	t.Cleanup(core.ResetConfigForTesting)
-	t.Setenv("CHROTE_ROOTS", strings.Join(allowedRoots, ","))
-	t.Setenv("CHROTE_WRITE_ROOTS", strings.Join(allowedRoots, ","))
-	return NewFilesHandlerWithFormationsDataRoot(formationsDataRoot)
-}
-
-func fileItemNames(items []FileItem) []string {
-	names := make([]string, 0, len(items))
-	for _, item := range items {
-		names = append(names, item.Name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 func TestFilesHandler_ResolveSafePath_Root(t *testing.T) {
@@ -534,7 +465,7 @@ func TestFilesHandlerSensitiveAllowPathsExposeOnlyConfiguredOwnerPrivateFiles(t 
 	t.Setenv("CHROTE_ROOTS", root)
 	t.Setenv("CHROTE_WRITE_ROOTS", root)
 	t.Setenv("CHROTE_FILE_ALLOW_SENSITIVE_PATHS", ownerRoot)
-	handler := NewFilesHandlerWithFormationsDataRoot("")
+	handler := NewFilesHandler()
 
 	for _, path := range []string{
 		filepath.Join(ownerRoot, ".hermes"),
@@ -555,15 +486,12 @@ func TestFilesHandlerSensitiveAllowPathsExposeOnlyConfiguredOwnerPrivateFiles(t 
 	}
 }
 
-func TestFilesHandlerDenyAndFormationsRootsOverrideSensitiveAllowPaths(t *testing.T) {
+func TestFilesHandlerDenyRootsOverrideSensitiveAllowPaths(t *testing.T) {
 	root := t.TempDir()
 	ownerRoot := filepath.Join(root, "home", "operator")
 	deniedRoot := filepath.Join(ownerRoot, ".hermes", "deny-me")
-	formationsRoot := filepath.Join(ownerRoot, ".hermes", "formations-private")
-	for _, path := range []string{deniedRoot, formationsRoot} {
-		if err := os.MkdirAll(path, 0700); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.MkdirAll(deniedRoot, 0700); err != nil {
+		t.Fatal(err)
 	}
 
 	core.ResetConfigForTesting()
@@ -572,15 +500,13 @@ func TestFilesHandlerDenyAndFormationsRootsOverrideSensitiveAllowPaths(t *testin
 	t.Setenv("CHROTE_WRITE_ROOTS", root)
 	t.Setenv("CHROTE_FILE_ALLOW_SENSITIVE_PATHS", ownerRoot)
 	t.Setenv("CHROTE_FILE_DENY_PATHS", deniedRoot)
-	handler := NewFilesHandlerWithFormationsDataRoot(formationsRoot)
+	handler := NewFilesHandler()
 
-	for _, path := range []string{deniedRoot, formationsRoot} {
-		if result := handler.resolveSafePath(path); result.Error != "Sensitive path not available in CHROTE Files" {
-			t.Fatalf("resolveSafePath(%q) = %#v, want explicit private-root rejection", path, result)
-		}
-		if result := handler.resolveMutationPath(path); result.Error != "Sensitive path not available in CHROTE Files" {
-			t.Fatalf("resolveMutationPath(%q) = %#v, want explicit private-root rejection", path, result)
-		}
+	if result := handler.resolveSafePath(deniedRoot); result.Error != "Sensitive path not available in CHROTE Files" {
+		t.Fatalf("resolveSafePath(%q) = %#v, want explicit private-root rejection", deniedRoot, result)
+	}
+	if result := handler.resolveMutationPath(deniedRoot); result.Error != "Sensitive path not available in CHROTE Files" {
+		t.Fatalf("resolveMutationPath(%q) = %#v, want explicit private-root rejection", deniedRoot, result)
 	}
 }
 
@@ -596,7 +522,7 @@ func TestFilesHandlerSensitiveAllowPathsSupportHTTPReadWriteRenameDelete(t *test
 	t.Setenv("CHROTE_ROOTS", root)
 	t.Setenv("CHROTE_WRITE_ROOTS", root)
 	t.Setenv("CHROTE_FILE_ALLOW_SENSITIVE_PATHS", ownerRoot)
-	handler := NewFilesHandlerWithFormationsDataRoot("")
+	handler := NewFilesHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
@@ -883,7 +809,7 @@ func TestFilesHandlerMutationCannotMoveOrRemoveNestedConfiguredWriteRoot(t *test
 func TestFilesHandlerRenameRejectsAncestorOfDeniedRoot(t *testing.T) {
 	root := t.TempDir()
 	container := filepath.Join(root, "container")
-	privateRoot := filepath.Join(container, "formations-private")
+	privateRoot := filepath.Join(container, "protected-private")
 	writeFileFixture(t, filepath.Join(privateRoot, "authority.json"), "private")
 	handler := &FilesHandler{
 		allowedRoots:   []string{root},
@@ -965,7 +891,7 @@ func TestFilesHandlerRejectsOversizedUpload(t *testing.T) {
 func TestFilesHandlerDownloadRejectsPrivateRootSwappedAfterPathValidation(t *testing.T) {
 	root := t.TempDir()
 	visible := filepath.Join(root, "visible")
-	private := filepath.Join(root, "formations-private")
+	private := filepath.Join(root, "protected-private")
 	writeFileFixture(t, filepath.Join(visible, "authority.json"), "public")
 	writeFileFixture(t, filepath.Join(private, "authority.json"), "private")
 
@@ -988,7 +914,7 @@ func TestFilesHandlerDownloadRejectsPrivateRootSwappedAfterPathValidation(t *tes
 func TestFilesHandlerListingRejectsPrivateRootSwappedAfterPathValidation(t *testing.T) {
 	root := t.TempDir()
 	visible := filepath.Join(root, "visible")
-	private := filepath.Join(root, "formations-private")
+	private := filepath.Join(root, "protected-private")
 	writeFileFixture(t, filepath.Join(visible, "notes.txt"), "public")
 	writeFileFixture(t, filepath.Join(private, "authority.json"), "private")
 
@@ -1011,7 +937,7 @@ func TestFilesHandlerListingRejectsPrivateRootSwappedAfterPathValidation(t *test
 func TestFilesHandlerCreateRejectsPrivateRootSwappedAfterPathValidation(t *testing.T) {
 	root := t.TempDir()
 	visible := filepath.Join(root, "visible")
-	private := filepath.Join(root, "formations-private")
+	private := filepath.Join(root, "protected-private")
 	if err := os.MkdirAll(visible, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -1039,7 +965,7 @@ func TestFilesHandlerCreateRejectsPrivateRootSwappedAfterPathValidation(t *testi
 func TestFilesHandlerDeleteRejectsPrivateRootSwappedAfterPathValidation(t *testing.T) {
 	root := t.TempDir()
 	visible := filepath.Join(root, "visible")
-	private := filepath.Join(root, "formations-private")
+	private := filepath.Join(root, "protected-private")
 	writeFileFixture(t, filepath.Join(visible, "victim.txt"), "public")
 	privateVictim := filepath.Join(private, "victim.txt")
 	writeFileFixture(t, privateVictim, "private")
@@ -1064,7 +990,7 @@ func TestFilesHandlerDeleteRejectsPrivateRootSwappedAfterPathValidation(t *testi
 func TestFilesHandlerRenameRejectsPrivateRootSwappedAfterPathValidation(t *testing.T) {
 	root := t.TempDir()
 	visible := filepath.Join(root, "visible")
-	private := filepath.Join(root, "formations-private")
+	private := filepath.Join(root, "protected-private")
 	writeFileFixture(t, filepath.Join(visible, "source.txt"), "public")
 	privateSource := filepath.Join(private, "source.txt")
 	writeFileFixture(t, privateSource, "private")
@@ -1207,9 +1133,9 @@ func TestFilesHandlerDownloadKeepsStableInRootSymlinkUseful(t *testing.T) {
 
 func TestFilesHandlerDownloadRejectsStaticPrivateRootAlias(t *testing.T) {
 	root := t.TempDir()
-	private := filepath.Join(root, "formations-private")
+	private := filepath.Join(root, "protected-private")
 	writeFileFixture(t, filepath.Join(private, "authority.json"), "private")
-	alias := filepath.Join(root, "formations-alias")
+	alias := filepath.Join(root, "protected-alias")
 	if err := os.Symlink(private, alias); err != nil {
 		t.Fatal(err)
 	}
@@ -1228,7 +1154,7 @@ func TestFilesHandlerDownloadRejectsStaticPrivateRootAlias(t *testing.T) {
 func TestFilesHandlerDeleteRejectsPrivateRootSwappedIntoFinalDirectory(t *testing.T) {
 	root := t.TempDir()
 	visible := filepath.Join(root, "visible")
-	private := filepath.Join(root, "formations-private")
+	private := filepath.Join(root, "protected-private")
 	if err := os.MkdirAll(visible, 0755); err != nil {
 		t.Fatal(err)
 	}

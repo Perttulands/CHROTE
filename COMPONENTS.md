@@ -56,8 +56,8 @@ separate safety ladder inside that experiment:
 3. explicitly promoted live tmux executor.
 
 The executor never gains permission to create or kill unrelated sessions merely
-because the Formations UI is available. See [`FORMATIONS.md`](FORMATIONS.md) and
-[`ARCHON.md`](ARCHON.md).
+because the Formations UI is available. See
+[chrote-agent-formations](https://github.com/Perttulands/chrote-agent-formations).
 
 ## Trust boundary
 

@@ -10,7 +10,7 @@ import (
 // first-wins, so listing and attaching resolved different tmux servers. The
 // server must refuse to start instead of silently picking one.
 func TestValidateTerminalUserEnv_RejectsDuplicateUserSocketKey(t *testing.T) {
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/run/user/2001/chrote-tmux/tmux-1000/default,build=/tmp/tmux-2002/default,alice=/run/user/2001/chrote-formations-tmux/default")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/run/user/2001/chrote-tmux/tmux-1000/default,build=/tmp/tmux-2002/default,alice=/run/user/2001/chrote-alt-tmux/default")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "")
 
 	err := ValidateTerminalUserEnv()
@@ -22,7 +22,7 @@ func TestValidateTerminalUserEnv_RejectsDuplicateUserSocketKey(t *testing.T) {
 		"CHROTE_TERMINAL_USER_SOCKETS",
 		"alice",
 		"/run/user/2001/chrote-tmux/tmux-1000/default",
-		"/run/user/2001/chrote-formations-tmux/default",
+		"/run/user/2001/chrote-alt-tmux/default",
 	} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("error %q does not name %q, so an operator cannot tell which entry to remove", message, want)

@@ -192,13 +192,6 @@ export interface UserSettings {
   mouseScroll: boolean               // tmux mouse mode: scroll wheel scrolls history
   hideScrollbar: boolean             // Hide the dead xterm scrollbar gutter in terminal iframes
   beadsProjectPaths?: string[]       // Manually added beads project paths
-  formationsTextSize?: FormationsTextSize // Formations cockpit text scale
-}
-
-export type FormationsTextSize = 'default' | 'large' | 'xlarge'
-
-export function resolveFormationsTextSize(value: unknown): FormationsTextSize {
-  return value === 'large' || value === 'xlarge' ? value : 'default'
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -217,7 +210,6 @@ export const DEFAULT_SETTINGS: UserSettings = {
   tmuxAppearance: DEFAULT_TMUX_APPEARANCE,
   mouseScroll: true,
   hideScrollbar: true,
-  formationsTextSize: 'default',
 }
 
 export interface TmuxSession {

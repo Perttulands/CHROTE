@@ -1,6 +1,0 @@
-{"type": "last-prompt", "sessionId": "5b1a0583-0000-4000-8000-000000000abc"}
-{"type": "attachment", "cwd": "/workspace/demo", "sessionId": "5b1a0583-0000-4000-8000-000000000abc"}
-{"type": "user", "cwd": "/workspace/demo", "sessionId": "5b1a0583-0000-4000-8000-000000000abc", "message": {"role": "user", "content": "peer turn"}}
-{"type": "assistant", "cwd": "/workspace/demo", "sessionId": "5b1a0583-0000-4000-8000-000000000abc", "message": {"role": "assistant", "content": [{"type": "text", "text": "First peer contribution.\n\n```chrote-outputs\n{\n  \"port_01TESTPORT0000000000000001\": {\"text\": \"turn-one\"}\n}\n```\n\n<<<CHROTE-DONE run-id=run_01TESTCAPTURE000000000000001 status=ok artifact=first.md>>>"}]}}
-{"type": "user", "cwd": "/workspace/demo", "sessionId": "5b1a0583-0000-4000-8000-000000000abc", "message": {"role": "user", "content": "facilitator turn"}}
-{"type": "assistant", "cwd": "/workspace/demo", "sessionId": "5b1a0583-0000-4000-8000-000000000abc", "message": {"role": "assistant", "content": "Done: no edits were needed; the routed payload is a short text value.\n\n```chrote-outputs\n{\n  \"port_01TESTPORT0000000000000001\": {\"text\": \"fixture-pass\"}\n}\n```\n\n<<<CHROTE-DONE run-id=run_01TESTCAPTURE000000000000001 status=ok artifact=second.md>>>"}}

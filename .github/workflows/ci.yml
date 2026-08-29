@@ -53,9 +53,10 @@ jobs:
 
       # The two gate scripts above ran in CI while their own tests never did, which is how a
       # corrupted guard and an untested neutrality gate both shipped green.
-      - name: Python checks
+      - name: Script contract checks
         run: |
           python3 -m unittest discover -s scripts -p 'test_*.py'
+          node --test scripts/ci-lane-contract.test.mjs
 
       - name: Dashboard install dependencies
         run: |
@@ -142,47 +143,6 @@ jobs:
           go test ./...
           go build -o /tmp/chrote-server-ci ./cmd/server
 
-  formations-browser:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: CI lane contract tests
-        run: node --test scripts/ci-lane-contract.test.mjs
-
-      - name: Dashboard install dependencies
-        run: |
-          cd dashboard
-          npm ci
-
-      - name: Install Playwright browser
-        run: |
-          cd dashboard
-          npx playwright install --with-deps chromium
-
-      - name: Formations Playwright tests
-        env:
-          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/formations-playwright.json
-        run: |
-          cd dashboard
-          npm run test:formations -- --reporter=line,json
-          node ../scripts/assert-playwright-executed.mjs "$PLAYWRIGHT_JSON_OUTPUT_FILE"
-
-      - name: Upload Formations browser failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: formations-browser-failure
-          path: |
-            dashboard/playwright-report
-            dashboard/test-results
-            ${{ runner.temp }}/formations-playwright.json
-          if-no-files-found: warn
-
   built-server-contract:
     runs-on: ubuntu-latest
     steps:
@@ -238,6 +198,5 @@ jobs:
             dashboard/playwright-report
             dashboard/test-results
             ${{ runner.temp }}/chrote-contract/server.log
-            ${{ runner.temp }}/chrote-contract/workspace/.formations
           include-hidden-files: true
           if-no-files-found: warn

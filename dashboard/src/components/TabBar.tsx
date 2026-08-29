@@ -7,7 +7,7 @@ import { getTerminalLabel, isTerminalWorkspaceId } from '../types'
 import type { WorkspaceId } from '../types'
 import DismissiblePanel from './DismissiblePanel'
 
-export type Tab = WorkspaceId | 'files' | 'agents' | 'beads' | 'formations' | 'services' | 'scheduled' | 'server' | 'settings' | 'help'
+export type Tab = WorkspaceId | 'files' | 'beads' | 'services' | 'scheduled' | 'server' | 'settings' | 'help'
 
 interface InternalTab {
   id: Tab
@@ -47,9 +47,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
   const tabs: TabConfig[] = [
     ...workspaceIds.map((id): InternalTab => ({ id, label: settings.terminalLabels[id]?.trim() || getTerminalLabel(id) })),
     { id: 'files', label: 'Files' },
-    { id: 'agents', label: 'Agents' },
     { id: 'beads', label: 'Beads' },
-    { id: 'formations', label: 'Formations' },
     { id: 'services', label: 'Services' },
     { id: 'scheduled', label: 'Scheduled' },
     ...(isFeatureEnabled('serverStatusTab') ? [{ id: 'server' as const, label: 'Server' }] : []),

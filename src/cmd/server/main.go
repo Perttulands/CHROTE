@@ -19,10 +19,7 @@ import (
 	"time"
 
 	"github.com/chrote/server/internal/api"
-	"github.com/chrote/server/internal/comms"
-	"github.com/chrote/server/internal/core"
 	"github.com/chrote/server/internal/dashboard"
-	"github.com/chrote/server/internal/formations"
 	"github.com/chrote/server/internal/proxy"
 )
 
@@ -47,7 +44,6 @@ type Config struct {
 	CORSOrigins             []string
 	StartTtyd               bool
 	StartSystemHistory      bool
-	FormationsDataRoot      string
 	StartSessionDropJanitor bool
 }
 
@@ -71,7 +67,6 @@ func main() {
 	if port := os.Getenv("TTYD_PORT"); port != "" {
 		config.TtydPort = mustParsePort("TTYD_PORT", port)
 	}
-	config.FormationsDataRoot = os.Getenv("CHROTE_FORMATIONS_DATA_ROOT")
 	warnRemovedAccessTokenSetting()
 	if err := api.ValidateTerminalUserEnv(); err != nil {
 		log.Fatalf("invalid terminal user configuration: %v", err)
@@ -185,7 +180,7 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	beadsHandler := api.NewBeadsHandler()
 	beadsHandler.RegisterRoutes(mux)
 
-	filesHandler := api.NewFilesHandlerWithFormationsDataRoot(config.FormationsDataRoot)
+	filesHandler := api.NewFilesHandler()
 	filesHandler.RegisterRoutes(mux)
 
 	healthHandler := api.NewHealthHandlerWithBuildInfo(Version, BuildCommit)
@@ -200,28 +195,6 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 		stopSystemHistory = startDefaultSystemHistorySampler(systemHandler, ctx)
 	}
 	systemHandler.RegisterRoutes(mux)
-
-	oracleHandler := api.NewOracleHandler(tmuxHandler, beadsHandler)
-	oracleHandler.RegisterRoutes(mux)
-
-	agentsHandler := api.NewAgentsHandler(formations.DefaultAgentsDir(), oracleHandler)
-	agentsHandler.RegisterRoutes(mux)
-
-	workspace := core.GetWorkDir()
-	formationsStore := formations.NewRuntimeStore(workspace, config.FormationsDataRoot)
-	formationsHandler := api.NewFormationsHandlerWithStore(formationsStore)
-	// Outbound "needs-you" channel: off by default. When the owner configures a
-	// webhook URL, a run that needs a human decision pushes one notification to it.
-	if webhookURL := strings.TrimSpace(os.Getenv("CHROTE_NEEDS_YOU_WEBHOOK_URL")); webhookURL != "" {
-		formationsHandler.SetNeedsYouNotifier(
-			formations.NewWebhookNeedsYouNotifier(webhookURL),
-			strings.TrimSpace(os.Getenv("CHROTE_NEEDS_YOU_BOARD_URL")),
-		)
-	}
-	formationsHandler.RegisterRoutes(mux)
-
-	commsHandler := api.NewCommsHandlerWithStore(comms.NewStoreWithFormations(workspace, formationsStore))
-	commsHandler.RegisterRoutes(mux)
 
 	// Create terminal proxy
 	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)

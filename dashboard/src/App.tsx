@@ -31,8 +31,6 @@ const FilesView = lazy(() => import('./components/FilesView'))
 const SettingsView = lazy(() => import('./components/SettingsView'))
 const HelpView = lazy(() => import('./components/HelpView'))
 const BeadsView = lazy(() => import('./components/BeadsView'))
-const FormationsCockpit = lazy(() => import('./components/FormationsCockpit'))
-const AgentsView = lazy(() => import('./components/AgentsView'))
 const ServicesView = lazy(() => import('./components/ServicesView'))
 const SystemStatusView = lazy(() => import('./components/SystemStatusView'))
 const ScheduledTasksView = lazy(() => import('./components/ScheduledTasksView'))
@@ -155,7 +153,6 @@ function DashboardContent() {
   const [showHelp, setShowHelp] = useState(false)
   const [showPresets, setShowPresets] = useState(false)
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
-  const [formationsVisited, setFormationsVisited] = useState(false)
   const {
     addSessionToWindow,
     settings,
@@ -245,12 +242,6 @@ function DashboardContent() {
   useEffect(() => {
     installFeatureFlagHelpers()
   }, [])
-
-  // Once visited, Formations stays mounted (hidden) so canvas/viewport state
-  // survives tab switches, mirroring the terminal tabs' keep-alive pattern.
-  useEffect(() => {
-    if (activeTab === 'formations') setFormationsVisited(true)
-  }, [activeTab])
 
   // Apply font size as CSS variable for terminal styling
   useEffect(() => {
@@ -356,31 +347,6 @@ function DashboardContent() {
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
                 <BeadsView onOpenProjectInFiles={handleOpenProjectInFiles} />
-              </Suspense>
-            </ErrorBoundary>
-          )}
-          {(formationsVisited || activeTab === 'formations') && (
-            <div
-              className="formations-host"
-              data-testid="formations-host"
-              style={{
-                display: activeTab === 'formations' ? 'flex' : 'none',
-                position: 'relative',
-                flex: 1,
-                minWidth: 0,
-              }}
-            >
-              <ErrorBoundary>
-                <Suspense fallback={<ViewFallback />}>
-                  <FormationsCockpit active={activeTab === 'formations'} />
-                </Suspense>
-              </ErrorBoundary>
-            </div>
-          )}
-          {activeTab === 'agents' && (
-            <ErrorBoundary>
-              <Suspense fallback={<ViewFallback />}>
-                <AgentsView />
               </Suspense>
             </ErrorBoundary>
           )}

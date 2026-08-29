@@ -95,15 +95,8 @@ const fileOpenPath = 0x200000
 
 // NewFilesHandler creates a new file API handler
 func NewFilesHandler() *FilesHandler {
-	return NewFilesHandlerWithFormationsDataRoot(strings.TrimSpace(os.Getenv("CHROTE_FORMATIONS_DATA_ROOT")))
-}
-
-// NewFilesHandlerWithFormationsDataRoot creates a file API handler that keeps
-// the supplied host-private Formations root outside the generic Files surface.
-func NewFilesHandlerWithFormationsDataRoot(formationsDataRoot string) *FilesHandler {
 	allowedRoots := core.GetAllowedRoots()
 	deniedRoots := append(defaultDeniedFileRoots(), configuredFileRoots("CHROTE_FILE_DENY_PATHS", nil)...)
-	deniedRoots = appendUniqueFileRoots(deniedRoots, canonicalFileRootAliases(formationsDataRoot)...)
 	return &FilesHandler{
 		allowedRoots:          allowedRoots,
 		writeRoots:            configuredFileRoots("CHROTE_WRITE_ROOTS", allowedRoots),
