@@ -229,13 +229,16 @@ func (h *ScheduledHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid scheduled task JSON: "+err.Error())
 		return
 	}
-	if !rejectScheduledSockets(w, request.Target, request.Targets) {
+	if !rejectLegacyScheduledTarget(w, request.RetiredTarget) {
+		return
+	}
+	if !rejectScheduledSockets(w, request.Targets) {
 		return
 	}
 	task, err := h.service.Create(r.Context(), scheduled.CreateTaskRequest{
 		Name:      request.Name,
 		Prompt:    request.Prompt,
-		Targets:   scheduledTargetList(request.Target, request.Targets),
+		Targets:   scheduledTargetList(request.Targets),
 		Schedule:  request.Schedule,
 		Enabled:   request.Enabled,
 		Paused:    request.Paused,
@@ -267,11 +270,14 @@ func (h *ScheduledHandler) PatchTask(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid scheduled task JSON: "+err.Error())
 		return
 	}
+	if !rejectLegacyScheduledTarget(w, request.RetiredTarget) {
+		return
+	}
 	requestedTargets := []scheduledAPITarget{}
 	if request.Targets != nil {
 		requestedTargets = *request.Targets
 	}
-	if !rejectScheduledSockets(w, request.Target, requestedTargets) {
+	if !rejectScheduledSockets(w, requestedTargets) {
 		return
 	}
 	patch := scheduled.PatchTaskRequest{
@@ -282,8 +288,8 @@ func (h *ScheduledHandler) PatchTask(w http.ResponseWriter, r *http.Request) {
 		Paused:    request.Paused,
 		UpdatedBy: request.UpdatedBy,
 	}
-	if request.Target != nil || request.Targets != nil {
-		targets := scheduledTargetList(request.Target, requestedTargets)
+	if request.Targets != nil {
+		targets := scheduledTargetList(requestedTargets)
 		patch.Targets = &targets
 	}
 	task, err := h.service.Patch(r.Context(), r.PathValue("id"), patch)
@@ -362,26 +368,26 @@ func requireScheduledMutation(w http.ResponseWriter, r *http.Request, requireJSO
 }
 
 type scheduledTaskRequest struct {
-	Name      string               `json:"name"`
-	Prompt    string               `json:"prompt"`
-	Target    *scheduledAPITarget  `json:"target,omitempty"`
-	Targets   []scheduledAPITarget `json:"targets,omitempty"`
-	Schedule  scheduled.Schedule   `json:"schedule"`
-	Enabled   *bool                `json:"enabled,omitempty"`
-	Paused    bool                 `json:"paused,omitempty"`
-	CreatedBy string               `json:"createdBy,omitempty"`
-	UpdatedBy string               `json:"updatedBy,omitempty"`
+	Name          string               `json:"name"`
+	Prompt        string               `json:"prompt"`
+	RetiredTarget json.RawMessage      `json:"target"`
+	Targets       []scheduledAPITarget `json:"targets,omitempty"`
+	Schedule      scheduled.Schedule   `json:"schedule"`
+	Enabled       *bool                `json:"enabled,omitempty"`
+	Paused        bool                 `json:"paused,omitempty"`
+	CreatedBy     string               `json:"createdBy,omitempty"`
+	UpdatedBy     string               `json:"updatedBy,omitempty"`
 }
 
 type scheduledTaskPatchRequest struct {
-	Name      *string               `json:"name,omitempty"`
-	Prompt    *string               `json:"prompt,omitempty"`
-	Target    *scheduledAPITarget   `json:"target,omitempty"`
-	Targets   *[]scheduledAPITarget `json:"targets,omitempty"`
-	Schedule  *scheduled.Schedule   `json:"schedule,omitempty"`
-	Enabled   *bool                 `json:"enabled,omitempty"`
-	Paused    *bool                 `json:"paused,omitempty"`
-	UpdatedBy string                `json:"updatedBy,omitempty"`
+	Name          *string               `json:"name,omitempty"`
+	Prompt        *string               `json:"prompt,omitempty"`
+	RetiredTarget json.RawMessage       `json:"target"`
+	Targets       *[]scheduledAPITarget `json:"targets,omitempty"`
+	Schedule      *scheduled.Schedule   `json:"schedule,omitempty"`
+	Enabled       *bool                 `json:"enabled,omitempty"`
+	Paused        *bool                 `json:"paused,omitempty"`
+	UpdatedBy     string                `json:"updatedBy,omitempty"`
 }
 
 type scheduledAPITarget struct {
@@ -394,26 +400,25 @@ func (t scheduledAPITarget) toScheduled() scheduled.Target {
 	return scheduled.Target{SessionName: t.SessionName, UnixUser: t.UnixUser}
 }
 
-// scheduledTargetList folds the documented single `target` object and the
-// multi-target `targets` array into one ordered list. Callers may send either.
-func scheduledTargetList(single *scheduledAPITarget, many []scheduledAPITarget) []scheduled.Target {
-	targets := make([]scheduled.Target, 0, len(many)+1)
+func scheduledTargetList(many []scheduledAPITarget) []scheduled.Target {
+	targets := make([]scheduled.Target, 0, len(many))
 	for _, target := range many {
 		targets = append(targets, target.toScheduled())
-	}
-	if single != nil {
-		targets = append(targets, single.toScheduled())
 	}
 	return targets
 }
 
+func rejectLegacyScheduledTarget(w http.ResponseWriter, target json.RawMessage) bool {
+	if target == nil {
+		return true
+	}
+	core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "target is retired; use targets instead")
+	return false
+}
+
 // rejectScheduledSockets fails closed on client-supplied socket paths; CHROTE
 // resolves tmux sockets server-side from its terminal configuration.
-func rejectScheduledSockets(w http.ResponseWriter, single *scheduledAPITarget, many []scheduledAPITarget) bool {
-	if single != nil && single.Socket != "" {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "target socket is not accepted; CHROTE resolves sockets server-side")
-		return false
-	}
+func rejectScheduledSockets(w http.ResponseWriter, many []scheduledAPITarget) bool {
 	for _, target := range many {
 		if target.Socket != "" {
 			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "target socket is not accepted; CHROTE resolves sockets server-side")

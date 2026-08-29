@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	osuser "os/user"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -28,7 +29,7 @@ func TestScheduledTasksAPIEnvelopeAndLifecycle(t *testing.T) {
 	created := scheduledAPIPost(t, mux, "/api/scheduled-tasks", `{
 		"name":"Standup nudge",
 		"prompt":"hello; rm -rf / $(whoami)",
-		"target":{"sessionName":"ops","unixUser":"alice"},
+		"targets":[{"sessionName":"ops","unixUser":"alice"}],
 		"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"},
 		"createdBy":"agent:test"
 	}`)
@@ -145,12 +146,6 @@ func TestScheduledTasksAPIFansOneTaskOutToManySessions(t *testing.T) {
 		t.Fatalf("run entry = %+v, want per-target results recorded", runTask.RecentRuns)
 	}
 
-	// The legacy single-target field stays readable for older API clients.
-	legacy := decodeScheduledLegacyTarget(t, runNow)
-	if legacy["sessionName"] != "worker-1" {
-		t.Fatalf("legacy target mirror = %v, want the first target", legacy)
-	}
-
 	patched := scheduledAPIPatch(t, mux, "/api/scheduled-tasks/"+createdTask.ID, `{
 		"targets":[{"sessionName":"worker-2","unixUser":"alice"}],
 		"updatedBy":"agent:patch"
@@ -184,6 +179,62 @@ func TestScheduledTasksAPIRejectsEmptyTargetList(t *testing.T) {
 	}
 }
 
+func TestScheduledTasksAPIRejectsLegacySingleTargetWithoutMutation(t *testing.T) {
+	fixedNow := time.Date(2026, 6, 27, 14, 0, 0, 0, time.UTC)
+	runner := newFakeScheduledRunner()
+	runner.allow(scheduled.Target{SessionName: "ops", UnixUser: "alice"})
+	handler := newScheduledTestHandler(t, runner, fixedNow, true)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(scheduledMutationIntentHeader, scheduledMutationIntentValue)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	legacyCreate := request(http.MethodPost, "/api/scheduled-tasks", `{
+		"name":"legacy","prompt":"hello",
+		"target":{"sessionName":"ops","unixUser":"alice"},
+		"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}
+	}`)
+	if legacyCreate.Code != http.StatusBadRequest || !strings.Contains(legacyCreate.Body.String(), `"code":"BAD_REQUEST"`) || !strings.Contains(legacyCreate.Body.String(), "use targets") {
+		t.Fatalf("legacy create status/body = %d/%s, want 400 BAD_REQUEST directing callers to targets", legacyCreate.Code, legacyCreate.Body.String())
+	}
+	if tasks := decodeScheduledTasksFromData(t, scheduledAPIGet(t, mux, "/api/scheduled-tasks"), "tasks"); len(tasks) != 0 {
+		t.Fatalf("legacy create persisted tasks = %+v, want none", tasks)
+	}
+
+	created := decodeScheduledTaskFromData(t, scheduledAPIPost(t, mux, "/api/scheduled-tasks", `{
+		"name":"current","prompt":"hello",
+		"targets":[{"sessionName":"ops","unixUser":"alice"}],
+		"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}
+	}`), "task")
+	if len(created.Targets) != 1 || created.Targets[0].SessionName != "ops" {
+		t.Fatalf("current targets create = %+v, want targets[] accepted", created.Targets)
+	}
+
+	legacyPatch := request(http.MethodPatch, "/api/scheduled-tasks/"+created.ID, `{
+		"name":"must not change",
+		"target":{"sessionName":"replacement","unixUser":"alice"},
+		"updatedBy":"legacy"
+	}`)
+	if legacyPatch.Code != http.StatusBadRequest || !strings.Contains(legacyPatch.Body.String(), `"code":"BAD_REQUEST"`) || !strings.Contains(legacyPatch.Body.String(), "use targets") {
+		t.Fatalf("legacy patch status/body = %d/%s, want 400 BAD_REQUEST directing callers to targets", legacyPatch.Code, legacyPatch.Body.String())
+	}
+	after := decodeScheduledTaskFromData(t, scheduledAPIGet(t, mux, "/api/scheduled-tasks/"+created.ID), "task")
+	if !reflect.DeepEqual(after, created) {
+		t.Fatalf("legacy patch changed task\nafter:  %+v\nbefore: %+v", after, created)
+	}
+	if len(runner.sent) != 0 {
+		t.Fatalf("rejected legacy requests invoked delivery: %+v", runner.sent)
+	}
+}
+
 func TestScheduledTasksAPIRequiresMutationIntentAndJSON(t *testing.T) {
 	runner := newFakeScheduledRunner()
 	runner.allow(scheduled.Target{SessionName: "ops", UnixUser: "alice"})
@@ -191,7 +242,7 @@ func TestScheduledTasksAPIRequiresMutationIntentAndJSON(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	body := `{"name":"csrf","prompt":"hello","target":{"sessionName":"ops","unixUser":"alice"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`
+	body := `{"name":"csrf","prompt":"hello","targets":[{"sessionName":"ops","unixUser":"alice"}],"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/scheduled-tasks", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -226,29 +277,29 @@ func TestScheduledTasksAPIValidationRejectsUnsafeOrInvalidRequests(t *testing.T)
 	}{
 		{
 			name: "empty prompt",
-			body: `{"name":"bad","prompt":"   ","target":{"sessionName":"ops","unixUser":"alice"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
+			body: `{"name":"bad","prompt":"   ","targets":[{"sessionName":"ops","unixUser":"alice"}],"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
 		},
 		{
 			name: "invalid interval",
-			body: `{"name":"bad","prompt":"hello","target":{"sessionName":"ops","unixUser":"alice"},"schedule":{"type":"interval","everyMinutes":0,"timezone":"UTC"}}`,
+			body: `{"name":"bad","prompt":"hello","targets":[{"sessionName":"ops","unixUser":"alice"}],"schedule":{"type":"interval","everyMinutes":0,"timezone":"UTC"}}`,
 		},
 		{
 			name: "invalid cron",
-			body: `{"name":"bad","prompt":"hello","target":{"sessionName":"ops","unixUser":"alice"},"schedule":{"type":"cron","expression":"61 * * * *","timezone":"UTC"}}`,
+			body: `{"name":"bad","prompt":"hello","targets":[{"sessionName":"ops","unixUser":"alice"}],"schedule":{"type":"cron","expression":"61 * * * *","timezone":"UTC"}}`,
 		},
 		{
 			name:     "socket field is forbidden",
-			body:     `{"name":"bad","prompt":"hello","target":{"sessionName":"ops","unixUser":"alice","socket":"/tmp/evil.sock"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
+			body:     `{"name":"bad","prompt":"hello","targets":[{"sessionName":"ops","unixUser":"alice","socket":"/tmp/evil.sock"}],"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
 			wantBody: "socket",
 		},
 		{
 			name:     "unknown target rejected when validation enabled",
-			body:     `{"name":"bad","prompt":"hello","target":{"sessionName":"missing","unixUser":"alice"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
+			body:     `{"name":"bad","prompt":"hello","targets":[{"sessionName":"missing","unixUser":"alice"}],"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
 			wantBody: "target",
 		},
 		{
 			name:     "unauthorized user rejected by validator",
-			body:     `{"name":"bad","prompt":"hello","target":{"sessionName":"ops","unixUser":"intruder"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
+			body:     `{"name":"bad","prompt":"hello","targets":[{"sessionName":"ops","unixUser":"intruder"}],"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
 			wantBody: "not allowed",
 		},
 	} {
@@ -975,20 +1026,6 @@ func decodeScheduledTaskFromData(t *testing.T, response map[string]any, key stri
 		t.Fatalf("decode task: %v; raw=%s", err, raw)
 	}
 	return task
-}
-
-func decodeScheduledLegacyTarget(t *testing.T, response map[string]any) map[string]any {
-	t.Helper()
-	data := response["data"].(map[string]any)
-	task, ok := data["task"].(map[string]any)
-	if !ok {
-		t.Fatalf("response data has no task object: %#v", data)
-	}
-	legacy, ok := task["target"].(map[string]any)
-	if !ok {
-		t.Fatalf("task has no legacy target mirror: %#v", task)
-	}
-	return legacy
 }
 
 func decodeScheduledTasksFromData(t *testing.T, response map[string]any, key string) []scheduled.Task {

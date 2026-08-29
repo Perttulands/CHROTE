@@ -2,7 +2,6 @@
 package api
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -358,45 +357,6 @@ func requiredIssueID(r *http.Request) (string, string, string) {
 		return "", "BAD_REQUEST", "Missing required parameter: id"
 	}
 	return id, "", ""
-}
-
-// parseJsonlFile reads and parses a JSONL file
-func (h *BeadsHandler) parseJsonlFile(filePath string) ([]map[string]interface{}, error) {
-	if !core.FileExists(filePath) {
-		return nil, fmt.Errorf("file not found: %s", filePath)
-	}
-
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var items []map[string]interface{}
-	var errors []string
-	lineNum := 0
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lineNum++
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		var item map[string]interface{}
-		if err := json.Unmarshal([]byte(line), &item); err != nil {
-			errors = append(errors, fmt.Sprintf("Line %d: %v", lineNum, err))
-		} else {
-			items = append(items, item)
-		}
-	}
-
-	if len(errors) > 0 {
-		return nil, fmt.Errorf("JSONL parse errors in %s:\n%s", filePath, strings.Join(errors, "\n"))
-	}
-
-	return items, nil
 }
 
 // transformIssue converts raw JSONL issue to frontend-expected format

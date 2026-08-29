@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 )
 
 // defaultAllowedRoots derives from HOME rather than hardcoding a user path.
@@ -17,22 +16,13 @@ var defaultAllowedRoots = func() []string {
 	return []string{home, "/code", "/vault"}
 }()
 
-var (
-	allowedRootsOnce sync.Once
-	allowedRoots     []string
-)
-
 // GetAllowedRoots returns the configured allowed roots
 // Reads from CHROTE_ROOTS env var, defaults to HOME,/code,/vault
 func GetAllowedRoots() []string {
-	allowedRootsOnce.Do(func() {
-		if roots := os.Getenv("CHROTE_ROOTS"); roots != "" {
-			allowedRoots = normalizeRoots(strings.Split(roots, ","))
-		} else {
-			allowedRoots = normalizeRoots(defaultAllowedRoots)
-		}
-	})
-	return allowedRoots
+	if roots := os.Getenv("CHROTE_ROOTS"); roots != "" {
+		return normalizeRoots(strings.Split(roots, ","))
+	}
+	return normalizeRoots(defaultAllowedRoots)
 }
 
 func normalizeRoots(parts []string) []string {
@@ -84,42 +74,6 @@ func IsPathUnderRoot(path, root string) bool {
 	return absPath == absRoot || strings.HasPrefix(absPath, absRoot+string(os.PathSeparator))
 }
 
-// ResetConfigForTesting resets the cached config (for testing only)
-func ResetConfigForTesting() {
-	allowedRootsOnce = sync.Once{}
-	allowedRoots = nil
-}
-
-// ValidateProjectPath ensures a path is within allowed roots
-func ValidateProjectPath(inputPath string) (string, string, string) {
-	if inputPath == "" {
-		return "", "BAD_REQUEST", "Missing required parameter: path"
-	}
-
-	resolved, err := filepath.Abs(inputPath)
-	if err != nil {
-		return "", "BAD_REQUEST", "Invalid path: " + err.Error()
-	}
-
-	isAllowed := false
-	for _, root := range GetAllowedRoots() {
-		if IsPathUnderRoot(resolved, root) {
-			isAllowed = true
-			break
-		}
-	}
-
-	if !isAllowed {
-		return "", "FORBIDDEN", "Project path not in allowed roots: " + resolved + ". Allowed: " + strings.Join(GetAllowedRoots(), ", ")
-	}
-
-	if _, err := os.Stat(resolved); os.IsNotExist(err) {
-		return "", "NOT_FOUND", "Project path does not exist: " + resolved
-	}
-
-	return resolved, "", ""
-}
-
 // FileExists checks if a file exists
 func FileExists(path string) bool {
 	_, err := os.Stat(path)
@@ -146,13 +100,4 @@ func GetLaunchScript() string {
 		return script
 	}
 	return "/usr/local/bin/terminal-launch.sh"
-}
-
-// GetBvLaunchScript returns the beads viewer launch script path
-// Reads from CHROTE_BV_LAUNCH_SCRIPT env var, defaults to /usr/local/bin/bv-launch.sh
-func GetBvLaunchScript() string {
-	if script := os.Getenv("CHROTE_BV_LAUNCH_SCRIPT"); script != "" {
-		return script
-	}
-	return "/usr/local/bin/bv-launch.sh"
 }

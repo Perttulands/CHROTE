@@ -580,7 +580,7 @@ func TestStoreReadsLegacySingleTargetDocument(t *testing.T) {
 	}
 }
 
-func TestTaskJSONMirrorsFirstTargetForOlderReaders(t *testing.T) {
+func TestTaskJSONWritesCurrentTargetsSchema(t *testing.T) {
 	raw, err := json.Marshal(Task{
 		ID:      "tsk_mirror",
 		Targets: []Target{{SessionName: "worker-1"}, {SessionName: "worker-2"}},
@@ -588,18 +588,29 @@ func TestTaskJSONMirrorsFirstTargetForOlderReaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal task: %v", err)
 	}
-	var document struct {
-		Target  *Target  `json:"target"`
-		Targets []Target `json:"targets"`
-	}
+	var document map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &document); err != nil {
 		t.Fatalf("unmarshal task: %v", err)
 	}
-	if document.Target == nil || document.Target.SessionName != "worker-1" {
-		t.Fatalf("legacy mirror = %+v, want the first target", document.Target)
+	wantKeys := map[string]bool{
+		"id": true, "name": true, "prompt": true, "targets": true,
+		"schedule": true, "enabled": true, "paused": true,
+		"createdAt": true, "updatedAt": true,
 	}
-	if len(document.Targets) != 2 {
-		t.Fatalf("targets = %+v, want both persisted", document.Targets)
+	if len(document) != len(wantKeys) {
+		t.Fatalf("task schema keys = %v, want current schema keys %v", document, wantKeys)
+	}
+	for key := range wantKeys {
+		if _, ok := document[key]; !ok {
+			t.Fatalf("task schema missing current field %q: %s", key, raw)
+		}
+	}
+	var targets []Target
+	if err := json.Unmarshal(document["targets"], &targets); err != nil {
+		t.Fatalf("decode task targets: %v", err)
+	}
+	if len(targets) != 2 || targets[0].SessionName != "worker-1" || targets[1].SessionName != "worker-2" {
+		t.Fatalf("targets = %+v, want both current targets in order", targets)
 	}
 }
 

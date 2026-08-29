@@ -11,8 +11,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/chrote/server/internal/core"
 )
 
 func beadsHandlerWithFakeCommand(t *testing.T, bdOutput string) (*BeadsHandler, string, string) {
@@ -24,7 +22,6 @@ func beadsHandlerWithFakeCommand(t *testing.T, bdOutput string) (*BeadsHandler, 
 	projectPath := filepath.Join(root, "project")
 	makeValidBeadsWorkspace(t, projectPath)
 	t.Setenv("CHROTE_ROOTS", root)
-	core.ResetConfigForTesting()
 
 	_, argsPath := makeFakeBdCommand(t, bdOutput)
 	return NewBeadsHandler(), projectPath, argsPath
@@ -118,14 +115,6 @@ func TestBeadsHandler_CurrentlyPassesLeadingDashCommentAsRawPositional(t *testin
 	if gotArgs := readFakeBdArgs(t, argsPath); !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("bd args = %#v, want current raw positional args %#v", gotArgs, wantArgs)
 	}
-}
-
-func TestBeadsHandler_RejectsLeadingDashIssueIDFutureSpec(t *testing.T) {
-	t.Skip("Known gap: enable in home-idhj.1 when bd issue ids reject leading-dash option-like values or add a -- terminator")
-}
-
-func TestBeadsHandler_RejectsLeadingDashCommentFutureSpec(t *testing.T) {
-	t.Skip("Known gap: enable in home-idhj.1 when bd comments add treats comment text as data, not possible CLI flags")
 }
 
 func TestBeadsHandler_BaselineDoesNotUseRealWorkspaceDatabase(t *testing.T) {

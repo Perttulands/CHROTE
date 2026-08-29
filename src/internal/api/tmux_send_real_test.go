@@ -1,3 +1,5 @@
+//go:build live
+
 package api
 
 import (
@@ -88,21 +90,21 @@ func TestCleanupPrivateTmuxSessionsRetainsRootOnAmbiguousClientFailure(t *testin
 
 func TestSendToSessionRealTmuxPinsExactPane(t *testing.T) {
 	if os.Getenv("CHROTE_REAL_TMUX_TEST") != "1" {
-		t.Skip("set CHROTE_REAL_TMUX_TEST=1 only with explicit approval to start and stop a disposable tmux server")
+		t.Fatal("live tmux test requires CHROTE_REAL_TMUX_TEST=1 and explicit approval for a disposable tmux server")
 	}
 	if os.Getenv("CHROTE_REAL_TMUX_OWNER_APPROVED") != "1" {
-		t.Skip("set CHROTE_REAL_TMUX_OWNER_APPROVED=1 only after configuring the effective tmux client's owner authorization for this disposable private root")
+		t.Fatal("live tmux test requires CHROTE_REAL_TMUX_OWNER_APPROVED=1 after owner authorization is configured")
 	}
 	tmuxBin, err := exec.LookPath("tmux")
 	if err != nil {
-		t.Skip("tmux is not installed")
+		t.Fatalf("live tmux test requires tmux: %v", err)
 	}
 	if _, err := exec.LookPath("setfacl"); err != nil {
-		t.Skip("setfacl is not installed")
+		t.Fatalf("live tmux test requires setfacl: %v", err)
 	}
 	current, err := osuser.Current()
 	if err != nil || current.Username == "" {
-		t.Skip("current Unix user is unavailable")
+		t.Fatalf("live tmux test requires the current Unix user: %v", err)
 	}
 
 	root, err := os.MkdirTemp("", "TestSendToSessionRealTmuxPinsExactPane-*")
@@ -228,25 +230,25 @@ func TestSendToSessionRealTmuxPinsExactPane(t *testing.T) {
 
 func TestSendToSessionRealCodexLongPrompt(t *testing.T) {
 	if os.Getenv("CHROTE_REAL_CODEX_TEST") != "1" {
-		t.Skip("set CHROTE_REAL_CODEX_TEST=1 only for an approved private-socket Codex smoke")
+		t.Fatal("live Codex smoke requires CHROTE_REAL_CODEX_TEST=1 and explicit private-socket approval")
 	}
 	if os.Getenv("CHROTE_REAL_TMUX_OWNER_APPROVED") != "1" {
-		t.Skip("set CHROTE_REAL_TMUX_OWNER_APPROVED=1 only after configuring the effective tmux client's owner authorization for this disposable private root")
+		t.Fatal("live Codex smoke requires CHROTE_REAL_TMUX_OWNER_APPROVED=1 after owner authorization is configured")
 	}
 	tmuxBin, err := exec.LookPath("tmux")
 	if err != nil {
-		t.Skip("tmux is not installed")
+		t.Fatalf("live Codex smoke requires tmux: %v", err)
 	}
 	codexBin, err := exec.LookPath("codex")
 	if err != nil {
-		t.Skip("codex is not installed")
+		t.Fatalf("live Codex smoke requires codex: %v", err)
 	}
 	if _, err := exec.LookPath("setfacl"); err != nil {
-		t.Skip("setfacl is not installed")
+		t.Fatalf("live Codex smoke requires setfacl: %v", err)
 	}
 	current, err := osuser.Current()
 	if err != nil || current.Username == "" {
-		t.Skip("current Unix user is unavailable")
+		t.Fatalf("live Codex smoke requires the current Unix user: %v", err)
 	}
 
 	root, err := os.MkdirTemp("", "TestSendToSessionRealCodexLongPrompt-*")

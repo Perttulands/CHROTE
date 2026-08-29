@@ -23,10 +23,6 @@ vi.mock('../context/SessionContext', () => ({
   }),
 }))
 
-vi.mock('./MusicPlayer', () => ({
-  default: () => <div data-testid="music-player" />,
-}))
-
 function mockMatchMedia(matches: boolean) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,

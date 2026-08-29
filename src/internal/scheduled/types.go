@@ -136,9 +136,8 @@ type Task struct {
 	Audit      []AuditEntry `json:"audit,omitempty"`
 }
 
-// UnmarshalJSON accepts both the multi-target schema and the legacy single
-// `target` object written by earlier CHROTE builds and still documented for
-// agent callers.
+// UnmarshalJSON keeps existing task files readable while new writes use only
+// the current multi-target schema.
 func (t *Task) UnmarshalJSON(raw []byte) error {
 	type taskAlias Task
 	var document struct {
@@ -151,22 +150,6 @@ func (t *Task) UnmarshalJSON(raw []byte) error {
 	*t = Task(document.taskAlias)
 	t.Targets = normalizeTargets(t.Targets, document.LegacyTarget)
 	return nil
-}
-
-// MarshalJSON writes the multi-target schema and mirrors the first target into
-// the legacy `target` field so an older build (or an older API client) reading
-// the same document still sees a usable single target.
-func (t Task) MarshalJSON() ([]byte, error) {
-	type taskAlias Task
-	document := struct {
-		taskAlias
-		LegacyTarget *Target `json:"target,omitempty"`
-	}{taskAlias: taskAlias(t)}
-	if len(t.Targets) > 0 {
-		first := t.Targets[0]
-		document.LegacyTarget = &first
-	}
-	return json.Marshal(document)
 }
 
 // normalizeTargets folds an optional legacy single target into the target list

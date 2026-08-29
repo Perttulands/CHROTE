@@ -17,8 +17,6 @@ func tempRootFilesHandler(t *testing.T) (*FilesHandler, string) {
 	root := filepath.ToSlash(t.TempDir())
 	return &FilesHandler{
 		allowedRoots:   []string{root},
-		writeRoots:     []string{root},
-		deniedRoots:    defaultDeniedFileRoots(),
 		maxUploadBytes: defaultMaxUploadBytes,
 	}, root
 }
