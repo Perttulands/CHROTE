@@ -25,6 +25,8 @@ A change is green only when the relevant layers pass after the final edit:
 
 Warnings are evidence. Do not suppress React lifecycle warnings, Go diagnostics, npm audit findings, or browser errors merely to make output quiet.
 
+A review finding that proposes adding handling, evidence, timeouts, guards, or tests of absence is answered with what the change removes; "harden" is not a verb a review may use without naming the removed surface.
+
 ## Canonical local matrix
 
 ### Documentation

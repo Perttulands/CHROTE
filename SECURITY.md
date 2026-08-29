@@ -47,17 +47,12 @@ CHROTE directly to an untrusted LAN or the public internet. Treat exposing the
 dashboard as exposing the shells of every configured terminal user.
 
 Configured Unix accounts are operational identities for process ownership,
-harness separation, and tmux routing. They are not mutually hostile tenants.
-Within that trusted-local boundary, preserving the owner's access to configured
-work takes priority over speculative isolation between those accounts.
-
-CHROTE therefore does not tighten or replace ownership, modes, or ACLs on
-workspaces, tmux sessions, or their sockets to manufacture an isolation or
-durability guarantee. It may apply or refresh explicitly operator-configured
-additive access grants, but those grants must never reduce the owner's access.
-Without such configuration, CHROTE reports missing access instead of reshaping
-the permission topology. Configured roots, path containment, and the Unix
-permissions the process already has remain enforced.
+harness separation, and tmux routing. They are not mutually hostile tenants:
+access is broad by design, and CHROTE never tightens or replaces ownership,
+modes, or ACLs to manufacture an isolation or durability guarantee — the
+product boundary in [`AGENTS.md`](AGENTS.md) owns that rule. Configured roots,
+path containment, and the Unix permissions the process already has remain
+enforced.
 
 ## CORS is not authentication
 
@@ -78,8 +73,6 @@ configured user's sessions, not the service account's alone.
 - A terminal is arbitrary command execution as that Unix user.
 - Cross-user socket access requires deliberate filesystem and tmux ACL setup.
 - CHROTE must not guess socket ownership or silently widen access.
-- CHROTE must not narrow owner access by dynamically changing workspace,
-  session, or socket permissions.
 - Experimental Formations executor access does not permit creating or killing unrelated tmux
   sessions.
 - Browser/device disconnects and CHROTE restarts must not cause CHROTE to kill

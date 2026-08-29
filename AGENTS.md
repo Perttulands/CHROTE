@@ -20,16 +20,44 @@ CHROTE is a private browser cockpit for host-owned work:
 
 CHROTE is not a hosted service, an IDE, or an OS sandbox. Do not assume Gastown, Ralph, or any single agent harness is installed.
 
-Preserve owner access and external work. Do not tighten or replace workspace,
-session, or socket ownership, modes, or ACLs to create speculative isolation or
-recovery guarantees. Explicit operator-configured additive grants may be
-applied or refreshed, but must never reduce owner access. A browser disconnect
-or CHROTE restart must not cause CHROTE to kill external tmux work, but ordinary
-sessions are best-effort and CHROTE does not recreate them after process death
-or host reboot. Rare durable workloads belong in explicit operator-owned host
-configuration.
+Access is broad by design: everything CHROTE can reach, it shows. The only
+asymmetry is Unix permissions — a secondary account cannot read the owner's
+work, the owner can read the secondary's — and it is never encoded in CHROTE.
+Never tighten ownership, modes, or ACLs to make code safer; CHROTE's value is
+access. Explicitly operator-configured additive grants may be applied or
+refreshed but must never reduce owner access; where one is missing, report it
+instead of reshaping the permission topology.
+
+Rare, judgment-heavy operations — session recovery, restore, cleanup,
+migration, one-off repair — are agent skills, not CHROTE code. CHROTE code is
+for what runs on every request; the operator's `agent-session-recovery` skill
+is the recovery surface. A browser disconnect or CHROTE restart must not kill
+external tmux work, but ordinary sessions are best-effort: CHROTE does not
+recreate them after process death or host reboot, and a rare durable workload
+belongs in explicit operator-owned host configuration.
 
 Formations and Archon are experimental and unreleased. Their active specs define development contracts, not a supported release promise.
+
+## Current epic
+
+`chrote-kmz` subtracts code without changing the product. Terminal, Files, Beads, Scheduled, Server,
+Settings, API response shapes, and persisted localStorage formats must not change; the only intended
+visible changes are the Agents tab going away and Files showing everything under `CHROTE_ROOTS`.
+Formations, Archon, and Agents move to the public `chrote-agent-formations` repository in
+`chrote-kmz.4` and stay experimental and unreleased until then.
+
+## Complexity budget
+
+Every change is measured by what it removes.
+
+- Report the net line delta of every change.
+- No new environment variable without removing one.
+- No new CI step, gate script, or test-of-a-gate without removing one.
+- No test file named `hardening`, `baseline`, `fence`, `guard`, or `prototype`.
+- No test asserting the absence of a feature.
+- No `t.Skip`. Opt-in or environment-dependent tests use a Go build tag such as `//go:build live`.
+- Rollback is `git revert` plus a rebuild, never a binary swap.
+- Never `git add -A` in this shared tree; commit small, scoped sets of files.
 
 ## Source truth
 
@@ -67,8 +95,7 @@ profile's conservative Git fallback below; leave the generated block intact.
 - Create and claim the relevant Bead before substantive implementation, then
   commit each coherent, verified increment before moving to an independent
   concern.
-- Keep commits small and single-purpose. Stage only the files belonging to the
-  current Bead, and preserve unrelated dirty work.
+- Stage only the files belonging to the current Bead, and preserve unrelated dirty work.
 - For generated, multiline, or Markdown commit messages, pass message bytes
   with `git commit -F <file>` or `git commit -F - <<'EOF'`; never interpolate
   message text into a double-quoted `-m` argument, where backticks and `$()`
@@ -88,9 +115,9 @@ profile's conservative Git fallback below; leave the generated block intact.
 - Do not kill, rename, or restart tmux sessions unless the task explicitly requires it.
 - Do not assume a service name, port, socket, or deployment lane from tracked files. Discover the approved target from local operator configuration before runtime actions.
 - Never commit private topology, credentials, terminal transcripts, or operator-specific recovery procedures.
-  `python3 scripts/host-neutrality.py` enforces this over every tracked file and runs in CI. It fails on real
-  usernames, home directories, uid-scoped socket paths, tailnet or host names, and host-only unit names.
-  Use neutral fixtures instead: `alice`/`build`, `/run/user/<uid>/...`, `/tmp/tmux-<uid>/...`.
+  `python3 scripts/host-neutrality.py` enforces this in CI over every tracked file — real usernames, home
+  directories, uid-scoped socket paths, tailnet or host names, host-only unit names. Use neutral fixtures:
+  `alice`/`build`, `/run/user/<uid>/...`, `/tmp/tmux-<uid>/...`.
 
 ## Build and verify
 
