@@ -24,7 +24,7 @@ export default defineConfig({
   testIgnore: externalServer ? [] : localOnlyIgnores,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  retries: 0,
   // Undefined workers means half the host's cores; on a shared 16-core host two
   // overlapping runs (each 8 Chromes) starve each other into beforeEach timeouts.
   workers: process.env.CI ? 1 : 4,
@@ -48,6 +48,7 @@ export default defineConfig({
     {
       name: 'live-backend',
       use: { ...devices['Desktop Chrome'] },
+      testMatch: 'integration/**/*.spec.ts',
     },
   ] : [
     {

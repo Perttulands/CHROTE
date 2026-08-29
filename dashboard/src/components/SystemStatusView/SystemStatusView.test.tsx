@@ -1,8 +1,12 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import SystemStatusView from './index'
 
 const fetchMock = vi.fn()
+const testDir = dirname(fileURLToPath(import.meta.url))
 
 function envelope(data: unknown) {
   return Promise.resolve(new Response(JSON.stringify({ success: true, data }), { status: 200 }))
@@ -190,6 +194,11 @@ describe('SystemStatusView', () => {
     expect(screen.queryByLabelText(/scrollable server telemetry history/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'History' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Storage' })).not.toBeInTheDocument()
+
+    const css = readFileSync(resolve(testDir, '../../styles/system-status.css'), 'utf8')
+    expect(css).toMatch(/--system-signal:\s*var\(--accent\)/)
+    expect(css).toMatch(/\.system-instrument\s*\{[\s\S]*?--system-trace:\s*var\(--system-signal\)/)
+    expect(css).toMatch(/\.system-trace-line,[\s\S]*?stroke:\s*var\(--system-trace\)/)
   })
 
   it('scales each row to its own peak so a quiet host is still readable', async () => {

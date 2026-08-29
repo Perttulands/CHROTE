@@ -556,7 +556,7 @@ func TestTmuxHandler_ListSessionsDoesNotAdvertiseImplicitCurrentUser(t *testing.
 }
 
 func TestTmuxHandler_DeleteAllSessionsReportsListErrors(t *testing.T) {
-	installFailingTmux(t, "error connecting to /tmp/tmux-2002/default (Permission denied)")
+	installAlwaysFailingTmux(t, "error connecting to /tmp/tmux-2002/default (Permission denied)")
 	handler := NewTmuxHandler()
 	req := httptest.NewRequest(http.MethodDelete, "/api/tmux/sessions/all", nil)
 	req.Header.Set("X-Nuke-Confirm", "DASHBOARD-NUKE-CONFIRMED")

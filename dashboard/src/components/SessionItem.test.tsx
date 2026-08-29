@@ -12,6 +12,7 @@ const mockState = vi.hoisted(() => ({
   focusSessionAssignment: vi.fn(),
   addSessionToWindow: vi.fn(),
   removeSessionFromWindow: vi.fn(),
+  renameSession: vi.fn(),
   dragListeners: { onPointerDown: vi.fn() },
   dragAttributes: { role: 'button', tabIndex: 0 },
   dragTransform: null as { x: number; y: number } | null,
@@ -34,7 +35,6 @@ vi.mock('../context/SessionContext', () => ({
     handleSessionClick: mockState.handleSessionClick,
     focusSessionAssignment: mockState.focusSessionAssignment,
     deleteSession: vi.fn(),
-    renameSession: vi.fn(),
     workspaces: {
       terminal1: { windows: [{ id: 'terminal1-window-0', colorIndex: 0 }], windowCount: 1 },
       terminal2: { windows: [], windowCount: 0 },
@@ -43,6 +43,7 @@ vi.mock('../context/SessionContext', () => ({
     workspaceIds: TERMINAL_WORKSPACE_IDS,
     addSessionToWindow: mockState.addSessionToWindow,
     removeSessionFromWindow: mockState.removeSessionFromWindow,
+    renameSession: mockState.renameSession,
     openFloatingModal: mockState.openFloatingModal,
     openSendToSession: mockState.openSendToSession,
     settings: {
@@ -63,6 +64,7 @@ describe('SessionItem user badge and context actions', () => {
     mockState.focusSessionAssignment.mockClear()
     mockState.addSessionToWindow.mockClear()
     mockState.removeSessionFromWindow.mockClear()
+    mockState.renameSession.mockClear()
     mockState.dragListeners.onPointerDown.mockClear()
     mockState.dragTransform = null
     mockState.isDragging = false
@@ -103,6 +105,37 @@ describe('SessionItem user badge and context actions', () => {
     )
 
     expect(screen.getByTitle('Foreground process reported by tmux: bash')).toHaveTextContent('shell')
+    expect(screen.queryByRole('button', { name: /Focus assigned window/ })).not.toBeInTheDocument()
+  })
+
+  it('cancels rename with Escape and rejects an empty replacement', () => {
+    render(
+      <SessionItem
+        session={{
+          name: 'alice-shell',
+          windows: 1,
+          attached: false,
+          group: 'main',
+          unixUser: 'alice',
+        }}
+      />
+    )
+
+    fireEvent.contextMenu(screen.getByText('alice-shell'))
+    fireEvent.click(screen.getByRole('button', { name: /Rename/ }))
+    const cancelled = screen.getByRole('textbox')
+    fireEvent.change(cancelled, { target: { value: 'discarded' } })
+    fireEvent.keyDown(cancelled, { key: 'Escape' })
+    expect(mockState.renameSession).not.toHaveBeenCalled()
+    expect(screen.getByText('alice-shell')).toBeInTheDocument()
+
+    fireEvent.contextMenu(screen.getByText('alice-shell'))
+    fireEvent.click(screen.getByRole('button', { name: /Rename/ }))
+    const empty = screen.getByRole('textbox')
+    fireEvent.change(empty, { target: { value: '' } })
+    fireEvent.keyDown(empty, { key: 'Enter' })
+    expect(mockState.renameSession).not.toHaveBeenCalled()
+    expect(screen.getByText('alice-shell')).toBeInTheDocument()
   })
 
   it('places the Unix user badge before the attached terminal/window badge', () => {
@@ -149,6 +182,7 @@ describe('SessionItem user badge and context actions', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Session actions for alice-shell' }))
+    expect(screen.queryByRole('button', { name: /Unassign/i })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Peek/i }))
     expect(mockState.openFloatingModal).toHaveBeenCalledWith('alice:alice-shell')
 

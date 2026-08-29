@@ -103,6 +103,24 @@ test.describe('Layout Presets', () => {
 
     // The input should be cleared after save
     await expect(page.locator('.preset-name-input')).toHaveValue('')
+
+    await page.click('.preset-rename-btn')
+    await page.locator('.preset-edit-input').fill('Renamed Layout')
+    await page.click('.preset-edit-save')
+    await expect(page.locator('.preset-name')).toContainText('Renamed Layout')
+
+    await page.click('.presets-panel-close')
+    await page.reload()
+    await openPresetsPanel(page)
+    await expect(page.locator('.preset-name')).toContainText('Renamed Layout')
+
+    await page.evaluate(json => localStorage.setItem('chrote-dashboard-presets', json), buildPresetJSON(10))
+    await page.reload()
+    await openPresetsPanel(page)
+    await expect(page.locator('.preset-item')).toHaveCount(10)
+    await expect(page.locator('.preset-limit-warning')).toContainText('Maximum 10 presets reached')
+    await page.fill('.preset-name-input', 'One More')
+    await expect(page.locator('.preset-save-btn')).toBeDisabled()
   })
 
   test('should load preset and restore layout', async ({ page }) => {
@@ -117,9 +135,13 @@ test.describe('Layout Presets', () => {
     await savePreset(page, 'With Jack')
     await page.click('.presets-panel-close')
 
-    // Change the layout: remove jack (click the remove button on the tag)
+    // Replace the saved binding before loading so the preset must cleanly restore it.
     await page.locator('.terminal-window:visible').nth(0).locator('.tag-remove').click()
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.session-tag')).toHaveCount(0)
+    const joeRow = page.locator('.session-item:has-text("joe")').first()
+    await joeRow.getByRole('button', { name: /Session actions/ }).click()
+    await page.getByRole('button', { name: /Attach to Window/ }).click()
+    await page.locator('.session-context-submenu').getByRole('button', { name: 'Window 1', exact: true }).click()
+    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('joe')
 
     // Now load the saved preset
     await openPresetsPanel(page)
@@ -130,6 +152,7 @@ test.describe('Layout Presets', () => {
 
     // Jack should be restored in window 0
     await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('jack')
+    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).not.toContainText('joe')
   })
 
   test('should delete preset from list', async ({ page }) => {
@@ -147,132 +170,4 @@ test.describe('Layout Presets', () => {
     await expect(page.locator('.preset-name')).toContainText('Second')
   })
 
-  test('should rename preset', async ({ page }) => {
-    // Save a preset
-    await openPresetsPanel(page)
-    await savePreset(page, 'Old Name')
-    await expect(page.locator('.preset-name')).toContainText('Old Name')
-
-    // Click the rename button (pencil icon)
-    await page.click('.preset-rename-btn')
-
-    // Edit form should appear with the current name
-    await expect(page.locator('.preset-edit-input')).toBeVisible()
-    await expect(page.locator('.preset-edit-input')).toHaveValue('Old Name')
-
-    // Clear and type new name
-    await page.locator('.preset-edit-input').fill('New Name')
-    await page.click('.preset-edit-save')
-
-    // Should show the new name
-    await expect(page.locator('.preset-name')).toContainText('New Name')
-
-    // Edit form should be gone
-    await expect(page.locator('.preset-edit-input')).not.toBeVisible()
-  })
-
-  test('should enforce MAX_PRESETS limit', async ({ page }) => {
-    // Seed localStorage with 10 presets (MAX_PRESETS), then reload
-    const json = buildPresetJSON(10)
-    await page.evaluate((j: string) => {
-      localStorage.setItem('chrote-dashboard-presets', j)
-    }, json)
-    await page.reload()
-    await page.waitForSelector('.dashboard')
-
-    await openPresetsPanel(page)
-
-    // Should show all 10 presets
-    await expect(page.locator('.preset-item')).toHaveCount(10)
-
-    // Warning should be visible
-    await expect(page.locator('.preset-limit-warning')).toBeVisible()
-    await expect(page.locator('.preset-limit-warning')).toContainText('Maximum 10 presets reached')
-
-    // Save button should be disabled even with text entered
-    await page.fill('.preset-name-input', 'One More')
-    await expect(page.locator('.preset-save-btn')).toBeDisabled()
-  })
-
-  test('should persist presets across page reload', async ({ page }) => {
-    // Save a preset
-    await openPresetsPanel(page)
-    await savePreset(page, 'Persistent Layout')
-    await expect(page.locator('.preset-item')).toHaveCount(1)
-    await page.click('.presets-panel-close')
-
-    // Reload the page — API routes from beforeEach persist across reloads
-    await page.reload()
-    await page.waitForSelector('.dashboard')
-
-    // Open presets panel again
-    await openPresetsPanel(page)
-
-    // Preset should still be there
-    await expect(page.locator('.preset-item')).toHaveCount(1)
-    await expect(page.locator('.preset-name')).toContainText('Persistent Layout')
-  })
-
-  test('should load preset when sessions already bound (clean replace)', async ({ page }) => {
-    await page.waitForSelector('.session-item')
-
-    // Bind joe to window 0
-    await dragAndDrop(page, '.session-item:has-text("joe")', '.terminal-window:visible >> nth=0')
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('joe')
-
-    // Save this layout
-    await openPresetsPanel(page)
-    await savePreset(page, 'Joe Layout')
-    await page.click('.presets-panel-close')
-
-    // Now change: remove joe, add jack instead
-    await page.locator('.terminal-window:visible').nth(0).locator('.tag-remove').click()
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.session-tag')).toHaveCount(0)
-    const jackRow = page.locator('.session-item:has-text("jack")').first()
-    await jackRow.getByRole('button', { name: /Session actions/ }).click()
-    await page.getByRole('button', { name: /Attach to Window/ }).click()
-    await page.locator('.session-context-submenu').getByRole('button', { name: 'Window 1', exact: true }).click()
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('jack')
-
-    // Load the Joe preset — should cleanly replace the current layout
-    await openPresetsPanel(page)
-    await page.click('.preset-load-btn')
-
-    // Joe should be back, jack should be gone
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('joe')
-    // Jack should not appear in any window
-    const allTags = page.locator('.terminal-window:visible .tag-name')
-    const tagTexts = await allTags.allTextContents()
-    expect(tagTexts.some(t => t.includes('jack'))).toBe(false)
-  })
-
-  test('should leave Ctrl+1 available to terminal input', async ({ page }) => {
-    await page.waitForSelector('.session-item')
-
-    // Bind jack to window 0
-    await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window:visible >> nth=0')
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('jack')
-
-    // Save as first preset
-    await openPresetsPanel(page)
-    await savePreset(page, 'Shortcut Layout')
-    await page.click('.presets-panel-close')
-
-    // Change the layout: remove jack
-    await page.locator('.terminal-window:visible').nth(0).locator('.tag-remove').click()
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.session-tag')).toHaveCount(0)
-
-    // Ctrl+1 is intentionally not a dashboard shortcut.
-    // Use page.evaluate to dispatch the keyboard event on the main window
-    // (page.keyboard.press may get intercepted by iframes)
-    await page.evaluate(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', {
-        key: '1',
-        ctrlKey: true,
-        bubbles: true,
-      }))
-    })
-
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.session-tag')).toHaveCount(0)
-  })
 })

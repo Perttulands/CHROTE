@@ -479,6 +479,7 @@ describe('migrateStoredState (via loadStoredState)', () => {
     expect(result.current.workspaces.terminal1.windowCount).toBe(2)
     expect(result.current.workspaces.terminal2.windowCount).toBe(2)
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
+    expect(result.current.settings.theme).toBe(DEFAULT_SETTINGS.theme)
   })
 
   it('keeps window layouts separate between desktop and mobile viewports', () => {
@@ -2982,6 +2983,40 @@ describe('terminal tab count', () => {
     expect(result.current.settings.theme).toBe('dark')
     expect(result.current.settings.tmuxAppearance).toEqual(DEFAULT_TMUX_APPEARANCE)
     expect(result.current.settings.terminalTabCount).toBe(3)
+  })
+
+  it('preserves an explicitly saved Matrix theme at the current settings schema', () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {},
+      sidebarCollapsed: false,
+      settings: { ...DEFAULT_SETTINGS, theme: 'matrix' },
+    }))
+
+    const { result } = renderSession()
+    expect(result.current.settings.theme).toBe('matrix')
+  })
+
+  it('persists appearance and polling values through the shared settings update', () => {
+    const { result } = renderSession()
+
+    act(() => result.current.updateSettings({
+      theme: 'gastown',
+      fontSize: 18,
+      autoRefreshInterval: 10000,
+    }))
+
+    expect(result.current.settings).toMatchObject({
+      theme: 'gastown',
+      fontSize: 18,
+      autoRefreshInterval: 10000,
+    })
+    expect(JSON.parse(localStorage.getItem('chrote-dashboard-state') || '{}').settings).toMatchObject({
+      theme: 'gastown',
+      fontSize: 18,
+      autoRefreshInterval: 10000,
+    })
   })
 
   it('retains launch users stored for hidden workspace ids', () => {

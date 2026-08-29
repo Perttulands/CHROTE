@@ -59,6 +59,7 @@ describe('TabBar Services navigation', () => {
     const labels = screen.getAllByRole('button').map(button => button.textContent)
     const terminalLabels = labels.filter(label => label?.startsWith('Terminal'))
     expect(terminalLabels).toEqual(['Terminal', 'Terminal 2', 'Terminal 3'])
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
   })
 
   it('follows the resolved workspace id list instead of a fixed tab set', () => {
@@ -97,8 +98,14 @@ describe('TabBar Services navigation', () => {
     mockMatchMedia(true)
     const onTabChange = vi.fn()
 
-    render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
+    const { container } = render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
+    expect(container.querySelector('.tab-bar')).toHaveClass('mobile-mode')
+    expect(container.querySelector('.tab-bar-tabs')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '☰' })).toBeInTheDocument()
+
     fireEvent.click(screen.getByRole('button', { name: '☰' }))
+    expect(screen.getByRole('button', { name: 'Terminal' })).toHaveClass('active')
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Services' }))
 
     expect(onTabChange).toHaveBeenCalledWith('services')

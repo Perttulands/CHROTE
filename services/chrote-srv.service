@@ -11,12 +11,6 @@ RuntimeDirectory=chrote
 RuntimeDirectoryMode=0750
 UMask=0002
 ExecStartPre=+/bin/sh -lc 'install -d -o "${CHROTE_SERVICE_USER:-chrote}" -g "${CHROTE_SERVICE_GROUP:-chrote}" -m "${CHROTE_RUNTIME_MODE:-0750}" "${CHROTE_RUNTIME_ROOT:-/run/chrote}/tmux"'
-# Install the tracked grant helper before running it, so the copy that executes
-# is always the copy that review, tests and doc-lint inspect. A host drop-in that
-# re-points ExecStartPre at a hand-maintained libexec copy is how the installed
-# helper forked from the repo and kept a validation bypass nobody could see.
-ExecStartPre=+/bin/sh -lc 'install -D -o root -g root -m 0755 "$CHROTE_SERVICE_ROOT/scripts/chrote-tmux-grants.sh" "${CHROTE_TMUX_GRANT_HELPER:-/usr/local/libexec/chrote/chrote-tmux-grants.sh}"'
-ExecStartPre=+/bin/sh -lc 'exec "${CHROTE_TMUX_GRANT_HELPER:-/usr/local/libexec/chrote/chrote-tmux-grants.sh}"'
 ExecStart=/bin/sh -lc 'cd "$CHROTE_SERVICE_ROOT" && exec "$CHROTE_SERVICE_ROOT/chrote-server" --host "${HOST:-127.0.0.1}" --port "${PORT:-8095}" --ttyd-port "${TTYD_PORT:-7686}"'
 # KillMode=process is ruled on by docs/adr/0013-ttyd-restart-lifecycle-and-orphan-reaping.md,
 # which owns the lifecycle and reaping story. Read that before changing this line.

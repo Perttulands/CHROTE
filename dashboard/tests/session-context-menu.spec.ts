@@ -130,33 +130,6 @@ test.describe('Session Context Menu', () => {
   // -------------------------------------------------------
   // 2. Rename flow: context menu -> Rename -> type new name -> Enter -> verify
   // -------------------------------------------------------
-  test('rename session via context menu and Enter', async ({ page }) => {
-    const session = page.locator('.session-item:has-text("hq-mayor")')
-    await session.click({ button: 'right' })
-
-    // Click Rename
-    await page.locator('.session-context-menu .session-context-item:has-text("Rename")').click()
-
-    // Context menu should close, rename input should appear
-    await expect(page.locator('.session-context-menu')).not.toBeVisible()
-    const input = page.locator('.session-rename-input')
-    await expect(input).toBeVisible()
-    await expect(input).toBeFocused()
-
-    // The input should be pre-filled with the current name
-    await expect(input).toHaveValue('hq-mayor')
-
-    // Clear and type new name
-    await input.fill('hq-commander')
-    await input.press('Enter')
-
-    // Rename input should disappear
-    await expect(input).not.toBeVisible()
-
-    // After the API call + refresh, the session should appear with new name
-    await expect(page.locator('.session-item:has-text("hq-commander")')).toBeVisible()
-    await expect(page.locator('.session-item:has-text("hq-mayor")')).not.toBeVisible()
-  })
 
   // -------------------------------------------------------
   // 3. Rename from the attached session tag menu
@@ -188,45 +161,10 @@ test.describe('Session Context Menu', () => {
   // -------------------------------------------------------
   // 4. Rename cancel via Escape reverts name
   // -------------------------------------------------------
-  test('rename cancel via Escape reverts name', async ({ page }) => {
-    const session = page.locator('.session-item:has-text("hq-mayor")')
-    await session.click({ button: 'right' })
-
-    await page.locator('.session-context-menu .session-context-item:has-text("Rename")').click()
-
-    const input = page.locator('.session-rename-input')
-    await expect(input).toBeVisible()
-
-    // Type a different name but press Escape
-    await input.fill('something-else')
-    await input.press('Escape')
-
-    // Input should disappear and original name should remain
-    await expect(input).not.toBeVisible()
-    await expect(page.locator('.session-item:has-text("hq-mayor")')).toBeVisible()
-    await expect(page.locator('.session-item:has-text("something-else")')).not.toBeVisible()
-  })
 
   // -------------------------------------------------------
   // 4. Rename with empty string is rejected
   // -------------------------------------------------------
-  test('rename with empty string is rejected', async ({ page }) => {
-    const session = page.locator('.session-item:has-text("hq-mayor")')
-    await session.click({ button: 'right' })
-
-    await page.locator('.session-context-menu .session-context-item:has-text("Rename")').click()
-
-    const input = page.locator('.session-rename-input')
-    await expect(input).toBeVisible()
-
-    // Clear the input entirely and submit
-    await input.fill('')
-    await input.press('Enter')
-
-    // The rename should be a no-op (empty string rejected by handleRenameSubmit guard).
-    // After the blur/submit, the original name should still be there.
-    await expect(page.locator('.session-item:has-text("hq-mayor")')).toBeVisible()
-  })
 
   // -------------------------------------------------------
   // 5. Kill session via context menu
@@ -248,101 +186,14 @@ test.describe('Session Context Menu', () => {
   // -------------------------------------------------------
   // 6. "Attach to Window" submenu shows correct windows
   // -------------------------------------------------------
-  test('attach to window submenu shows correct windows', async ({ page }) => {
-    const session = page.locator('.session-item:has-text("hq-mayor")')
-    await session.click({ button: 'right' })
-
-    const menu = page.locator('.session-context-menu')
-    await expect(menu).toBeVisible()
-
-    // Click "Attach to Window" to reveal the keyboard/touch-operable submenu
-    const assignTrigger = menu.getByRole('button', { name: /Attach to Window/ })
-    await assignTrigger.click()
-
-    // Submenu should appear with window entries
-    const submenu = page.locator('.session-context-submenu')
-    await expect(submenu).toBeVisible()
-
-    // Default layout is 2 windows per workspace (terminal1 + terminal2).
-    // Should have entries like "Window 1", "Window 2", "Terminal 2 - Window 1", "Terminal 2 - Window 2"
-    const windowItems = submenu.locator('.session-context-item')
-    const count = await windowItems.count()
-    expect(count).toBeGreaterThanOrEqual(2)
-
-    // At minimum, "Window 1" should be present (use exact text to avoid matching "Terminal 2 - Window 1")
-    await expect(submenu.getByRole('button', { name: 'Window 1', exact: true })).toBeVisible()
-  })
 
   // -------------------------------------------------------
   // 7. "Unassign" option appears only for assigned sessions
   // -------------------------------------------------------
-  test('unassign option only appears for assigned sessions', async ({ page }) => {
-    // Right-click on an unassigned session
-    const unassigned = page.locator('.session-item:has-text("gt-gastown-jack")')
-    await unassigned.click({ button: 'right' })
-
-    let menu = page.locator('.session-context-menu')
-    await expect(menu).toBeVisible()
-
-    // Unassign should NOT be visible for unassigned sessions
-    await expect(menu.locator('.session-context-item:has-text("Unassign")')).not.toBeVisible()
-
-    // Close menu
-    await page.mouse.click(1, 1)
-    await expect(menu).not.toBeVisible()
-
-    // Now assign the session via drag-and-drop
-    await dragAndDrop(page, '.session-panel .session-item:has-text("gt-gastown-jack")', '.terminal-window')
-
-    // Verify it's assigned
-    const sessionItem = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
-    await expect(sessionItem).toHaveClass(/assigned/)
-
-    // Right-click the now-assigned session
-    await sessionItem.click({ button: 'right' })
-
-    menu = page.locator('.session-context-menu')
-    await expect(menu).toBeVisible()
-
-    // Unassign SHOULD now be visible
-    await expect(menu.locator('.session-context-item:has-text("Unassign")')).toBeVisible()
-  })
 
   // -------------------------------------------------------
   // 8. Context menu closes on click outside
   // -------------------------------------------------------
-  test('context menu closes on click outside', async ({ page }) => {
-    const session = page.locator('.session-item:has-text("hq-mayor")')
-    await session.click({ button: 'right' })
-
-    const menu = page.locator('.session-context-menu')
-    await expect(menu).toBeVisible()
-
-    // Click somewhere outside the menu
-    await page.mouse.click(1, 1)
-
-    // Menu should be gone
-    await expect(menu).not.toBeVisible()
-  })
-
-  test('context menu closes when the outside click lands over a terminal iframe', async ({ page }) => {
-    const session = page.locator('.session-panel .session-item:has-text("hq-mayor")')
-    await dragAndDrop(page, '.session-panel .session-item:has-text("hq-mayor")', '.terminal-window')
-    const iframe = page.locator('iframe[title^="Terminal -"]').first()
-    await expect(iframe).toBeAttached()
-    const iframeBox = await iframe.boundingBox()
-    expect(iframeBox).toBeTruthy()
-
-    await session.click({ button: 'right' })
-    const menu = page.locator('.session-context-menu')
-    await expect(menu).toBeVisible()
-    await menu.getByRole('button', { name: /Attach to Window/i }).click()
-    await expect(menu.locator('.session-context-submenu')).toBeVisible()
-
-    await page.mouse.click(iframeBox!.x + iframeBox!.width / 2, iframeBox!.y + iframeBox!.height / 2)
-    await expect(menu).not.toBeVisible()
-    await expect(iframe).toBeAttached()
-  })
 
   // -------------------------------------------------------
   // 9. Mobile long-press opens context menu

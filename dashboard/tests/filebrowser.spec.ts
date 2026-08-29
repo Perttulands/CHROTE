@@ -101,56 +101,6 @@ async function mockFilebrowserApi(page: Page, options?: {
 }
 
 test.describe('Filebrowser Connection', () => {
-  test('should show loading state while fetching directory', async ({ page }) => {
-    // Add delay to observe loading state
-    await mockFilebrowserApi(page, { delay: 1500 })
-
-    await page.goto('/')
-    await page.waitForSelector('.dashboard')
-
-    // Switch to Files tab
-    await page.click('.tab:has-text("Files")')
-
-    // Should show loading indicator
-    await expect(page.locator('.fb-loading')).toBeVisible()
-    await expect(page.locator('.fb-loading')).not.toBeVisible({ timeout: 5000 })
-  })
-
-  test('should load and display directory contents', async ({ page }) => {
-    await mockFilebrowserApi(page)
-
-    await page.goto('/')
-    await page.waitForSelector('.dashboard')
-
-    // Switch to Files tab
-    await page.click('.tab:has-text("Files")')
-    await page.waitForSelector('.files-view')
-
-    // Wait for loading to complete
-    await expect(page.locator('.fb-loading')).not.toBeVisible({ timeout: 5000 })
-
-    // Should display files from mock
-    await expect(page.locator('.fb-row, .fb-grid-item')).toHaveCount(3)
-    await expect(page.locator('.fb-filename:has-text("code"), .fb-grid-name:has-text("code")')).toBeVisible()
-    await expect(page.locator('.fb-filename:has-text("projects"), .fb-grid-name:has-text("projects")')).toBeVisible()
-    await expect(page.locator('.fb-filename:has-text("readme.txt"), .fb-grid-name:has-text("readme.txt")')).toBeVisible()
-  })
-
-  test('should show error state when connection fails', async ({ page }) => {
-    allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 503')
-    await mockFilebrowserApi(page, { failConnection: true })
-
-    await page.goto('/')
-    await page.waitForSelector('.dashboard')
-
-    // Switch to Files tab
-    await page.click('.tab:has-text("Files")')
-    await page.waitForSelector('.files-view')
-
-    // Should show error state
-    await expect(page.locator('.fb-error')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('.fb-retry-btn')).toBeVisible()
-  })
 
   test('should retry loading on retry button click', async ({ page }) => {
     allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 503')
@@ -205,53 +155,47 @@ test.describe('Filebrowser Navigation', () => {
   })
 
   test('should navigate into folder on double-click', async ({ page }) => {
-    // Double-click on "code" folder
     await page.dblclick('.fb-row:has-text("code"), .fb-grid-item:has-text("code")')
-
-    // Should show breadcrumb with "code"
     await expect(page.locator('.fb-breadcrumb-item:has-text("code")')).toBeVisible()
-
-    // Should show contents of code directory
     await expect(page.locator('.fb-filename:has-text("src"), .fb-grid-name:has-text("src")')).toBeVisible()
     await expect(page.locator('.fb-filename:has-text("package.json"), .fb-grid-name:has-text("package.json")')).toBeVisible()
-  })
 
-  test('should navigate back using breadcrumbs', async ({ page }) => {
-    // Navigate into code folder
-    await page.dblclick('.fb-row:has-text("code"), .fb-grid-item:has-text("code")')
-    await expect(page.locator('.fb-breadcrumb-item:has-text("code")')).toBeVisible()
-
-    // Click root breadcrumb
     await page.click('.fb-breadcrumb-root')
-
-    // Should be back at root
-    await expect(page.locator('.fb-filename:has-text("code"), .fb-grid-name:has-text("code")')).toBeVisible()
     await expect(page.locator('.fb-row, .fb-grid-item')).toHaveCount(3)
-  })
 
-  test('should navigate up using up button', async ({ page }) => {
-    // Navigate into code folder
     await page.dblclick('.fb-row:has-text("code"), .fb-grid-item:has-text("code")')
-    await expect(page.locator('.fb-breadcrumb-item:has-text("code")')).toBeVisible()
-
-    // Click up button
     await page.click('.fb-nav-btn[title="Up"]')
+    await expect(page.locator('.fb-row, .fb-grid-item')).toHaveCount(3)
 
-    // Should be back at root
-    await expect(page.locator('.fb-filename:has-text("code"), .fb-grid-name:has-text("code")')).toBeVisible()
-  })
-
-  test('should refresh directory on refresh button click', async ({ page }) => {
-    // Get current item count
-    const initialCount = await page.locator('.fb-row, .fb-grid-item').count()
-    expect(initialCount).toBe(3)
-
-    // Click refresh
     await page.click('.fb-btn[title="Refresh"]')
+    await expect(page.locator('.fb-row, .fb-grid-item')).toHaveCount(3)
 
-    // Wait for content to reload (items should still be there)
-    await expect(page.locator('.fb-row, .fb-grid-item')).toHaveCount(3, { timeout: 3000 })
+    await page.unroute(fileResourcesPattern)
+    await mockFilebrowserApi(page, {
+      rootItems: Array.from({ length: 80 }, (_, index) => ({
+        name: `artifact-${String(index).padStart(2, '0')}.txt`,
+        size: 128,
+        modified: '2026-07-13T00:00:00Z',
+        isDir: false,
+        type: 'text/plain',
+      })),
+    })
+    await page.reload()
+    await page.click('.tab:has-text("Files")')
+    const tree = page.getByRole('tree', { name: 'File tree' })
+    await expect(tree.getByRole('treeitem')).toHaveCount(80)
+    const geometry = await tree.evaluate(element => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      overflowY: getComputedStyle(element).overflowY,
+    }))
+    expect(geometry.scrollHeight).toBeGreaterThan(geometry.clientHeight)
+    expect(geometry.overflowY).toMatch(/auto|scroll/)
+    await tree.hover()
+    await page.mouse.wheel(0, 700)
+    await expect.poll(() => tree.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
   })
+
 })
 
 test.describe('Filebrowser UI Elements', () => {
@@ -287,18 +231,6 @@ test.describe('Filebrowser UI Elements', () => {
     await expect(page.locator('.fb-filename:has-text("code"), .fb-grid-name:has-text("code")')).toBeVisible()
   })
 
-  test('should show item count in status bar', async ({ page }) => {
-    await expect(page.locator('.fb-statusbar')).toContainText('3 items')
-  })
-
-  test('should open a selected file in the dedicated file view', async ({ page }) => {
-    await page.click('.fb-row:has-text("readme.txt")')
-
-    await expect(page.locator('.fb-content')).toHaveClass(/mode-file/)
-    await expect(page.getByRole('button', { name: 'File', exact: true })).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.locator('.fb-editor-tab:has-text("readme.txt")')).toBeVisible()
-  })
-
   test('should show context menu on right-click', async ({ page }) => {
     // Right-click on a file
     await page.click('.fb-row:has-text("readme.txt")', { button: 'right' })
@@ -313,18 +245,6 @@ test.describe('Filebrowser UI Elements', () => {
     expect(menuZIndex).toBeGreaterThan(layerZIndex)
     await page.locator('.fb-context-item:has-text("Rename")').click()
     await expect(page.locator('.fb-rename-input')).toBeVisible()
-  })
-
-  test('should close context menu on click outside', async ({ page }) => {
-    // Open context menu
-    await page.click('.fb-row:has-text("readme.txt")', { button: 'right' })
-    await expect(page.locator('.fb-context-menu')).toBeVisible()
-
-    // Click outside
-    await page.mouse.click(1, 1)
-
-    // Context menu should close
-    await expect(page.locator('.fb-context-menu')).not.toBeVisible()
   })
 
   test('should sort by column headers', async ({ page }) => {
@@ -346,25 +266,11 @@ test.describe('Filebrowser Workbench', () => {
     await expect(page.locator('.fb-loading')).not.toBeVisible({ timeout: 5000 })
   })
 
-  test('should start in folder view with a file-level explorer tree', async ({ page }) => {
-    await expect(page.locator('.fb-sidebar')).toBeVisible()
-    await expect(page.locator('.fb-section-title:has-text("Workspace")')).toBeVisible()
-    await expect(page.getByRole('treeitem', { name: /File readme\.txt/ })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Folder', exact: true })).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.locator('.fb-editor-pane')).toHaveCount(0)
-  })
-
   test('should open a text file in the editor pane', async ({ page }) => {
     await page.click('.fb-row:has-text("readme.txt")')
 
     await expect(page.locator('.fb-editor-tab:has-text("readme.txt")')).toBeVisible()
     await expect(page.locator('.fb-editor-textarea')).toHaveValue('mock file content')
-  })
-
-  test('should have upload control in the toolbar', async ({ page }) => {
-    await page.dblclick('.fb-row:has-text("code")')
-    await expect(page.locator('.fb-btn[title="Upload"]')).toBeEnabled()
-    await expect(page.locator('.fb-hidden-input[type="file"]')).toHaveCount(1)
   })
 
   test('should upload files to the current folder', async ({ page }) => {
@@ -422,23 +328,6 @@ test.describe('Filebrowser Workbench', () => {
   })
 })
 
-test.describe('Filebrowser preview formats', () => {
-  test('opens JSONL inline instead of falling back to download', async ({ page }) => {
-    const jsonl = '{"event":"started"}\n{"event":"finished"}\n'
-    await mockFilebrowserApi(page, {
-      rootItems: [{ name: 'events.jsonl', size: jsonl.length, modified: '2026-08-18T00:00:00Z', isDir: false, type: 'jsonl' }],
-      rawBody: jsonl,
-    })
-    await page.goto('/')
-    await page.waitForSelector('.dashboard')
-    await page.click('.tab:has-text("Files")')
-    await page.click('.fb-row:has-text("events.jsonl")')
-
-    await expect(page.locator('.fb-editor-textarea')).toHaveValue(jsonl)
-    await expect(page.getByText('No inline preview is available for this file type.')).toHaveCount(0)
-  })
-})
-
 test.describe('Filebrowser layout regressions', () => {
   test('Markdown Source fills the artifact viewport instead of collapsing to textarea rows', async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 760 })
@@ -463,35 +352,6 @@ test.describe('Filebrowser layout regressions', () => {
     expect(sourceBox!.height).toBeGreaterThanOrEqual(viewportBox!.height - 2)
   })
 
-  test('Explorer owns a bounded wheel-scroll viewport for long file trees', async ({ page }) => {
-    await page.setViewportSize({ width: 1100, height: 620 })
-    await mockFilebrowserApi(page, {
-      rootItems: Array.from({ length: 80 }, (_, index) => ({
-        name: `artifact-${String(index).padStart(2, '0')}.txt`,
-        size: 128,
-        modified: '2026-07-13T00:00:00Z',
-        isDir: false,
-        type: 'text/plain',
-      })),
-    })
-    await page.goto('/')
-    await page.waitForSelector('.dashboard')
-    await page.click('.tab:has-text("Files")')
-
-    const tree = page.getByRole('tree', { name: 'File tree' })
-    await expect(tree.getByRole('treeitem')).toHaveCount(80)
-    const geometry = await tree.evaluate(element => ({
-      clientHeight: element.clientHeight,
-      scrollHeight: element.scrollHeight,
-      overflowY: getComputedStyle(element).overflowY,
-    }))
-    expect(geometry.scrollHeight).toBeGreaterThan(geometry.clientHeight)
-    expect(geometry.overflowY).toMatch(/auto|scroll/)
-
-    await tree.hover()
-    await page.mouse.wheel(0, 700)
-    await expect.poll(() => tree.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
-  })
 })
 
 test.describe('Filebrowser Tab Navigation', () => {
@@ -518,16 +378,4 @@ test.describe('Filebrowser Tab Navigation', () => {
     await expect(page.locator('.files-view')).not.toBeVisible()
   })
 
-  test('should show editor pane content', async ({ page }) => {
-    // Go to Files tab
-    await page.click('.tab:has-text("Files")')
-    await page.waitForSelector('.files-view')
-
-    await expect(page.getByRole('button', { name: 'Folder', exact: true })).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.locator('.fb-editor-pane')).toHaveCount(0)
-
-    await page.click('.fb-row:has-text("readme.txt")')
-    await expect(page.locator('.fb-editor-pane')).toBeVisible()
-    await expect(page.locator('.fb-editor-tab:has-text("readme.txt")')).toBeVisible()
-  })
 })

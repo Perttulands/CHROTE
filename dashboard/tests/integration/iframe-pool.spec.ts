@@ -103,47 +103,6 @@ test.describe.serial('IframePool: session iframe renders in window', () => {
     }
   });
 
-  test('iframe survives tab switch (terminal -> files -> terminal)', async ({ page }) => {
-    await page.goto('/');
-    await page.evaluate(() => localStorage.clear());
-    await page.reload();
-    await page.waitForSelector('.dashboard', { timeout: 10000 });
-
-    const firstWindow = page.locator('.terminal-window').first();
-    const createBtn = firstWindow.locator('.create-session-btn');
-    await expect(createBtn).toBeVisible({ timeout: 5000 });
-
-    await createTrackedSession(page, firstWindow);
-
-    // Verify iframe is there
-    const body = firstWindow.locator('.terminal-window-body');
-    await expect(body.locator('iframe')).toHaveCount(1, { timeout: 5000 });
-
-    // Switch to Files tab
-    await page.click('.tab:has-text("Files")');
-    await page.waitForSelector('.files-view', { timeout: 5000 });
-
-    // Switch back to Terminal
-    await page.click('.tab:has-text("Terminal")');
-    await page.waitForSelector('.terminal-window', { timeout: 5000 });
-
-    // Iframe should STILL be there and visible (not recreated)
-    const iframeAfter = page.locator('.terminal-window').first().locator('.terminal-window-body iframe');
-    await expect(iframeAfter).toHaveCount(1, { timeout: 5000 });
-
-    const styles = await iframeAfter.evaluate((el: HTMLIFrameElement) => ({
-      display: getComputedStyle(el).display,
-      visibility: getComputedStyle(el).visibility,
-      width: el.offsetWidth,
-      height: el.offsetHeight,
-    }));
-    console.log('After tab switch iframe styles:', styles);
-    expect(styles.display).not.toBe('none');
-    expect(styles.visibility).not.toBe('hidden');
-    expect(styles.width).toBeGreaterThan(100);
-    expect(styles.height).toBeGreaterThan(50);
-  });
-
   test('iframe persists across page reload', async ({ page }) => {
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());

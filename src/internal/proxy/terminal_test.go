@@ -43,6 +43,13 @@ func mockTtydServer() *httptest.Server {
 	}))
 }
 
+func TestTerminalProxyStopBeforeStart(t *testing.T) {
+	proxy := NewTerminalProxy(0)
+	if err := proxy.Stop(); err != nil {
+		t.Fatalf("Stop before Start returned error: %v", err)
+	}
+}
+
 func TestTerminalProxy_WebSocketUpgrade(t *testing.T) {
 	// Start mock ttyd server
 	mockTtyd := mockTtydServer()

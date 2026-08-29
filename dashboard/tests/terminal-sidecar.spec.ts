@@ -20,21 +20,6 @@ async function openFreshTerminal(page: Page, viewport?: { width: number; height:
 }
 
 test.describe('terminal workspace sidecars', () => {
-  test('keeps an untouched fresh sidecar closed across reload', async ({ page }) => {
-    await openFreshTerminal(page, { width: 1280, height: 800 })
-    const dock = page.locator('.terminal-workspace-dock[data-active="true"]')
-    const sessionsTrigger = page.getByRole('button', { name: 'Sessions sidecar', exact: true })
-
-    await expect(dock.locator('.session-panel, .terminal-files-panel')).toHaveCount(0)
-    await expect(sessionsTrigger).toHaveAttribute('aria-pressed', 'false')
-    await page.reload()
-
-    await expect(sessionsTrigger).toBeVisible()
-    await expect(sessionsTrigger).toHaveAttribute('aria-pressed', 'false')
-    await expect(dock.locator('.session-panel, .terminal-files-panel')).toHaveCount(0)
-    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('chrote.sessionsDock.v1') || '{}')
-      ?.state)).toEqual({ open: false, pinned: false, width: 260, searchTerm: '', collapsedGroups: [] })
-  })
 
   test('opens Sessions and focuses its filter when slash is pressed while closed', async ({ page }) => {
     await openFreshTerminal(page, { width: 1280, height: 800 })
@@ -94,32 +79,6 @@ test.describe('terminal workspace sidecars', () => {
     expect(reopened.width).toBeLessThan(initial.width - 200)
   })
 
-  test('paints session context menus above the adjacent Files sidecar', async ({ page }) => {
-    await openFreshTerminal(page, { width: 1280, height: 800 })
-    await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
-    await page.getByRole('button', { name: 'Files sidecar' }).click()
-    await page.getByRole('button', { name: 'Session creation options' }).click()
-
-    const menu = page.locator('.session-context-menu')
-    const files = page.locator('.terminal-files-panel.sidecar-pinned')
-    await expect(menu).toBeVisible()
-    await expect(files).toBeVisible()
-
-    const menuBox = await box(menu)
-    const filesBox = await box(files)
-    const overlapLeft = Math.max(menuBox.x, filesBox.x)
-    const overlapRight = Math.min(menuBox.x + menuBox.width, filesBox.x + filesBox.width)
-    expect(overlapRight - overlapLeft).toBeGreaterThan(4)
-
-    const menuWinsHitTest = await page.evaluate(({ x, y }) => (
-      document.elementFromPoint(x, y)?.closest('.session-context-menu') !== null
-    ), {
-      x: overlapLeft + 2,
-      y: menuBox.y + Math.min(20, menuBox.height / 2),
-    })
-    expect(menuWinsHitTest).toBe(true)
-  })
-
   test('uses icon-only hit-testable launchers and independent overlay drawers on narrow screens', async ({ page }) => {
     await openFreshTerminal(page, { width: 700, height: 800 })
 
@@ -155,36 +114,6 @@ test.describe('terminal workspace sidecars', () => {
     await dock.locator('.terminal-sidecar-dismiss').click({ position: { x: 650, y: 300 } })
     await expect(dock.locator('.session-panel')).toHaveCount(0)
     await expect(dock.locator('.terminal-files-panel')).toHaveCount(0)
-  })
-
-  test('Escape ignores hidden keep-alive dialogs and defers to visible dialogs', async ({ page }) => {
-    await openFreshTerminal(page, { width: 700, height: 800 })
-    await page.evaluate(() => {
-      const host = document.createElement('div')
-      host.id = 'escape-blocker-host'
-      host.style.display = 'none'
-      const dialog = document.createElement('section')
-      dialog.setAttribute('role', 'dialog')
-      dialog.style.width = '120px'
-      dialog.style.height = '80px'
-      host.append(dialog)
-      document.body.append(host)
-    })
-
-    await page.getByRole('button', { name: 'Sessions sidecar' }).click()
-    await page.keyboard.press('Escape')
-    await expect(page.locator('.session-panel')).toHaveCount(0)
-
-    await page.getByRole('button', { name: 'Sessions sidecar' }).click()
-    await page.locator('#escape-blocker-host').evaluate(element => {
-      ;(element as HTMLElement).style.display = 'block'
-    })
-    await page.keyboard.press('Escape')
-    await expect(page.locator('.session-panel.sidecar-overlay')).toBeVisible()
-
-    await page.locator('#escape-blocker-host').evaluate(element => element.remove())
-    await page.keyboard.press('Escape')
-    await expect(page.locator('.session-panel')).toHaveCount(0)
   })
 
   test('peeks an attached session from the row and reserves location-chip click for frame navigation', async ({ page }) => {

@@ -17,6 +17,7 @@ const reconnectIframe = vi.fn()
 const triggerFit = vi.fn()
 const setFocusedWindowKey = vi.fn()
 const setActiveSession = vi.fn()
+const cycleSession = vi.fn()
 const openSendToSession = vi.fn()
 const draggableState = vi.hoisted(() => ({
   transform: null as { x: number, y: number } | null,
@@ -66,7 +67,7 @@ vi.mock('../context/SessionContext', () => ({
     addSessionToWindow,
     removeSessionFromWindow,
     setActiveSession,
-    cycleSession: vi.fn(),
+    cycleSession,
     setWindowCount: vi.fn(),
     clearStaleSessionsFromWindow: vi.fn(),
     focusedWindowKey: null,
@@ -124,6 +125,8 @@ describe('TerminalWindow launch user', () => {
   })
 
   it('creates new sessions with the shared creation action and attaches to the current window', async () => {
+    let finishCreate!: (sessionName: string) => void
+    createSession.mockReturnValue(new Promise(resolve => { finishCreate = resolve }))
     render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -131,13 +134,45 @@ describe('TerminalWindow launch user', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /New Session/i }))
+    const createButton = screen.getByRole('button', { name: /New Session/i })
+    fireEvent.click(createButton)
 
     await waitFor(() => expect(createSession).toHaveBeenCalled())
+    expect(createButton).toBeDisabled()
+    expect(createButton).toHaveTextContent('...')
+    fireEvent.click(createButton)
+    expect(createSession).toHaveBeenCalledTimes(1)
     expect(createSession).toHaveBeenCalledWith({
       workspaceId: 'terminal3',
       attachTo: { workspaceId: 'terminal3', windowId: 'terminal3-window-0' },
     })
+    await act(async () => finishCreate('forge1'))
+    await waitFor(() => expect(createButton).toBeEnabled())
+  })
+
+  it('shows cycle controls only for multiple sessions and marks the active tag', () => {
+    const twoSessions = {
+      id: 'terminal3-window-0',
+      boundSessions: ['build:forge-existing', 'alice:shell-existing'],
+      activeSession: 'alice:shell-existing',
+      colorIndex: 0,
+    }
+    const { container, rerender } = render(<TerminalWindow workspaceId="terminal3" window={twoSessions} />)
+
+    expect(screen.getByTitle('Previous session')).toBeInTheDocument()
+    expect(screen.getByTitle('Next session')).toBeInTheDocument()
+    expect(screen.getByText('shell-existing').closest('.session-tag')).toHaveClass('active')
+    expect(screen.getByText('forge-existing').closest('.session-tag')).not.toHaveClass('active')
+    fireEvent.click(screen.getByTitle('Next session'))
+    expect(cycleSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'next')
+
+    rerender(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ ...twoSessions, boundSessions: ['alice:shell-existing'] }}
+      />
+    )
+    expect(container.querySelectorAll('.cycle-btn')).toHaveLength(0)
   })
 
   it('does not intercept right-click on the empty-window new-session button', async () => {

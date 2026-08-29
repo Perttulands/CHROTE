@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { probeTextFile, readTextFile } from './fileService'
+import { fetchDirectory, probeTextFile, readTextFile } from './fileService'
 
 describe('probeTextFile', () => {
   afterEach(() => {
@@ -54,5 +54,27 @@ describe('probeTextFile', () => {
       code: 'STORAGE',
       status: 413,
     })
+  })
+})
+
+describe('fetchDirectory paths', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('requests the exact root and nested resource paths supplied by Files', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(
+      JSON.stringify({ isDir: true, items: [] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await fetchDirectory('/')
+    await fetchDirectory('/code')
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/files/resources/',
+      '/api/files/resources/code',
+    ])
   })
 })

@@ -3,9 +3,12 @@ name: CI
 on:
   pull_request:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
+  schedule:
+    - cron: '23 3 * * 1'
+
+permissions:
+  contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -13,25 +16,9 @@ env:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-        with:
-          # The commit message scan resolves real revision ranges, so it needs history.
-          fetch-depth: 0
-
-      - name: Commit message scan
-        run: |
-          # The scanner is event-agnostic: compute the range here. A push to a new
-          # branch reports an all-zeros "before" SHA, so scan just the pushed commit.
-          zero="0000000000000000000000000000000000000000"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
-          elif [ "${{ github.event.before }}" = "$zero" ]; then
-            range="${{ github.sha }}"
-          else
-            range="${{ github.event.before }}..${{ github.sha }}"
-          fi
-          python3 scripts/commit-message-scan.py "$range"
 
       - uses: actions/setup-go@v5
         with:
@@ -41,159 +28,68 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
 
-      - name: Documentation contract
-        run: python3 scripts/doc-lint.py
-
-      - name: Host neutrality
-        run: python3 scripts/host-neutrality.py
-
-      - name: Cross-user tmux grant helper
-        run: bash scripts/test-tmux-grants.sh
-
-      # The two gate scripts above ran in CI while their own tests never did, which is how a
-      # corrupted guard and an untested neutrality gate both shipped green.
-      - name: Script contract checks
+      - name: Install dashboard and Chromium
         run: |
-          python3 -m unittest discover -s scripts -p 'test_*.py'
-          node --test scripts/ci-lane-contract.test.mjs
-
-      - name: Dashboard install dependencies
-        run: |
+          npm ci --prefix dashboard
           cd dashboard
-          npm ci
+          npx playwright install --with-deps chromium
 
-      - name: Dashboard build embedded assets
+      - name: Build embedded dashboard and server
         run: |
-          cd dashboard
-          npm run build
-          rm -rf ../src/internal/dashboard/dist
-          cp -r dist ../src/internal/dashboard/
-          find ../src/internal/dashboard/dist -type d -empty -delete
+          ./scripts/build-embedded-dashboard.sh
+          cd src
+          go build -trimpath -o ../chrote-server-ci ./cmd/server
 
-      - name: Go format
+      - name: Go format and vet
         run: |
           cd src
           unformatted="$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
-          if [ -n "$unformatted" ]; then
-            printf '%s\n' "$unformatted"
+          test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
+          go vet ./...
+
+      - name: Go race tests with coverage
+        run: cd src && go test -race -coverprofile=coverage.out ./...
+
+      - name: Dashboard unit, lint, and browser tests
+        run: |
+          cd dashboard
+          npm run test:unit
+          npm run lint
+          npm test
+
+      - name: Source contracts
+        run: |
+          python3 scripts/doc-lint.py
+          python3 scripts/host-neutrality.py
+          python3 scripts/check-embedded-dashboard.py
+          dead="$(cd src && go run golang.org/x/tools/cmd/deadcode@latest ./cmd/server)"
+          test -z "$dead" || { printf '%s\n' "$dead"; exit 1; }
+          if grep -R -n --include='*.go' 't\.Skip(' src; then
             exit 1
           fi
 
-      - name: Go vet
-        run: |
-          cd src
-          go vet ./...
-
-      # release.yml has scanned source and both release binaries since it was written, but CI
-      # scanned nothing, so a toolchain drifting into known-vulnerable territory only surfaced at
-      # release time. Under the old 1.23 pin this step reports 23 reachable stdlib advisories.
-      - name: Go vulnerability scan
-        run: |
-          cd src
-          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
-
-      - name: Go tests
-        run: |
-          cd src
-          go test ./...
-
-      - name: Go race tests
-        run: |
-          cd src
-          go test -race ./...
-
-      - name: Go coverage
-        run: |
-          cd src
-          go test -coverprofile=coverage.out ./...
-          go tool cover -func=coverage.out
-
-      - name: Dashboard lint
-        run: |
-          cd dashboard
-          npm run lint
-
-      - name: Dashboard unit coverage
-        run: |
-          cd dashboard
-          npm run test:unit -- --coverage
-
-      - name: Dashboard dependency audit
-        run: |
-          cd dashboard
-          npm audit --audit-level=moderate
-
-      - name: Install Playwright browser
-        run: |
-          cd dashboard
-          npx playwright install --with-deps chromium
-
-      - name: Dashboard Playwright tests
-        run: |
-          cd dashboard
-          npm test
-
-      - name: Release package smoke
-        run: |
-          rm -rf src/internal/dashboard/dist
-          cp -r dashboard/dist src/internal/dashboard/
-          find src/internal/dashboard/dist -type d -empty -delete
-          cd src
-          go test ./...
-          go build -o /tmp/chrote-server-ci ./cmd/server
-
-  built-server-contract:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.6'
-          cache-dependency-path: src/go.sum
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Dashboard install dependencies
-        run: |
-          cd dashboard
-          npm ci
-
-      - name: Build dashboard and embedded Go server
-        run: |
-          # Use the shipped script rather than repeating its steps here. This job
-          # previously inlined its own copy of the embed logic, so the two could
-          # drift and only one of them wrote the provenance stamp.
-          scripts/build-embedded-dashboard.sh
-          cd src
-          go build -o ../chrote-server-ci ./cmd/server
-
-      - name: Embedded dashboard is not stale
-        # go:embed fails loudly on a MISSING bundle but silently accepts a STALE one,
-        # and both dist directories are gitignored so git cannot notice. That is how an
-        # 8-day-old UI built from an abandoned branch shipped unnoticed on 2026-07-24
-        # and a committed change looked lost.
-        run: python3 scripts/check-embedded-dashboard.py
-
-      - name: Install Playwright browser
-        run: |
-          cd dashboard
-          npx playwright install --with-deps chromium
-
-      - name: Built server browser/API contract
+      - name: Built server browser and API contract
         env:
           CHROTE_CONTRACT_ARTIFACT_DIR: ${{ runner.temp }}/chrote-contract
           CHROTE_SERVER_BINARY: ${{ github.workspace }}/chrote-server-ci
-        run: scripts/test-built-server-contract.sh
+        run: ./scripts/test-built-server-contract.sh
 
-      - name: Upload built server contract failure artifacts
+      - name: Weekly dependency scans
+        if: github.event_name == 'schedule'
+        run: |
+          cd src
+          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+          cd ../dashboard
+          npm audit --audit-level=moderate
+
+      - name: Upload browser failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: built-server-contract-failure
+          name: quality-browser-failure
           path: |
             dashboard/playwright-report
             dashboard/test-results

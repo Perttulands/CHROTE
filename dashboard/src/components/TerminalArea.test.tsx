@@ -68,6 +68,17 @@ describe('TerminalArea layout controls', () => {
     expect(reconnectIframe).toHaveBeenCalledWith('bob:beta')
   })
 
+  it('renders the current desktop layout controls and default visible window count', () => {
+    const { container } = render(<TerminalArea workspaceId="terminal1" />)
+
+    for (const count of [1, 2, 3, 4]) {
+      expect(screen.getByTitle(`${count} window${count > 1 ? 's' : ''}`)).toBeInTheDocument()
+    }
+    expect(screen.getByTitle('2 windows')).toHaveClass('active')
+    expect(container.querySelector('.terminal-grid')).toHaveClass('grid-2')
+    expect(container.querySelectorAll('[data-testid^="terminal-window-"]')).toHaveLength(2)
+  })
+
   it('keeps Refit directly visible while stale cleanup remains in the maintenance menu', () => {
     render(<TerminalArea workspaceId="terminal1" />)
 
@@ -99,6 +110,7 @@ describe('TerminalArea layout controls', () => {
 
     const { rerender } = render(<TerminalArea workspaceId="terminal1" />)
 
+    expect(document.querySelector('.terminal-grid')).toHaveClass('grid-1')
     expect(viewControls().getByRole('button', { name: 'View window 1' })).toHaveClass('active')
     expect(viewControls().queryByRole('button', { name: 'View window 4' })).not.toBeInTheDocument()
 

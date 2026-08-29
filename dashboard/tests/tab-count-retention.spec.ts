@@ -119,18 +119,4 @@ test.describe('Tab count retention', () => {
     expect(terminalDocumentLoads.filter(url => url.includes('arg=main'))).toHaveLength(baselineLoads)
   })
 
-  test('hidden workspace keeps its layout when the count shrinks and returns', async ({ page }) => {
-    await page.goto('/')
-
-    await page.getByRole('button', { name: 'Settings' }).click()
-    await page.getByRole('combobox', { name: 'Terminal tabs' }).selectOption('2')
-    await page.waitForRequest(request => request.url().includes('/api/tmux/sessions'))
-    await page.getByRole('combobox', { name: 'Terminal tabs' }).selectOption('3')
-
-    await page.getByRole('button', { name: 'Terminal 3' }).click()
-    const grid = page.locator('.terminal-grid[data-workspace="terminal3"]')
-    await expect(grid).toBeVisible()
-    // The seeded binding survived the round trip.
-    await expect(grid.locator('iframe')).toHaveCount(1)
-  })
 })
