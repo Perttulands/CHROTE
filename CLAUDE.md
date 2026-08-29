@@ -8,7 +8,7 @@ Start with its **Operating contract** section: the host workspace one directory 
 
 ```text
 src/cmd/server/main.go          server entry point, middleware, routes
-src/internal/api/               HTTP APIs for tmux, files, Beads, recovery, and status
+src/internal/api/               HTTP APIs for tmux, files, Beads, agents, Formations, scheduled tasks, services, and status
 src/internal/proxy/terminal.go  ttyd lifecycle and terminal proxy
 dashboard/src/                  React dashboard
 scripts/doc-lint.py             public documentation and release-truth contract

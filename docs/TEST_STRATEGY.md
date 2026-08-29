@@ -25,6 +25,8 @@ A change is green only when the relevant layers pass after the final edit:
 
 Warnings are evidence. Do not suppress React lifecycle warnings, Go diagnostics, npm audit findings, or browser errors merely to make output quiet.
 
+A review finding that proposes adding handling, evidence, timeouts, guards, or tests of absence is answered with what the change removes; "harden" is not a verb a review may use without naming the removed surface.
+
 ## Canonical local matrix
 
 ### Documentation
@@ -76,6 +78,18 @@ If the default Vite port is already occupied, use another port rather than killi
 ```bash
 CHROTE_PLAYWRIGHT_PORT=5279 npm test
 ```
+
+Artifacts are keyed on that port (`test-results/port-<port>/` and, for the
+config's own html reporter, `playwright-report/port-<port>/`), so two runs in
+one checkout must use different ports. The same variable keys artifacts for
+`test:server-contract` and `test:live` even though those modes start no Vite
+server, and a CLI `--reporter=...` replaces the config reporter, so it does not
+produce the per-port html folder. Playwright wipes its output directory at
+every run start: two runs on one port destroy each other's artifacts and the
+second aborts at Vite startup. Local runs use four workers; a host already
+saturated by another suite or build shows up as `Test timeout of 30000ms
+exceeded while running "beforeEach" hook` on `page.goto`. That is contention,
+not evidence about the suite: rerun the failing spec alone before recording it.
 
 The default suite covers desktop and mobile layouts, terminal workspace persistence, Sessions/Files sidecars, Peek and location-chip behavior, drag/drop, Files, Beads, settings, destructive-action confirmation, and error states.
 

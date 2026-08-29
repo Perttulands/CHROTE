@@ -35,7 +35,8 @@ chrote-server-integ
 chrote-server.*
 *.exe
 
-# Vite cache
+# Vite / TypeScript incremental build caches
+*.tsbuildinfo
 dashboard/.vite/
 dashboard/dist/
 dashboard/coverage/
@@ -95,3 +96,6 @@ src/internal/dashboard/dist.stamp
 
 # root-level tool droppings (a vite cache appeared here 2026-07-26)
 /node_modules/
+prototype-output/
+.superpowers/
+.codex/

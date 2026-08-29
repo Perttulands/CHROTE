@@ -44,6 +44,11 @@ source of truth into the browser.
   need reboot recovery use explicit operator-owned host configuration outside
   CHROTE.
 - CHROTE does not require Gastown, Ralph, or a single preferred agent harness.
+- CHROTE does not implement rare, judgment-heavy operations — recovery, restore,
+  cleanup, migration, one-off repair — in code; they are agent skills, and CHROTE
+  code is for what runs on every request.
+- CHROTE does not restrict access to make itself safer: everything it can reach it
+  shows, and the only asymmetry is Unix permissions, never CHROTE code.
 
 ## Current views
 
