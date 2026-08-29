@@ -55,10 +55,10 @@ tmux list-sessions
 curl http://127.0.0.1:8094/api/tmux/sessions
 ```
 
-A fresh install uses the installing user's normal tmux server. If you configured
-`CHROTE_DEFAULT_TMUX_SOCKET` or cross-user socket mappings, verify the exact
-socket path and filesystem permissions. CHROTE intentionally fails loud instead
-of falling back to a different user's ambient server.
+A fresh install writes the installing user's normal tmux socket as an explicit
+`CHROTE_TMUX_SOCKET=unixUser=/absolute/socket` mapping. For cross-user mappings,
+verify each exact socket path and its filesystem permissions. CHROTE intentionally
+fails loud instead of discovering or falling back to another ambient server.
 
 Do **not** kill a healthy tmux server merely because the browser terminal is
 broken. tmux owns the session lifetime; ttyd and CHROTE are replaceable clients.

@@ -270,7 +270,13 @@ exit 0
 	}
 }
 
-func TestSizeGuardCanBeDisabledAndTuned(t *testing.T) {
+func TestSizeGuardConfigurationPreservesSocketOrderAndTuning(t *testing.T) {
+	t.Setenv("CHROTE_TMUX_SOCKET", "build=/tmp/tmux-build,alice=/tmp/tmux-alice,mirror=/tmp/tmux-build")
+	wantSockets := []string{"/tmp/tmux-build", "/tmp/tmux-alice"}
+	if got := NewTmuxHandler().guardedSockets(); strings.Join(got, "\x00") != strings.Join(wantSockets, "\x00") {
+		t.Fatalf("guarded sockets = %q, want configured order %q", got, wantSockets)
+	}
+
 	t.Setenv("CHROTE_TERMINAL_SIZE_GUARD", "off")
 	if sizeGuardEnabled() {
 		t.Fatal("guard stayed enabled with CHROTE_TERMINAL_SIZE_GUARD=off")

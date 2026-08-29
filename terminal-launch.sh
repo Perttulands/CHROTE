@@ -1,7 +1,7 @@
 #!/bin/bash
 # truthsayer:ignore bad-defaults.missing-pipefail -- launch script uses intentional fallthrough
 # Terminal launch script for CHROTE.
-# TMUX_TMPDIR and CHROTE_WORKDIR are set by the systemd unit or environment.
+# CHROTE_WORKDIR and CHROTE_TMUX_SOCKET are set by the systemd unit or environment.
 export LANG=en_US.UTF-8
 # REASON: cd to preferred dir is optional, fallthrough is intentional
 cd "${CHROTE_WORKDIR:-$HOME}" 2>/dev/null || cd ~ || exit
@@ -18,57 +18,48 @@ trim_ws() {
   printf '%s\n' "$value"
 }
 
-allowed_terminal_user() {
-  local candidate="$1"
-  local allowed="${CHROTE_TERMINAL_USERS:-}"
-  local entry user
-  local -a entries
-  [ -n "$candidate" ] || return 1
-  if [ -z "$allowed" ]; then
-    [ "$candidate" = "$(id -un)" ]
-    return $?
-  fi
-  IFS=',' read -r -a entries <<< "$allowed"
-  for entry in "${entries[@]}"; do
-    user="$(trim_ws "$entry")"
-    [ -n "$user" ] || continue
-    [ "$user" = "$candidate" ] && return 0
-  done
-  return 1
-}
-
 socket_for_terminal_user() {
   local candidate="$1"
-  local mappings="${CHROTE_TERMINAL_USER_SOCKETS:-}"
-  local entry key value match=""
+  local mappings="${CHROTE_TMUX_SOCKET:-}"
+  local entry key value match="" count=0
   local -a entries
+  local -A seen
   IFS=',' read -r -a entries <<< "$mappings"
-  # REASON: the Go parser is last-wins and this one used to be first-wins, so a
-  # duplicated user key made listing and attaching resolve different tmux
-  # servers. Both parsers now refuse a duplicate instead of picking silently.
   for entry in "${entries[@]}"; do
+    entry="$(trim_ws "$entry")"
+    [ -n "$entry" ] || continue
     key="$(trim_ws "${entry%%=*}")"
     value="$(trim_ws "${entry#*=}")"
-    if [ "$key" = "$candidate" ] && [ -n "$value" ] && [ "$value" != "$entry" ]; then
-      if [ -n "$match" ]; then
-        echo "CHROTE_TERMINAL_USER_SOCKETS has duplicate entries for Unix user '$candidate' ('$match' and '$value'); keep exactly one entry per user so terminal listing and terminal attach resolve the same socket" >&2
-        return 3
-      fi
+    if [ -z "$key" ] || [ -z "$value" ] || [ "$value" = "$entry" ]; then
+      echo "CHROTE_TMUX_SOCKET entry '$entry' must be unixUser=/absolute/socket" >&2
+      return 3
+    fi
+    case "$value" in
+      /*) ;;
+      *) echo "CHROTE_TMUX_SOCKET for Unix user '$key' must be an absolute path: '$value'" >&2; return 3 ;;
+    esac
+    case "$value" in
+      *'/../'*|*'/..'|*'/./'*|*'/.'|*'//'*) echo "CHROTE_TMUX_SOCKET for Unix user '$key' must be canonical: '$value'" >&2; return 3 ;;
+    esac
+    if [ -n "${seen[$key]+x}" ]; then
+      echo "CHROTE_TMUX_SOCKET has duplicate entries for Unix user '$key' ('${seen[$key]}' and '$value'); keep exactly one entry per user" >&2
+      return 3
+    fi
+    seen[$key]="$value"
+    count=$((count + 1))
+    if [ -n "$candidate" ] && [ "$key" = "$candidate" ]; then
       match="$value"
     fi
   done
+  if [ -z "$candidate" ] && [ "$count" -eq 1 ]; then
+    for key in "${!seen[@]}"; do
+      match="${seen[$key]}"
+    done
+  elif [ -z "$candidate" ] && [ "$count" -gt 1 ]; then
+    return 2
+  fi
   if [ -n "$match" ]; then
     printf '%s\n' "$match"
-    return 0
-  fi
-  local uid
-  if [ "$candidate" = "$(id -un)" ] && [ -n "${CHROTE_TMUX_SOCKET:-}" ]; then
-    printf '%s\n' "$CHROTE_TMUX_SOCKET"
-    return 0
-  fi
-  uid="$(id -u "$candidate" 2>/dev/null || true)"
-  if [ -n "$uid" ]; then
-    printf '/tmp/tmux-%s/default\n' "$uid"
     return 0
   fi
   return 1
@@ -94,10 +85,6 @@ attach_explicit_socket() {
 }
 
 if [ -n "$UNIX_USER" ]; then
-  if ! allowed_terminal_user "$UNIX_USER"; then
-    echo "Unix user '$UNIX_USER' is not allowed for CHROTE terminal launch" >&2
-    exit 2
-  fi
   USER_SOCKET="$(socket_for_terminal_user "$UNIX_USER")"
   SOCKET_RC=$?
   if [ "$SOCKET_RC" -eq 3 ]; then
@@ -108,12 +95,17 @@ if [ -n "$UNIX_USER" ]; then
     exit 2
   fi
   attach_explicit_socket "$USER_SOCKET" "$SESSION"
-elif [ -n "${CHROTE_TMUX_SOCKET:-}" ]; then
-  attach_explicit_socket "$CHROTE_TMUX_SOCKET" "$SESSION"
 else
-  # REASON: tmux has-session tests existence; stderr is noise, not an error
-  if [ -n "$SESSION" ] && "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null; then
-    exec "$TMUX_BIN" attach-session -t "$SESSION"
+  USER_SOCKET="$(socket_for_terminal_user "")"
+  SOCKET_RC=$?
+  if [ "$SOCKET_RC" -eq 2 ]; then
+    echo "Unix user is required when multiple CHROTE tmux sockets are configured" >&2
+    exit 2
+  elif [ "$SOCKET_RC" -eq 3 ]; then
+    exit 2
+  elif [ "$SOCKET_RC" -ne 0 ]; then
+    echo "No CHROTE tmux sockets are configured" >&2
+    exit 2
   fi
+  attach_explicit_socket "$USER_SOCKET" "$SESSION"
 fi
-exec bash -l

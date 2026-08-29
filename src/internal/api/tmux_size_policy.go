@@ -183,7 +183,8 @@ func sizeGuardEnabled() bool {
 	return raw != "0" && raw != "false" && raw != "off"
 }
 
-// guardedSockets lists every tmux socket CHROTE manages, deduped.
+// guardedSockets lists every tmux socket CHROTE manages in configured order,
+// deduped.
 func (h *TmuxHandler) guardedSockets() []string {
 	sockets := []string{}
 	seen := map[string]bool{}
@@ -195,8 +196,7 @@ func (h *TmuxHandler) guardedSockets() []string {
 		seen[socket] = true
 		sockets = append(sockets, socket)
 	}
-	add(h.socket)
-	for user := range allowedTerminalUsers() {
+	for _, user := range configuredTerminalUsers() {
 		if target, err := h.targetForUnixUser(user); err == nil {
 			add(target.socket)
 		}

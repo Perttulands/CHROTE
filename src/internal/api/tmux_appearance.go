@@ -27,9 +27,6 @@ type AppearanceRequest struct {
 
 func (h *TmuxHandler) appearanceTargets() []tmuxTarget {
 	users := configuredTerminalUsers()
-	if len(users) == 0 {
-		return []tmuxTarget{{socket: h.socket, workDir: h.workDir}}
-	}
 	targets := make([]tmuxTarget, 0, len(users))
 	seenSockets := map[string]bool{}
 	for _, user := range users {
@@ -37,18 +34,11 @@ func (h *TmuxHandler) appearanceTargets() []tmuxTarget {
 		if err != nil {
 			continue
 		}
-		key := target.socket
-		if key == "" {
-			key = "ambient:"
-		}
-		if seenSockets[key] {
+		if seenSockets[target.socket] {
 			continue
 		}
-		seenSockets[key] = true
+		seenSockets[target.socket] = true
 		targets = append(targets, target)
-	}
-	if len(targets) == 0 {
-		return []tmuxTarget{{socket: h.socket, workDir: h.workDir}}
 	}
 	return targets
 }

@@ -271,6 +271,7 @@ XDG_CONFIG_HOME="$config_home" \
 XDG_STATE_HOME="$state_home" \
 CHROTE_INSTALL_PREFIX="$prefix" \
 CHROTE_SERVICE_DIR="$service_dir" \
+TMUX_TMPDIR="$runtime_dir" \
   "$installer" "${install_args[@]}"
 
 installed_binary="$prefix/bin/chrote-server"
@@ -287,6 +288,7 @@ done
 [ ! -e "$service_dir/chrote-ttyd.service" ]
 
 grep -F 'CHROTE_ROOTS=' "$env_file" | grep -Fq "$workspace"
+grep -F 'CHROTE_TMUX_SOCKET=' "$env_file" | grep -Fq "$(id -un)=$tmux_socket"
 grep -F 'CHROTE_SCHEDULED_TASKS_DIR=' "$env_file" | grep -Fq "$state_home/chrote/scheduled-tasks"
 grep -Fq "ExecStart=$installed_binary" "$unit_file"
 ! grep -Fq 'Environment=TMUX_TMPDIR=' "$unit_file"
@@ -302,7 +304,6 @@ set +a
 export HOME
 export TMUX_TMPDIR="$runtime_dir"
 export CHROTE_TMUX_BIN="$tmux_bin"
-export CHROTE_DEFAULT_TMUX_SOCKET="$tmux_socket"
 export PATH="$prefix/bin:$tmux_bin_dir:/usr/local/bin:/usr/bin:/bin"
 
 tmux_cmd new-session -d -s public-smoke -c "$workspace"

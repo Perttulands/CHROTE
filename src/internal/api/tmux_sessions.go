@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	osuser "os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -25,18 +24,7 @@ import (
 
 // TmuxHandler handles tmux-related API endpoints
 type TmuxHandler struct {
-	cache          *sessionsCache
-	colorRegex     *regexp.Regexp
-	socket         string
-	workDir        string
-	sessionDropSem chan struct{}
-}
-
-type sessionsCache struct {
-	mu        sync.RWMutex
-	data      *SessionsResponse
-	timestamp time.Time
-	ttl       time.Duration
+	colorRegex *regexp.Regexp
 }
 
 // SessionsResponse is the response for listing sessions
@@ -69,18 +57,10 @@ func isReservedInternalSessionName(name string) bool {
 	return strings.HasPrefix(strings.TrimSpace(name), reservedInternalSessionPrefix)
 }
 
-// NewTmuxHandler creates the default tmux handler. By default it uses
-// TMUX_TMPDIR; CHROTE_DEFAULT_TMUX_SOCKET pins the same /api/tmux route to an
-// explicit socket without changing the dashboard UI.
+// NewTmuxHandler creates the default tmux handler.
 func NewTmuxHandler() *TmuxHandler {
 	return &TmuxHandler{
-		cache: &sessionsCache{
-			ttl: time.Second,
-		},
-		colorRegex:     regexp.MustCompile(`^#[0-9A-Fa-f]{3,6}$|^[a-zA-Z]+$|^default$`),
-		socket:         strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_SOCKET")),
-		workDir:        strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_WORKDIR")),
-		sessionDropSem: newSessionDropSemaphore(),
+		colorRegex: regexp.MustCompile(`^#[0-9A-Fa-f]{3,6}$|^[a-zA-Z]+$|^default$`),
 	}
 }
 
@@ -98,80 +78,10 @@ func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/tmux/mouse", h.SetMouseMode)
 }
 
-// RunTmux satisfies the teams.TmuxRunner interface.
-func (h *TmuxHandler) RunTmux(args ...string) (string, error) {
-	return h.runTmux(args...)
-}
-
 type tmuxTarget struct {
 	socket   string
 	workDir  string
 	unixUser string
-}
-
-var (
-	tmuxCurrentUser = osuser.Current
-	tmuxLookupUser  = osuser.Lookup
-)
-
-type tmuxUserLookupResult struct {
-	account *osuser.User
-	err     error
-}
-
-type tmuxUserLookupCall struct {
-	done   chan struct{}
-	result tmuxUserLookupResult
-}
-
-var tmuxUserLookupFlights = struct {
-	sync.Mutex
-	calls map[string]*tmuxUserLookupCall
-}{calls: map[string]*tmuxUserLookupCall{}}
-
-func resolveTmuxUserContext(ctx context.Context, key string, lookup func() (*osuser.User, error)) (*osuser.User, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	tmuxUserLookupFlights.Lock()
-	call := tmuxUserLookupFlights.calls[key]
-	if call == nil {
-		call = &tmuxUserLookupCall{done: make(chan struct{})}
-		tmuxUserLookupFlights.calls[key] = call
-		go func() {
-			call.result.account, call.result.err = lookup()
-			tmuxUserLookupFlights.Lock()
-			delete(tmuxUserLookupFlights.calls, key)
-			close(call.done)
-			tmuxUserLookupFlights.Unlock()
-		}()
-	}
-	tmuxUserLookupFlights.Unlock()
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-call.done:
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		return call.result.account, call.result.err
-	}
-}
-
-func currentTmuxUserContext(ctx context.Context) (*osuser.User, error) {
-	return resolveTmuxUserContext(ctx, "current", tmuxCurrentUser)
-}
-
-func lookupTmuxUserContext(ctx context.Context, username string) (*osuser.User, error) {
-	lookupUser := tmuxLookupUser
-	return resolveTmuxUserContext(ctx, "lookup:"+username, func() (*osuser.User, error) {
-		return lookupUser(username)
-	})
 }
 
 func parseUserValueMap(raw string) map[string]string {
@@ -194,22 +104,35 @@ func parseUserValueMap(raw string) map[string]string {
 	return result
 }
 
-// terminalUserMapEnvVars are the CHROTE_TERMINAL_USER_* CSV maps parsed by
-// parseUserValueMap.
+// terminalUserMapEnvVars are the CSV maps parsed by parseUserValueMap.
 var terminalUserMapEnvVars = []string{
-	"CHROTE_TERMINAL_USER_SOCKETS",
+	"CHROTE_TMUX_SOCKET",
 	"CHROTE_TERMINAL_USER_WORKDIRS",
 }
 
 // ValidateTerminalUserEnv rejects a Unix user appearing twice in any
-// CHROTE_TERMINAL_USER_* map. parseUserValueMap is last-wins while
-// terminal-launch.sh is first-wins, so a duplicate makes session listing and
-// terminal attach resolve different tmux servers. Refusing to start is the only
-// way both parsers stay in agreement.
+// terminal map and requires every configured socket to be explicit.
 func ValidateTerminalUserEnv() error {
 	for _, name := range terminalUserMapEnvVars {
 		if err := validateNoDuplicateUserKeys(name, os.Getenv(name)); err != nil {
 			return err
+		}
+	}
+	for _, item := range strings.Split(os.Getenv("CHROTE_TMUX_SOCKET"), ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return fmt.Errorf("CHROTE_TMUX_SOCKET entry %q must be unixUser=/absolute/socket", item)
+		}
+		socket := strings.TrimSpace(parts[1])
+		if !filepath.IsAbs(socket) {
+			return fmt.Errorf("CHROTE_TMUX_SOCKET for Unix user %q must be an absolute path: %q", strings.TrimSpace(parts[0]), socket)
+		}
+		if filepath.Clean(socket) != socket {
+			return fmt.Errorf("CHROTE_TMUX_SOCKET for Unix user %q must be canonical: %q", strings.TrimSpace(parts[0]), socket)
 		}
 	}
 	return nil
@@ -240,17 +163,19 @@ func validateNoDuplicateUserKeys(envName, raw string) error {
 }
 
 func configuredTerminalUsers() []string {
-	raw := strings.TrimSpace(os.Getenv("CHROTE_TERMINAL_USERS"))
-	if raw == "" {
-		return []string{}
-	}
+	raw := strings.TrimSpace(os.Getenv("CHROTE_TMUX_SOCKET"))
 	users := []string{}
 	seen := map[string]bool{}
 	for _, item := range strings.Split(raw, ",") {
-		item = strings.TrimSpace(item)
-		if item != "" && !seen[item] {
-			users = append(users, item)
-			seen[item] = true
+		parts := strings.SplitN(strings.TrimSpace(item), "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		user := strings.TrimSpace(parts[0])
+		socket := strings.TrimSpace(parts[1])
+		if user != "" && socket != "" && !seen[user] {
+			users = append(users, user)
+			seen[user] = true
 		}
 	}
 	return users
@@ -260,42 +185,11 @@ func advertisedTerminalUsers() []string {
 	return configuredTerminalUsers()
 }
 
-func allowedTerminalUsers() map[string]bool {
-	allowed, _ := allowedTerminalUsersContext(context.Background())
-	return allowed
-}
-
-func allowedTerminalUsersContext(ctx context.Context) (map[string]bool, error) {
-	allowed := map[string]bool{}
-	configured := configuredTerminalUsers()
-	if len(configured) > 0 {
-		for _, item := range configured {
-			allowed[item] = true
-		}
-		return allowed, nil
-	}
-	current, err := currentTmuxUserContext(ctx)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		return allowed, nil
-	}
-	if current != nil && current.Username != "" {
-		allowed[current.Username] = true
-	}
-	return allowed, nil
-}
-
 func (h *TmuxHandler) targetForUnixUser(unixUser string) (tmuxTarget, error) {
-	return h.resolveTargetForUnixUser(context.Background(), unixUser, false)
+	return h.targetForUnixUserContext(context.Background(), unixUser)
 }
 
 func (h *TmuxHandler) targetForUnixUserContext(ctx context.Context, unixUser string) (tmuxTarget, error) {
-	return h.resolveTargetForUnixUser(ctx, unixUser, true)
-}
-
-func (h *TmuxHandler) resolveTargetForUnixUser(ctx context.Context, unixUser string, configuredFastPath bool) (tmuxTarget, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -304,58 +198,29 @@ func (h *TmuxHandler) resolveTargetForUnixUser(ctx context.Context, unixUser str
 	}
 	unixUser = strings.TrimSpace(unixUser)
 	if unixUser == "" {
-		target := tmuxTarget{socket: h.socket, workDir: h.workDir}
-		return target, nil
+		users := configuredTerminalUsers()
+		switch len(users) {
+		case 0:
+			return tmuxTarget{}, fmt.Errorf("no tmux sockets are configured")
+		case 1:
+			unixUser = users[0]
+		default:
+			return tmuxTarget{}, fmt.Errorf("Unix user is required when multiple terminal users are configured")
+		}
 	}
 
-	allowed, err := allowedTerminalUsersContext(ctx)
-	if err != nil {
-		return tmuxTarget{}, err
-	}
-	if !allowed[unixUser] {
-		return tmuxTarget{}, fmt.Errorf("Unix user %q is not allowed for terminal launch", unixUser)
-	}
-
-	socketMap := parseUserValueMap(os.Getenv("CHROTE_TERMINAL_USER_SOCKETS"))
+	socketMap := parseUserValueMap(os.Getenv("CHROTE_TMUX_SOCKET"))
 	workDirMap := parseUserValueMap(os.Getenv("CHROTE_TERMINAL_USER_WORKDIRS"))
 	target := tmuxTarget{
-		socket:   socketMap[unixUser],
+		socket:   filepath.Clean(socketMap[unixUser]),
 		workDir:  workDirMap[unixUser],
 		unixUser: unixUser,
 	}
-	if configuredFastPath && target.socket != "" && target.workDir != "" {
-		return target, nil
-	}
-
-	account, err := lookupTmuxUserContext(ctx, unixUser)
-	if err != nil {
-		if target.socket != "" && target.workDir != "" && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			return target, nil
-		}
-		return tmuxTarget{}, fmt.Errorf("lookup Unix user %q: %w", unixUser, err)
-	}
-	currentUser := ""
-	current, currentErr := currentTmuxUserContext(ctx)
-	if currentErr != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return tmuxTarget{}, ctxErr
-		}
-	} else if current != nil {
-		currentUser = current.Username
+	if strings.TrimSpace(socketMap[unixUser]) == "" {
+		return tmuxTarget{}, fmt.Errorf("Unix user %q is not allowed for terminal launch", unixUser)
 	}
 	if target.workDir == "" {
-		if currentUser == unixUser && h.workDir != "" {
-			target.workDir = h.workDir
-		} else {
-			target.workDir = account.HomeDir
-		}
-	}
-	if target.socket == "" {
-		if currentUser == unixUser {
-			target.socket = h.socket
-		} else {
-			target.socket = fmt.Sprintf("/tmp/tmux-%s/default", account.Uid)
-		}
+		target.workDir = core.GetWorkDir()
 	}
 	return target, nil
 }
@@ -381,25 +246,11 @@ func sendTargetFromRequest(h *TmuxHandler, r *http.Request, bodyUnixUser string)
 	if unixUser == "" {
 		unixUser = queryUnixUser
 	}
-	if unixUser == "" {
-		configured := configuredTerminalUsers()
-		switch len(configured) {
-		case 0:
-			return h.targetForUnixUser("")
-		case 1:
-			unixUser = configured[0]
-		default:
-			return tmuxTarget{}, fmt.Errorf("Unix user is required when multiple terminal users are configured")
-		}
-	}
 	return h.targetForUnixUser(unixUser)
 }
 
 func effectiveTmuxSocket(socket string) string {
-	if socket = strings.TrimSpace(socket); socket != "" {
-		return filepath.Clean(socket)
-	}
-	return filepath.Join(core.GetTmuxTmpdir(), "default")
+	return filepath.Clean(strings.TrimSpace(socket))
 }
 
 func isTmuxNoServerErrorForSocket(errStr, socket string) bool {
@@ -495,11 +346,6 @@ func (c *tmuxCommandCapture) values() (stdout, stderr string, exceeded bool) {
 	return c.stdout.String(), c.stderr.String(), c.exceeded
 }
 
-// runTmux executes a tmux command with proper environment
-func (h *TmuxHandler) runTmux(args ...string) (string, error) {
-	return h.runTmuxOnSocket(h.socket, args...)
-}
-
 func (h *TmuxHandler) runTmuxOnSocket(socket string, args ...string) (string, error) {
 	return h.runTmuxOnSocketContext(context.Background(), socket, args...)
 }
@@ -511,12 +357,14 @@ func (h *TmuxHandler) runTmuxOnSocketContext(parent context.Context, socket stri
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 
-	if socket != "" {
-		args = append([]string{"-S", socket}, args...)
+	socket = strings.TrimSpace(socket)
+	if socket == "" {
+		return "", fmt.Errorf("tmux socket is not configured")
 	}
+	args = append([]string{"-S", socket}, args...)
 
 	cmd := exec.CommandContext(ctx, core.TmuxBin(), args...)
-	cmd.Env = core.GetTmuxEnv()
+	cmd.Env = os.Environ()
 	capture := &tmuxCommandCapture{remaining: tmuxCommandOutputLimit}
 	cmd.Stdout = tmuxCommandCaptureWriter{capture: capture}
 	cmd.Stderr = tmuxCommandCaptureWriter{capture: capture, stderr: true}
@@ -613,20 +461,6 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	if r != nil {
 		queryUnixUser = strings.TrimSpace(r.URL.Query().Get("unixUser"))
 	}
-	useConfiguredUsers := queryUnixUser == "" && len(configuredTerminalUsers()) > 0
-	useCache := queryUnixUser == "" && !useConfiguredUsers
-
-	// Check cache
-	if useCache {
-		h.cache.mu.RLock()
-		if h.cache.data != nil && time.Since(h.cache.timestamp) < h.cache.ttl {
-			data := h.cache.data
-			h.cache.mu.RUnlock()
-			core.WriteJSON(w, http.StatusOK, data)
-			return
-		}
-		h.cache.mu.RUnlock()
-	}
 
 	response := &SessionsResponse{
 		Sessions:      []core.Session{},
@@ -634,7 +468,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		TerminalUsers: advertisedTerminalUsers(),
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 	}
-	if useConfiguredUsers {
+	if queryUnixUser == "" {
 		var errors []string
 		successfulUsers := 0
 		for _, unixUser := range configuredTerminalUsers() {
@@ -671,14 +505,6 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 
 	core.SortSessions(response.Sessions)
 	response.Grouped = core.GroupSessions(response.Sessions)
-
-	// Update cache
-	if useCache {
-		h.cache.mu.Lock()
-		h.cache.data = response
-		h.cache.timestamp = time.Now()
-		h.cache.mu.Unlock()
-	}
 
 	core.WriteJSON(w, http.StatusOK, response)
 }
@@ -802,14 +628,6 @@ func (h *TmuxHandler) createOwnedTmuxSessionWithWindow(parent context.Context, s
 	return session, nil
 }
 
-// invalidateCache clears the sessions cache
-func (h *TmuxHandler) invalidateCache() {
-	h.cache.mu.Lock()
-	h.cache.data = nil
-	h.cache.timestamp = time.Time{}
-	h.cache.mu.Unlock()
-}
-
 // CreateSession handles POST /api/tmux/sessions
 func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	var req CreateSessionRequest
@@ -870,8 +688,6 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return
 	}
-	h.invalidateCache()
-
 	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"success":   true,
 		"session":   name,
@@ -900,8 +716,6 @@ func (h *TmuxHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return
 	}
-
-	h.invalidateCache()
 
 	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"success":   true,
@@ -971,8 +785,6 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	h.invalidateCache()
-
 	response := map[string]interface{}{
 		"success":   len(errors) == 0,
 		"killed":    len(killed),
@@ -1029,8 +841,6 @@ func (h *TmuxHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.invalidateCache()
-
 	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"success":   true,
 		"oldName":   oldName,
@@ -1078,5 +888,37 @@ func (h *TmuxHandler) CapturePane(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"content": output,
 		"session": sessionName,
+	})
+}
+
+// ListSessionPanes handles GET /api/tmux/sessions/{name}/panes and exposes
+// immutable pane IDs plus human-readable labels for an explicit safe choice.
+func (h *TmuxHandler) ListSessionPanes(w http.ResponseWriter, r *http.Request) {
+	sessionName := strings.TrimSpace(r.PathValue("name"))
+	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
+	if !valid {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
+		return
+	}
+	target, err := sendTargetFromRequest(h, r, "")
+	if err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+	panes, err := h.listSendPanes(r.Context(), target, sessionName)
+	if err != nil {
+		var targetErr *sendTargetError
+		if errors.As(err, &targetErr) {
+			core.WriteError(w, targetErr.Status, targetErr.Code, targetErr.Message)
+			return
+		}
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+		return
+	}
+	core.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"session":  sessionName,
+		"unixUser": target.unixUser,
+		"panes":    panes,
 	})
 }

@@ -2,7 +2,6 @@
 package core
 
 import (
-	"fmt"
 	"os"
 	"regexp"
 	"sort"
@@ -104,19 +103,6 @@ func ValidateSessionName(name, paramName string) (bool, string) {
 	return true, ""
 }
 
-// GetTmuxTmpdir returns the TMUX_TMPDIR environment variable or a portable default.
-// Prefers XDG_RUNTIME_DIR/tmux, falls back to /tmp/tmux-<uid>.
-func GetTmuxTmpdir() string {
-	tmpdir := strings.TrimSpace(os.Getenv("TMUX_TMPDIR"))
-	if tmpdir != "" {
-		return tmpdir
-	}
-	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
-		return xdg + "/tmux"
-	}
-	return fmt.Sprintf("/tmp/tmux-%d", os.Getuid())
-}
-
 // TmuxBin returns the tmux client binary every CHROTE code path must invoke.
 // CHROTE_TMUX_BIN pins one client version across the Go server,
 // terminal-launch.sh and the grants helper: a tmux 3.4 client cannot talk to a
@@ -127,23 +113,4 @@ func TmuxBin() string {
 		return bin
 	}
 	return "tmux"
-}
-
-// GetTmuxEnv returns the environment for tmux commands
-func GetTmuxEnv() []string {
-	env := os.Environ()
-	tmpdir := GetTmuxTmpdir()
-	// Ensure TMUX_TMPDIR is set
-	found := false
-	for i, e := range env {
-		if strings.HasPrefix(e, "TMUX_TMPDIR=") {
-			env[i] = "TMUX_TMPDIR=" + tmpdir
-			found = true
-			break
-		}
-	}
-	if !found {
-		env = append(env, "TMUX_TMPDIR="+tmpdir)
-	}
-	return env
 }

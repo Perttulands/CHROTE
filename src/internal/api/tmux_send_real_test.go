@@ -150,8 +150,7 @@ func TestSendToSessionRealTmuxPinsExactPane(t *testing.T) {
 	}
 
 	t.Setenv("CHROTE_SESSION_DROPS_DIR", drops)
-	t.Setenv("CHROTE_TERMINAL_USERS", current.Username)
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", current.Username+"="+socket)
+	t.Setenv("CHROTE_TMUX_SOCKET", current.Username+"="+socket)
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", current.Username+"="+root)
 	handler := NewTmuxHandler()
 	mux := http.NewServeMux()
@@ -308,8 +307,7 @@ func TestSendToSessionRealCodexLongPrompt(t *testing.T) {
 	pane := sendPaneTarget{SessionID: parts[0], Session: parts[1], PaneID: parts[2], PanePID: parts[3], ServerPID: parts[4], CurrentCommand: parts[5]}
 
 	t.Setenv("CHROTE_SESSION_DROPS_DIR", drops)
-	t.Setenv("CHROTE_TERMINAL_USERS", current.Username)
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", current.Username+"="+socket)
+	t.Setenv("CHROTE_TMUX_SOCKET", current.Username+"="+socket)
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", current.Username+"="+repositoryRoot)
 	handler := NewTmuxHandler()
 	mux := http.NewServeMux()

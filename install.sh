@@ -133,6 +133,11 @@ quote_unit_value() {
   printf '%s' "$value"
 }
 
+default_tmux_socket() {
+  local socket_root="${TMUX_TMPDIR:-/tmp}"
+  printf '%s/tmux-%s/default\n' "${socket_root%/}" "$(id -u)"
+}
+
 version_from_source() {
   local raw
   raw="$(tr -d '\r\n' < "$SCRIPT_DIR/VERSION")"
@@ -201,8 +206,9 @@ install_ttyd() {
 }
 
 write_environment() {
-  local env_file="$1" state_dir="$2" launch_script="$3" service_path
+  local env_file="$1" state_dir="$2" launch_script="$3" service_path tmux_mapping
   service_path="$PREFIX/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+  tmux_mapping="${CHROTE_TMUX_SOCKET:-$(id -un)=$(default_tmux_socket)}"
   cat > "$env_file" <<EOF
 # Managed by CHROTE install.sh. Put private optional service values in secrets.env.
 HOST=$(quote_env_value "127.0.0.1")
@@ -210,7 +216,7 @@ PORT=$(quote_env_value "$PORT")
 TTYD_PORT=$(quote_env_value "$TTYD_PORT")
 CHROTE_ROOTS=$(quote_env_value "$WORKSPACE")
 CHROTE_WORKDIR=$(quote_env_value "$WORKSPACE")
-CHROTE_DEFAULT_TMUX_WORKDIR=$(quote_env_value "$WORKSPACE")
+CHROTE_TMUX_SOCKET=$(quote_env_value "$tmux_mapping")
 CHROTE_LAUNCH_SCRIPT=$(quote_env_value "$launch_script")
 CHROTE_BEADS_WORKSPACES=$(quote_env_value "$WORKSPACE")
 CHROTE_SESSION_DROPS_DIR=$(quote_env_value "$state_dir/session-drops")
@@ -253,10 +259,10 @@ run_as_tmux_owner() {
 }
 
 grant_tmux_access() {
-  local mappings="${CHROTE_TERMINAL_USER_SOCKETS:-}"
+  local mappings="${CHROTE_TMUX_SOCKET:-}"
   [ -n "$mappings" ] || return 0
 
-  [ "$(id -u)" -eq 0 ] || die "CHROTE_TERMINAL_USER_SOCKETS grants require a root install"
+  [ "$(id -u)" -eq 0 ] || die "CHROTE_TMUX_SOCKET grants require a root install"
   local service_user="${CHROTE_TMUX_GRANT_USER:-chrote}"
   id "$service_user" >/dev/null 2>&1 || die "tmux grant user does not exist: $service_user"
   require_command setfacl

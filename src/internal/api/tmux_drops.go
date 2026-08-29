@@ -14,33 +14,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
-	"syscall"
 	"time"
 )
 
-func newSessionDropSemaphore() chan struct{} {
-	sem := make(chan struct{}, 1)
-	sem <- struct{}{}
-	return sem
-}
-
 const defaultSessionDropsDir = "/srv/data/chrote/session-drops"
-const defaultSessionDropRetention = 7 * 24 * time.Hour
-const defaultSessionDropMaintenanceInterval = time.Hour
 
-var sessionDropIDPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{24}$`)
 var sessionDropUnixUserPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*[$]?$`)
 var errEmptySessionDrop = errors.New("send text or at least one file")
-
-func validSessionDropID(name string) bool {
-	if !sessionDropIDPattern.MatchString(name) {
-		return false
-	}
-	_, err := time.Parse("20060102T150405Z", strings.SplitN(name, "-", 2)[0])
-	return err == nil
-}
 
 func defaultSessionDropsPath() string {
 	if override := strings.TrimSpace(os.Getenv("CHROTE_SESSION_DROPS_DIR")); override != "" {
@@ -58,17 +39,16 @@ type sessionDropFile struct {
 }
 
 type sessionDropManifest struct {
-	ID             string                `json:"id"`
-	Session        string                `json:"session"`
-	UnixUser       string                `json:"unixUser,omitempty"`
-	PaneID         string                `json:"paneId"`
-	PanePID        string                `json:"panePid"`
-	ServerPID      string                `json:"serverPid"`
-	CreatedAt      string                `json:"createdAt"`
-	TextPath       string                `json:"textPath,omitempty"`
-	Payload        string                `json:"payload"`
-	Files          []sessionDropFile     `json:"files"`
-	submitEvidence submitPayloadEvidence `json:"-"`
+	ID        string            `json:"id"`
+	Session   string            `json:"session"`
+	UnixUser  string            `json:"unixUser,omitempty"`
+	PaneID    string            `json:"paneId"`
+	PanePID   string            `json:"panePid"`
+	ServerPID string            `json:"serverPid"`
+	CreatedAt string            `json:"createdAt"`
+	TextPath  string            `json:"textPath,omitempty"`
+	Payload   string            `json:"payload"`
+	Files     []sessionDropFile `json:"files"`
 }
 
 func newSessionDropID() (string, error) {
@@ -137,128 +117,16 @@ func parseSessionDropForm(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func sessionDropRetention() (time.Duration, error) {
-	raw := strings.TrimSpace(os.Getenv("CHROTE_SESSION_DROPS_RETENTION"))
-	if raw == "" {
-		return defaultSessionDropRetention, nil
-	}
-	retention, err := time.ParseDuration(raw)
-	if err != nil || retention < 0 {
-		return 0, fmt.Errorf("invalid CHROTE_SESSION_DROPS_RETENTION %q", raw)
-	}
-	return retention, nil
-}
-
-func sessionDropMaintenanceInterval() (time.Duration, error) {
-	raw := strings.TrimSpace(os.Getenv("CHROTE_SESSION_DROPS_MAINTENANCE_INTERVAL"))
-	if raw == "" {
-		return defaultSessionDropMaintenanceInterval, nil
-	}
-	interval, err := time.ParseDuration(raw)
-	if err != nil || interval <= 0 {
-		return 0, fmt.Errorf("invalid CHROTE_SESSION_DROPS_MAINTENANCE_INTERVAL %q", raw)
-	}
-	return interval, nil
-}
-
-func (h *TmuxHandler) lockSessionDrops(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-h.sessionDropSem:
-		return nil
-	}
-}
-
-func (h *TmuxHandler) unlockSessionDrops() {
-	h.sessionDropSem <- struct{}{}
-}
-
-func (h *TmuxHandler) maintainSessionDrops(ctx context.Context, now time.Time) error {
-	if err := h.lockSessionDrops(ctx); err != nil {
-		return err
-	}
-	defer h.unlockSessionDrops()
-	return maintainSessionDropsContext(ctx, defaultSessionDropsPath(), now)
-}
-
-// StartSessionDropJanitor hardens legacy drops synchronously before serving and
-// removes expired drops periodically until ctx is cancelled. The returned
-// channel closes after all janitor work has stopped.
-func (h *TmuxHandler) StartSessionDropJanitor(ctx context.Context, report func(error)) (<-chan struct{}, error) {
-	interval, err := sessionDropMaintenanceInterval()
-	if err != nil {
-		if report != nil {
-			report(fmt.Errorf("invalid session drop maintenance interval; using %s: %w", defaultSessionDropMaintenanceInterval, err))
-		}
-		interval = defaultSessionDropMaintenanceInterval
-	}
-	done := make(chan struct{})
-	initialErr := h.maintainSessionDrops(ctx, time.Now())
-	if ctx.Err() != nil {
-		close(done)
-		return done, errors.Join(initialErr, ctx.Err())
-	}
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case now := <-ticker.C:
-				if err := h.maintainSessionDrops(ctx, now); err != nil && report != nil && !errors.Is(err, context.Canceled) {
-					report(err)
-				}
-			}
-		}
-	}()
-	return done, initialErr
-}
-
-func setSessionDropACLContext(parent context.Context, path, unixUser, permissions string, reset bool) error {
+func grantSessionDrop(path, unixUser string) error {
 	unixUser = strings.TrimSpace(unixUser)
-	if unixUser != "" && !sessionDropUnixUserPattern.MatchString(unixUser) {
+	if !sessionDropUnixUserPattern.MatchString(unixUser) {
 		return fmt.Errorf("invalid session drop Unix user %q", unixUser)
 	}
-	args := []string{"-k"}
-	if reset {
-		args = []string{"-b", "-k"}
-	}
-	args = append(args, "-m", "g::---", "-m", "o::---")
-	if unixUser != "" {
-		args = append(args, "-m", "u:"+unixUser+":"+permissions)
-	}
-	args = append(args, "--", path)
-	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, "setfacl", args...).CombinedOutput()
+	output, err := exec.CommandContext(ctx, "setfacl", "-P", "-R", "-m", "u:"+unixUser+":r-X", "--", path).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("set session drop ACL: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return nil
-}
-
-func rebuildSessionDropRootACLContext(parent context.Context, path string, unixUsers []string) error {
-	if err := parent.Err(); err != nil {
-		return err
-	}
-	args := []string{"-b", "-k", "-m", "g::---", "-m", "o::---"}
-	for _, unixUser := range unixUsers {
-		if !sessionDropUnixUserPattern.MatchString(unixUser) {
-			return fmt.Errorf("invalid session drop Unix user %q", unixUser)
-		}
-		args = append(args, "-m", "u:"+unixUser+":--x")
-	}
-	args = append(args, "--", path)
-	// setfacl computes the full access ACL before applying it, so cancellation
-	// leaves either the prior ACL or this complete retained-user set.
-	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, "setfacl", args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("rebuild session drop root ACL: %w: %s", err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("grant session drop: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
@@ -269,7 +137,7 @@ func ensureSessionDropRoot(dropRoot string) error {
 	}
 	info, err := os.Lstat(dropRoot)
 	if os.IsNotExist(err) {
-		if err := os.MkdirAll(dropRoot, 0o700); err != nil {
+		if err := os.MkdirAll(dropRoot, 0o711); err != nil {
 			return fmt.Errorf("create session drop root: %w", err)
 		}
 		info, err = os.Lstat(dropRoot)
@@ -280,211 +148,13 @@ func ensureSessionDropRoot(dropRoot string) error {
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return fmt.Errorf("session drop root must be a real directory")
 	}
-	if err := os.Chmod(dropRoot, 0o700); err != nil {
-		return fmt.Errorf("secure session drop root: %w", err)
+	// The root is traverse-only to callers who already know a random drop ID.
+	// Fresh child directories and files remain 0700/0600 until the target user
+	// receives the single recursive read/traverse grant after the write completes.
+	if err := os.Chmod(dropRoot, 0o711); err != nil {
+		return fmt.Errorf("set session drop root traversal mode: %w", err)
 	}
 	return nil
-}
-
-func secureSessionDropTree(dropRoot, dropPath, unixUser string) error {
-	return secureSessionDropTreeContext(context.Background(), dropRoot, dropPath, unixUser)
-}
-
-func secureSessionDropTreeContext(ctx context.Context, dropRoot, dropPath, unixUser string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := ensureSessionDropRoot(dropRoot); err != nil {
-		return err
-	}
-	if err := setSessionDropACLContext(ctx, dropRoot, unixUser, "--x", false); err != nil {
-		return err
-	}
-	return secureSessionDropPathContext(ctx, dropPath, unixUser)
-}
-
-func secureSessionDropPathContext(ctx context.Context, dropPath, unixUser string) error {
-	return filepath.Walk(dropPath, func(path string, info os.FileInfo, walkErr error) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if walkErr != nil {
-			return walkErr
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("session drop contains symbolic link %q", path)
-		}
-		if !info.IsDir() && !info.Mode().IsRegular() {
-			return fmt.Errorf("session drop contains non-regular file %q", path)
-		}
-		mode := os.FileMode(0o600)
-		permissions := "r--"
-		if info.IsDir() {
-			mode = 0o700
-			permissions = "r-x"
-		}
-		// Close the owning-group mask before rebuilding the ACL from a known base.
-		if err := os.Chmod(path, mode); err != nil {
-			return err
-		}
-		return setSessionDropACLContext(ctx, path, unixUser, permissions, true)
-	})
-}
-
-func readSessionDropManifest(path string) (sessionDropManifest, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if os.IsNotExist(err) {
-		return sessionDropManifest{}, nil
-	}
-	if err != nil {
-		return sessionDropManifest{}, fmt.Errorf("open manifest without following links: %w", err)
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return sessionDropManifest{}, fmt.Errorf("inspect manifest: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return sessionDropManifest{}, fmt.Errorf("manifest must be a regular file")
-	}
-	manifest := sessionDropManifest{}
-	if err := json.NewDecoder(io.LimitReader(file, 1<<20)).Decode(&manifest); err != nil {
-		return sessionDropManifest{}, fmt.Errorf("decode manifest: %w", err)
-	}
-	return manifest, nil
-}
-
-type sessionDropMaintenanceEntry struct {
-	name     string
-	path     string
-	unixUser string
-	expired  bool
-	process  bool
-}
-
-func removeSessionDropTreeContext(ctx context.Context, root string) error {
-	paths := []string{}
-	if err := filepath.Walk(root, func(path string, _ os.FileInfo, walkErr error) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if walkErr != nil {
-			return walkErr
-		}
-		paths = append(paths, path)
-		return nil
-	}); err != nil {
-		return err
-	}
-	for index := len(paths) - 1; index >= 0; index-- {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := os.Remove(paths[index]); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
-}
-
-func maintainSessionDropsContext(ctx context.Context, dropRoot string, now time.Time) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := ensureSessionDropRoot(dropRoot); err != nil {
-		return err
-	}
-	retention, retentionConfigErr := sessionDropRetention()
-	if retentionConfigErr != nil {
-		retention = defaultSessionDropRetention
-	}
-	maintenanceErrors := []error{}
-	if retentionConfigErr != nil {
-		maintenanceErrors = append(maintenanceErrors, retentionConfigErr)
-	}
-	entries, err := os.ReadDir(dropRoot)
-	if err != nil {
-		return fmt.Errorf("read session drops: %w", err)
-	}
-
-	inventory := make([]sessionDropMaintenanceEntry, 0, len(entries))
-	retainedUsers := map[string]struct{}{}
-	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return errors.Join(append(maintenanceErrors, err)...)
-		}
-		record := sessionDropMaintenanceEntry{name: entry.Name(), path: filepath.Join(dropRoot, entry.Name())}
-		info, infoErr := entry.Info()
-		if infoErr != nil {
-			maintenanceErrors = append(maintenanceErrors, fmt.Errorf("inspect session drop %q: %w", entry.Name(), infoErr))
-			inventory = append(inventory, record)
-			continue
-		}
-		if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
-			maintenanceErrors = append(maintenanceErrors, fmt.Errorf("unsupported entry in session drop root %q", entry.Name()))
-			inventory = append(inventory, record)
-			continue
-		}
-		record.process = true
-		record.expired = info.IsDir() && validSessionDropID(entry.Name()) && retention > 0 && now.Sub(info.ModTime()) > retention
-		if info.IsDir() && !record.expired {
-			manifest, manifestErr := readSessionDropManifest(filepath.Join(record.path, "manifest.json"))
-			if manifestErr != nil {
-				maintenanceErrors = append(maintenanceErrors, fmt.Errorf("read existing session drop %q manifest: %w", entry.Name(), manifestErr))
-			} else if manifest.UnixUser != "" && !sessionDropUnixUserPattern.MatchString(manifest.UnixUser) {
-				maintenanceErrors = append(maintenanceErrors, fmt.Errorf("invalid session drop Unix user %q in %q", manifest.UnixUser, entry.Name()))
-			} else if manifest.UnixUser != "" {
-				account, lookupErr := tmuxLookupUser(manifest.UnixUser)
-				if lookupErr != nil || account == nil || strings.TrimSpace(account.Uid) == "" {
-					if lookupErr == nil {
-						lookupErr = fmt.Errorf("account has no numeric UID")
-					}
-					maintenanceErrors = append(maintenanceErrors, fmt.Errorf("resolve session drop Unix user %q in %q: %w", manifest.UnixUser, entry.Name(), lookupErr))
-				} else {
-					record.unixUser = manifest.UnixUser
-					retainedUsers[record.unixUser] = struct{}{}
-				}
-			}
-		}
-		inventory = append(inventory, record)
-	}
-
-	users := make([]string, 0, len(retainedUsers))
-	for unixUser := range retainedUsers {
-		users = append(users, unixUser)
-	}
-	sort.Strings(users)
-	if err := rebuildSessionDropRootACLContext(ctx, dropRoot, users); err != nil {
-		return errors.Join(append(maintenanceErrors, err)...)
-	}
-	if err := ctx.Err(); err != nil {
-		return errors.Join(append(maintenanceErrors, err)...)
-	}
-
-	for _, record := range inventory {
-		if err := ctx.Err(); err != nil {
-			return errors.Join(append(maintenanceErrors, err)...)
-		}
-		if !record.process {
-			continue
-		}
-		if record.expired {
-			if err := removeSessionDropTreeContext(ctx, record.path); err != nil {
-				if ctx.Err() != nil {
-					return errors.Join(append(maintenanceErrors, ctx.Err())...)
-				}
-				maintenanceErrors = append(maintenanceErrors, fmt.Errorf("remove expired session drop %q: %w", record.name, err))
-			}
-			continue
-		}
-		if err := secureSessionDropPathContext(ctx, record.path, record.unixUser); err != nil {
-			if ctx.Err() != nil {
-				return errors.Join(append(maintenanceErrors, ctx.Err())...)
-			}
-			maintenanceErrors = append(maintenanceErrors, fmt.Errorf("secure existing session drop %q: %w", record.name, err))
-		}
-	}
-	return errors.Join(maintenanceErrors...)
 }
 
 func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget, pane sendPaneTarget) (manifest sessionDropManifest, err error) {
@@ -590,7 +260,6 @@ func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget, pa
 		sections = append(sections, strings.TrimRight(fileSection, "\n"))
 	}
 	payload := strings.Join(sections, "\n\n")
-	manifest.submitEvidence, _ = buildSubmitPayloadEvidence(payload)
 	if err := os.WriteFile(manifest.Payload, []byte(payload), 0o600); err != nil {
 		return sessionDropManifest{}, fmt.Errorf("write drop payload: %w", err)
 	}
@@ -604,7 +273,7 @@ func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget, pa
 	if err := os.WriteFile(manifestPath, raw, 0o600); err != nil {
 		return sessionDropManifest{}, fmt.Errorf("write drop manifest: %w", err)
 	}
-	if err := secureSessionDropTree(dropRoot, dropPath, target.unixUser); err != nil {
+	if err := grantSessionDrop(dropPath, target.unixUser); err != nil {
 		return sessionDropManifest{}, err
 	}
 	complete = true
