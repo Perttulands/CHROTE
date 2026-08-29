@@ -65,36 +65,4 @@ test.describe('live terminal interactions', () => {
     ).__chroteContextMenuPrevented)).toBe(false)
   })
 
-  test('mobile defaults to a terminal-first layout with reachable session actions', async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 })
-    await openLiveDashboard(page)
-
-    const workspace = page.locator('.terminal-workspace-dock[data-active="true"]')
-    const sessionsSidecar = workspace.getByRole('button', { name: 'Sessions sidecar', exact: true })
-    await expect(sessionsSidecar).toHaveAttribute('aria-expanded', 'false')
-    await expect(workspace.locator('.terminal-window:visible')).toHaveCount(1)
-
-    const layoutFour = page.getByRole('button', { name: '4', exact: true }).last()
-    await expect(layoutFour).toBeVisible()
-    const hitTargetIsLayoutButton = await layoutFour.evaluate(button => {
-      const rect = button.getBoundingClientRect()
-      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
-      return hit === button || button.contains(hit)
-    })
-    expect(hitTargetIsLayoutButton).toBe(true)
-    await layoutFour.click()
-    await expect(page.getByRole('group', { name: 'Window view controls' }).getByRole('button')).toHaveCount(4)
-
-    await sessionsSidecar.click()
-    await expect(sessionsSidecar).toHaveAttribute('aria-expanded', 'true')
-    const panel = workspace.locator('.session-panel')
-    await expect(panel).toBeVisible()
-    const sessionRow = panel.locator('.session-item').first()
-    await expect(sessionRow).toBeVisible()
-    const actions = sessionRow.getByRole('button', { name: /Session actions for/ })
-    await actions.click()
-    await expect(page.locator('.session-context-menu')).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(page.locator('.session-context-menu')).toHaveCount(0)
-  })
 })

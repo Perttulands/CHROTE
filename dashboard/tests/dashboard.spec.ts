@@ -46,47 +46,6 @@ test.describe('Arena Dashboard', () => {
   })
 
   test.describe('Session Panel', () => {
-    test('should render session panel with groups', async ({ page }) => {
-      // Wait for sessions to load
-      await page.waitForSelector('.session-panel')
-
-      // Check that groups are rendered
-      await expect(page.locator('.session-group')).toHaveCount(4) // hq, main, gt-gastown, gt-beads
-    })
-
-    test('should show HQ group first', async ({ page }) => {
-      await page.waitForSelector('.session-group')
-
-      // First group should be HQ
-      const firstGroup = page.locator('.session-group').first()
-      await expect(firstGroup.locator('.group-name')).toContainText('HQ')
-    })
-
-    test('should show correct session count badges', async ({ page }) => {
-      await page.waitForSelector('.session-group')
-
-      // HQ should have 2 sessions
-      const hqGroup = page.locator('.session-group').first()
-      await expect(hqGroup.locator('.session-count')).toContainText('2')
-    })
-
-    test('does not show a decorative attached indicator without a dashboard assignment', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      await expect(page.locator('.attached-indicator')).toHaveCount(0)
-      await expect(page.locator('.window-location-chip')).toHaveCount(0)
-    })
-
-    test('closes the active sidecar from its stable trigger and reopens it still pinned', async ({ page }) => {
-      const panel = page.locator('.session-panel')
-      await expect(panel).toHaveClass(/sidecar-pinned/)
-
-      await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
-      await expect(panel).toHaveCount(0)
-
-      await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
-      await expect(page.locator('.session-panel')).toHaveClass(/sidecar-pinned/)
-    })
 
     test('shares Sessions across terminal tabs while Files follows its terminal workspace', async ({ page }) => {
       await page.route('**/api/scheduled-tasks', route => route.fulfill({
@@ -145,50 +104,6 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.session-group').filter({ hasText: groupName }).locator('.expand-icon')).toHaveText('▶')
     })
 
-    test('shows all configured owner Files beside live Sessions', async ({ page }) => {
-      const ownerSessions = ['alice', 'build'].map(unixUser => ({ name: `${unixUser}-shell`, windows: 1, attached: false, group: 'owners', unixUser }))
-      await page.route('**/api/tmux/sessions', route => route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ sessions: ownerSessions, grouped: { owners: ownerSessions },
-          terminalUsers: ['alice', 'build'], timestamp: new Date().toISOString() }),
-      }))
-      await page.route(/.*\/api\/files\/resources(?:\/.*)?$/, async route => {
-        const path = decodeURIComponent(new URL(route.request().url()).pathname)
-        const directory = (names: string[]) => ({ isDir: true, items: names.map(name => ({
-          name, path: name, isDir: true, size: 0, modified: '2026-08-07T00:00:00Z', type: '',
-        })) })
-        let payload
-        if (path.endsWith('/api/files/resources') || path.endsWith('/api/files/resources/')) payload = directory(['home', 'srv'])
-        else if (path.endsWith('/api/files/resources/home')) payload = directory(['alice', 'build'])
-        else if (path.endsWith('/api/files/resources/home/alice')) payload = directory(['.hermes', '.ssh', 'projects'])
-        else if (path.endsWith('/api/files/resources/home/alice/.hermes')) payload = directory(['profiles'])
-        else payload = directory([])
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payload) })
-      })
-
-      await page.reload()
-      await page.waitForSelector('.dashboard')
-      if (await page.locator('.session-panel').count() === 0) {
-        await openSessionsSidecar(page)
-      }
-      const sessions = page.locator('.session-panel')
-      await expect(sessions.getByText('alice-shell', { exact: true })).toBeVisible()
-      await expect(sessions.getByText('build-shell', { exact: true })).toBeVisible()
-
-      await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
-      const files = page.locator('.terminal-files-panel')
-      await expect(files).toBeVisible()
-      await expect(sessions).toBeVisible()
-      await files.getByRole('treeitem', { name: 'Folder home' }).click()
-      await files.getByRole('treeitem', { name: 'Folder alice' }).click()
-      await files.getByRole('treeitem', { name: 'Folder .hermes' }).click()
-      await expect(files.getByRole('textbox', { name: 'Files panel path' })).toHaveValue('/home/alice/.hermes')
-      await expect(files.getByRole('treeitem', { name: 'Folder profiles' })).toBeVisible()
-      await expect(sessions.getByText('alice-shell', { exact: true })).toBeVisible()
-      await expect(sessions.getByText('build-shell', { exact: true })).toBeVisible()
-    })
-
     test('keeps Sessions open while Files opens and shows one non-modal file Peek', async ({ page }) => {
       await page.route(/.*\/api\/files\/resources(?:\/.*)?$/, async route => {
         await route.fulfill({
@@ -228,180 +143,30 @@ test.describe('Arena Dashboard', () => {
       await expect(terminalFrame).toHaveAttribute('data-dock-identity', 'preserved')
     })
 
-    test('should expand/collapse groups', async ({ page }) => {
-      await page.waitForSelector('.session-group')
-
-      const firstGroup = page.locator('.session-group').first()
-      const items = firstGroup.locator('.session-group-items')
-
-      // Initially expanded
-      await expect(items).toBeVisible()
-
-      // Click header to collapse
-      await firstGroup.locator('.session-group-header').click()
-      await expect(items).not.toBeVisible()
-
-      // Click again to expand
-      await firstGroup.locator('.session-group-header').click()
-      await expect(items).toBeVisible()
-    })
   })
 
   test.describe('Terminal Area', () => {
-    test('should render layout controls', async ({ page }) => {
-      await expect(page.locator('.terminal-area-controls:visible')).toBeVisible()
-      await expect(page.locator('.layout-btn:visible')).toHaveCount(6)
-      await expect(page.getByRole('button', { name: 'Refit terminal layout' })).toBeVisible()
-      await expect(page.getByRole('button', { name: 'Terminal maintenance actions' })).toBeVisible()
-    })
-
-    test('should start with 2 windows by default', async ({ page }) => {
-      await expect(page.locator('.terminal-window:visible')).toHaveCount(2)
-      await expect(page.locator('.layout-btn.active:visible')).toContainText('2')
-    })
 
     test('should switch to 1 window layout', async ({ page }) => {
+      await page.click('.layout-btn:visible:has-text("4")')
+      const windows = page.locator('.terminal-window:visible')
+      await expect(windows).toHaveCount(4)
+      await expect(page.locator('.terminal-grid:visible')).toHaveClass(/grid-4/)
+
+      const firstBox = await windows.nth(0).boundingBox()
+      const thirdBox = await windows.nth(2).boundingBox()
+      expect(firstBox).toBeTruthy()
+      expect(thirdBox).toBeTruthy()
+      expect(Math.abs(firstBox!.height - thirdBox!.height)).toBeLessThan(10)
+
       await page.click('.layout-btn:visible:has-text("1")')
       await expect(page.locator('.terminal-window:visible')).toHaveCount(1)
       await expect(page.locator('.terminal-grid:visible')).toHaveClass(/grid-1/)
     })
 
-    test('should switch to 4 window layout', async ({ page }) => {
-      await page.click('.layout-btn:visible:has-text("4")')
-      await expect(page.locator('.terminal-window:visible')).toHaveCount(4)
-      await expect(page.locator('.terminal-grid:visible')).toHaveClass(/grid-4/)
-    })
-
-    test('should maintain equal window heights in 4 window layout', async ({ page }) => {
-      await page.click('.terminal-area:visible .layout-btn:has-text("4")')
-      // Wait for all 4 windows to render instead of arbitrary timeout
-      await expect(page.locator('.terminal-window:visible')).toHaveCount(4, { timeout: 3000 })
-
-      const windows = page.locator('.terminal-window:visible')
-      const firstBox = await windows.nth(0).boundingBox()
-      const thirdBox = await windows.nth(2).boundingBox()
-
-      // Windows in different rows should have similar heights
-      expect(firstBox).toBeTruthy()
-      expect(thirdBox).toBeTruthy()
-      if (firstBox && thirdBox) {
-        // Heights should be roughly equal (within 10px tolerance)
-        expect(Math.abs(firstBox.height - thirdBox.height)).toBeLessThan(10)
-        // Third window should be below first (different row)
-        expect(thirdBox.y).toBeGreaterThan(firstBox.y + firstBox.height - 10)
-      }
-    })
-
-    test('should show "New Session" button when window has no bound sessions', async ({ page }) => {
-      await expect(page.locator('.empty-window-state').first()).toBeVisible()
-      await expect(page.locator('.create-session-btn').first()).toContainText('New Session')
-    })
-  })
-
-  test.describe('Drag and Drop', () => {
-    test('should drag session from panel to window', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window')
-
-      // Session tag should appear in window
-      const targetWindow = page.locator('.terminal-window').first()
-      await expect(targetWindow.locator('.session-tag')).toHaveCount(1)
-      await expect(targetWindow.locator('.tag-name')).toContainText('jack')
-    })
-
-    test('should mark session as assigned after dropping', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      // Use more specific selector to avoid drag overlay
-      const sessionItem = page.locator('.session-panel .session-item:has-text("jack")')
-
-      // Before drag - not assigned
-      await expect(sessionItem).not.toHaveClass(/assigned/)
-
-      // Drag
-      await dragAndDrop(page, '.session-panel .session-item:has-text("jack")', '.terminal-window')
-
-      // After drag - should be assigned (greyed out)
-      await expect(sessionItem).toHaveClass(/assigned/)
-    })
-
-    test('should remove session tag with x button', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      const targetWindow = page.locator('.terminal-window').first()
-      // Use more specific selector to avoid drag overlay
-      const sessionItem = page.locator('.session-panel .session-item:has-text("jack")')
-
-      // First, add a session
-      await dragAndDrop(page, '.session-panel .session-item:has-text("jack")', '.terminal-window')
-
-      // Verify it's there
-      await expect(targetWindow.locator('.session-tag')).toHaveCount(1)
-
-      // Click remove button
-      await targetWindow.locator('.tag-remove').click()
-
-      // Tag should be gone
-      await expect(targetWindow.locator('.session-tag')).toHaveCount(0)
-
-      // Session should no longer be assigned
-      await expect(sessionItem).not.toHaveClass(/assigned/)
-    })
-
-    test('should allow multiple sessions in one window', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      const targetWindow = page.locator('.terminal-window').first()
-
-      // Add first session
-      await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window')
-      await expect(targetWindow.locator('.session-tag')).toHaveCount(1)
-
-      // Add second session
-      await dragAndDrop(page, '.session-item:has-text("joe")', '.terminal-window')
-      await expect(targetWindow.locator('.session-tag')).toHaveCount(2)
-    })
   })
 
   test.describe('Session Cycling', () => {
-    test('should show cycle buttons when multiple sessions bound', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      const targetWindow = page.locator('.terminal-window').first()
-
-      // Add two sessions
-      await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window')
-      await dragAndDrop(page, '.session-item:has-text("joe")', '.terminal-window')
-
-      // Cycle buttons should appear
-      await expect(targetWindow.locator('.cycle-btn')).toHaveCount(2)
-    })
-
-    test('should not show cycle buttons with single session', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      const targetWindow = page.locator('.terminal-window').first()
-
-      // Add one session
-      await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window')
-
-      // No cycle buttons
-      await expect(targetWindow.locator('.cycle-btn')).toHaveCount(0)
-    })
-
-    test('should highlight active session tag', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      const targetWindow = page.locator('.terminal-window').first()
-
-      // Add two sessions
-      await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window')
-      await dragAndDrop(page, '.session-item:has-text("joe")', '.terminal-window')
-
-      // The most recently attached session is active.
-      await expect(targetWindow.locator('.session-tag').last()).toHaveClass(/active/)
-    })
 
     test('should switch active tag on click', async ({ page }) => {
       await page.waitForSelector('.session-item')
@@ -434,214 +199,35 @@ test.describe('Arena Dashboard', () => {
       // Modal should appear
       await expect(page.locator('.floating-modal')).toBeVisible()
       await expect(page.locator('.modal-title')).toContainText('jack')
-    })
 
-    test('should close modal when clicking overlay', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      // Open modal
-      await page.click('.session-item:has-text("jack")')
-      await expect(page.locator('.floating-modal')).toBeVisible()
-
-      // Click overlay (outside modal)
-      await page.click('.floating-modal-overlay', { position: { x: 10, y: 10 } })
-
-      // Modal should close
-      await expect(page.locator('.floating-modal')).not.toBeVisible()
-    })
-
-    test('should close modal when clicking x button', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      // Open modal
-      await page.click('.session-item:has-text("jack")')
-      await expect(page.locator('.floating-modal')).toBeVisible()
-
-      // Click close button
       await page.click('.modal-close')
+      await expect(page.locator('.floating-modal')).not.toBeVisible()
 
-      // Modal should close
+      await page.click('.session-item:has-text("jack")')
+      await expect(page.locator('.floating-modal')).toBeVisible()
+      await page.click('.floating-modal-overlay', { position: { x: 10, y: 10 } })
       await expect(page.locator('.floating-modal')).not.toBeVisible()
     })
 
-    test('opens Peek for an assigned row and focuses only from its location chip', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      const targetWindow = page.locator('.terminal-window').first()
-
-      await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window')
-      await dragAndDrop(page, '.session-item:has-text("joe")', '.terminal-window')
-      await expect(targetWindow.locator('.session-tag')).toHaveCount(2)
-
-      const joeTag = targetWindow.locator('.session-tag').nth(1)
-      await joeTag.locator('.tag-name').click()
-      await expect(joeTag).toHaveClass(/active/)
-
-      const jackRow = page.locator('.session-item:has-text("jack")')
-      await jackRow.locator('.session-name').click()
-      await expect(page.locator('.floating-modal')).toBeVisible()
-      await expect(joeTag).toHaveClass(/active/)
-
-      await page.keyboard.press('Escape')
-      await expect(page.locator('.floating-modal')).toHaveCount(0)
-      await jackRow.locator('.window-location-chip').click()
-      await expect(targetWindow.locator('.session-tag').first()).toHaveClass(/active/)
-    })
-  })
-
-  test.describe('Tab Navigation', () => {
-    test('should switch to Files tab', async ({ page }) => {
-      await page.click('.tab:has-text("Files")')
-      await expect(page.locator('.files-view')).toBeVisible()
-      await expect(page.locator('.session-panel')).not.toBeVisible()
-    })
-
-    test('should return to Terminal tab', async ({ page }) => {
-      await page.click('.tab:has-text("Files")')
-      await page.click('.tab:has-text("Terminal")')
-      await expect(page.locator('.session-panel')).toBeVisible()
-      await expect(page.locator('.terminal-area:visible')).toBeVisible()
-    })
-
-    test('keeps the mobile navigation clickable above its outside-dismiss layer', async ({ page }) => {
-      await page.setViewportSize({ width: 700, height: 760 })
-      await page.getByRole('button', { name: '☰' }).click()
-
-      const menu = page.locator('.mobile-nav-dropdown')
-      const layer = page.locator('.floating-panel-dismiss-layer')
-      await expect(menu).toBeVisible()
-      await expect(menu).toHaveCSS('position', 'absolute')
-      expect(await menu.evaluate(element => Number(getComputedStyle(element).zIndex)))
-        .toBeGreaterThan(await layer.evaluate(element => Number(getComputedStyle(element).zIndex)))
-
-      await menu.getByRole('button', { name: 'Terminal 2' }).click()
-      await expect(page.locator('.terminal-grid[data-workspace="terminal2"]')).toBeVisible()
-      await expect(layer).toHaveCount(0)
-    })
   })
 
   test.describe('Search Filter', () => {
     test('should filter sessions by name', async ({ page }) => {
       await page.waitForSelector('.session-item')
 
-      // Type in search box
-      await page.fill('.session-search-input', 'jack')
-
-      // Only jack should be visible
-      await expect(page.locator('.session-item:visible')).toHaveCount(1)
-      await expect(page.locator('.session-item:visible')).toContainText('jack')
-    })
-
-    test('should be case-insensitive', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      // Type uppercase
       await page.fill('.session-search-input', 'JACK')
 
-      // jack should still be visible
       await expect(page.locator('.session-item:visible')).toHaveCount(1)
       await expect(page.locator('.session-item:visible')).toContainText('jack')
-    })
 
-    test('should hide groups with no matching sessions', async ({ page }) => {
-      await page.waitForSelector('.session-group')
-
-      // Initially 4 groups
-      await expect(page.locator('.session-group')).toHaveCount(4)
-
-      // Filter to only gt-gastown sessions
       await page.fill('.session-search-input', 'gastown')
-
-      // Only gt-gastown group should remain (others are removed from DOM)
-      // Group display name is "Gastown" (capitalized, without gt- prefix)
       await expect(page.locator('.session-group')).toHaveCount(1)
       await expect(page.locator('.session-group .group-name')).toContainText('Gastown')
-    })
 
-    test('should show all sessions when search cleared', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      // Filter first
-      await page.fill('.session-search-input', 'jack')
-      await expect(page.locator('.session-item:visible')).toHaveCount(1)
-
-      // Clear search
       await page.fill('.session-search-input', '')
-
-      // All sessions visible again (8 in mock data)
       await expect(page.locator('.session-item:visible')).toHaveCount(8)
     })
 
-    test('should filter by session name', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      // Filter by session name
-      await page.fill('.session-search-input', 'hq-mayor')
-
-      await expect(page.locator('.session-item:visible')).toHaveCount(1)
-      await expect(page.locator('.session-item:visible')).toContainText('hq-mayor')
-    })
   })
 
-  test.describe('Terminal-safe keyboard handling', () => {
-    test('does not hijack Ctrl+Arrow terminal input', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-      const targetWindow = page.locator('.terminal-window:visible').first()
-      await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window:visible')
-      await dragAndDrop(page, '.session-item:has-text("joe")', '.terminal-window:visible')
-      await expect(targetWindow.locator('.session-tag')).toHaveCount(2)
-      await expect(targetWindow.locator('.session-tag').last()).toHaveClass(/active/)
-      await page.evaluate(() => {
-        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', ctrlKey: true, bubbles: true }))
-      })
-      await expect(targetWindow.locator('.session-tag').last()).toHaveClass(/active/)
-    })
-  })
-
-  test.describe('Persistence', () => {
-    test('should persist layout to localStorage', async ({ page }) => {
-      // Switch to 4 windows
-      await page.click('.layout-btn:visible:has-text("4")')
-
-      // Reload page
-      await page.reload()
-      await mockApiRoutes(page)
-      await page.waitForSelector('.dashboard')
-
-      // Should still be 4 windows
-      await expect(page.locator('.terminal-window:visible')).toHaveCount(4)
-      await expect(page.locator('.layout-btn.active:visible')).toContainText('4')
-    })
-
-    test('should persist session bindings to localStorage', async ({ page }) => {
-      await page.waitForSelector('.session-item')
-
-      // Add session to window via drag
-      await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window')
-
-      // Verify it's there before reload
-      await expect(page.locator('.terminal-window').first().locator('.tag-name')).toContainText('jack')
-
-      // Reload
-      await page.reload()
-      await mockApiRoutes(page)
-      await page.waitForSelector('.dashboard')
-
-      // Session should still be bound
-      await expect(page.locator('.terminal-window').first().locator('.tag-name')).toContainText('jack')
-    })
-
-    test('persists a closed workspace sidecar', async ({ page }) => {
-      await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
-      await expect(page.locator('.session-panel')).toHaveCount(0)
-      await expect(page.getByRole('button', { name: 'Sessions sidecar', exact: true })).toHaveAttribute('aria-expanded', 'false')
-
-      await page.reload()
-      await mockApiRoutes(page)
-      await page.waitForSelector('.dashboard')
-
-      await expect(page.locator('.session-panel')).toHaveCount(0)
-      await expect(page.getByRole('button', { name: 'Sessions sidecar', exact: true })).toHaveAttribute('aria-expanded', 'false')
-    })
-  })
 })

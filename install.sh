@@ -242,6 +242,88 @@ WantedBy=default.target
 EOF
 }
 
+run_as_tmux_owner() {
+  local owner="$1"
+  shift
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u "$owner" -- "$@"
+  else
+    sudo -n -u "$owner" "$@"
+  fi
+}
+
+grant_tmux_access() {
+  local mappings="${CHROTE_TERMINAL_USER_SOCKETS:-}"
+  [ -n "$mappings" ] || return 0
+
+  [ "$(id -u)" -eq 0 ] || die "CHROTE_TERMINAL_USER_SOCKETS grants require a root install"
+  local service_user="${CHROTE_TMUX_GRANT_USER:-chrote}"
+  id "$service_user" >/dev/null 2>&1 || die "tmux grant user does not exist: $service_user"
+  require_command setfacl
+  require_command stat
+
+  local tmux_bin
+  if [ -n "${CHROTE_TMUX_BIN:-}" ]; then
+    [ -x "$CHROTE_TMUX_BIN" ] || die "CHROTE_TMUX_BIN is not executable: $CHROTE_TMUX_BIN"
+    tmux_bin="$CHROTE_TMUX_BIN"
+  else
+    require_command tmux
+    tmux_bin="$(command -v tmux)"
+  fi
+  local entry owner socket uid roots root allowed dir path part socket_owner
+  local -a entries=() root_entries=() parts=()
+  IFS=',' read -r -a entries <<< "$mappings"
+  for entry in "${entries[@]}"; do
+    entry="${entry//[[:space:]]/}"
+    [ -n "$entry" ] || continue
+    owner="${entry%%=*}"
+    socket="${entry#*=}"
+    [ -n "$owner" ] && [ -n "$socket" ] && [ "$owner" != "$socket" ] || die "invalid tmux socket mapping: $entry"
+    id "$owner" >/dev/null 2>&1 || die "tmux socket owner does not exist: $owner"
+    case "$socket" in
+      /*) ;;
+      *) die "tmux socket path must be absolute: $entry" ;;
+    esac
+    case "$socket" in
+      *'/../'*|*'/..'|*'/./'*|*'/.'|*'//'*) die "tmux socket path must be canonical: $entry" ;;
+    esac
+
+    uid="$(id -u "$owner")"
+    roots="${CHROTE_TMUX_GRANT_SOCKET_ROOTS:-/run/user/%u:/tmp/tmux-%u}"
+    IFS=':' read -r -a root_entries <<< "$roots"
+    allowed=0
+    for root in "${root_entries[@]}"; do
+      [ -n "$root" ] || continue
+      root="${root//%u/$uid}"
+      case "$socket" in "${root%/}"/*) allowed=1 ;; esac
+    done
+    [ "$allowed" -eq 1 ] || die "tmux socket is outside configured roots: $entry"
+
+    if [ -e "$socket" ]; then
+      socket_owner="$(stat -c '%U' "$socket")"
+      [ "$socket_owner" = "$owner" ] || die "tmux socket belongs to $socket_owner, not $owner: $socket"
+    fi
+    dir="$(dirname "$socket")"
+    path=""
+    IFS='/' read -r -a parts <<< "${dir#/}"
+    for part in "${parts[@]}"; do
+      [ -n "$part" ] || continue
+      path="$path/$part"
+      case "$path" in /run|/tmp) continue ;; esac
+      [ ! -d "$path" ] || setfacl -m "u:${service_user}:--x" "$path"
+    done
+    [ ! -d "$dir" ] || setfacl -d -m "u:${service_user}:rwx" "$dir"
+    if [ -e "$socket" ]; then
+      [ -S "$socket" ] || die "configured tmux path is not a socket: $socket"
+      setfacl -m "u:${service_user}:rw" "$socket"
+      run_as_tmux_owner "$owner" env TERM="${TERM:-xterm-256color}" "$tmux_bin" -S "$socket" server-access -a "$service_user"
+      log "Granted $service_user access to $owner's tmux socket"
+    else
+      warn "Configured tmux socket is not running yet; rerun install after it starts: $socket"
+    fi
+  done
+}
+
 health_check() {
   local url="http://127.0.0.1:$PORT/api/health" attempt expected_version payload compact
   require_command curl
@@ -312,6 +394,7 @@ main() {
   write_environment "$env_file" "$state_dir" "$launch_script"
   [ -e "$secrets_file" ] || { : > "$secrets_file"; chmod 0600 "$secrets_file"; }
   write_service "$unit_file" "$binary" "$env_file" "$secrets_file"
+  grant_tmux_access
 
   if [ "$MANAGE_SYSTEMD" -eq 1 ]; then
     systemctl --user daemon-reload

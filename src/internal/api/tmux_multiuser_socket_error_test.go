@@ -13,9 +13,8 @@ import (
 // installSelectiveTmux writes a fake tmux that fails only for sockets whose path
 // contains failFor, and otherwise reports one session named after the socket.
 //
-// The pre-existing baseline test installs a tmux that fails for EVERY call, which
-// cannot express the case that matters on a multi-user host: one user's socket
-// unreadable while another's is fine.
+// A selective failure expresses the multi-user case: one user's socket is
+// unreadable while another's is healthy.
 func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 	t.Helper()
 
@@ -41,12 +40,23 @@ func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
+func installAlwaysFailingTmux(t *testing.T, stderr string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\nprintf '%s\\n' \"$TMUX_STDERR\" >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o700); err != nil {
+		t.Fatalf("write failing fake tmux: %v", err)
+	}
+	t.Setenv("TMUX_STDERR", stderr)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // The production path on a multi-user host is the CHROTE_TERMINAL_USERS loop, and
 // it is the ONLY place a socket error is prefixed with the unix user. Without
 // CHROTE_TERMINAL_USERS set, configuredTerminalUsers() returns empty and
 // ListSessions takes the single-target branch instead -- which is what every
 // pre-existing test exercised, so the branch that actually runs in production had
-// no coverage and "the error names the effective user" was unproven.
+// no coverage unless this test drives it directly.
 func TestTmuxHandler_ListSessionsNamesTheUnixUserWhoseSocketFailed(t *testing.T) {
 	installSelectiveTmux(t, "denied", "error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)")
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   openSendToSession: vi.fn(),
   windowRevealRequest: null as { workspaceId: string; windowId: string; requestId: number } | null,
   workspaceIds: null as readonly string[] | null,
+  settings: null as typeof DEFAULT_SETTINGS | null,
 }))
 
 vi.mock('@dnd-kit/core', () => ({
@@ -30,7 +31,7 @@ vi.mock('./context/SessionContext', () => ({
   useSession: () => ({
     addSessionToWindow: mocks.addSessionToWindow,
     removeSessionFromWindow: mocks.removeSessionFromWindow,
-    settings: DEFAULT_SETTINGS,
+    settings: mocks.settings ?? DEFAULT_SETTINGS,
     windowRevealRequest: mocks.windowRevealRequest,
     workspaces: {
       terminal1: { windows: [] },
@@ -106,6 +107,7 @@ describe('App drag lifecycle', () => {
     mocks.dndProps = null
     mocks.windowRevealRequest = null
     mocks.workspaceIds = null
+    mocks.settings = null
   })
 
   it('uses one reset path for drag cancel and clears all active drag visuals', () => {
@@ -219,6 +221,20 @@ describe('App drag lifecycle', () => {
     expect(container.querySelector('[data-workspace="terminal2"]')).toHaveAttribute('data-active', 'false')
     expect(container.querySelector('[data-workspace="terminal3"]')).toHaveAttribute('data-active', 'false')
     expect(container.querySelector('.session-panel')).toHaveAttribute('data-active-workspace', 'terminal1')
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark')
+  })
+
+  it('applies restored appearance settings to the document', () => {
+    mocks.settings = { ...DEFAULT_SETTINGS, theme: 'gastown', fontSize: 18 }
+    const { rerender } = render(<App />)
+
+    expect(document.documentElement).toHaveAttribute('data-theme', 'gastown')
+    expect(document.documentElement.style.getPropertyValue('--terminal-font-size')).toBe('18px')
+
+    mocks.settings = { ...DEFAULT_SETTINGS, theme: 'matrix', fontSize: 16 }
+    rerender(<App />)
+    expect(document.documentElement).toHaveAttribute('data-theme', 'matrix')
+    expect(document.documentElement.style.getPropertyValue('--terminal-font-size')).toBe('16px')
   })
 
   it('switches to the workspace requested by assigned-session navigation', () => {

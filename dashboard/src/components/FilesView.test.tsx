@@ -35,6 +35,15 @@ const textFile = (name: string, content = '') => ({
   type: 'text/plain',
 })
 
+const directory = (name: string) => ({
+  name,
+  path: `/${name}`,
+  isDir: true,
+  size: 0,
+  modified: '2026-01-01T00:00:00Z',
+  type: '',
+})
+
 function mockRootFiles(contentsByName: Record<string, string>) {
   mockFetchDirectory.mockImplementation(async (path: string) => {
     if (path === '/') {
@@ -129,6 +138,43 @@ beforeEach(() => {
   mockProbeTextFile.mockResolvedValue(null)
   mockReadTextFile.mockResolvedValue('')
   mockWriteTextFile.mockResolvedValue(undefined)
+})
+
+describe('FilesView directory values', () => {
+  it('shows loading, directory contents, item count, explorer tree, and upload control', async () => {
+    let finishLoad!: (items: Array<ReturnType<typeof textFile> | ReturnType<typeof directory>>) => void
+    mockFetchDirectory.mockReturnValue(new Promise(resolve => { finishLoad = resolve }))
+
+    const { container } = render(<FilesView />)
+    expect(container.querySelector('.fb-loading')).toBeInTheDocument()
+
+    finishLoad([directory('code'), textFile('readme.txt', 'hello')])
+    expect(await screen.findByRole('row', { name: /readme\.txt/i })).toBeInTheDocument()
+    expect(screen.getByRole('treeitem', { name: /File readme\.txt/i })).toBeInTheDocument()
+    expect(container.querySelector('.fb-statusbar')).toHaveTextContent('2 items')
+    expect(screen.getByRole('button', { name: /^Folder$/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTitle('Upload')).toBeEnabled()
+    expect(container.querySelector('.fb-hidden-input[type="file"]')).toBeInTheDocument()
+    expect(container.querySelector('.fb-editor-pane')).not.toBeInTheDocument()
+  })
+
+  it('shows a retryable error and keeps the exact navigated path in the breadcrumb', async () => {
+    mockFetchDirectory.mockRejectedValue(new Error('file service offline'))
+    const first = render(<FilesView />)
+    expect(await screen.findByText('file service offline')).toBeInTheDocument()
+    expect(first.container.querySelector('.fb-error')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    first.unmount()
+
+    mockFetchDirectory.mockImplementation(async path => (
+      path === '/' ? [directory('code')] : [textFile('package.json', '{}')]
+    ))
+    const second = render(<FilesView />)
+    fireEvent.doubleClick(await screen.findByRole('row', { name: /code/i }))
+    expect(await screen.findByRole('row', { name: /package\.json/i })).toBeInTheDocument()
+    expect(second.container.querySelector('.fb-breadcrumb-item')).toHaveTextContent('code')
+    expect(second.container.querySelector('.fb-path-display')).toHaveTextContent('/code')
+  })
 })
 
 describe('FilesView fallback text preview', () => {

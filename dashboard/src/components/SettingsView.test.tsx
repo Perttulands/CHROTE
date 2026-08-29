@@ -1,5 +1,8 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import SettingsView from './SettingsView'
 import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from '../types'
 
@@ -27,6 +30,7 @@ const settings = {
 }
 
 const terminalUsers = ['alice', 'bob']
+const testDir = dirname(fileURLToPath(import.meta.url))
 
 function sessionReturn(updateSettings: ReturnType<typeof vi.fn>, overrides: Record<string, unknown> = {}) {
   return {
@@ -60,6 +64,42 @@ describe('SettingsView terminal launch users', () => {
     fireEvent.change(countSelect, { target: { value: '5' } })
 
     expect(updateSettings).toHaveBeenCalledWith({ terminalTabCount: 5 })
+  })
+
+  it('renders and updates theme, font-size, and refresh-interval values', () => {
+    const updateSettings = vi.fn()
+    mockUseSession.mockReturnValue(sessionReturn(updateSettings, {
+      settings: {
+        ...settings,
+        theme: 'gastown',
+        fontSize: 16,
+        autoRefreshInterval: 10000,
+      },
+    }))
+
+    const { container } = render(<SettingsView />)
+    const themeOptions = container.querySelector('.settings-theme-options') as HTMLElement
+    expect(within(themeOptions).getByRole('button', { name: 'Gastown' })).toHaveClass('selected')
+    fireEvent.click(within(themeOptions).getByRole('button', { name: 'Matrix' }))
+    expect(updateSettings).toHaveBeenCalledWith({ theme: 'matrix' })
+
+    const fontSize = screen.getByRole('slider')
+    expect(fontSize).toHaveValue('16')
+    fireEvent.change(fontSize, { target: { value: '18' } })
+    expect(updateSettings).toHaveBeenCalledWith({ fontSize: 18 })
+
+    const refresh = screen.getByText('Auto-refresh Interval').closest('.settings-field')?.querySelector('select')
+    expect(refresh).toHaveValue('10000')
+    fireEvent.change(refresh as HTMLSelectElement, { target: { value: '30000' } })
+    expect(updateSettings).toHaveBeenCalledWith({ autoRefreshInterval: 30000 })
+  })
+
+  it('defines distinct Matrix, Dark, and Gastown theme values', () => {
+    const css = readFileSync(resolve(testDir, '../styles/theme-colors.css'), 'utf8')
+
+    expect(css).toMatch(/\[data-theme="matrix"\][\s\S]*?--accent:\s*#00ff41;/)
+    expect(css).toMatch(/\[data-theme="dark"\][\s\S]*?--accent:\s*#6b9fff;/)
+    expect(css).toMatch(/\[data-theme="gastown"\][\s\S]*?--background:\s*#32160f;/)
   })
 
   it('lets each terminal tab choose the Unix user used for new shells from configured users', () => {

@@ -1,18 +1,20 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import BeadsView from './BeadsView'
+import type { BeadsProject, InsightsResponse, TriageResponse } from './BeadsView/types'
 
 const mocks = vi.hoisted(() => ({
   refreshIssues: vi.fn(),
   refreshTriage: vi.fn(),
   refreshInsights: vi.fn(),
+  projects: [] as BeadsProject[],
+  triage: null as TriageResponse | null,
+  insights: null as InsightsResponse | null,
 }))
 
 vi.mock('./BeadsView/hooks', () => ({
   useProjects: () => ({
-    projects: [
-      { name: 'chrote', path: '/home/operator/chrote', beadsPath: '/home/operator/chrote/.beads', source: 'configured' },
-    ],
+    projects: mocks.projects,
     loading: false,
     error: null,
     refresh: vi.fn(),
@@ -32,13 +34,13 @@ vi.mock('./BeadsView/hooks', () => ({
     refresh: mocks.refreshIssues,
   }),
   useTriage: () => ({
-    triage: { recommendations: [], quickWins: [], blockers: [] },
+    triage: mocks.triage,
     loading: false,
     error: null,
     refresh: mocks.refreshTriage,
   }),
   useInsights: () => ({
-    insights: null,
+    insights: mocks.insights,
     loading: false,
     error: null,
     refresh: mocks.refreshInsights,
@@ -66,6 +68,22 @@ vi.mock('./BeadsView/hooks', () => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.projects = [
+    { name: 'chrote', path: '/home/operator/chrote', beadsPath: '/home/operator/chrote/.beads', source: 'configured' },
+    { name: 'other', path: '/home/operator/other', beadsPath: '/home/operator/other/.beads', source: 'discovered' },
+  ]
+  mocks.triage = {
+    recommendations: [{ issueId: 'chrt-3dra', rank: 1, reasoning: 'Small and ready', estimatedImpact: 'high' }],
+    quickWins: ['chrt-3dra'],
+    blockers: ['chrt-3dra'],
+  }
+  mocks.insights = {
+    issueCount: 4,
+    openCount: 2,
+    blockedCount: 1,
+    closedCount: 1,
+    health: { score: 75, risks: ['Cycle risk'], warnings: ['One blocker'] },
+  }
   Object.assign(navigator, {
     clipboard: {
       writeText: vi.fn().mockResolvedValue(undefined),
@@ -74,6 +92,40 @@ beforeEach(() => {
 })
 
 describe('BeadsView context menus', () => {
+  it('renders project, board, triage, and insight values in their existing views', async () => {
+    const { container } = render(<BeadsView />)
+
+    const selector = await screen.findByRole('combobox', { name: 'Project' })
+    expect(within(selector).getAllByRole('option')).toHaveLength(3)
+    expect(selector).toHaveValue('/home/operator/chrote')
+    expect(screen.getAllByRole('button', { name: /Kanban|Triage|Insights/ })).toHaveLength(3)
+    expect(screen.getByRole('button', { name: 'Kanban' })).toHaveClass('active')
+    expect(container.querySelectorAll('.kanban-column')).toHaveLength(6)
+    expect(screen.getByText('Add lightweight right-click menus')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Triage' }))
+    expect(screen.getByRole('heading', { name: 'Recommended Next' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Quick Wins' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Blockers' })).toBeInTheDocument()
+    expect(screen.getByText('Small and ready')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Insights' }))
+    expect(screen.getByText('75')).toBeInTheDocument()
+    expect(container.querySelectorAll('.stat-card')).toHaveLength(4)
+    expect(screen.getByText('Cycle risk')).toBeInTheDocument()
+    expect(screen.getByText('One blocker')).toBeInTheDocument()
+  })
+
+  it('shows the empty project state when discovery returns no workspaces', () => {
+    mocks.projects = []
+
+    render(<BeadsView />)
+
+    expect(screen.getByRole('heading', { name: 'No Beads Projects' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox')).toBeDisabled()
+  })
+
   it('hides legacy Patrols UI from the visible Beads status strip', async () => {
     render(<BeadsView />)
 
