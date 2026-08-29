@@ -24,9 +24,8 @@ Access is broad by design: everything CHROTE can reach, it shows. The only
 asymmetry is Unix permissions — a secondary account cannot read the owner's
 work, the owner can read the secondary's — and it is never encoded in CHROTE.
 Never tighten ownership, modes, or ACLs to make code safer; CHROTE's value is
-access. Explicitly operator-configured additive grants may be applied or
-refreshed but must never reduce owner access; where one is missing, report it
-instead of reshaping the permission topology.
+access. `SECURITY.md` owns the additive-grant and missing-access rules; follow
+it instead of reshaping the permission topology.
 
 Rare, judgment-heavy operations — session recovery, restore, cleanup,
 migration, one-off repair — are agent skills, not CHROTE code. CHROTE code is

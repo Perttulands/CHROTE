@@ -48,11 +48,12 @@ dashboard as exposing the shells of every configured terminal user.
 
 Configured Unix accounts are operational identities for process ownership,
 harness separation, and tmux routing. They are not mutually hostile tenants:
-access is broad by design, and CHROTE never tightens or replaces ownership,
-modes, or ACLs to manufacture an isolation or durability guarantee — the
-product boundary in [`AGENTS.md`](AGENTS.md) owns that rule. Configured roots,
-path containment, and the Unix permissions the process already has remain
-enforced.
+access is broad by design. CHROTE never tightens or replaces ownership, modes,
+or ACLs to manufacture an isolation or durability guarantee. Explicitly
+operator-configured additive grants may be applied or refreshed, but must never
+reduce owner access. Missing access is reported instead of repaired by
+reshaping the permission topology. Configured roots, path containment, and the
+Unix permissions the process already has remain enforced.
 
 ## CORS is not authentication
 
