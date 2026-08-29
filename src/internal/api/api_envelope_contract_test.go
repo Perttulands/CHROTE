@@ -84,6 +84,7 @@ func TestAPIEnvelopeContract_BeadsHealthUsesSuccessDataEnvelope(t *testing.T) {
 
 func TestAPIEnvelopeContract_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.T) {
 	installFakeTmux(t)
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
 	handler := NewTmuxHandler()
 
 	tests := []struct {
@@ -192,6 +193,7 @@ func TestAPIEnvelopeContract_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.T)
 
 func TestTmuxHandler_DeleteAllSessionsRequiresExactNukeConfirmationHeader(t *testing.T) {
 	_, argsPath := installFakeTmux(t)
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
 	handler := NewTmuxHandler()
 
 	tests := []struct {
@@ -228,9 +230,9 @@ func TestTmuxHandler_DeleteAllSessionsRequiresExactNukeConfirmationHeader(t *tes
 			headerValue: "DASHBOARD-NUKE-CONFIRMED",
 			wantStatus:  http.StatusOK,
 			wantCalls: []string{
-				"list-sessions -F #{session_name}",
-				"kill-session -t alpha",
-				"kill-session -t beta",
+				"-S /tmp/tmux-a list-sessions -F #{session_name}",
+				"-S /tmp/tmux-a kill-session -t alpha",
+				"-S /tmp/tmux-a kill-session -t beta",
 			},
 		},
 	}
@@ -299,9 +301,11 @@ func installFakeTmux(t *testing.T) (string, string) {
 	scriptPath := filepath.Join(dir, "tmux")
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_ARGS_FILE"
+socket=""
+if [ "${1:-}" = "-S" ]; then socket="$2"; shift 2; fi
 case "$*" in
   *"list-sessions -F #{session_id}"*)
-    printf 'no server running on %s/default\n' "$TMUX_TMPDIR" >&2
+	printf 'no server running on %s\n' "$socket" >&2
     exit 1
     ;;
   "list-sessions -F #{session_name}:#{session_windows}:#{session_attached}")

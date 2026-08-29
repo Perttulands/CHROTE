@@ -8,10 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	osuser "os/user"
 	"reflect"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -339,148 +337,6 @@ func TestScheduledTasksAPIValidationRejectsUnsafeOrInvalidRequests(t *testing.T)
 	}
 }
 
-func TestScheduledTmuxRunnerUnixUserLookupHonorsCallerDeadline(t *testing.T) {
-	operations := []struct {
-		name string
-		run  func(context.Context, *ScheduledTmuxRunner, scheduled.Target) error
-	}{
-		{name: "validate", run: func(ctx context.Context, runner *ScheduledTmuxRunner, target scheduled.Target) error {
-			return runner.ValidateTarget(ctx, target)
-		}},
-		{name: "send", run: func(ctx context.Context, runner *ScheduledTmuxRunner, target scheduled.Target) error {
-			_, err := runner.SendPrompt(ctx, target, "deadline")
-			return err
-		}},
-	}
-	for _, operation := range operations {
-		t.Run(operation.name, func(t *testing.T) {
-			username := "deadline-" + operation.name
-			t.Setenv("CHROTE_TERMINAL_USERS", username)
-			t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "")
-			t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "")
-			oldLookup := tmuxLookupUser
-			release := make(chan struct{})
-			lookupFinished := make(chan struct{})
-			var calls atomic.Int32
-			tmuxLookupUser = func(name string) (*osuser.User, error) {
-				calls.Add(1)
-				<-release
-				close(lookupFinished)
-				return &osuser.User{Username: name, Uid: "1000", HomeDir: "/tmp/chrote-deadline-home"}, nil
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-			defer cancel()
-			done := make(chan error, 1)
-			started := time.Now()
-			go func() {
-				done <- operation.run(ctx, NewScheduledTmuxRunner(NewTmuxHandler()), scheduled.Target{SessionName: "ops", UnixUser: username})
-			}()
-
-			var err error
-			completedInTime := true
-			select {
-			case err = <-done:
-			case <-time.After(120 * time.Millisecond):
-				completedInTime = false
-			}
-			close(release)
-			<-lookupFinished
-			if !completedInTime {
-				err = <-done
-			}
-			tmuxLookupUser = oldLookup
-
-			if !completedInTime {
-				t.Fatalf("%s remained blocked in Unix-user lookup for %s after a 30ms deadline (eventual error: %v)", operation.name, time.Since(started), err)
-			}
-			if !errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("%s error = %v, want context deadline exceeded", operation.name, err)
-			}
-			if calls.Load() != 1 {
-				t.Fatalf("%s lookup calls = %d, want one", operation.name, calls.Load())
-			}
-		})
-	}
-}
-
-func TestScheduledTmuxRunnerCurrentUserLookupHonorsCallerDeadline(t *testing.T) {
-	const username = "deadline-current"
-	t.Setenv("CHROTE_TERMINAL_USERS", username)
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "")
-	oldLookup := tmuxLookupUser
-	oldCurrent := tmuxCurrentUser
-	tmuxLookupUser = func(name string) (*osuser.User, error) {
-		return &osuser.User{Username: name, Uid: "1000", HomeDir: "/tmp/chrote-deadline-home"}, nil
-	}
-	release := make(chan struct{})
-	tmuxCurrentUser = func() (*osuser.User, error) {
-		<-release
-		return &osuser.User{Username: "alice", Uid: "1001", HomeDir: "/tmp/chrote-current-home"}, nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		done <- NewScheduledTmuxRunner(NewTmuxHandler()).ValidateTarget(ctx, scheduled.Target{SessionName: "ops", UnixUser: username})
-	}()
-	var err error
-	completedInTime := true
-	select {
-	case err = <-done:
-	case <-time.After(120 * time.Millisecond):
-		completedInTime = false
-	}
-	close(release)
-	if !completedInTime {
-		err = <-done
-	}
-	tmuxLookupUser = oldLookup
-	tmuxCurrentUser = oldCurrent
-	if !completedInTime {
-		t.Fatalf("validation remained blocked in current-user lookup after a 30ms deadline (eventual error: %v)", err)
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("ValidateTarget error = %v, want context deadline exceeded", err)
-	}
-}
-
-func TestScheduledTmuxRunnerDeduplicatesCanceledUnixUserLookups(t *testing.T) {
-	const username = "deadline-shared"
-	t.Setenv("CHROTE_TERMINAL_USERS", username)
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "")
-	oldLookup := tmuxLookupUser
-	release := make(chan struct{})
-	var calls atomic.Int32
-	tmuxLookupUser = func(name string) (*osuser.User, error) {
-		calls.Add(1)
-		<-release
-		return &osuser.User{Username: name, Uid: "1000", HomeDir: "/tmp/chrote-deadline-home"}, nil
-	}
-
-	runner := NewScheduledTmuxRunner(NewTmuxHandler())
-	done := make(chan error, 2)
-	for range 2 {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-			defer cancel()
-			done <- runner.ValidateTarget(ctx, scheduled.Target{SessionName: "ops", UnixUser: username})
-		}()
-	}
-	time.Sleep(60 * time.Millisecond)
-	close(release)
-	for range 2 {
-		<-done
-	}
-	tmuxLookupUser = oldLookup
-	if calls.Load() != 1 {
-		t.Fatalf("concurrent canceled lookups spawned %d OS lookups, want one bounded in-flight lookup", calls.Load())
-	}
-}
-
 func TestScheduledTmuxRunnerDeliversThroughGuardedPasteAndSubmits(t *testing.T) {
 	tmpDir := t.TempDir()
 	argsPath := tmpDir + "/tmux-argv.txt"
@@ -528,8 +384,7 @@ exit 0
 	t.Setenv("TMUX_PAYLOAD_PATH", payloadPathRecord)
 	// tmpDir stays first so the fake tmux wins; the stub also needs cp.
 	t.Setenv("PATH", tmpDir+":/usr/bin:/bin")
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/chrote-fake-tmux.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/tmp/chrote-fake-home")
 
 	runner := NewScheduledTmuxRunner(NewTmuxHandler())
@@ -548,7 +403,7 @@ exit 0
 	}
 	calls := splitScheduledTmuxCalls(raw)
 	if len(calls) != 4 {
-		t.Fatalf("tmux calls = %#v, want list-panes, load-buffer, guarded paste, then one guarded submit key; scheduled delivery must not inherit interactive composer retries", calls)
+		t.Fatalf("tmux calls = %#v, want list-panes, load-buffer, guarded paste, then exactly one guarded submit key", calls)
 	}
 	if calls[0][2] != "list-panes" {
 		t.Fatalf("first call = %#v, want pane resolution before any side effect", calls[0])
@@ -633,8 +488,7 @@ exit 0
 		t.Fatalf("write fake tmux: %v", err)
 	}
 	t.Setenv("PATH", tmpDir)
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/chrote-fake-tmux.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/tmp/chrote-fake-home")
 
 	runner := NewScheduledTmuxRunner(NewTmuxHandler())
@@ -659,8 +513,7 @@ printf 'tmux started\n' >> "$TMUX_ARGS_FILE"
 	}
 	t.Setenv("TMUX_ARGS_FILE", argsPath)
 	t.Setenv("PATH", tmpDir)
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/chrote-fake-tmux.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/tmp/chrote-fake-home")
 
 	runner := NewScheduledTmuxRunner(NewTmuxHandler())
@@ -703,8 +556,7 @@ exit 0
 	}
 	t.Setenv("TMUX_ARGS_FILE", argsPath)
 	t.Setenv("PATH", tmpDir+":/usr/bin:/bin")
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/chrote-fake-tmux.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/tmp/chrote-fake-home")
 
 	runner := NewScheduledTmuxRunner(NewTmuxHandler())
@@ -760,8 +612,7 @@ exit 0
 		t.Fatalf("write fake tmux: %v", err)
 	}
 	t.Setenv("PATH", tmpDir+":/usr/bin:/bin")
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/chrote-fake-tmux.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/tmp/chrote-fake-home")
 
 	runner := NewScheduledTmuxRunner(NewTmuxHandler())
@@ -811,8 +662,7 @@ exit 0
 	}
 	t.Setenv("TMUX_ARGS_FILE", argsPath)
 	t.Setenv("PATH", tmpDir+":/usr/bin:/bin")
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/chrote-fake-tmux.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/tmp/chrote-fake-home")
 
 	runner := NewScheduledTmuxRunner(NewTmuxHandler())

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	osuser "os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -27,9 +26,6 @@ func TestTmuxHandler_NewTmuxHandler(t *testing.T) {
 
 	if handler == nil {
 		t.Fatal("NewTmuxHandler() returned nil")
-	}
-	if handler.cache == nil {
-		t.Error("Handler cache is nil")
 	}
 	if handler.colorRegex == nil {
 		t.Error("Handler colorRegex is nil")
@@ -172,8 +168,7 @@ case "$*" in
   *list-sessions*) printf '$1\tchrote-probe-123\t1\t0\t/workspaces/alice\n$2\twork\t1\t0\t/workspaces/alice\n' ;;
 esac
 `)
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
 
 	handler := NewTmuxHandler()
@@ -197,8 +192,7 @@ case "$*" in
   *pane_current_path*) printf '$9\twork\t1\t0\t/workspaces/alice/live\tcodex\n$10\tno-cwd\t1\t0\t\tbash\n' ;;
 esac
 `)
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice")
 
 	handler := NewTmuxHandler()
@@ -234,8 +228,7 @@ esac
 
 func TestTmuxHandler_CreateAndRenameRejectReservedInternalSessionNames(t *testing.T) {
 	argsPath := installScriptedTmux(t, "")
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
 
 	handler := NewTmuxHandler()
@@ -269,6 +262,7 @@ case "$*" in
   *new-session*) echo 'duplicate session: existing-smoke' >&2; exit 1 ;;
 esac
 `)
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
 	handler := NewTmuxHandler()
 	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", bytes.NewBufferString(`{"name":"existing-smoke"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -354,10 +348,10 @@ func TestTmuxHandler_ListSessions_ReturnsValidJSON(t *testing.T) {
 	}
 }
 
-func TestTmuxHandler_DefaultProfileUsesConfiguredSocketAndWorkDir(t *testing.T) {
+func TestTmuxHandler_SoleExplicitSocketUsesConfiguredWorkDir(t *testing.T) {
 	_, argsPath := installFakeTmux(t)
-	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "/tmp/tmux-2002/default")
-	t.Setenv("CHROTE_DEFAULT_TMUX_WORKDIR", "/srv/terminal-three")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-2002/default")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/srv/terminal-three")
 
 	handler := NewTmuxHandler()
 	body := CreateSessionRequest{Name: "terminal-three-smoke"}
@@ -387,48 +381,9 @@ func TestTmuxHandler_DefaultProfileUsesConfiguredSocketAndWorkDir(t *testing.T) 
 	}
 }
 
-func TestTmuxHandler_CurrentUnixUserHonorsConfiguredDefaultTarget(t *testing.T) {
-	current, err := osuser.Current()
-	if err != nil {
-		t.Fatalf("current user: %v", err)
-	}
-	_, argsPath := installFakeTmux(t)
-	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "/configured/current-user.sock")
-	t.Setenv("CHROTE_DEFAULT_TMUX_WORKDIR", "/srv/current-user")
-	t.Setenv("CHROTE_TERMINAL_USERS", current.Username)
-
-	handler := NewTmuxHandler()
-	body := CreateSessionRequest{Name: "current-user-smoke", UnixUser: current.Username}
-	bodyBytes, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", bytes.NewBuffer(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	handler.CreateSession(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath))
-	want := []string{
-		"-S /configured/current-user.sock new-session -d -P -F #{session_id} -e CHROTE_CREATION_TOKEN=<token> -s current-user-smoke -c /srv/current-user",
-		"-S /configured/current-user.sock set-option -g mouse on",
-		"-S /configured/current-user.sock unbind-key -q -n MouseDown3Pane",
-		"-S /configured/current-user.sock unbind-key -q -n MouseDown3Status",
-		"-S /configured/current-user.sock unbind-key -q -n MouseDown3StatusLeft",
-		"-S /configured/current-user.sock unbind-key -q -n M-MouseDown3Pane",
-		"-S /configured/current-user.sock unbind-key -q -n M-MouseDown3Status",
-		"-S /configured/current-user.sock unbind-key -q -n M-MouseDown3StatusLeft",
-	}
-	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("tmux calls = %#v, want %#v", got, want)
-	}
-}
-
 func TestTmuxHandler_CreateSessionUsesSelectedUnixUserTarget(t *testing.T) {
 	_, argsPath := installFakeTmux(t)
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/run/user/2001/chrote-tmux/tmux-1000/default,build=/tmp/tmux-2002/default")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/run/user/2001/chrote-tmux/tmux-1000/default,build=/tmp/tmux-2002/default")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/operator,build=/home/secondary")
 
 	handler := NewTmuxHandler()
@@ -472,8 +427,7 @@ esac
 		t.Fatalf("write fake tmux: %v", err)
 	}
 	t.Setenv("PATH", tmpDir)
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-p,build=/tmp/tmux-t")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-p,build=/tmp/tmux-t")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/operator,build=/home/secondary")
 
 	handler := NewTmuxHandler()
@@ -505,10 +459,9 @@ esac
 	}
 }
 
-func TestTmuxHandler_ListSessionsReturnsTrimmedDedupedTerminalUsers(t *testing.T) {
+func TestTmuxHandler_ListSessionsReturnsOrderedTrimmedTerminalUsers(t *testing.T) {
 	installFakeTmux(t)
-	t.Setenv("CHROTE_TERMINAL_USERS", " alice, bob , alice ,,bob ")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a,bob=/tmp/tmux-b")
+	t.Setenv("CHROTE_TMUX_SOCKET", " alice=/tmp/tmux-a, bob=/tmp/tmux-b ")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice,bob=/home/bob")
 
 	handler := NewTmuxHandler()
@@ -530,7 +483,7 @@ func TestTmuxHandler_ListSessionsReturnsTrimmedDedupedTerminalUsers(t *testing.T
 	}
 }
 
-func TestTmuxHandler_ListSessionsDoesNotAdvertiseImplicitCurrentUser(t *testing.T) {
+func TestTmuxHandler_ZeroMappingsReturnEmptyInventoryAndRoutingError(t *testing.T) {
 	installFakeTmux(t)
 	handler := NewTmuxHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
@@ -546,17 +499,19 @@ func TestTmuxHandler_ListSessionsDoesNotAdvertiseImplicitCurrentUser(t *testing.
 		t.Fatalf("decode response: %v", err)
 	}
 	if len(response.TerminalUsers) != 0 {
-		t.Fatalf("terminalUsers = %#v, want empty when CHROTE_TERMINAL_USERS is unset", response.TerminalUsers)
+		t.Fatalf("terminalUsers = %#v, want empty inventory when CHROTE_TMUX_SOCKET is unset", response.TerminalUsers)
 	}
-	for _, session := range response.Sessions {
-		if session.UnixUser != "" {
-			t.Fatalf("session %q UnixUser = %q, want bare default-session identity", session.Name, session.UnixUser)
-		}
+	if len(response.Sessions) != 0 {
+		t.Fatalf("sessions = %#v, want no routed inventory with zero socket mappings", response.Sessions)
+	}
+	if _, err := handler.targetForUnixUser(""); err == nil || !strings.Contains(err.Error(), "no tmux sockets are configured") {
+		t.Fatalf("zero-mapping target error = %v, want an explicit configuration error", err)
 	}
 }
 
 func TestTmuxHandler_DeleteAllSessionsReportsListErrors(t *testing.T) {
 	installAlwaysFailingTmux(t, "error connecting to /tmp/tmux-2002/default (Permission denied)")
+	t.Setenv("CHROTE_TMUX_SOCKET", "build=/tmp/tmux-2002/default")
 	handler := NewTmuxHandler()
 	req := httptest.NewRequest(http.MethodDelete, "/api/tmux/sessions/all", nil)
 	req.Header.Set("X-Nuke-Confirm", "DASHBOARD-NUKE-CONFIRMED")
@@ -581,8 +536,7 @@ func TestTmuxHandler_ApplyAppearanceTargetsConfiguredTerminalUsers(t *testing.T)
 		t.Fatalf("write fake tmux: %v", err)
 	}
 	t.Setenv("PATH", tmpDir)
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-p,build=/tmp/tmux-t")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-p,build=/tmp/tmux-t")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/operator,build=/home/secondary")
 
 	handler := NewTmuxHandler()
@@ -621,8 +575,7 @@ func TestTmuxHandler_SetMouseModeTargetsConfiguredTerminalUsers(t *testing.T) {
 		t.Fatalf("write fake tmux: %v", err)
 	}
 	t.Setenv("PATH", tmpDir)
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-p,build=/tmp/tmux-t")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-p,build=/tmp/tmux-t")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/operator,build=/home/secondary")
 
 	handler := NewTmuxHandler()
@@ -658,6 +611,7 @@ func TestTmuxHandler_SetMouseModeTargetsConfiguredTerminalUsers(t *testing.T) {
 
 func TestTmuxHandler_SetMouseModeRemovesTmuxRightClickMenus(t *testing.T) {
 	_, argsPath := installFakeTmux(t)
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
 	handler := NewTmuxHandler()
 	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBufferString(`{"enabled":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -669,13 +623,13 @@ func TestTmuxHandler_SetMouseModeRemovesTmuxRightClickMenus(t *testing.T) {
 		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
 	want := []string{
-		"set-option -g mouse on",
-		"unbind-key -q -n MouseDown3Pane",
-		"unbind-key -q -n MouseDown3Status",
-		"unbind-key -q -n MouseDown3StatusLeft",
-		"unbind-key -q -n M-MouseDown3Pane",
-		"unbind-key -q -n M-MouseDown3Status",
-		"unbind-key -q -n M-MouseDown3StatusLeft",
+		"-S /tmp/tmux-a set-option -g mouse on",
+		"-S /tmp/tmux-a unbind-key -q -n MouseDown3Pane",
+		"-S /tmp/tmux-a unbind-key -q -n MouseDown3Status",
+		"-S /tmp/tmux-a unbind-key -q -n MouseDown3StatusLeft",
+		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3Pane",
+		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3Status",
+		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3StatusLeft",
 	}
 	if got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath)); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("tmux calls = %#v, want mouse mode plus no right-click menus %#v", got, want)
@@ -683,8 +637,7 @@ func TestTmuxHandler_SetMouseModeRemovesTmuxRightClickMenus(t *testing.T) {
 }
 
 func TestTmuxHandler_SetMouseModeDoesNotReportPartialPolicyAsApplied(t *testing.T) {
-	t.Setenv("CHROTE_TERMINAL_USERS", "")
-	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
 	argsPath := installScriptedTmux(t, `
 case "$*" in
   *"unbind-key -q -n MouseDown3Status"*) echo 'unbind failed' >&2; exit 1 ;;
@@ -712,9 +665,9 @@ esac
 		t.Fatalf("response = %+v, want failed policy application with applied=0 total=1", response)
 	}
 	want := [][]string{
-		{"set-option", "-g", "mouse", "on"},
-		{"unbind-key", "-q", "-n", "MouseDown3Pane"},
-		{"unbind-key", "-q", "-n", "MouseDown3Status"},
+		{"-S", "/tmp/tmux-a", "set-option", "-g", "mouse", "on"},
+		{"-S", "/tmp/tmux-a", "unbind-key", "-q", "-n", "MouseDown3Pane"},
+		{"-S", "/tmp/tmux-a", "unbind-key", "-q", "-n", "MouseDown3Status"},
 	}
 	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); !equalArgvCalls(got, want) {
 		t.Fatalf("tmux calls = %#v, want fail-fast policy calls %#v", got, want)
@@ -722,7 +675,6 @@ esac
 }
 
 func TestTmuxHandler_CreateOwnedTmuxSessionCleansAmbiguousCreationByMarker(t *testing.T) {
-	t.Setenv("CHROTE_TERMINAL_USERS", "")
 	argsPath := installScriptedTmux(t, `
 case "$*" in
   *new-session*)
@@ -738,13 +690,13 @@ esac
 `)
 	handler := NewTmuxHandler()
 
-	_, err := handler.createOwnedTmuxSession(context.Background(), "", "ambiguous-smoke", "/tmp")
+	_, err := handler.createOwnedTmuxSession(context.Background(), "/tmp/tmux-a", "ambiguous-smoke", "/tmp")
 	if err == nil || !strings.Contains(err.Error(), "tmux command failed") || strings.Contains(err.Error(), "after server-side creation") {
 		t.Fatalf("create error = %v, want a redacted ambiguous creation error", err)
 	}
 	want := [][]string{
-		{"new-session", "-d", "-P", "-F", "#{session_id}", "-e", "CHROTE_CREATION_TOKEN=<token>", "-s", "ambiguous-smoke", "-c", "/tmp"},
-		{"if-shell", "-F", "-t", "ambiguous-smoke", "#{==:#{CHROTE_CREATION_TOKEN},<token>}", "kill-session -t ambiguous-smoke", "display-message -p CHROTE_OWNERSHIP_MISMATCH"},
+		{"-S", "/tmp/tmux-a", "new-session", "-d", "-P", "-F", "#{session_id}", "-e", "CHROTE_CREATION_TOKEN=<token>", "-s", "ambiguous-smoke", "-c", "/tmp"},
+		{"-S", "/tmp/tmux-a", "if-shell", "-F", "-t", "ambiguous-smoke", "#{==:#{CHROTE_CREATION_TOKEN},<token>}", "kill-session -t ambiguous-smoke", "display-message -p CHROTE_OWNERSHIP_MISMATCH"},
 	}
 	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); !equalArgvCalls(got, want) {
 		t.Fatalf("tmux calls = %#v, want marker-owned ambiguous cleanup %#v", got, want)
@@ -752,7 +704,6 @@ esac
 }
 
 func TestTmuxHandler_CreateOwnedTmuxSessionCleansMalformedIDByOwnedName(t *testing.T) {
-	t.Setenv("CHROTE_TERMINAL_USERS", "")
 	argsPath := installScriptedTmux(t, `
 case "$*" in
   *new-session*)
@@ -768,13 +719,13 @@ esac
 `)
 	handler := NewTmuxHandler()
 
-	_, err := handler.createOwnedTmuxSession(context.Background(), "", "malformed-id-smoke", "/tmp")
+	_, err := handler.createOwnedTmuxSession(context.Background(), "/tmp/tmux-a", "malformed-id-smoke", "/tmp")
 	if err == nil || !strings.Contains(err.Error(), "without a valid session ID") {
 		t.Fatalf("create error = %v, want malformed session ID error", err)
 	}
 	want := [][]string{
-		{"new-session", "-d", "-P", "-F", "#{session_id}", "-e", "CHROTE_CREATION_TOKEN=<token>", "-s", "malformed-id-smoke", "-c", "/tmp"},
-		{"if-shell", "-F", "-t", "malformed-id-smoke", "#{==:#{CHROTE_CREATION_TOKEN},<token>}", "kill-session -t malformed-id-smoke", "display-message -p CHROTE_OWNERSHIP_MISMATCH"},
+		{"-S", "/tmp/tmux-a", "new-session", "-d", "-P", "-F", "#{session_id}", "-e", "CHROTE_CREATION_TOKEN=<token>", "-s", "malformed-id-smoke", "-c", "/tmp"},
+		{"-S", "/tmp/tmux-a", "if-shell", "-F", "-t", "malformed-id-smoke", "#{==:#{CHROTE_CREATION_TOKEN},<token>}", "kill-session -t malformed-id-smoke", "display-message -p CHROTE_OWNERSHIP_MISMATCH"},
 	}
 	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); !equalArgvCalls(got, want) {
 		t.Fatalf("tmux calls = %#v, want name fallback for malformed ID %#v", got, want)
@@ -782,7 +733,6 @@ esac
 }
 
 func TestTmuxHandler_CreateOwnedTmuxSessionRefusesToCleanUnownedName(t *testing.T) {
-	t.Setenv("CHROTE_TERMINAL_USERS", "")
 	argsPath := installScriptedTmux(t, `
 case "$*" in
   *new-session*) echo 'duplicate session' >&2; exit 1 ;;
@@ -791,18 +741,17 @@ esac
 `)
 	handler := NewTmuxHandler()
 
-	_, err := handler.createOwnedTmuxSession(context.Background(), "", "existing-smoke", "/tmp")
+	_, err := handler.createOwnedTmuxSession(context.Background(), "/tmp/tmux-a", "existing-smoke", "/tmp")
 	if err == nil || !strings.Contains(err.Error(), "creation token does not match") {
 		t.Fatalf("create error = %v, want ownership mismatch joined to create failure", err)
 	}
 	got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath))
-	if len(got) != 2 || got[0][0] != "new-session" || got[1][0] != "if-shell" {
+	if len(got) != 2 || !containsArg(got[0], "new-session") || !containsArg(got[1], "if-shell") {
 		t.Fatalf("tmux calls = %#v, want create plus ownership check and no kill", got)
 	}
 }
 
 func TestTmuxHandler_CleanupOwnedTmuxSessionJoinsKillFailure(t *testing.T) {
-	t.Setenv("CHROTE_TERMINAL_USERS", "")
 	argsPath := installScriptedTmux(t, `
 case "$*" in
   *if-shell*) echo 'kill denied' >&2; exit 1 ;;
@@ -811,12 +760,12 @@ esac
 	handler := NewTmuxHandler()
 	cause := errors.New("policy failed")
 
-	err := handler.cleanupOwnedTmuxSessionAfterError("", ownedTmuxSession{ID: "$42", Name: "owned-smoke", Token: "0123456789abcdef01234567"}, cause)
+	err := handler.cleanupOwnedTmuxSessionAfterError("/tmp/tmux-a", ownedTmuxSession{ID: "$42", Name: "owned-smoke", Token: "0123456789abcdef01234567"}, cause)
 	if err == nil || !strings.Contains(err.Error(), "policy failed") || !strings.Contains(err.Error(), "tmux command failed") || strings.Contains(err.Error(), "kill denied") {
 		t.Fatalf("cleanup error = %v, want original and redacted cleanup failures joined", err)
 	}
 	want := [][]string{
-		{"if-shell", "-F", "-t", "$42", "#{==:#{CHROTE_CREATION_TOKEN},<token>}", "kill-session -t $42", "display-message -p CHROTE_OWNERSHIP_MISMATCH"},
+		{"-S", "/tmp/tmux-a", "if-shell", "-F", "-t", "$42", "#{==:#{CHROTE_CREATION_TOKEN},<token>}", "kill-session -t $42", "display-message -p CHROTE_OWNERSHIP_MISMATCH"},
 	}
 	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); !equalArgvCalls(got, want) {
 		t.Fatalf("tmux calls = %#v, want ID-based verified cleanup %#v", got, want)
@@ -855,6 +804,7 @@ func TestTmuxHandler_SetMouseModeRejectsMissingEnabled(t *testing.T) {
 
 func TestTmuxHandler_RegisterRoutesWiresMouseMode(t *testing.T) {
 	_, argsPath := installFakeTmux(t)
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
 	handler := NewTmuxHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -868,13 +818,13 @@ func TestTmuxHandler_RegisterRoutesWiresMouseMode(t *testing.T) {
 		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
 	want := []string{
-		"set-option -g mouse on",
-		"unbind-key -q -n MouseDown3Pane",
-		"unbind-key -q -n MouseDown3Status",
-		"unbind-key -q -n MouseDown3StatusLeft",
-		"unbind-key -q -n M-MouseDown3Pane",
-		"unbind-key -q -n M-MouseDown3Status",
-		"unbind-key -q -n M-MouseDown3StatusLeft",
+		"-S /tmp/tmux-a set-option -g mouse on",
+		"-S /tmp/tmux-a unbind-key -q -n MouseDown3Pane",
+		"-S /tmp/tmux-a unbind-key -q -n MouseDown3Status",
+		"-S /tmp/tmux-a unbind-key -q -n MouseDown3StatusLeft",
+		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3Pane",
+		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3Status",
+		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3StatusLeft",
 	}
 	if got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath)); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("tmux calls = %#v, want %#v", got, want)

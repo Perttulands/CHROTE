@@ -28,7 +28,7 @@ protection.
 
 Anyone who can reach the dashboard holds, at once:
 
-- a terminal for **every** Unix user listed in `CHROTE_TERMINAL_USERS` — that is
+- a terminal for **every** Unix user keyed in `CHROTE_TMUX_SOCKET` — that is
   arbitrary command execution as each of those users, not just one;
 - the file APIs across everything under `CHROTE_ROOTS` with the service
   identity's Unix permissions — deployments may configure broad roots, up to `/`;

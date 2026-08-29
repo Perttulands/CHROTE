@@ -35,12 +35,9 @@ type TerminalProxy struct {
 	mu           sync.Mutex
 	running      bool
 	launchScript string
-	socket       string
 }
 
 // NewTerminalProxy creates the default TerminalProxy served at /terminal/.
-// CHROTE_DEFAULT_TMUX_SOCKET pins the existing terminal route to an explicit
-// socket without adding a separate dashboard terminal profile.
 func NewTerminalProxy(ttydPort int) *TerminalProxy {
 	target, _ := url.Parse(fmt.Sprintf("http://localhost:%d", ttydPort)) //nolint:errcheck // static URL format cannot fail
 
@@ -67,23 +64,11 @@ func NewTerminalProxy(ttydPort int) *TerminalProxy {
 		ttydPort:     ttydPort,
 		proxy:        proxy,
 		launchScript: core.GetLaunchScript(),
-		socket:       strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_SOCKET")),
 	}
 }
 
 func (tp *TerminalProxy) launchEnv() []string {
-	env := core.GetTmuxEnv()
-	filtered := env[:0]
-	for _, entry := range env {
-		if strings.HasPrefix(entry, "CHROTE_TMUX_SOCKET=") {
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-	if tp.socket != "" {
-		filtered = append(filtered, "CHROTE_TMUX_SOCKET="+tp.socket)
-	}
-	return filtered
+	return os.Environ()
 }
 
 // Start starts the ttyd process
@@ -113,7 +98,7 @@ func (tp *TerminalProxy) Start() error {
 		tp.launchScript,
 	)
 
-	// Set environment with TMUX_TMPDIR and optional explicit default socket.
+	// Preserve the server's explicit tmux socket mappings for terminal-launch.sh.
 	tp.ttydCmd.Env = tp.launchEnv()
 
 	// Pipe stdout/stderr for debugging

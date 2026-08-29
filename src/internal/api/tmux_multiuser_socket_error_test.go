@@ -51,16 +51,12 @@ func installAlwaysFailingTmux(t *testing.T, stderr string) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-// The production path on a multi-user host is the CHROTE_TERMINAL_USERS loop, and
-// it is the ONLY place a socket error is prefixed with the unix user. Without
-// CHROTE_TERMINAL_USERS set, configuredTerminalUsers() returns empty and
-// ListSessions takes the single-target branch instead -- which is what every
-// pre-existing test exercised, so the branch that actually runs in production had
-// no coverage unless this test drives it directly.
+// The production path on a multi-user host is the CHROTE_TMUX_SOCKET loop, and
+// it is the only place a socket error is prefixed with the Unix user. This test
+// drives the partial-inventory branch where one explicit source is unavailable.
 func TestTmuxHandler_ListSessionsNamesTheUnixUserWhoseSocketFailed(t *testing.T) {
 	installSelectiveTmux(t, "denied", "error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)")
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/denied.sock")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/denied.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
 
 	handler := NewTmuxHandler()
@@ -99,8 +95,7 @@ func TestTmuxHandler_ListSessionsNamesTheUnixUserWhoseSocketFailed(t *testing.T)
 // an empty list is indistinguishable from "no sessions".
 func TestTmuxHandler_ListSessionsStillReturnsHealthyUsersSessionsWhenOneSocketFails(t *testing.T) {
 	installSelectiveTmux(t, "denied", "error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)")
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/denied.sock")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/denied.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
 
 	handler := NewTmuxHandler()
@@ -132,8 +127,7 @@ func TestTmuxHandler_ListSessionsStillReturnsHealthyUsersSessionsWhenOneSocketFa
 // preserve their last-known-good state.
 func TestTmuxHandler_ListSessionsDoesNotMarkTotalMultiUserFailurePartial(t *testing.T) {
 	installSelectiveTmux(t, "fixture-", "error connecting to /tmp/chrote-tmux-test/socket (Permission denied)")
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/denied.sock,build=/tmp/fixture-build/denied.sock")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/fixture-alice/denied.sock,build=/tmp/fixture-build/denied.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
 
 	handler := NewTmuxHandler()
@@ -160,8 +154,7 @@ func TestTmuxHandler_ListSessionsDoesNotMarkTotalMultiUserFailurePartial(t *test
 // authoritative and must retain total-failure semantics.
 func TestTmuxHandler_ListSessionsMultiUserNoServerIsNotAnError(t *testing.T) {
 	installSelectiveTmux(t, "empty", "no server running on /tmp/fixture-build/empty.sock")
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/empty.sock")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/empty.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
 
 	handler := NewTmuxHandler()

@@ -8,13 +8,13 @@ import (
 	"testing"
 )
 
-func TestNewTerminalProxy_DefaultProfileUsesConfiguredSocket(t *testing.T) {
-	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "/tmp/tmux-2002/default")
+func TestNewTerminalProxy_PreservesConfiguredSocketMappings(t *testing.T) {
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-2001/default,build=/tmp/tmux-2002/default")
 
 	proxy := NewTerminalProxy(7683)
 	env := proxy.launchEnv()
 
-	want := "CHROTE_TMUX_SOCKET=/tmp/tmux-2002/default"
+	want := "CHROTE_TMUX_SOCKET=alice=/tmp/tmux-2001/default,build=/tmp/tmux-2002/default"
 	for _, entry := range env {
 		if entry == want {
 			return
@@ -23,25 +23,25 @@ func TestNewTerminalProxy_DefaultProfileUsesConfiguredSocket(t *testing.T) {
 	t.Fatalf("default terminal launch env does not contain %q; env=%v", want, env)
 }
 
-func TestLaunchScript_AttachesWithExplicitSocketWhenSet(t *testing.T) {
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	repoRoot := filepath.Clean(filepath.Join(wd, "..", "..", ".."))
-	scriptPath := filepath.Join(repoRoot, "terminal-launch.sh")
+func TestLaunchScript_SoleMappingSupportsLegacyAttachWithoutUnixUser(t *testing.T) {
+	scriptPath := launchScriptPath(t)
+	tmpDir := t.TempDir()
+	argsPath := filepath.Join(tmpDir, "tmux.args")
+	writeFakeTmux(t, filepath.Join(tmpDir, "tmux"))
 
-	raw, err := os.ReadFile(scriptPath)
-	if err != nil {
-		t.Fatalf("read launch script %s: %v", scriptPath, err)
+	cmd := exec.Command("bash", scriptPath, "shell-one")
+	cmd.Env = append(os.Environ(),
+		"PATH="+tmpDir+":"+os.Getenv("PATH"),
+		"TMUX_ARGS="+argsPath,
+		"HOME="+tmpDir,
+		"CHROTE_WORKDIR="+tmpDir,
+		"CHROTE_TMUX_SOCKET=alice=/tmp/tmux-a",
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("launch script failed: %v\n%s", err, output)
 	}
-	content := string(raw)
-
-	if !strings.Contains(content, "CHROTE_TMUX_SOCKET") {
-		t.Fatalf("launch script %s does not reference CHROTE_TMUX_SOCKET", scriptPath)
-	}
-	if !strings.Contains(content, `attach_explicit_socket "$CHROTE_TMUX_SOCKET"`) && !strings.Contains(content, `attach_explicit_socket "${CHROTE_TMUX_SOCKET}"`) {
-		t.Fatalf("launch script %s does not route CHROTE_TMUX_SOCKET through explicit socket attach", scriptPath)
+	if raw, err := os.ReadFile(argsPath); err != nil || !strings.Contains(string(raw), "-S /tmp/tmux-a attach-session -t shell-one") {
+		t.Fatalf("legacy attach did not resolve the sole configured mapping: args=%q err=%v", raw, err)
 	}
 }
 
@@ -60,8 +60,7 @@ func TestLaunchScript_RejectsDuplicateUserSocketKey(t *testing.T) {
 		"TMUX_ARGS="+argsPath,
 		"HOME="+tmpDir,
 		"CHROTE_WORKDIR="+tmpDir,
-		"CHROTE_TERMINAL_USERS=alice,bob",
-		"CHROTE_TERMINAL_USER_SOCKETS=alice=/tmp/tmux-a,bob=/tmp/tmux-b,bob=/tmp/tmux-b2",
+		"CHROTE_TMUX_SOCKET=alice=/tmp/tmux-a,bob=/tmp/tmux-b,bob=/tmp/tmux-b2",
 	)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
@@ -98,8 +97,7 @@ func TestLaunchScript_UsesPinnedTmuxBin(t *testing.T) {
 		"PATH="+pathDir+":"+os.Getenv("PATH"),
 		"HOME="+tmpDir,
 		"CHROTE_WORKDIR="+tmpDir,
-		"CHROTE_TERMINAL_USERS=bob",
-		"CHROTE_TERMINAL_USER_SOCKETS=bob=/tmp/tmux-b",
+		"CHROTE_TMUX_SOCKET=bob=/tmp/tmux-b",
 		"CHROTE_TMUX_BIN="+pinnedTmux,
 	)
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -146,7 +144,7 @@ func writeFakeTmuxRecording(t *testing.T, path, argsPath string) {
 	}
 }
 
-func TestLaunchScript_TrimsConfiguredTerminalUserCSVs(t *testing.T) {
+func TestLaunchScript_TrimsConfiguredSocketCSV(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -170,8 +168,7 @@ exit 0
 		"TMUX_ARGS="+argsPath,
 		"HOME="+tmpDir,
 		"CHROTE_WORKDIR="+tmpDir,
-		"CHROTE_TERMINAL_USERS= alice, bob ,",
-		"CHROTE_TERMINAL_USER_SOCKETS= alice=/tmp/tmux-a, bob = /tmp/tmux-b ",
+		"CHROTE_TMUX_SOCKET= alice=/tmp/tmux-a, bob = /tmp/tmux-b ",
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

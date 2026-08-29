@@ -38,18 +38,17 @@ const (
 
 // Config holds server configuration
 type Config struct {
-	Host                    string
-	Port                    int
-	TtydPort                int
-	CORSOrigins             []string
-	StartTtyd               bool
-	StartSystemHistory      bool
-	StartSessionDropJanitor bool
+	Host               string
+	Port               int
+	TtydPort           int
+	CORSOrigins        []string
+	StartTtyd          bool
+	StartSystemHistory bool
 }
 
 func main() {
 	// Parse flags
-	config := Config{StartSessionDropJanitor: true, StartSystemHistory: true}
+	config := Config{StartSystemHistory: true}
 	flag.StringVar(&config.Host, "host", defaultBindHost, "Bind address")
 	flag.IntVar(&config.Port, "port", defaultServerPort, "Server port")
 	flag.IntVar(&config.TtydPort, "ttyd-port", defaultTtydPort, "ttyd port")
@@ -155,18 +154,6 @@ func main() {
 
 func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Context) (*proxy.TerminalProxy, *api.ScheduledHandler, context.CancelFunc) {
 	tmuxHandler := api.NewTmuxHandler()
-	closedJanitorDone := make(chan struct{})
-	close(closedJanitorDone)
-	var janitorDone <-chan struct{} = closedJanitorDone
-	if config.StartSessionDropJanitor {
-		var err error
-		janitorDone, err = tmuxHandler.StartSessionDropJanitor(ctx, func(err error) {
-			log.Printf("Warning: session drop maintenance failed: %v", err)
-		})
-		if err != nil {
-			log.Printf("Warning: initial session drop maintenance failed: %v", err)
-		}
-	}
 	tmuxHandler.RegisterRoutes(mux)
 	// Keeps an abandoned or still-hidden browser terminal from clamping a live
 	// agent's window to the ttyd default of 80 columns.
@@ -203,14 +190,6 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	stopRuntimeMaintenance := func() {
 		stopOnce.Do(func() {
 			stopSystemHistory()
-			if !config.StartSessionDropJanitor {
-				return
-			}
-			select {
-			case <-janitorDone:
-			case <-time.After(10 * time.Second):
-				log.Printf("Warning: session drop janitor did not stop before shutdown deadline")
-			}
 		})
 	}
 	return terminalProxy, scheduledHandler, stopRuntimeMaintenance

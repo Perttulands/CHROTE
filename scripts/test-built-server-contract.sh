@@ -201,7 +201,7 @@ LANG=C.UTF-8 \
 TMPDIR="$artifact_root/tmp" \
 XDG_RUNTIME_DIR="$artifact_root/runtime" \
 TMUX_TMPDIR="$artifact_root/tmux" \
-CHROTE_DEFAULT_TMUX_SOCKET="$artifact_root/tmux/default" \
+CHROTE_TMUX_SOCKET="$(id -un)=$artifact_root/tmux/default" \
 CHROTE_WORKDIR="$workspace" \
 CHROTE_ROOTS="$workspace" \
 CHROTE_BEADS_WORKSPACES="$workspace" \
