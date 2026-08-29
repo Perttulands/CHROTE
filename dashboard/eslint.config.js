@@ -41,6 +41,13 @@ export default tseslint.config(
   },
   {
     files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.*'],
+    rules: {
+      'max-lines': ['error', { max: 800 }],
+    },
+  },
+  {
+    files: ['src/**/*.{ts,tsx}'],
     plugins: {
       'react-hooks': reactHooks,
     },

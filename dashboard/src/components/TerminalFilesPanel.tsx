@@ -731,3 +731,4 @@ function TerminalFilesPanel({
 }
 
 export default TerminalFilesPanel
+import './TerminalFilesPanel.css'

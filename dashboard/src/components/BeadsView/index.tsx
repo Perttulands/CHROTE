@@ -235,3 +235,4 @@ export default function BeadsView({ onOpenProjectInFiles }: BeadsViewProps = {})
     </div>
   )
 }
+import './BeadsView.css'

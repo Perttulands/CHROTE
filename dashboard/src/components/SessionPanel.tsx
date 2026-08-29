@@ -385,3 +385,4 @@ function SessionPanel({
 }
 
 export default SessionPanel
+import './SessionPanel.css'

@@ -548,3 +548,4 @@ function SettingsView() {
 }
 
 export default SettingsView
+import './SettingsView.css'

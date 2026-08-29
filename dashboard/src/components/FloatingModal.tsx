@@ -181,3 +181,4 @@ function FloatingModal() {
 }
 
 export default FloatingModal
+import './FloatingModal.css'

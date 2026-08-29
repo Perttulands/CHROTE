@@ -81,3 +81,4 @@ function NukeConfirmModal({ onConfirm, onCancel, sessionCount, sessionNames = []
 }
 
 export default NukeConfirmModal
+import './NukeConfirmModal.css'

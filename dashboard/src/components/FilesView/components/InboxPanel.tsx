@@ -346,3 +346,4 @@ export function InboxPanel({ onError }: InboxPanelProps) {
     </div>
   )
 }
+import '../InboxPanel.css'

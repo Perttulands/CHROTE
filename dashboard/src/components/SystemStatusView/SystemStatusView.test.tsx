@@ -195,7 +195,7 @@ describe('SystemStatusView', () => {
     expect(screen.queryByRole('heading', { name: 'History' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Storage' })).not.toBeInTheDocument()
 
-    const css = readFileSync(resolve(testDir, '../../styles/system-status.css'), 'utf8')
+    const css = readFileSync(resolve(testDir, './SystemStatusView.css'), 'utf8')
     expect(css).toMatch(/--system-signal:\s*var\(--accent\)/)
     expect(css).toMatch(/\.system-instrument\s*\{[\s\S]*?--system-trace:\s*var\(--system-signal\)/)
     expect(css).toMatch(/\.system-trace-line,[\s\S]*?stroke:\s*var\(--system-trace\)/)

@@ -431,3 +431,4 @@ function TmuxSection() {
 }
 
 export default HelpView
+import './HelpView.css'
