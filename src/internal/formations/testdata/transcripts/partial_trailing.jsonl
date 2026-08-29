@@ -1,4 +1,0 @@
-{"type": "attachment", "cwd": "/workspace/demo", "sessionId": "5b1a0583-0000-4000-8000-000000000abc"}
-{"type": "assistant", "cwd": "/workspace/demo", "sessionId": "5b1a0583-0000-4000-8000-000000000abc", "message": {"role": "assistant", "content": "Done: no edits were needed; the routed payload is a short text value.\n\n```chrote-outputs\n{\n  \"port_01TESTPORT0000000000000001\": {\"text\": \"fixture-pass\"}\n}\n```\n\n<<<CHROTE-DONE run-id=run_01TESTCAPTURE000000000000001 status=ok artifact=none>>>"}}
-this line is not valid json at all
-{"type":"assistant","cwd":"/workspace/demo","message":{"role":"assistant","content":[{"type":"text","text":"half written and truncat

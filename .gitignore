@@ -90,10 +90,6 @@ __pycache__/
 # provenance stamp for the embedded dashboard bundle (build artifact)
 src/internal/dashboard/dist.stamp
 
-# Archon CLI binaries (build with: cd src && go build -o ../archon ./cmd/archon)
-/archon
-/src/archon
-
 # root-level tool droppings (a vite cache appeared here 2026-07-26)
 /node_modules/
 prototype-output/

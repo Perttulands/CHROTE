@@ -196,18 +196,3 @@ func TestTmuxMissingTargetClassificationIsExactAndSocketBound(t *testing.T) {
 		}
 	}
 }
-
-func TestOracleHandler_GetAgentSessionsCurrentlyTreatsServerExitedUnexpectedlyAsNoServer(t *testing.T) {
-	installFailingTmux(t, "server exited unexpectedly")
-	handler := NewOracleHandler(NewTmuxHandler(), NewBeadsHandler())
-	defer handler.Stop()
-
-	sessions, err := handler.getAgentSessions()
-
-	if err != nil {
-		t.Fatalf("getAgentSessions error = %v, want nil for current Oracle no-server allowlist", err)
-	}
-	if len(sessions) != 0 {
-		t.Fatalf("sessions = %+v, want empty list", sessions)
-	}
-}

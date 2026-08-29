@@ -41,7 +41,6 @@ test.describe('Hamburger Menu', () => {
     await expect(dropdown.locator('.mobile-nav-item', { hasText: /^Terminal 2$/ })).toBeVisible()
     await expect(dropdown.locator('.mobile-nav-item', { hasText: /^Files$/ })).toBeVisible()
     await expect(dropdown.locator('.mobile-nav-item', { hasText: /^Beads$/ })).toBeVisible()
-    await expect(dropdown.locator('.mobile-nav-item', { hasText: /^Agents$/ })).toBeVisible()
     await expect(dropdown.locator('.mobile-nav-item', { hasText: /^Settings$/ })).toBeVisible()
   })
 

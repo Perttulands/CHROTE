@@ -39,7 +39,7 @@ check_runs="$(gh api --paginate --slurp \
   "repos/$GITHUB_REPOSITORY/commits/$release_commit/check-runs?per_page=100")" \
   || die "could not read check runs for $release_commit"
 
-required_jobs=(quality formations-browser built-server-contract)
+required_jobs=(quality built-server-contract)
 for job in "${required_jobs[@]}"; do
   if ! jq -e --arg job "$job" --arg sha "$release_commit" '
     [.[] | .check_runs[]? | select(

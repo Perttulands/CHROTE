@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { featureFlagKey, isFeatureEnabled, setFeatureEnabled } from './featureFlags'
 
-/* The Formations flags were retired when Formations became always-on, so this
-   pins the generic flag mechanism (default, persisted opt-out, persisted opt-in)
-   against a surviving default-on flag instead. */
+/* Pin the generic flag mechanism (default, persisted opt-out, persisted opt-in)
+   against a default-on flag. */
 describe('feature flag mechanism', () => {
   beforeEach(() => {
     localStorage.clear()

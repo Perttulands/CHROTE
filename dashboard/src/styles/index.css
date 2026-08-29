@@ -17,13 +17,10 @@
 @import './inbox.css';
 @import './help-view.css';
 @import './beads.css';
-@import './oracle.css';
-@import './agents.css';
 @import './services.css';
 @import './scheduled.css';
 @import './system-status.css';
 @import './teams.css';
-@import './formations-d7.css';
 
 /* Delightful features */
 @import './delightful.css';

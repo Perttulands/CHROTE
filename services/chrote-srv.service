@@ -10,7 +10,7 @@ EnvironmentFile=/etc/chrote/chrote-srv.env
 RuntimeDirectory=chrote
 RuntimeDirectoryMode=0750
 UMask=0002
-ExecStartPre=+/bin/sh -lc 'install -d -o "${CHROTE_SERVICE_USER:-chrote}" -g "${CHROTE_SERVICE_GROUP:-chrote}" -m "${CHROTE_RUNTIME_MODE:-0750}" "${CHROTE_RUNTIME_ROOT:-/run/chrote}/tmux" "${CHROTE_RUNTIME_ROOT:-/run/chrote}/formations-tmux"'
+ExecStartPre=+/bin/sh -lc 'install -d -o "${CHROTE_SERVICE_USER:-chrote}" -g "${CHROTE_SERVICE_GROUP:-chrote}" -m "${CHROTE_RUNTIME_MODE:-0750}" "${CHROTE_RUNTIME_ROOT:-/run/chrote}/tmux"'
 # Install the tracked grant helper before running it, so the copy that executes
 # is always the copy that review, tests and doc-lint inspect. A host drop-in that
 # re-points ExecStartPre at a hand-maintained libexec copy is how the installed

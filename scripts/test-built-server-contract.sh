@@ -3,17 +3,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 server_binary="${CHROTE_SERVER_BINARY:-$repo_root/chrote-server-ci}"
-fixture="$repo_root/dashboard/tests/contract/fixtures/ci-contract.formation.toml"
 
 if [ ! -x "$server_binary" ]; then
   echo "Built CHROTE server is not executable: $server_binary" >&2
   exit 1
 fi
-if [ ! -f "$fixture" ]; then
-  echo "Formations contract fixture is missing: $fixture" >&2
-  exit 1
-fi
-
 if [ -n "${CHROTE_CONTRACT_ARTIFACT_DIR:-}" ]; then
   artifact_root="$CHROTE_CONTRACT_ARTIFACT_DIR"
   if [ -e "$artifact_root" ]; then
@@ -29,12 +23,8 @@ workspace="$artifact_root/workspace"
 contract_session="chrote-owc-contract"
 sentinel_marker="CHROTE_OWC_TTYD_SENTINEL"
 mkdir -p \
-  "$workspace/.formations/boards" \
   "$workspace/contract-files-terminal1" \
   "$workspace/contract-files-terminal2" \
-  "$artifact_root/agents" \
-  "$artifact_root/formations-data" \
-  "$artifact_root/formations-tmux" \
   "$artifact_root/home" \
   "$artifact_root/runtime" \
   "$artifact_root/scheduled-tasks" \
@@ -43,14 +33,11 @@ mkdir -p \
   "$artifact_root/tmux" \
   "$artifact_root/tmp"
 chmod 700 \
-  "$artifact_root/formations-tmux" \
   "$artifact_root/home" \
   "$artifact_root/runtime" \
   "$artifact_root/session-drops" \
   "$artifact_root/tmux" \
   "$artifact_root/tmp"
-cp "$fixture" "$workspace/.formations/boards/ci-contract.formation.toml"
-
 sentinel_port_file="$artifact_root/terminal-sentinel-port"
 server_log="$artifact_root/server.log"
 sentinel_log="$artifact_root/terminal-sentinel.log"
@@ -218,22 +205,10 @@ CHROTE_DEFAULT_TMUX_SOCKET="$artifact_root/tmux/default" \
 CHROTE_WORKDIR="$workspace" \
 CHROTE_ROOTS="$workspace" \
 CHROTE_WRITE_ROOTS="$workspace" \
-CHROTE_AGENTS_DIR="$artifact_root/agents" \
 CHROTE_BEADS_WORKSPACES="$workspace" \
 CHROTE_BEADS_AUTO_DISCOVER=false \
 CHROTE_SCHEDULED_TASKS_DIR="$artifact_root/scheduled-tasks" \
 CHROTE_SESSION_DROPS_DIR="$artifact_root/session-drops" \
-CHROTE_FORMATIONS_DATA_ROOT="$artifact_root/formations-data" \
-CHROTE_FORMATIONS_LAB_HARNESSES= \
-CHROTE_FORMATIONS_LAB_CWD="$workspace" \
-CHROTE_FORMATIONS_LAB_ROOTS="$workspace" \
-CHROTE_FORMATIONS_TMUX_HARNESSES= \
-CHROTE_FORMATIONS_TMUX_SOCKET="$artifact_root/formations-tmux/default" \
-CHROTE_FORMATIONS_TMUX_CWD="$workspace" \
-CHROTE_FORMATIONS_TMUX_ROOTS="$workspace" \
-CHROTE_FORMATIONS_TMUX_SESSION_PREFIX=contract- \
-CHROTE_FORMATIONS_TMUX_DEDICATED= \
-CHROTE_FORMATIONS_TMUX_PROD_SMOKE= \
 TTYD_PORT="$sentinel_port" \
   "$server_binary" -host 127.0.0.1 -port "$port" -start-ttyd=false -start-system-history=false >"$server_log" 2>&1 &
 server_pid=$!

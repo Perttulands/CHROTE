@@ -27,7 +27,7 @@ test('release admission pins the tag to exact green main CI', () => {
   assert.match(admission, /git fetch --no-tags origin main:refs\/remotes\/origin\/main/)
   assert.match(admission, /git merge-base --is-ancestor \"\$release_commit\" \"\$main_commit\"/)
   assert.match(admission, /check-runs\?per_page=100/)
-  for (const job of ['quality', 'formations-browser', 'built-server-contract']) {
+  for (const job of ['quality', 'built-server-contract']) {
     assert.match(admission, new RegExp(job))
   }
   assert.match(admission, /\.head_sha == \$sha/)

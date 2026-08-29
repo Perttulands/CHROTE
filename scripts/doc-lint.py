@@ -2,7 +2,7 @@
 """CHROTE docs/source-truth lint.
 
 This intentionally starts narrow. It enforces claims the current docs already make
-without dragging dirty Archon/Formations implementation work into doc cleanup.
+without dragging unrelated implementation work into doc cleanup.
 """
 
 from __future__ import annotations
@@ -16,9 +16,6 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[1]
 
 ACTIVE_SPECS = [
-    "ARCHON.md",
-    "FORMATIONS.md",
-    "DATA-MODEL.md",
     "DESIGN-SYSTEM.md",
 ]
 REQUIRED_FRONTMATTER = {
@@ -41,15 +38,9 @@ PUBLIC_PRODUCT_DOCS = [
     "docs/TEST_STRATEGY.md",
     "docs/installation.md",
     "docs/troubleshooting.md",
-    "docs/adr/0004-mission-rooms-agent-team-ledgers.md",
     "dashboard/README.md",
-    "Perttus_vision_for_agent_orchestration/spec/contracts.md",
 ]
-HOST_LOCAL_EXEMPT = {
-    "DATA-MODEL.md",
-    "FORMATIONS.md",
-    "Perttus_vision_for_agent_orchestration/spec/contracts.md",
-}
+HOST_LOCAL_EXEMPT: set[str] = set()
 HOST_LOCAL_TOKENS = [
     "/srv/chrote",
     "/srv/data/chrote",
@@ -64,12 +55,10 @@ HOST_LOCAL_PATTERNS = [
     ),
 ]
 SHIPPED_VIEW_LABELS = [
-    "Formations",
     "Terminal 1",
     "Terminal 2",
     "Terminal 3",
     "Files",
-    "Agents",
     "Beads",
     "Services",
     "Scheduled",
@@ -194,14 +183,10 @@ def check_source_truth_index(errors: list[str]) -> None:
     text = path.read_text(encoding="utf-8")
 
     required_mentions = [
-        "FORMATIONS.md",
-        "ARCHON.md",
-        "DATA-MODEL.md",
         "DESIGN-SYSTEM.md",
         "PRD.md",
         "SECURITY.md",
         "docs/archive/",
-        "Perttus_vision_for_agent_orchestration/spec/",
         "scripts/doc-lint.py",
     ]
     for mention in required_mentions:
@@ -280,10 +265,7 @@ def check_theme_docs(errors: list[str]) -> None:
     if not ids:
         return
     expected_block = "\n".join(ids)
-    data_model = (ROOT / "DATA-MODEL.md").read_text(encoding="utf-8")
     design_system = (ROOT / "DESIGN-SYSTEM.md").read_text(encoding="utf-8")
-    if expected_block not in data_model:
-        fail(errors, "DATA-MODEL.md: current theme id block does not match dashboard/src/types.ts")
     table_ids = re.findall(r"\| `([^`]+)` \|", design_system)
     missing = [theme for theme in ids if theme not in table_ids]
     extra = [theme for theme in table_ids if theme not in ids]

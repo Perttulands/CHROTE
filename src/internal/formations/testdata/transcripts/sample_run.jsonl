@@ -1,9 +1,0 @@
-{"type": "last-prompt", "sessionId": "5b1a0583-0000-4000-8000-000000000abc"}
-{"type": "mode", "sessionId": "5b1a0583-0000-4000-8000-000000000abc"}
-{"type": "permission-mode", "sessionId": "5b1a0583-0000-4000-8000-000000000abc"}
-{"type": "attachment", "cwd": "/workspace/demo", "sessionId": "5b1a0583-0000-4000-8000-000000000abc"}
-{"type": "file-history-snapshot"}
-{"type": "user", "cwd": "/workspace/demo", "sessionId": "5b1a0583-0000-4000-8000-000000000abc", "message": {"role": "user", "content": "Confirm you are a real agent and finish."}}
-{"type": "assistant", "cwd": "/workspace/demo", "sessionId": "5b1a0583-0000-4000-8000-000000000abc", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "internal reasoning that must not leak into captured output"}, {"type": "text", "text": "Working through the brief now."}]}}
-{"type": "system", "cwd": "/workspace/demo", "sessionId": "5b1a0583-0000-4000-8000-000000000abc", "content": "hook ran"}
-{"type": "assistant", "cwd": "/workspace/demo", "sessionId": "5b1a0583-0000-4000-8000-000000000abc", "message": {"role": "assistant", "content": "Done: no edits were needed; the routed payload is a short text value.\n\n```chrote-outputs\n{\n  \"port_01TESTPORT0000000000000001\": {\"text\": \"fixture-pass\"}\n}\n```\n\n<<<CHROTE-DONE run-id=run_01TESTCAPTURE000000000000001 status=ok artifact=none>>>"}}

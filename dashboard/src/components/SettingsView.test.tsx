@@ -159,17 +159,6 @@ describe('SettingsView terminal launch users', () => {
     expect(updateSettings).toHaveBeenCalledWith({ hideScrollbar: false })
   })
 
-  it('persists the Formations text size preset from Appearance settings', () => {
-    const updateSettings = vi.fn()
-    mockUseSession.mockReturnValue(sessionReturn(updateSettings))
-
-    render(<SettingsView />)
-
-    expect(screen.getByTestId('formations-textsize-default')).toHaveClass('selected')
-    fireEvent.click(screen.getByTestId('formations-textsize-large'))
-    expect(updateSettings).toHaveBeenCalledWith({ formationsTextSize: 'large' })
-  })
-
   it('keeps bulk session destruction in advanced Settings', () => {
     const updateSettings = vi.fn()
     mockUseSession.mockReturnValue(sessionReturn(updateSettings, {

@@ -74,9 +74,8 @@ Formations is how delegated work actually gets done here. In business terms:
    merged change, a post, a document — with provenance: which run produced it
    and which gates it passed. Actually shipping it stays your call.
 
-The specs behind this live in [FORMATIONS.md](FORMATIONS.md) (the run model),
-[ARCHON.md](ARCHON.md) (the CLI agents author with), and
-[DATA-MODEL.md](DATA-MODEL.md) (persistence and event formats).
+The extracted experiment and its specifications live in
+[chrote-agent-formations](https://github.com/Perttulands/chrote-agent-formations).
 
 ## What is on `main`
 

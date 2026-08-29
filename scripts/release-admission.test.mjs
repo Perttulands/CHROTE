@@ -59,7 +59,6 @@ esac
 
 const successfulChecks = [
   'quality',
-  'formations-browser',
   'built-server-contract',
 ].map((name) => ({ name, head_sha: releaseCommit, conclusion: 'success' }))
 
@@ -80,12 +79,12 @@ test('release admission rejects an older ancestor tag even when every exact-SHA 
 test('release admission rejects an exact-main tag without every successful exact-SHA job', async () => {
   const result = await runAdmission({
     ancestor: true,
-    checks: successfulChecks.filter(({ name }) => name !== 'formations-browser'),
+    checks: successfulChecks.filter(({ name }) => name !== 'built-server-contract'),
     main: releaseCommit,
   })
 
   assert.notEqual(result.status, 0)
-  assert.match(result.stderr, /CI job formations-browser has no successful check run/)
+  assert.match(result.stderr, /CI job built-server-contract has no successful check run/)
 })
 
 test('release admission accepts an exact-main tag with all successful exact-SHA jobs', async () => {

@@ -28,14 +28,10 @@ When it conflicts with the PRD or an active source-truth spec, fix the README.
 | Spec | Owns |
 | --- | --- |
 | [`PRD.md`](../PRD.md) | Current product, shipped views, operator outcomes, non-goals, and roadmap boundary |
-| [`FORMATIONS.md`](../FORMATIONS.md) | Unreleased experimental Formation and mission model, ports, gates, runs, and execution environments |
-| [`ARCHON.md`](../ARCHON.md) | Unreleased experimental Archon CLI and shared-storage contract |
-| [`DATA-MODEL.md`](../DATA-MODEL.md) | Durable data, ids, revisions, ledgers, and browser-state boundary |
 | [`DESIGN-SYSTEM.md`](../DESIGN-SYSTEM.md) | Dashboard visual and interaction principles and theme ids |
 | [`SECURITY.md`](../SECURITY.md) | Public network, identity, filesystem, terminal, and secret-handling boundary |
 
-The four machine-frontmattered specs are `FORMATIONS.md`, `ARCHON.md`,
-`DATA-MODEL.md`, and `DESIGN-SYSTEM.md`. They carry
+`DESIGN-SYSTEM.md` is the machine-frontmattered spec. It carries
 `authority: source-of-truth` and `enforced_by: scripts/doc-lint.py`.
 
 `PRD.md` is product-level authority and is linted for its stable shipped-view
@@ -77,8 +73,6 @@ The following are useful context but are not current product authority:
 
 - [`docs/plans/`](plans/) — implementation plans;
 - [`docs/archive/`](archive/) — retired or historical material;
-- [`Perttus_vision_for_agent_orchestration/spec/`](../Perttus_vision_for_agent_orchestration/spec/) — active design reference packet where still cited by Formations specs;
-- `Perttus_vision_for_agent_orchestration/archive/` — superseded exploration;
 - `docs/gascity-*` — evaluation material, not a hidden runtime dependency.
 
 If historical text conflicts with an active source-truth spec, the active spec

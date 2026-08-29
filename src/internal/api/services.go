@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/chrote/server/internal/core"
-	"github.com/chrote/server/internal/formations"
 )
 
 const (
@@ -117,7 +116,7 @@ func (h *ServicesHandler) RegisterRoutes(mux *http.ServeMux) {
 // Catalog handles GET /api/services.
 func (h *ServicesHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 	core.WriteSuccess(w, ServicesCatalogResponse{
-		Capabilities: []string{formations.RuntimeAuthorityGuardCapabilityV1},
+		Capabilities: []string{},
 		Services: []ServiceStatus{
 			{
 				ID:         "tts",
