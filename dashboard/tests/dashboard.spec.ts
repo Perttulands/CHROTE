@@ -111,10 +111,13 @@ test.describe('Arena Dashboard', () => {
           contentType: 'application/json',
           body: JSON.stringify({
             isDir: true,
-            items: [{ name: 'readme.txt', path: '/readme.txt', isDir: false, size: 12, modified: '2026-07-13T00:00:00Z', type: 'text/plain' }],
+            items: [{ name: 'README.md', path: '/README.md', isDir: false, size: 12, modified: '2026-07-13T00:00:00Z', type: 'text/markdown' }],
           }),
         })
       })
+      await page.evaluate(() => localStorage.setItem('chrote-files-persist-tab-state', '0'))
+      await page.reload()
+      await openSessionsSidecar(page)
       await expect(page.locator('.session-panel')).toHaveClass(/sidecar-pinned/)
       await expect(page.locator('.terminal-files-panel')).toHaveCount(0)
 
@@ -128,9 +131,10 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.session-panel')).toHaveClass(/sidecar-pinned/)
       await expect(files).toHaveClass(/sidecar-pinned/)
 
-      await page.getByRole('treeitem', { name: /File readme\.txt/ }).click()
-      const peek = page.getByRole('dialog', { name: /File Peek: readme\.txt/ })
+      await page.getByRole('treeitem', { name: /File README\.md/ }).click()
+      const peek = page.getByRole('dialog', { name: /File Peek: README\.md/ })
       await expect(peek).toBeVisible()
+      await expect(peek.getByRole('article', { name: 'Markdown preview for README.md' })).toHaveCSS('padding', '14px 18px')
       await expect(page.locator('.file-peek-overlay')).toHaveCount(0)
       await page.getByRole('button', { name: 'Close file Peek' }).click()
       await expect(peek).toHaveCount(0)

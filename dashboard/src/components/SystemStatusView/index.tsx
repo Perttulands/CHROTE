@@ -778,3 +778,4 @@ function SystemStatusView({ active = true }: { active?: boolean }) {
 }
 
 export default SystemStatusView
+import './SystemStatusView.css'

@@ -97,7 +97,7 @@ vi.mock('./IframePool', () => ({
 }))
 
 const testDir = dirname(fileURLToPath(import.meta.url))
-const terminalCss = () => readFileSync(resolve(testDir, '../styles/terminal.css'), 'utf8')
+const terminalCss = () => readFileSync(resolve(testDir, './TerminalWorkspaceDock.css'), 'utf8')
 
 function dispatchContextMenu(target: Element) {
   const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 350, clientY: 230 })

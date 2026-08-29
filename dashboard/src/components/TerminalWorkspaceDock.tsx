@@ -237,3 +237,4 @@ function TerminalWorkspaceDock({
 // Memoized so unrelated App state changes do not reconcile the terminal subtree.
 // Shared Sessions presentation changes deliberately reach every mounted dock.
 export default memo(TerminalWorkspaceDock)
+import './TerminalWorkspaceDock.css'

@@ -155,6 +155,9 @@ test.describe('Filebrowser Navigation', () => {
   })
 
   test('should navigate into folder on double-click', async ({ page }) => {
+    await expect(page.getByRole('button', { name: 'Back' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Forward' })).toBeDisabled()
+
     await page.dblclick('.fb-row:has-text("code"), .fb-grid-item:has-text("code")')
     await expect(page.locator('.fb-breadcrumb-item:has-text("code")')).toBeVisible()
     await expect(page.locator('.fb-filename:has-text("src"), .fb-grid-name:has-text("src")')).toBeVisible()

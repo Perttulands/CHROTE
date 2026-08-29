@@ -86,6 +86,29 @@ export interface ContextMenuState {
   item: FileItem | null
 }
 
+export type SortKey = 'name' | 'size' | 'modified'
+export type SortDir = 'asc' | 'desc'
+export type ViewMode = 'list' | 'grid'
+export type CreateKind = 'file' | 'folder'
+
+export interface FilesViewProps {
+  navigateRequest?: { path: string; nonce: number } | null
+  onSendPath?: (path: string) => void
+  sendTargetLabel?: string | null
+}
+
+export interface TabContextMenuState {
+  x: number
+  y: number
+  path: string
+}
+
+export interface CreateIntent {
+  kind: CreateKind
+  parentPath: string
+  name: string
+}
+
 // ============================================
 // PATH UTILITIES
 // ============================================
