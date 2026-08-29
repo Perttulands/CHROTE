@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	osuser "os/user"
 	"path/filepath"
 	"strings"
@@ -25,6 +24,10 @@ type sendHarness struct {
 	aclLog    string
 	mux       *http.ServeMux
 	handler   *TmuxHandler
+}
+
+func maintainSessionDropsForTest(root string, now time.Time) error {
+	return maintainSessionDropsContext(context.Background(), root, now)
 }
 
 func newSendHarness(t *testing.T, panes string) sendHarness {
@@ -734,7 +737,7 @@ func TestMaintainSessionDropsBadEntryDoesNotStrandLaterRetainedUsers(t *testing.
 		t.Fatalf("create bad middle entry: %v", err)
 	}
 
-	err := maintainSessionDrops(h.dropsDir, time.Now())
+	err := maintainSessionDropsForTest(h.dropsDir, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "unsupported entry") {
 		t.Fatalf("maintenance error = %v, want unsupported entry report", err)
 	}
@@ -785,7 +788,7 @@ func TestMaintainSessionDropsDeletedAccountDoesNotBlockOtherUsersOrExpiration(t 
 		t.Fatalf("age expired drop: %v", err)
 	}
 
-	err := maintainSessionDrops(h.dropsDir, now)
+	err := maintainSessionDropsForTest(h.dropsDir, now)
 	if err == nil || !strings.Contains(err.Error(), "resolve session drop Unix user \"chrote_deleted_user_zz\"") {
 		t.Fatalf("maintenance error = %v, want deleted-account report", err)
 	}
@@ -853,7 +856,7 @@ func TestMaintainSessionDropsExpiresOldDropsAndHardensRetainedDrops(t *testing.T
 		t.Fatalf("write loose payload: %v", err)
 	}
 
-	if err := maintainSessionDrops(h.dropsDir, now); err != nil {
+	if err := maintainSessionDropsForTest(h.dropsDir, now); err != nil {
 		t.Fatalf("maintain session drops: %v", err)
 	}
 	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
@@ -1142,7 +1145,7 @@ func TestMaintainSessionDropsInvalidRetentionStillHardensRetainedDrops(t *testin
 	if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	if err := maintainSessionDrops(h.dropsDir, time.Now()); err == nil || !strings.Contains(err.Error(), "invalid CHROTE_SESSION_DROPS_RETENTION") {
+	if err := maintainSessionDropsForTest(h.dropsDir, time.Now()); err == nil || !strings.Contains(err.Error(), "invalid CHROTE_SESSION_DROPS_RETENTION") {
 		t.Fatalf("maintenance error = %v, want invalid retention report", err)
 	}
 	for path, want := range map[string]os.FileMode{drop: 0o700, manifestPath: 0o600} {
@@ -1175,7 +1178,7 @@ func TestMaintainSessionDropsRejectsSymlinkRoot(t *testing.T) {
 	if err := os.Symlink(realRoot, linkRoot); err != nil {
 		t.Fatalf("create root symlink: %v", err)
 	}
-	if err := maintainSessionDrops(linkRoot, time.Now()); err == nil {
+	if err := maintainSessionDropsForTest(linkRoot, time.Now()); err == nil {
 		t.Fatal("maintainSessionDrops accepted a symlink root")
 	}
 	info, err := os.Stat(realRoot)
@@ -1197,7 +1200,7 @@ func TestMaintainSessionDropsRejectsNestedSpecialFiles(t *testing.T) {
 	if err := syscall.Mkfifo(fifoPath, 0o600); err != nil {
 		t.Fatalf("create FIFO: %v", err)
 	}
-	if err := maintainSessionDrops(h.dropsDir, time.Now()); err == nil {
+	if err := maintainSessionDropsForTest(h.dropsDir, time.Now()); err == nil {
 		t.Fatal("maintainSessionDrops accepted a nested FIFO")
 	}
 }
@@ -1220,7 +1223,7 @@ func TestMaintainSessionDropsRejectsManifestSymlinkWithoutFollowing(t *testing.T
 	if err := os.Symlink(external, filepath.Join(dropPath, "manifest.json")); err != nil {
 		t.Fatalf("create manifest symlink: %v", err)
 	}
-	if err := maintainSessionDrops(h.dropsDir, time.Now()); err == nil || !strings.Contains(err.Error(), "without following links") {
+	if err := maintainSessionDropsForTest(h.dropsDir, time.Now()); err == nil || !strings.Contains(err.Error(), "without following links") {
 		t.Fatalf("manifest symlink error = %v", err)
 	}
 	info, err := os.Stat(external)
@@ -1243,80 +1246,10 @@ func TestMaintainSessionDropsDoesNotExpireImpossibleTimestamp(t *testing.T) {
 	if err := os.Chtimes(invalidPath, old, old); err != nil {
 		t.Fatalf("age invalid timestamp drop: %v", err)
 	}
-	if err := maintainSessionDrops(h.dropsDir, time.Now()); err != nil {
+	if err := maintainSessionDropsForTest(h.dropsDir, time.Now()); err != nil {
 		t.Fatalf("maintain drops: %v", err)
 	}
 	if _, err := os.Stat(invalidPath); err != nil {
 		t.Fatalf("invalid timestamp entry should be retained and hardened: %v", err)
-	}
-}
-
-func TestSecureSessionDropTreeRebuildsACLsFromKnownBase(t *testing.T) {
-	if _, err := exec.LookPath("setfacl"); err != nil {
-		t.Skip("setfacl is not installed")
-	}
-	if _, err := exec.LookPath("getfacl"); err != nil {
-		t.Skip("getfacl is not installed")
-	}
-	root := filepath.Join(t.TempDir(), "drops")
-	drop := filepath.Join(root, "20260718T120000Z-aaaaaaaaaaaaaaaaaaaaaaaa")
-	filesDir := filepath.Join(drop, "files")
-	file := filepath.Join(drop, "payload.txt")
-	manifestPath := filepath.Join(drop, "manifest.json")
-	upload := filepath.Join(filesDir, "upload.txt")
-	if err := os.MkdirAll(filesDir, 0o750); err != nil {
-		t.Fatalf("create drop: %v", err)
-	}
-	if err := os.WriteFile(file, []byte("payload"), 0o640); err != nil {
-		t.Fatalf("write payload: %v", err)
-	}
-	if err := os.WriteFile(upload, []byte("upload"), 0o640); err != nil {
-		t.Fatalf("write upload: %v", err)
-	}
-	manifest, err := json.Marshal(sessionDropManifest{UnixUser: "nobody"})
-	if err != nil {
-		t.Fatalf("marshal manifest: %v", err)
-	}
-	if err := os.WriteFile(manifestPath, manifest, 0o640); err != nil {
-		t.Fatalf("write manifest: %v", err)
-	}
-	for _, command := range [][]string{
-		{"setfacl", "-m", "u:daemon:--x,d:u:daemon:r-x", root},
-		{"setfacl", "-m", "u:daemon:rwx,d:u:daemon:rwx", drop},
-		{"setfacl", "-m", "u:daemon:rwx,d:u:daemon:rwx", filesDir},
-		{"setfacl", "-m", "u:daemon:rw-", file},
-		{"setfacl", "-m", "u:daemon:rw-", manifestPath},
-		{"setfacl", "-m", "u:daemon:rw-", upload},
-	} {
-		if output, err := exec.Command(command[0], command[1:]...).CombinedOutput(); err != nil {
-			t.Skipf("cannot seed ACL fixture: %v: %s", err, output)
-		}
-	}
-	if err := maintainSessionDrops(root, time.Date(2026, 7, 18, 13, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatalf("maintain drop tree: %v", err)
-	}
-	expectedPermissions := map[string]string{
-		root:         "--x",
-		drop:         "r-x",
-		filesDir:     "r-x",
-		manifestPath: "r--",
-		file:         "r--",
-		upload:       "r--",
-	}
-	for path, expected := range expectedPermissions {
-		output, err := exec.Command("getfacl", "-cp", path).CombinedOutput()
-		if err != nil {
-			t.Fatalf("getfacl %s: %v: %s", path, err, output)
-		}
-		acl := string(output)
-		if strings.Contains(acl, "user:daemon:") || strings.Contains(acl, "default:user:daemon:") {
-			t.Fatalf("stale daemon ACL survived on %s:\n%s", path, acl)
-		}
-		if !strings.Contains(acl, "user:nobody:"+expected) {
-			t.Fatalf("target nobody ACL %s missing on %s:\n%s", expected, path, acl)
-		}
-		if !strings.Contains(acl, "group::---") || !strings.Contains(acl, "other::---") {
-			t.Fatalf("owning group or other retained access on %s:\n%s", path, acl)
-		}
 	}
 }

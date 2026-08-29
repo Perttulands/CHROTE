@@ -185,13 +185,6 @@ func (tp *TerminalProxy) Stop() error {
 	return nil
 }
 
-// IsRunning returns whether ttyd is running
-func (tp *TerminalProxy) IsRunning() bool {
-	tp.mu.Lock()
-	defer tp.mu.Unlock()
-	return tp.running
-}
-
 // Handler returns an http.Handler that proxies to ttyd
 func (tp *TerminalProxy) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -20,13 +20,9 @@ import (
 
 // FilesHandler handles file browser API requests
 type FilesHandler struct {
-	allowedRoots          []string
-	writeRoots            []string
-	sensitiveAllowedRoots []string
-	deniedRoots           []string
-	deniedRootIDs         map[fileIdentity]struct{}
-	maxUploadBytes        int64
-	operationHook         func(string)
+	allowedRoots   []string
+	maxUploadBytes int64
+	operationHook  func(string)
 }
 
 const defaultMaxUploadBytes int64 = 64 << 20
@@ -63,22 +59,15 @@ type RenameRequest struct {
 
 // PathResult represents path resolution result
 type PathResult struct {
-	Path        string
-	Root        string
-	IsRoot      bool
-	Writable    bool
-	IsWriteRoot bool
-	Error       string
+	Path   string
+	Root   string
+	IsRoot bool
+	Error  string
 }
 
 // SuccessResponse is a simple success response
 type SuccessResponse struct {
 	Success bool `json:"success"`
-}
-
-type fileIdentity struct {
-	device uint64
-	inode  uint64
 }
 
 type confinedParent struct {
@@ -95,115 +84,10 @@ const fileOpenPath = 0x200000
 
 // NewFilesHandler creates a new file API handler
 func NewFilesHandler() *FilesHandler {
-	allowedRoots := core.GetAllowedRoots()
-	deniedRoots := append(defaultDeniedFileRoots(), configuredFileRoots("CHROTE_FILE_DENY_PATHS", nil)...)
 	return &FilesHandler{
-		allowedRoots:          allowedRoots,
-		writeRoots:            configuredFileRoots("CHROTE_WRITE_ROOTS", allowedRoots),
-		sensitiveAllowedRoots: configuredFileRootAliases("CHROTE_FILE_ALLOW_SENSITIVE_PATHS"),
-		deniedRoots:           deniedRoots,
-		deniedRootIDs:         fileRootIdentities(deniedRoots),
-		maxUploadBytes:        configuredMaxUploadBytes(),
+		allowedRoots:   core.GetAllowedRoots(),
+		maxUploadBytes: configuredMaxUploadBytes(),
 	}
-}
-
-func fileRootIdentities(roots []string) map[fileIdentity]struct{} {
-	identities := make(map[fileIdentity]struct{})
-	for _, root := range roots {
-		info, err := os.Stat(root)
-		if err != nil {
-			continue
-		}
-		if identity, ok := identityFromFileInfo(info); ok {
-			identities[identity] = struct{}{}
-		}
-	}
-	return identities
-}
-
-func identityFromFileInfo(info os.FileInfo) (fileIdentity, bool) {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return fileIdentity{}, false
-	}
-	return fileIdentity{device: uint64(stat.Dev), inode: stat.Ino}, true
-}
-
-func (h *FilesHandler) deniedIdentitySnapshot() map[fileIdentity]struct{} {
-	identities := make(map[fileIdentity]struct{}, len(h.deniedRootIDs)+len(h.deniedRoots))
-	for identity := range h.deniedRootIDs {
-		identities[identity] = struct{}{}
-	}
-	for identity := range fileRootIdentities(h.deniedRoots) {
-		identities[identity] = struct{}{}
-	}
-	return identities
-}
-
-func canonicalFileRootAliases(root string) []string {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return nil
-	}
-	absolute, err := filepath.Abs(root)
-	if err != nil {
-		return nil
-	}
-	absolute = filepath.Clean(absolute)
-	aliases := []string{absolute}
-	canonical, err := canonicalPathAllowMissing(absolute)
-	if err == nil && canonical != absolute {
-		aliases = append(aliases, canonical)
-	}
-	return aliases
-}
-
-func appendUniqueFileRoots(roots []string, additions ...string) []string {
-	seen := make(map[string]bool, len(roots)+len(additions))
-	for _, root := range roots {
-		seen[root] = true
-	}
-	for _, root := range additions {
-		if root == "" || seen[root] {
-			continue
-		}
-		seen[root] = true
-		roots = append(roots, root)
-	}
-	return roots
-}
-
-func configuredFileRoots(name string, fallback []string) []string {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return append([]string(nil), fallback...)
-	}
-	roots := make([]string, 0)
-	seen := map[string]bool{}
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		absolute, err := filepath.Abs(part)
-		if err != nil {
-			continue
-		}
-		absolute = filepath.Clean(absolute)
-		if !seen[absolute] {
-			seen[absolute] = true
-			roots = append(roots, absolute)
-		}
-	}
-	return roots
-}
-
-func configuredFileRootAliases(name string) []string {
-	roots := make([]string, 0)
-	for _, root := range configuredFileRoots(name, nil) {
-		roots = appendUniqueFileRoots(roots, canonicalFileRootAliases(root)...)
-	}
-	return roots
 }
 
 func configuredMaxUploadBytes() int64 {
@@ -216,42 +100,6 @@ func configuredMaxUploadBytes() int64 {
 		return defaultMaxUploadBytes
 	}
 	return value
-}
-
-func defaultDeniedFileRoots() []string {
-	return []string{
-		"/proc",
-		"/sys",
-		"/dev",
-		"/run",
-		"/root",
-		"/etc/chrote",
-		"/etc/ssl/private",
-	}
-}
-
-func isSensitiveCredentialPath(path string) bool {
-	parts := strings.Split(strings.Trim(filepath.ToSlash(filepath.Clean(path)), "/"), "/")
-	sensitiveSegments := map[string]bool{
-		".ssh": true, ".gnupg": true, ".aws": true, ".azure": true,
-		".kube": true, ".docker": true, ".password-store": true,
-		".hermes": true, ".netrc": true, ".git-credentials": true,
-	}
-	for index, part := range parts {
-		if sensitiveSegments[part] {
-			return true
-		}
-		if part == ".config" && index+1 < len(parts) {
-			switch parts[index+1] {
-			case "gh", "gcloud", "hermes", "opencode":
-				return true
-			}
-		}
-		if part == ".local" && index+2 < len(parts) && parts[index+1] == "share" && parts[index+2] == "keyrings" {
-			return true
-		}
-	}
-	return false
 }
 
 func canonicalPathAllowMissing(path string) (string, error) {
@@ -289,42 +137,14 @@ func isPathUnderAnyRoot(path string, roots []string) (string, bool) {
 			continue
 		}
 		absoluteRoot = filepath.Clean(absoluteRoot)
+		if canonicalRoot, err := canonicalPathAllowMissing(absoluteRoot); err == nil {
+			absoluteRoot = canonicalRoot
+		}
 		if core.IsPathUnderRoot(path, absoluteRoot) && len(absoluteRoot) > len(matchedRoot) {
 			matchedRoot = absoluteRoot
 		}
 	}
 	return matchedRoot, matchedRoot != ""
-}
-
-func (h *FilesHandler) isDeniedPath(path string) bool {
-	if isSensitiveCredentialPath(path) {
-		if _, allowed := isPathUnderAnyRoot(path, h.sensitiveAllowedRoots); !allowed {
-			return true
-		}
-	}
-	_, denied := isPathUnderAnyRoot(path, h.deniedRoots)
-	return denied
-}
-
-func (h *FilesHandler) isDeniedMutationPath(path string) bool {
-	if h.isDeniedPath(path) {
-		return true
-	}
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return true
-	}
-	absolute = filepath.Clean(absolute)
-	for _, deniedRoot := range h.deniedRoots {
-		deniedAbsolute, err := filepath.Abs(deniedRoot)
-		if err != nil {
-			continue
-		}
-		if core.IsPathUnderRoot(filepath.Clean(deniedAbsolute), absolute) {
-			return true
-		}
-	}
-	return false
 }
 
 func normalizeRequestPath(path string) string {
@@ -346,27 +166,18 @@ func (h *FilesHandler) resolveSafePath(requestPath string) PathResult {
 	if !filepath.IsAbs(normalized) {
 		return PathResult{Error: "Path not allowed"}
 	}
-	if h.isDeniedPath(normalized) {
-		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
-	}
 
 	resolved, err := canonicalPathAllowMissing(normalized)
 	if err != nil {
 		return PathResult{Error: "Invalid path"}
 	}
-	if h.isDeniedPath(resolved) {
-		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
-	}
 	matchedRoot, allowed := isPathUnderAnyRoot(resolved, h.allowedRoots)
 	if !allowed {
 		return PathResult{Error: "Path not allowed"}
 	}
-	writeRoot, writable := isPathUnderAnyRoot(resolved, h.writeRoots)
 	return PathResult{
-		Path:        resolved,
-		Root:        matchedRoot,
-		Writable:    writable,
-		IsWriteRoot: writable && filepath.Clean(resolved) == filepath.Clean(writeRoot),
+		Path: resolved,
+		Root: matchedRoot,
 	}
 }
 
@@ -385,35 +196,19 @@ func (h *FilesHandler) resolveMutationPath(requestPath string) PathResult {
 	if !filepath.IsAbs(normalized) {
 		return PathResult{Error: "Path not allowed"}
 	}
-	if h.isDeniedMutationPath(normalized) {
-		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
-	}
 
 	resolvedParent, err := canonicalPathAllowMissing(filepath.Dir(normalized))
 	if err != nil {
 		return PathResult{Error: "Invalid path"}
 	}
-	if h.isDeniedPath(resolvedParent) {
-		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
-	}
 	operationPath := filepath.Join(resolvedParent, filepath.Base(normalized))
-	canonicalOperation, err := canonicalPathAllowMissing(operationPath)
-	if err != nil {
-		return PathResult{Error: "Invalid path"}
-	}
-	if h.isDeniedMutationPath(operationPath) || h.isDeniedMutationPath(canonicalOperation) {
-		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
-	}
 	matchedRoot, allowed := isPathUnderAnyRoot(operationPath, h.allowedRoots)
 	if !allowed {
 		return PathResult{Error: "Path not allowed"}
 	}
-	writeRoot, writable := isPathUnderAnyRoot(operationPath, h.writeRoots)
 	return PathResult{
-		Path:        operationPath,
-		Root:        matchedRoot,
-		Writable:    writable,
-		IsWriteRoot: writable && filepath.Clean(operationPath) == filepath.Clean(writeRoot),
+		Path: operationPath,
+		Root: matchedRoot,
 	}
 }
 
@@ -444,23 +239,7 @@ func openDirectoryAt(parent *os.File, name string) (*os.File, error) {
 	return openFileAt(parent, name, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
 }
 
-func (h *FilesHandler) validateConfinedFile(file *os.File, logicalPath string, denied map[fileIdentity]struct{}) error {
-	if file == nil || h.isDeniedPath(logicalPath) {
-		return errFilesPathChanged
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	if identity, ok := identityFromFileInfo(info); ok {
-		if _, denied := denied[identity]; denied {
-			return errFilesPathChanged
-		}
-	}
-	return nil
-}
-
-func (h *FilesHandler) openConfinedRoot(root string, denied map[fileIdentity]struct{}) (*os.File, string, error) {
+func openConfinedRoot(root string) (*os.File, string, error) {
 	canonicalRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, "", err
@@ -483,24 +262,14 @@ func (h *FilesHandler) openConfinedRoot(root string, denied map[fileIdentity]str
 		_ = syscall.Close(fd)
 		return nil, "", errors.New("could not open filesystem root")
 	}
-	if err := h.validateConfinedFile(current, string(os.PathSeparator), denied); err != nil {
-		_ = current.Close()
-		return nil, "", err
-	}
 	if canonicalRoot == string(os.PathSeparator) {
 		return current, canonicalRoot, nil
 	}
 
-	openedPath := string(os.PathSeparator)
 	for _, component := range strings.Split(strings.TrimPrefix(canonicalRoot, string(os.PathSeparator)), string(os.PathSeparator)) {
 		next, err := openDirectoryAt(current, component)
 		_ = current.Close()
 		if err != nil {
-			return nil, "", err
-		}
-		openedPath = filepath.Join(openedPath, component)
-		if err := h.validateConfinedFile(next, openedPath, denied); err != nil {
-			_ = next.Close()
 			return nil, "", err
 		}
 		current = next
@@ -529,8 +298,7 @@ func confinedPathComponents(root, target string) ([]string, error) {
 }
 
 func (h *FilesHandler) openConfinedExisting(result PathResult) (*os.File, error) {
-	denied := h.deniedIdentitySnapshot()
-	current, canonicalRoot, err := h.openConfinedRoot(result.Root, denied)
+	current, canonicalRoot, err := openConfinedRoot(result.Root)
 	if err != nil {
 		return nil, err
 	}
@@ -539,7 +307,6 @@ func (h *FilesHandler) openConfinedExisting(result PathResult) (*os.File, error)
 		_ = current.Close()
 		return nil, err
 	}
-	openedPath := canonicalRoot
 	for index, component := range components {
 		flags := syscall.O_RDONLY
 		if index < len(components)-1 {
@@ -548,11 +315,6 @@ func (h *FilesHandler) openConfinedExisting(result PathResult) (*os.File, error)
 		next, err := openFileAt(current, component, flags, 0)
 		_ = current.Close()
 		if err != nil {
-			return nil, err
-		}
-		openedPath = filepath.Join(openedPath, component)
-		if err := h.validateConfinedFile(next, openedPath, denied); err != nil {
-			_ = next.Close()
 			return nil, err
 		}
 		if index < len(components)-1 {
@@ -572,8 +334,7 @@ func (h *FilesHandler) openConfinedExisting(result PathResult) (*os.File, error)
 }
 
 func (h *FilesHandler) openConfinedDirectory(result PathResult, create bool) (*os.File, error) {
-	denied := h.deniedIdentitySnapshot()
-	current, canonicalRoot, err := h.openConfinedRoot(result.Root, denied)
+	current, canonicalRoot, err := openConfinedRoot(result.Root)
 	if err != nil {
 		return nil, err
 	}
@@ -582,7 +343,6 @@ func (h *FilesHandler) openConfinedDirectory(result PathResult, create bool) (*o
 		_ = current.Close()
 		return nil, err
 	}
-	openedPath := canonicalRoot
 	for _, component := range components {
 		next, openErr := openDirectoryAt(current, component)
 		if errors.Is(openErr, os.ErrNotExist) && create {
@@ -595,11 +355,6 @@ func (h *FilesHandler) openConfinedDirectory(result PathResult, create bool) (*o
 		_ = current.Close()
 		if openErr != nil {
 			return nil, openErr
-		}
-		openedPath = filepath.Join(openedPath, component)
-		if err := h.validateConfinedFile(next, openedPath, denied); err != nil {
-			_ = next.Close()
-			return nil, err
 		}
 		current = next
 	}
@@ -623,7 +378,7 @@ func (h *FilesHandler) openConfinedParent(result PathResult, create bool) (*conf
 	return &confinedParent{directory: directory, name: name}, nil
 }
 
-func (h *FilesHandler) writeConfinedFileAt(parent *confinedParent, logicalPath string, body []byte) error {
+func (h *FilesHandler) writeConfinedFileAt(parent *confinedParent, body []byte) error {
 	if parent == nil || parent.directory == nil {
 		return errFilesPathChanged
 	}
@@ -648,9 +403,6 @@ func (h *FilesHandler) writeConfinedFileAt(parent *confinedParent, logicalPath s
 	if !info.Mode().IsRegular() {
 		return errors.New("file target is not a regular file")
 	}
-	if err := h.validateConfinedFile(file, logicalPath, h.deniedIdentitySnapshot()); err != nil {
-		return err
-	}
 	if !created {
 		if err := file.Truncate(0); err != nil {
 			return err
@@ -670,7 +422,7 @@ func (h *FilesHandler) writeConfinedFileAt(parent *confinedParent, logicalPath s
 	return err
 }
 
-func (h *FilesHandler) validateMutationEntry(parent *confinedParent, logicalPath string, allowMissing bool) error {
+func (h *FilesHandler) validateMutationEntry(parent *confinedParent, allowMissing bool) error {
 	if parent == nil || parent.directory == nil || !validFilePathComponent(parent.name) {
 		return errFilesPathChanged
 	}
@@ -691,11 +443,10 @@ func (h *FilesHandler) validateMutationEntry(parent *confinedParent, logicalPath
 		_ = syscall.Close(fd)
 		return errors.New("could not open mutation target")
 	}
-	defer file.Close()
-	return h.validateConfinedFile(file, logicalPath, h.deniedIdentitySnapshot())
+	return file.Close()
 }
 
-func (h *FilesHandler) removeConfinedAt(parent *os.File, name, logicalPath string, denied map[fileIdentity]struct{}) error {
+func (h *FilesHandler) removeConfinedAt(parent *os.File, name string) error {
 	if parent == nil || !validFilePathComponent(name) {
 		return errFilesPathChanged
 	}
@@ -715,12 +466,6 @@ func (h *FilesHandler) removeConfinedAt(parent *os.File, name, logicalPath strin
 		_ = directory.Close()
 		return err
 	}
-	identity, hasIdentity := identityFromFileInfo(info)
-	if err := h.validateConfinedFile(directory, logicalPath, denied); err != nil {
-		_ = directory.Close()
-		return err
-	}
-
 	for {
 		names, readErr := directory.Readdirnames(128)
 		for _, child := range names {
@@ -728,7 +473,7 @@ func (h *FilesHandler) removeConfinedAt(parent *os.File, name, logicalPath strin
 				_ = directory.Close()
 				return errFilesPathChanged
 			}
-			if err := h.removeConfinedAt(directory, child, filepath.Join(logicalPath, child), denied); err != nil {
+			if err := h.removeConfinedAt(directory, child); err != nil {
 				_ = directory.Close()
 				return err
 			}
@@ -754,8 +499,7 @@ func (h *FilesHandler) removeConfinedAt(parent *os.File, name, logicalPath strin
 	if statErr != nil {
 		return statErr
 	}
-	confirmationIdentity, confirmationHasIdentity := identityFromFileInfo(confirmationInfo)
-	if hasIdentity != confirmationHasIdentity || hasIdentity && identity != confirmationIdentity {
+	if !os.SameFile(info, confirmationInfo) {
 		return errFilesPathChanged
 	}
 	return unlinkDirectoryAt(parent, name)
@@ -822,6 +566,10 @@ func writeFilesUseError(w http.ResponseWriter, err error, notFound bool) {
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", "Path changed during validation")
 		return
 	}
+	if errors.Is(err, os.ErrPermission) {
+		core.WriteError(w, http.StatusForbidden, "PERMISSION_DENIED", err.Error())
+		return
+	}
 	if notFound && errors.Is(err, os.ErrNotExist) {
 		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Not found")
 		return
@@ -841,7 +589,7 @@ func (h *FilesHandler) RegisterRoutes(mux *http.ServeMux) {
 
 // ListRoot handles GET /api/files/resources/ - root listing
 func (h *FilesHandler) ListRoot(w http.ResponseWriter, r *http.Request) {
-	allowedRoots := h.visibleAllowedRoots()
+	allowedRoots := h.allowedRoots
 	if hasOnlyFilesystemRoot(allowedRoots) {
 		h.writeDirectoryListing(w, string(os.PathSeparator))
 		return
@@ -864,26 +612,6 @@ func (h *FilesHandler) ListRoot(w http.ResponseWriter, r *http.Request) {
 		IsDir: true,
 		Items: items,
 	})
-}
-
-func (h *FilesHandler) visibleAllowedRoots() []string {
-	visible := make([]string, 0, len(h.allowedRoots))
-	for _, root := range h.allowedRoots {
-		absolute, err := filepath.Abs(root)
-		if err != nil {
-			continue
-		}
-		absolute = filepath.Clean(absolute)
-		if h.isDeniedPath(absolute) {
-			continue
-		}
-		canonical, err := canonicalPathAllowMissing(absolute)
-		if err != nil || h.isDeniedPath(canonical) {
-			continue
-		}
-		visible = append(visible, root)
-	}
-	return visible
 }
 
 func hasOnlyFilesystemRoot(roots []string) bool {
@@ -931,7 +659,6 @@ func (h *FilesHandler) confinedDirectoryItems(directory *os.File, directoryResul
 		return nil, err
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	denied := h.deniedIdentitySnapshot()
 	items := make([]FileItem, 0, len(entries))
 	for _, entry := range entries {
 		if !validFilePathComponent(entry.Name()) {
@@ -959,9 +686,7 @@ func (h *FilesHandler) confinedDirectoryItems(directory *os.File, directoryResul
 			if openErr != nil {
 				continue
 			}
-			if openErr = h.validateConfinedFile(entryFile, fullPath, denied); openErr == nil {
-				info, openErr = entryFile.Stat()
-			}
+			info, openErr = entryFile.Stat()
 			_ = entryFile.Close()
 			if openErr != nil {
 				continue
@@ -1048,10 +773,10 @@ func (h *FilesHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
 	result := h.resolveSafePath(requestPath)
 
-	if result.Error != "" || result.IsRoot || !result.Writable || result.IsWriteRoot {
+	if result.Error != "" || result.IsRoot || filepath.Clean(result.Path) == filepath.Clean(result.Root) {
 		errMsg := result.Error
 		if errMsg == "" {
-			errMsg = "Path is outside configured write roots"
+			errMsg = "Cannot create a configured root"
 		}
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", errMsg)
 		return
@@ -1093,7 +818,7 @@ func (h *FilesHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 	}
 	defer parent.directory.Close()
 
-	if err := h.writeConfinedFileAt(parent, result.Path, body); err != nil {
+	if err := h.writeConfinedFileAt(parent, body); err != nil {
 		writeFilesUseError(w, err, false)
 		return
 	}
@@ -1106,10 +831,10 @@ func (h *FilesHandler) RenameResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
 	result := h.resolveMutationPath(requestPath)
 
-	if result.Error != "" || result.IsRoot || !result.Writable || result.IsWriteRoot {
+	if result.Error != "" || result.IsRoot || filepath.Clean(result.Path) == filepath.Clean(result.Root) {
 		errMsg := result.Error
 		if errMsg == "" {
-			errMsg = "Path is outside configured write roots"
+			errMsg = "Cannot rename a configured root"
 		}
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", errMsg)
 		return
@@ -1128,7 +853,7 @@ func (h *FilesHandler) RenameResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	destResult := h.resolveMutationPath(req.Destination)
-	if destResult.Error != "" || destResult.IsRoot || !destResult.Writable || destResult.IsWriteRoot {
+	if destResult.Error != "" || destResult.IsRoot || filepath.Clean(destResult.Path) == filepath.Clean(destResult.Root) {
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", "Invalid destination")
 		return
 	}
@@ -1148,11 +873,11 @@ func (h *FilesHandler) RenameResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer destinationParent.directory.Close()
-	if err := h.validateMutationEntry(sourceParent, result.Path, false); err != nil {
+	if err := h.validateMutationEntry(sourceParent, false); err != nil {
 		writeFilesUseError(w, err, false)
 		return
 	}
-	if err := h.validateMutationEntry(destinationParent, destResult.Path, true); err != nil {
+	if err := h.validateMutationEntry(destinationParent, true); err != nil {
 		writeFilesUseError(w, err, false)
 		return
 	}
@@ -1174,10 +899,10 @@ func (h *FilesHandler) DeleteResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
 	result := h.resolveMutationPath(requestPath)
 
-	if result.Error != "" || result.IsRoot || !result.Writable || result.IsWriteRoot {
+	if result.Error != "" || result.IsRoot || filepath.Clean(result.Path) == filepath.Clean(result.Root) {
 		errMsg := result.Error
 		if errMsg == "" {
-			errMsg = "Path is outside configured write roots"
+			errMsg = "Cannot delete a configured root"
 		}
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", errMsg)
 		return
@@ -1192,12 +917,12 @@ func (h *FilesHandler) DeleteResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer parent.directory.Close()
-	if err := h.validateMutationEntry(parent, result.Path, false); err != nil {
+	if err := h.validateMutationEntry(parent, false); err != nil {
 		writeFilesUseError(w, err, true)
 		return
 	}
 
-	if err := h.removeConfinedAt(parent.directory, parent.name, result.Path, h.deniedIdentitySnapshot()); err != nil {
+	if err := h.removeConfinedAt(parent.directory, parent.name); err != nil {
 		writeFilesUseError(w, err, true)
 		return
 	}

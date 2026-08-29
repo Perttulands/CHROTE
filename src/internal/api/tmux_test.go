@@ -986,34 +986,6 @@ func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 	}
 }
 
-func installArgvRecordingTmux(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	argsPath := filepath.Join(dir, "tmux-argv.txt")
-	scriptPath := filepath.Join(dir, "tmux")
-	markerPath := filepath.Join(dir, "tmux-session-marker.txt")
-	script := `#!/bin/sh
-for arg in "$@"; do
-  printf '%s\n' "$arg" >> "$TMUX_ARGS_FILE"
-done
-printf '%s\n' '---' >> "$TMUX_ARGS_FILE"
-case "$*" in
-  *list-sessions*) printf '%s\n' 'no server running on /tmp/tmux-a' >&2; exit 1 ;;
-  *new-session*) printf '$42\n' ;;
-esac
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0o700); err != nil {
-		t.Fatalf("write fake tmux: %v", err)
-	}
-	if err := os.WriteFile(argsPath, nil, 0o600); err != nil {
-		t.Fatalf("write args log: %v", err)
-	}
-	t.Setenv("TMUX_ARGS_FILE", argsPath)
-	t.Setenv("TMUX_SESSION_MARKER_FILE", markerPath)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return argsPath
-}
-
 func readArgvRecordingTmuxCalls(t *testing.T, argsPath string) [][]string {
 	t.Helper()
 	raw, err := os.ReadFile(argsPath)
@@ -1053,15 +1025,6 @@ func equalArgvCalls(a, b [][]string) bool {
 		}
 	}
 	return true
-}
-
-func containsArgvCall(calls [][]string, want []string) bool {
-	for _, call := range calls {
-		if strings.Join(call, "\x00") == strings.Join(want, "\x00") {
-			return true
-		}
-	}
-	return false
 }
 
 func containsArg(call []string, want string) bool {

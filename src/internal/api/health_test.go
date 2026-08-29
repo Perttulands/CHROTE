@@ -8,7 +8,7 @@ import (
 )
 
 func TestHealthHandler_Health(t *testing.T) {
-	handler := NewHealthHandler()
+	handler := NewHealthHandlerWithBuildInfo("2.0.0-alpha.2-dev", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	recorder := httptest.NewRecorder()
@@ -60,7 +60,7 @@ func TestHealthHandler_Health_ReportsBuildCommit(t *testing.T) {
 }
 
 func TestHealthHandler_RegisterRoutes(t *testing.T) {
-	handler := NewHealthHandler()
+	handler := NewHealthHandlerWithBuildInfo("2.0.0-alpha.2-dev", "")
 	mux := http.NewServeMux()
 
 	// This should not panic

@@ -519,12 +519,6 @@ func uniqueDropFileName(used map[string]int, name string) string {
 	}
 }
 
-func isTmuxNoServerError(errStr string) bool {
-	lower := strings.ToLower(errStr)
-	return strings.Contains(lower, "no server running on ") ||
-		(strings.Contains(lower, "error connecting to ") && strings.Contains(lower, "(no such file or directory)"))
-}
-
 func effectiveTmuxSocket(socket string) string {
 	if socket = strings.TrimSpace(socket); socket != "" {
 		return filepath.Clean(socket)
@@ -542,16 +536,6 @@ func isTmuxNoServerErrorForSocket(errStr, socket string) bool {
 
 func isTmuxDuplicateSessionError(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(tmuxErrorDiagnostic(err)), "duplicate session")
-}
-
-func appendSessionResponseError(existing, next string) string {
-	if strings.TrimSpace(existing) == "" {
-		return next
-	}
-	if strings.TrimSpace(next) == "" {
-		return existing
-	}
-	return existing + "; " + next
 }
 
 const tmuxCommandOutputLimit = 1 << 20
@@ -695,18 +679,7 @@ func parseSessionsOutput(output string, unixUser string) []core.Session {
 		} else if len(parts) == 5 {
 			sessionID, name, windowsText, attachedText, cwd = parts[0], parts[1], parts[2], parts[3], parts[4]
 		} else {
-			parts := strings.Split(line, ":")
-			if len(parts) < 3 {
-				continue
-			}
-			nameIndex := 0
-			if len(parts) >= 4 {
-				sessionID = parts[0]
-				nameIndex = 1
-			}
-			name = parts[nameIndex]
-			windowsText = parts[nameIndex+1]
-			attachedText = parts[nameIndex+2]
+			continue
 		}
 		if isReservedInternalSessionName(name) {
 			continue
@@ -785,9 +758,6 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		TerminalUsers: advertisedTerminalUsers(),
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 	}
-	var multiUserError string
-	multiUserPartialCandidate := false
-
 	if useConfiguredUsers {
 		var errors []string
 		successfulUsers := 0
@@ -807,9 +777,8 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			response.Sessions = append(response.Sessions, sessions...)
 		}
 		if len(errors) > 0 {
-			multiUserError = strings.Join(errors, "; ")
-			response.Error = appendSessionResponseError(response.Error, multiUserError)
-			multiUserPartialCandidate = successfulUsers > 0
+			response.Error = strings.Join(errors, "; ")
+			response.Partial = successfulUsers > 0
 		}
 	} else {
 		target, targetErr := targetFromRequest(h, r, "")
@@ -826,7 +795,6 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 
 	core.SortSessions(response.Sessions)
 	response.Grouped = core.GroupSessions(response.Sessions)
-	response.Partial = multiUserPartialCandidate && response.Error == multiUserError
 
 	// Update cache
 	if useCache {
@@ -1811,10 +1779,6 @@ func removeSessionDropTreeContext(ctx context.Context, root string) error {
 		}
 	}
 	return nil
-}
-
-func maintainSessionDrops(dropRoot string, now time.Time) error {
-	return maintainSessionDropsContext(context.Background(), dropRoot, now)
 }
 
 func maintainSessionDropsContext(ctx context.Context, dropRoot string, now time.Time) error {

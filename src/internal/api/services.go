@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -77,16 +76,6 @@ func NewServicesHandler(config ServiceConfig) *ServicesHandler {
 		streamClient:     &http.Client{},
 		contextAskClient: &http.Client{Timeout: 60 * time.Second},
 	}
-}
-
-// NewServicesHandlerWithClient creates a Services handler with a testable HTTP client.
-func NewServicesHandlerWithClient(config ServiceConfig, client *http.Client) *ServicesHandler {
-	handler := NewServicesHandler(config)
-	if client != nil {
-		handler.client = client
-		handler.streamClient = clientWithoutTimeout(client)
-	}
-	return handler
 }
 
 // RegisterRoutes registers service adapter routes.
@@ -360,10 +349,6 @@ func (h *ServicesHandler) proxySSE(w http.ResponseWriter, r *http.Request, clien
 	copyAndFlush(w, resp.Body, controller)
 }
 
-func (h *ServicesHandler) forward(r *http.Request, baseURL, path, bearerToken string) (*http.Response, error) {
-	return h.forwardWithClient(r, h.client, baseURL, path, bearerToken)
-}
-
 func (h *ServicesHandler) forwardWithClient(r *http.Request, client *http.Client, baseURL, path, bearerToken string) (*http.Response, error) {
 	target := baseURL + path
 	if r.URL.RawQuery != "" {
@@ -383,12 +368,6 @@ func (h *ServicesHandler) forwardWithClient(r *http.Request, client *http.Client
 		req.Header.Set("Authorization", "Bearer "+bearerToken)
 	}
 	return client.Do(req)
-}
-
-func clientWithoutTimeout(client *http.Client) *http.Client {
-	clone := *client
-	clone.Timeout = 0
-	return &clone
 }
 
 func writeForwardError(w http.ResponseWriter, err error) {
@@ -486,8 +465,4 @@ func envURL(name, fallback string) string {
 
 func cleanBaseURL(value string) string {
 	return strings.TrimRight(strings.TrimSpace(value), "/")
-}
-
-func (c ServiceConfig) String() string {
-	return fmt.Sprintf("tts=%s context=%s contextTokenConfigured=%t", c.TTSBaseURL, c.ContextBaseURL, c.ContextToken != "")
 }

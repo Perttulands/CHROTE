@@ -244,15 +244,6 @@ func (h *SystemHandler) StartHistorySampler(ctx context.Context, interval time.D
 	return cancel
 }
 
-func (h *SystemHandler) StopHistorySampler() {
-	h.samplerMu.Lock()
-	defer h.samplerMu.Unlock()
-	if h.stopSampler != nil {
-		h.stopSampler()
-		h.stopSampler = nil
-	}
-}
-
 func (h *SystemHandler) recordHistorySnapshot(ctx context.Context) {
 	status, err := h.collector.Snapshot(ctx)
 	if err != nil {

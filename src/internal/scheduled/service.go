@@ -115,11 +115,6 @@ func NewService(store *Store, runner Runner, options ServiceOptions) *Service {
 	}
 }
 
-// Store returns the underlying durable store.
-func (s *Service) Store() *Store {
-	return s.store
-}
-
 // List returns all scheduled tasks.
 func (s *Service) List() ([]Task, error) {
 	return s.store.List()

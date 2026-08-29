@@ -17,7 +17,7 @@ func TestIntegration_FullAPIRouting(t *testing.T) {
 	tmuxHandler := NewTmuxHandler()
 	tmuxHandler.RegisterRoutes(mux)
 
-	healthHandler := NewHealthHandler()
+	healthHandler := NewHealthHandlerWithBuildInfo("2.0.0-alpha.2-dev", "")
 	healthHandler.RegisterRoutes(mux)
 
 	beadsHandler := NewBeadsHandler()
@@ -102,7 +102,7 @@ func TestIntegration_FullAPIRouting(t *testing.T) {
 func TestIntegration_APIResponseFormat(t *testing.T) {
 	mux := http.NewServeMux()
 
-	healthHandler := NewHealthHandler()
+	healthHandler := NewHealthHandlerWithBuildInfo("2.0.0-alpha.2-dev", "")
 	healthHandler.RegisterRoutes(mux)
 
 	tmuxHandler := NewTmuxHandler()

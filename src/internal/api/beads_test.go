@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
-
-	"github.com/chrote/server/internal/core"
 )
 
 func makeValidBeadsWorkspace(t *testing.T, projectPath string) {
@@ -31,13 +31,50 @@ func makePartialBeadsDirectory(t *testing.T, projectPath string) {
 	}
 }
 
+const beadsPermissionHelperEnv = "CHROTE_BEADS_PERMISSION_HELPER"
+
+func makeBeadsPermissionProject(t *testing.T) string {
+	t.Helper()
+	project, err := os.MkdirTemp("", "chrote-beads-permission-")
+	if err != nil {
+		t.Fatalf("create permission fixture: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(project) })
+	if err := os.Chmod(project, 0o755); err != nil {
+		t.Fatalf("make permission fixture searchable: %v", err)
+	}
+	makeValidBeadsWorkspace(t, project)
+	return project
+}
+
+func runBeadsPermissionSubprocess(t *testing.T, project string) bool {
+	t.Helper()
+	if os.Getenv(beadsPermissionHelperEnv) == "1" {
+		return true
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$")
+	cmd.Env = append(os.Environ(),
+		beadsPermissionHelperEnv+"=1",
+		"CHROTE_BEADS_PERMISSION_PROJECT="+project,
+		"CHROTE_ROOTS="+project,
+		"CHROTE_BEADS_WORKSPACES=",
+		"CHROTE_BEADS_AUTO_DISCOVER=0",
+	)
+	if os.Geteuid() == 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534}}
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("unprivileged Beads permission probe: %v\n%s", err, output)
+	}
+	return false
+}
+
 func resetBeadsTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("CHROTE_ROOTS", "")
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
 	t.Setenv("CHROTE_BEADS_AUTO_DISCOVER", "")
 	t.Setenv("CHROTE_BD_COMMAND", "")
-	core.ResetConfigForTesting()
 }
 
 func makeFakeBdCommand(t *testing.T, output string) (string, string) {
@@ -92,7 +129,6 @@ func TestBeadsHandler_ListProjectsSkipsPartialBeadsDirectories(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("CHROTE_ROOTS", tempDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
-	core.ResetConfigForTesting()
 
 	validProject := filepath.Join(tempDir, "valid")
 	makeValidBeadsWorkspace(t, validProject)
@@ -137,7 +173,6 @@ func TestBeadsHandler_ListProjectsAllowsConfiguredWorkspaceOutsideRoots(t *testi
 
 	t.Setenv("CHROTE_ROOTS", rootDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", serviceWorkspace)
-	core.ResetConfigForTesting()
 
 	handler := NewBeadsHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects", nil)
@@ -179,7 +214,6 @@ func TestBeadsHandler_ListProjectsIncludesConfiguredAndAllowedRootWorkspaces(t *
 
 	t.Setenv("CHROTE_ROOTS", rootDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", serviceWorkspace)
-	core.ResetConfigForTesting()
 
 	handler := NewBeadsHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects", nil)
@@ -229,7 +263,6 @@ func TestBeadsHandler_ListProjectsCanDisableAutoDiscovery(t *testing.T) {
 			t.Setenv("CHROTE_ROOTS", rootDir)
 			t.Setenv("CHROTE_BEADS_WORKSPACES", configuredWorkspace)
 			t.Setenv("CHROTE_BEADS_AUTO_DISCOVER", flag)
-			core.ResetConfigForTesting()
 
 			handler := NewBeadsHandler()
 			req := httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+manualWorkspace, nil)
@@ -279,7 +312,6 @@ func TestBeadsHandler_ListProjectsValidatesManualNestedWorkspace(t *testing.T) {
 
 	t.Setenv("CHROTE_ROOTS", rootDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
-	core.ResetConfigForTesting()
 
 	handler := NewBeadsHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+nestedWorkspace, nil)
@@ -319,7 +351,6 @@ func TestBeadsHandler_IssuesRejectsInvalidWorkspaceBeforeRunningBd(t *testing.T)
 
 	t.Setenv("CHROTE_ROOTS", rootDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
-	core.ResetConfigForTesting()
 
 	handler := NewBeadsHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/beads/issues?path="+partialProject, nil)
@@ -338,7 +369,6 @@ func TestBeadsHandler_IssuesSupportsExplicitStatusAndLimit(t *testing.T) {
 
 	t.Setenv("CHROTE_ROOTS", rootDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
-	core.ResetConfigForTesting()
 	_, argsPath := makeFakeBdCommand(t, `[{"_type":"issue","id":"test-1","title":"Closed issue","status":"closed"}]`)
 
 	handler := NewBeadsHandler()
@@ -362,7 +392,6 @@ func TestBeadsHandler_InsightsSupportsExplicitStatusAndLimit(t *testing.T) {
 
 	t.Setenv("CHROTE_ROOTS", rootDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
-	core.ResetConfigForTesting()
 	_, argsPath := makeFakeBdCommand(t, `[{"_type":"issue","id":"test-1","title":"Closed issue","status":"closed"}]`)
 
 	handler := NewBeadsHandler()
@@ -386,7 +415,6 @@ func TestBeadsHandler_IssueDetailRejectsInvalidWorkspaceBeforeRunningBd(t *testi
 
 	t.Setenv("CHROTE_ROOTS", rootDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
-	core.ResetConfigForTesting()
 
 	handler := NewBeadsHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/beads/issue?path="+partialProject+"&id=test-1", nil)
@@ -405,7 +433,6 @@ func TestBeadsHandler_IssueDetailAcceptsBdShowArrayResponse(t *testing.T) {
 
 	t.Setenv("CHROTE_ROOTS", rootDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
-	core.ResetConfigForTesting()
 	_, argsPath := makeFakeBdCommand(t, `[{"_type":"issue","id":"test-1","title":"Shown issue","status":"open"}]`)
 
 	handler := NewBeadsHandler()
@@ -429,7 +456,6 @@ func TestBeadsHandler_AddCommentPassesTextAsSingleArgument(t *testing.T) {
 
 	t.Setenv("CHROTE_ROOTS", rootDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
-	core.ResetConfigForTesting()
 	_, argsPath := makeFakeBdCommand(t, `{"id":"comment-1","body":"ok"}`)
 
 	handler := NewBeadsHandler()
@@ -449,21 +475,21 @@ func TestBeadsHandler_AddCommentPassesTextAsSingleArgument(t *testing.T) {
 }
 
 func TestBeadsHandler_CheckBeadsDirectoryUnreadableReportsPermissionError(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission bits do not restrict root")
+	project := os.Getenv("CHROTE_BEADS_PERMISSION_PROJECT")
+	if project == "" {
+		project = makeBeadsPermissionProject(t)
+		beadsPath := filepath.Join(project, ".beads")
+		if err := os.Chmod(beadsPath, 0); err != nil {
+			t.Fatalf("chmod .beads: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(beadsPath, 0o700) })
 	}
-	resetBeadsTestEnv(t)
-	handler := NewBeadsHandler()
-
-	project := t.TempDir()
-	makeValidBeadsWorkspace(t, project)
 	beadsPath := filepath.Join(project, ".beads")
-	if err := os.Chmod(beadsPath, 0); err != nil {
-		t.Fatalf("chmod .beads: %v", err)
+	if !runBeadsPermissionSubprocess(t, project) {
+		return
 	}
-	t.Cleanup(func() { _ = os.Chmod(beadsPath, 0o700) })
 
-	_, err := handler.checkBeadsDirectory(project)
+	_, err := NewBeadsHandler().checkBeadsDirectory(project)
 	if err == nil {
 		t.Fatal("unreadable .beads was accepted as a workspace")
 	}
@@ -483,20 +509,19 @@ func TestBeadsHandler_CheckBeadsDirectoryUnreadableReportsPermissionError(t *tes
 }
 
 func TestBeadsHandler_CheckBeadsDirectoryUnsearchableParentReportsPermissionError(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission bits do not restrict root")
+	project := os.Getenv("CHROTE_BEADS_PERMISSION_PROJECT")
+	if project == "" {
+		project = makeBeadsPermissionProject(t)
+		if err := os.Chmod(project, 0); err != nil {
+			t.Fatalf("chmod project: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(project, 0o755) })
 	}
-	resetBeadsTestEnv(t)
-	handler := NewBeadsHandler()
-
-	project := filepath.Join(t.TempDir(), "project")
-	makeValidBeadsWorkspace(t, project)
-	if err := os.Chmod(project, 0); err != nil {
-		t.Fatalf("chmod project: %v", err)
+	if !runBeadsPermissionSubprocess(t, project) {
+		return
 	}
-	t.Cleanup(func() { _ = os.Chmod(project, 0o700) })
 
-	_, err := handler.checkBeadsDirectory(project)
+	_, err := NewBeadsHandler().checkBeadsDirectory(project)
 	if err == nil {
 		t.Fatal("unsearchable project directory was accepted as a workspace")
 	}
@@ -526,22 +551,18 @@ func TestBeadsHandler_CheckBeadsDirectoryAbsentStillSuggestsBdInit(t *testing.T)
 }
 
 func TestBeadsHandler_ListProjectsReportsPermissionErrorForUnreadableWorkspace(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission bits do not restrict root")
+	project := os.Getenv("CHROTE_BEADS_PERMISSION_PROJECT")
+	if project == "" {
+		project = makeBeadsPermissionProject(t)
+		beadsPath := filepath.Join(project, ".beads")
+		if err := os.Chmod(beadsPath, 0); err != nil {
+			t.Fatalf("chmod .beads: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(beadsPath, 0o700) })
 	}
-	resetBeadsTestEnv(t)
-
-	rootDir := t.TempDir()
-	project := filepath.Join(rootDir, "project")
-	makeValidBeadsWorkspace(t, project)
-	beadsPath := filepath.Join(project, ".beads")
-	if err := os.Chmod(beadsPath, 0); err != nil {
-		t.Fatalf("chmod .beads: %v", err)
+	if !runBeadsPermissionSubprocess(t, project) {
+		return
 	}
-	t.Cleanup(func() { _ = os.Chmod(beadsPath, 0o700) })
-
-	t.Setenv("CHROTE_ROOTS", rootDir)
-	core.ResetConfigForTesting()
 
 	handler := NewBeadsHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+project, nil)

@@ -14,19 +14,12 @@ type HealthHandler struct {
 	commit  string
 }
 
-// NewHealthHandler creates a new HealthHandler
-func NewHealthHandler() *HealthHandler {
-	return &HealthHandler{version: "2.0.0-alpha.2-dev"}
-}
-
-// NewHealthHandlerWithVersion creates a new HealthHandler with a custom version
-func NewHealthHandlerWithVersion(version string) *HealthHandler {
-	return &HealthHandler{version: version}
-}
-
 // NewHealthHandlerWithBuildInfo creates a HealthHandler carrying the git commit
 // the binary was built from. Commit is empty when the build did not stamp one.
 func NewHealthHandlerWithBuildInfo(version, commit string) *HealthHandler {
+	if version == "" {
+		return &HealthHandler{version: "2.0.0-alpha.2-dev", commit: commit}
+	}
 	return &HealthHandler{version: version, commit: commit}
 }
 

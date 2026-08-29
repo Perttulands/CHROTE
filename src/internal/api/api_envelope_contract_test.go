@@ -16,8 +16,8 @@ import (
 // Intentionally flat endpoints pinned by home-idhj.14:
 // /api/health, /api/version, and tmux endpoints that dashboard code reads
 // directly without a top-level data envelope.
-func TestResponseShapeBaseline_FlatHealthEndpointsDoNotUseDataEnvelope(t *testing.T) {
-	handler := NewHealthHandlerWithVersion("test-version")
+func TestAPIEnvelopeContract_FlatHealthEndpointsDoNotUseDataEnvelope(t *testing.T) {
+	handler := NewHealthHandlerWithBuildInfo("test-version", "")
 
 	tests := []struct {
 		name     string
@@ -56,7 +56,7 @@ func TestResponseShapeBaseline_FlatHealthEndpointsDoNotUseDataEnvelope(t *testin
 	}
 }
 
-func TestResponseShapeBaseline_BeadsHealthUsesSuccessDataEnvelope(t *testing.T) {
+func TestAPIEnvelopeContract_BeadsHealthUsesSuccessDataEnvelope(t *testing.T) {
 	resetBeadsTestEnv(t)
 	makeFakeBdCommand(t, "bd version 1.2.3\n")
 
@@ -82,7 +82,7 @@ func TestResponseShapeBaseline_BeadsHealthUsesSuccessDataEnvelope(t *testing.T) 
 	assertTopLevelKeys(t, data, []string{"allowedRoots", "bdVersion", "configuredWorkspaces", "status"})
 }
 
-func TestResponseShapeBaseline_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.T) {
+func TestAPIEnvelopeContract_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.T) {
 	installFakeTmux(t)
 	handler := NewTmuxHandler()
 

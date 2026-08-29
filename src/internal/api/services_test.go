@@ -10,6 +10,18 @@ import (
 	"time"
 )
 
+func newServicesHandlerWithClient(config ServiceConfig, client *http.Client) *ServicesHandler {
+	handler := NewServicesHandler(config)
+	if client == nil {
+		return handler
+	}
+	handler.client = client
+	streamClient := *client
+	streamClient.Timeout = 0
+	handler.streamClient = &streamClient
+	return handler
+}
+
 func TestLoadServiceConfigFromEnvDefaults(t *testing.T) {
 	t.Setenv("CHROTE_TTS_URL", "")
 	t.Setenv("CHROTE_CONTEXT_API_URL", "")
@@ -300,7 +312,7 @@ func TestServicesHandlerTTSFeedIgnoresFiniteClientTimeout(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handler := NewServicesHandlerWithClient(
+	handler := newServicesHandlerWithClient(
 		ServiceConfig{TTSBaseURL: upstream.URL},
 		&http.Client{Timeout: 10 * time.Millisecond},
 	)
@@ -568,7 +580,7 @@ func TestServicesHandlerContextAskUsesLongerTimeoutThanGenericProxy(t *testing.T
 	}))
 	defer upstream.Close()
 
-	handler := NewServicesHandlerWithClient(
+	handler := newServicesHandlerWithClient(
 		ServiceConfig{ContextBaseURL: upstream.URL, ContextToken: token},
 		&http.Client{Timeout: 10 * time.Millisecond},
 	)
@@ -694,7 +706,7 @@ func TestServicesHandlerUpstreamUnavailableReturnsStructuredError(t *testing.T) 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	upstream.Close()
 
-	handler := NewServicesHandlerWithClient(
+	handler := newServicesHandlerWithClient(
 		ServiceConfig{TTSBaseURL: upstream.URL},
 		&http.Client{Timeout: 50 * time.Millisecond},
 	)
@@ -723,7 +735,7 @@ func TestServicesHandlerUpstreamTimeoutReturnsStructuredGatewayTimeout(t *testin
 	}))
 	defer upstream.Close()
 
-	handler := NewServicesHandlerWithClient(
+	handler := newServicesHandlerWithClient(
 		ServiceConfig{TTSBaseURL: upstream.URL},
 		&http.Client{Timeout: 10 * time.Millisecond},
 	)

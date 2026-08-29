@@ -47,7 +47,3 @@ func TestTerminalProxy_WebSocketCurrentlyAllowsCrossOriginBrowserOrigin(t *testi
 		t.Fatalf("echo = %q, want %q", got, message)
 	}
 }
-
-func TestTerminalProxy_WebSocketOriginAllowlistFutureSpec(t *testing.T) {
-	t.Skip("Known gap: enable in home-idhj.13 after browser-compatible terminal WebSocket Origin allowlist is implemented")
-}
