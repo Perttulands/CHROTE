@@ -96,3 +96,6 @@ src/internal/dashboard/dist.stamp
 
 # root-level tool droppings (a vite cache appeared here 2026-07-26)
 /node_modules/
+prototype-output/
+.superpowers/
+.codex/
