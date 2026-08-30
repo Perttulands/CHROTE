@@ -457,39 +457,74 @@ describe('refreshSessions', () => {
     vi.useRealTimers()
   })
 
-  it('replaces last-known-good state with healthy sessions from an authoritative partial refresh and keeps the per-user error visible', async () => {
+  it('preserves a bound failed-user session while applying healthy-user changes across repeated partial refreshes', async () => {
     vi.useFakeTimers()
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {
+        desktop: {
+          workspaces: {
+            terminal1: {
+              windows: [{
+                id: 'terminal1-window-0',
+                boundSessions: ['alice:old', 'build:worker'],
+                activeSession: 'build:worker',
+                colorIndex: 0,
+              }],
+              windowCount: 1,
+            },
+          },
+        },
+      },
+      sidebarCollapsed: false,
+      settings: { ...DEFAULT_SETTINGS, autoRefreshInterval: 60000 },
+    }))
     const { requests } = stubDeferredSessionFetch()
     const { result, unmount } = renderSession()
-    const knownSession = { name: 'known', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
-    const healthySession = { name: 'healthy', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
+    const oldHealthySession = { name: 'old', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
+    const failedUserSession = { name: 'worker', windows: 1, attached: false, group: 'agents', unixUser: 'build' }
+    const newHealthySession = { name: 'new', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
 
     await act(async () => {
       requests[0].response.resolve(sessionResponse({
-        sessions: [knownSession],
-        grouped: { shell: [knownSession] },
-        terminalUsers: ['alice'],
+        sessions: [oldHealthySession, failedUserSession],
+        grouped: { shell: [oldHealthySession], agents: [failedUserSession] },
+        terminalUsers: ['alice', 'build'],
       }))
       await flushPromises()
     })
-    expect(result.current.sessions).toEqual([knownSession])
-
-    const partialRefresh = result.current.refreshSessions()
-    await act(async () => {
-      requests[1].response.resolve(sessionResponse({
-        partial: true,
-        error: 'build: error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)',
-        sessions: [healthySession],
-        grouped: { shell: [healthySession] },
-        terminalUsers: ['alice', 'build'],
-      }))
-      await partialRefresh
+    act(() => {
+      result.current.openFloatingModal('build:worker')
+      result.current.openSendToSession('build:worker')
     })
 
-    expect(result.current.sessions).toEqual([healthySession])
-    expect(result.current.groupedSessions).toEqual({ shell: [healthySession] })
+    for (const requestIndex of [1, 2]) {
+      const partialRefresh = result.current.refreshSessions()
+      await act(async () => {
+        requests[requestIndex].response.resolve(sessionResponse({
+          partial: true,
+          successfulUsers: ['alice'],
+          failedUsers: ['build'],
+          error: 'build: tmux source permission denied',
+          sessions: [newHealthySession],
+          grouped: { shell: [newHealthySession] },
+          terminalUsers: ['alice', 'build'],
+        }))
+        await partialRefresh
+      })
+    }
+
+    expect(result.current.sessions).toEqual([newHealthySession, failedUserSession])
+    expect(result.current.groupedSessions).toEqual({ shell: [newHealthySession], agents: [failedUserSession] })
     expect(result.current.terminalUsers).toEqual(['alice', 'build'])
-    expect(result.current.error).toBe('build: error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)')
+    expect(result.current.error).toBe('build: tmux source permission denied')
+    expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
+      boundSessions: ['build:worker'],
+      activeSession: 'build:worker',
+    })
+    expect(result.current.floatingSession).toBe('build:worker')
+    expect(result.current.sendToSessionTarget).toBe('build:worker')
 
     unmount()
     expect(vi.getTimerCount()).toBe(0)

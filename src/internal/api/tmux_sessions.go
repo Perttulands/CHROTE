@@ -36,7 +36,9 @@ type SessionsResponse struct {
 	Error         string                    `json:"error,omitempty"`
 	// Partial is true only when configured-user tmux collection is the sole
 	// source of errors and at least one configured user succeeded.
-	Partial bool `json:"partial,omitempty"`
+	Partial         bool     `json:"partial,omitempty"`
+	SuccessfulUsers []string `json:"successfulUsers,omitempty"`
+	FailedUsers     []string `json:"failedUsers,omitempty"`
 }
 
 // CreateSessionRequest is the request body for creating a session
@@ -469,26 +471,31 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 	}
 	if queryUnixUser == "" {
-		var errors []string
-		successfulUsers := 0
+		var errors, successfulUsers, failedUsers []string
 		for _, unixUser := range configuredTerminalUsers() {
 			target, targetErr := h.targetForUnixUser(unixUser)
 			if targetErr != nil {
 				publicError := "tmux source configuration is unavailable"
 				errors = append(errors, fmt.Sprintf("%s: %s", unixUser, publicError))
+				failedUsers = append(failedUsers, unixUser)
 				continue
 			}
 			sessions, errStr := h.listSessionsForTarget(target)
 			if errStr != "" {
 				errors = append(errors, fmt.Sprintf("%s: %s", unixUser, errStr))
+				failedUsers = append(failedUsers, unixUser)
 				continue
 			}
-			successfulUsers++
+			successfulUsers = append(successfulUsers, unixUser)
 			response.Sessions = append(response.Sessions, sessions...)
 		}
 		if len(errors) > 0 {
 			response.Error = strings.Join(errors, "; ")
-			response.Partial = successfulUsers > 0
+			response.Partial = len(successfulUsers) > 0
+			if response.Partial {
+				response.SuccessfulUsers = successfulUsers
+				response.FailedUsers = failedUsers
+			}
 		}
 	} else {
 		target, targetErr := targetFromRequest(h, r, "")
