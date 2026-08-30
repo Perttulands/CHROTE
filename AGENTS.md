@@ -1,12 +1,14 @@
 # Agent instructions
 
-Use these rules for work in the CHROTE repository. Keep public instructions host-neutral; deployment-specific paths, ports, sockets, service identities, and credentials belong in untracked operator configuration.
+Use these rules for work in CHROTE. Keep public instructions host-neutral;
+deployment paths, ports, sockets, service identities, and credentials belong in
+untracked operator configuration.
 
 ## Operating contract
 
-This repository sits inside a host workspace whose root instruction files (`CLAUDE.md` and `AGENTS.md` one directory up) name the operator's canonical operating contract. Read it before non-trivial work; it is the authority these repository rules sit under, not a duplicate of them. In short: define done before changing things, read before writing, keep changes small, tests must prove intent, verify before claiming done, fail loud.
-
-The contract's own location is deployment-specific, so it is deliberately not spelled out here — naming it would put an operator path in a public file, which the host-neutrality rule above and `scripts/host-neutrality.py` both forbid. Follow the pointer up rather than copying the rules down: restating them here is how two contracts drift apart.
+The host workspace's `CLAUDE.md` and `AGENTS.md` one directory up name the
+operator's canonical contract. Read them before non-trivial work. Follow that
+pointer rather than copying deployment-specific paths or duplicating the rules.
 
 ## Product boundary
 
@@ -18,7 +20,8 @@ CHROTE is a private browser cockpit for host-owned work:
 - harness-neutral agent observability;
 - scheduling, server status, and optional local adapters.
 
-CHROTE is not a hosted service, an IDE, or an OS sandbox. Do not assume Gastown, Ralph, or any single agent harness is installed.
+CHROTE is not a hosted service, an IDE, or an OS sandbox. Do not assume
+Gastown, Ralph, or any single agent harness is installed.
 
 Access is broad by design: everything CHROTE can reach, it shows. The only
 asymmetry is Unix permissions — a secondary account cannot read the owner's
@@ -27,23 +30,12 @@ Never tighten ownership, modes, or ACLs to make code safer; CHROTE's value is
 access. `SECURITY.md` owns the additive-grant and missing-access rules; follow
 it instead of reshaping the permission topology.
 
-Rare, judgment-heavy operations — session recovery, restore, cleanup,
-migration, one-off repair — are agent skills, not CHROTE code. CHROTE code is
-for what runs on every request; the operator's `agent-session-recovery` skill
-is the recovery surface. A browser disconnect or CHROTE restart must not kill
-external tmux work, but ordinary sessions are best-effort: CHROTE does not
-recreate them after process death or host reboot, and a rare durable workload
-belongs in explicit operator-owned host configuration.
-
-Formations and Archon are experimental and unreleased. Their active specs define development contracts, not a supported release promise.
-
-## Current epic
-
-`chrote-kmz` subtracts code without changing the product. Terminal, Files, Beads, Scheduled, Server,
-Settings, API response shapes, and persisted localStorage formats must not change; the only intended
-visible changes are the Agents tab going away and Files showing everything under `CHROTE_ROOTS`.
-Formations, Archon, and Agents move to the public `chrote-agent-formations` repository in
-`chrote-kmz.4` and stay experimental and unreleased until then.
+Rare, judgment-heavy recovery, restore, cleanup, migration, and repair are
+agent skills, not request-path code. CHROTE must not kill external tmux work on
+disconnect or restart, but it does not recreate ordinary work after process
+death or reboot. Durable workloads belong in operator-owned host configuration.
+Experimental orchestration contracts live in `chrote-agent-formations`, not
+this product.
 
 ## Complexity budget
 
@@ -65,57 +57,48 @@ Read [`docs/source-truth-index.md`](docs/source-truth-index.md) before changing 
 - [`PRD.md`](PRD.md) owns the current product and roadmap boundary.
 - [`SECURITY.md`](SECURITY.md) owns the public trust boundary.
 - [chrote-agent-formations](https://github.com/Perttulands/chrote-agent-formations) owns experimental orchestration contracts.
-- Plans and archives are context, not current authority.
+- [`docs/legacy-ideas.md`](docs/legacy-ideas.md) is non-current context only.
+
+### Six-view source map
+
+| View | Dashboard | API |
+| --- | --- | --- |
+| Terminal | `dashboard/src/components/TerminalWorkspaceDock.tsx` | `src/internal/api/tmux_sessions.go`, `src/internal/proxy/terminal.go` |
+| Files | `dashboard/src/components/FilesView/` | `src/internal/api/files.go` |
+| Beads | `dashboard/src/components/BeadsView/` | `src/internal/api/beads.go` |
+| Scheduled | `dashboard/src/components/ScheduledTasksView.tsx` | `src/internal/api/scheduled.go` |
+| Server | `dashboard/src/components/SystemStatusView/` | `src/internal/api/system.go` |
+| Settings | `dashboard/src/components/SettingsView.tsx` | `src/internal/api/tmux_sessions.go` |
 
 ## Work state
 
-Use `bd` for durable task state in this repository's own `.beads/` workspace —
-run `bd` from the repo root so it resolves there. New issues get the `chrote-`
-prefix. `chrt-` and `ctx-` ids are imported history living in this same
-database; `.beads/WORKSPACE.md` (workspace-local, untracked) owns the scope,
-the import story, and what does not belong here. Do not file CHROTE work in any
-other workspace:
+Use `bd` from this repo root so it resolves the local `.beads/` workspace. New
+issues use `chrote-`; `chrt-` and `ctx-` are imported history described by the
+untracked `.beads/WORKSPACE.md`. Do not file CHROTE work elsewhere.
 
-```bash
-bd prime
-bd ready --json
-bd show <id>
-bd update <id> --claim --json
-```
-
-Create discovered work as linked Beads rather than burying it in prose or unrelated changes.
+Create discovered work as linked Beads, not prose or unrelated changes.
 
 ## Git checkpoints
 
-This project uses frequent local Git commits as part of normal Beads-backed
-work. This project-specific rule is more specific than the generated Beads
-profile's conservative Git fallback below; leave the generated block intact.
+Frequent local commits are part of normal Beads work. This repository rule
+overrides the generated conservative fallback below; leave that block intact.
 
-- Create and claim the relevant Bead before substantive implementation, then
-  commit each coherent, verified increment before moving to an independent
-  concern.
+- Claim the Bead before substantive work; commit each coherent verified increment.
 - Stage only the files belonging to the current Bead, and preserve unrelated dirty work.
-- For generated, multiline, or Markdown commit messages, pass message bytes
-  with `git commit -F <file>` or `git commit -F - <<'EOF'`; never interpolate
-  message text into a double-quoted `-m` argument, where backticks and `$()`
-  execute in the shell.
-- Do not leave substantive completed work only in the working tree at handoff.
-  Report the commit hash, Bead id/status, and verification receipt together.
-- A local commit does not authorize a push, rebase, merge, or deployment. Those
-  remain separate actions requiring explicit authority.
-- If the user explicitly says not to commit yet, honor that exception and
-  report the exact uncommitted scope at handoff.
+- Pass generated/Markdown commit messages with `git commit -F`; never put
+  backticks or `$()` in a double-quoted `-m` argument.
+- Report the commit, Bead state, and verification together at handoff.
+- A commit does not authorize push, rebase, merge, or deployment.
+- Honor an explicit no-commit instruction and report the uncommitted scope.
 
 ## Before editing
 
 - Read nearby code, callers, tests, and the active source-truth document.
-- Define done before changing files.
-- Preserve unrelated dirty work.
+- Define done and preserve unrelated dirty work.
 - Do not kill, rename, or restart tmux sessions unless the task explicitly requires it.
 - Do not assume a service name, port, socket, or deployment lane from tracked files. Discover the approved target from local operator configuration before runtime actions.
 - Never commit private topology, credentials, terminal transcripts, or operator-specific recovery procedures.
-  `python3 scripts/host-neutrality.py` enforces this in CI over every tracked file — real usernames, home
-  directories, uid-scoped socket paths, tailnet or host names, host-only unit names. Use neutral fixtures:
+  `scripts/host-neutrality.py` checks every tracked file. Use neutral fixtures:
   `alice`/`build`, `/run/user/<uid>/...`, `/tmp/tmux-<uid>/...`.
 
 ## Build and verify
@@ -149,19 +132,15 @@ For installer changes, run both disposable modes:
 ./scripts/test-public-install.sh
 ```
 
-Before completion, run `git diff --check`, compare `dashboard/dist` with `src/internal/dashboard/dist`, inspect every touched repository, and report warnings or skipped checks plainly.
+Before completion, run `git diff --check`, compare `dashboard/dist` with
+`src/internal/dashboard/dist`, and report warnings or skipped checks plainly.
 
 ## Runtime actions
 
-Runtime deployment is separate from repository verification. Before restarting or installing anything:
-
-1. identify the exact operator-approved service and endpoint;
-2. inspect current status and health;
-3. preserve tmux sessions and unrelated work;
-4. restart only the intended service;
-5. verify the live endpoint after activation.
-
-If the runtime target is not discoverable from local, untracked operator context, ask instead of guessing.
+Runtime deployment is separate from repository verification. Before any restart
+or install: identify the operator-approved service and endpoint, inspect current
+health, preserve tmux and unrelated work, touch only that service, then verify
+the live endpoint. Ask if untracked operator context does not identify it.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker

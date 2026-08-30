@@ -28,9 +28,7 @@ The application shell currently exposes:
 - Terminal 2
 - Terminal 3
 - Files
-- Agents
 - Beads
-- Formations
 - Services
 - Scheduled
 - Server (default-enabled feature flag)
@@ -44,7 +42,10 @@ Help is an application-shell dialog, not a persistent tab.
 src/
 ├── App.tsx                         application shell and keep-alive view ownership
 ├── context/
-│   ├── SessionContext.tsx          sessions, workspaces, and persistence
+│   ├── SessionContext.tsx          session actions and composed state surface
+│   ├── useSessionsPoll.ts          session discovery and stale-state handling
+│   ├── useWorkspaceLayouts.ts      layouts, settings, and persistence
+│   ├── useSendToSession.ts         guarded send workflow client
 │   └── ToastContext.tsx            operator notifications
 ├── components/
 │   ├── TabBar.tsx                  top-level navigation
@@ -54,12 +55,10 @@ src/
 │   ├── TerminalWindow.tsx          assignment, location, and iframe surface
 │   ├── FilesView/                  full Files workspace
 │   ├── TerminalFilesPanel.tsx      terminal-companion Files sidecar
-│   ├── AgentsView.tsx              agent/persona and mission context
-│   ├── BeadsView.tsx               Beads workspace and issue surfaces
-│   ├── FormationsCockpit.tsx       board/mission/formation/gate cockpit
-│   ├── ServicesView.tsx            configured local service adapters
+│   ├── BeadsView/                  Beads workspace and issue surfaces
+│   ├── ServicesView/               configured local service adapters
 │   ├── ScheduledTasksView.tsx      schedules and run history
-│   ├── ServerStatus.tsx            health, resources, and system history
+│   ├── SystemStatusView/           health, resources, and system history
 │   └── SettingsView.tsx            appearance, flags, and session cleanup
 ├── hooks/                          keyboard, drag, polling, and layout behavior
 ├── utils/                          shared parsing and UI utilities
@@ -115,16 +114,6 @@ serve different jobs:
 Filesystem errors must remain visible. Never fall back silently to fake data or
 an unconstrained root.
 
-## Formations and Agents
-
-The Formations UI works against durable board/layout/run APIs. Tests must preserve
-mission reachability, typed ports, gate branches, revisions/ETags, explicit
-executor boundaries, and ledger-backed run state.
-
-Agents is not just a tmux process list: it joins persona/session state with the
-selected board, mission, and active run where those exist. Missing optional data
-must degrade honestly.
-
 ## Testing
 
 ```bash
@@ -132,10 +121,9 @@ must degrade honestly.
 npm run lint
 npm run test:unit
 npm run test:unit -- --coverage
-npm audit --audit-level=moderate
 
 # Deterministic mocked browser suite
-npm test -- --project=chromium
+npm test
 
 # Interactive debugging
 npm run test:headed
@@ -151,6 +139,8 @@ CHROTE_TEST_URL=http://127.0.0.1:8094 npm run test:live
 
 Run live tests only against an approved disposable or operator-controlled CHROTE
 instance. They are not a substitute for the deterministic suite.
+
+`npm audit --audit-level=moderate` runs in the weekly CI dependency scan.
 
 ## Production embedding
 

@@ -2,230 +2,154 @@
 
 ## Vision
 
-CHROTE is the private browser cockpit for host-owned agentic work.
+CHROTE is a private browser cockpit for host-owned work. The browser is
+disposable glass; the configured Linux or WSL host owns the terminals, agents,
+files, builds, tests, Beads, schedules, runtime history, and local services.
 
-The host owns the terminals, agents, files, dev servers, builds, tests, and
-Beads. Browsers and client devices are replaceable windows onto that work.
+CHROTE gives one trusted operator a coherent view of that state without moving
+its source of truth into the browser. tmux owns terminal sessions, the filesystem
+owns files, `bd` owns issues, and explicit host configuration owns durable
+workloads and integrations.
 
-The browser is disposable. Host-owned state—not browser state—is authoritative.
+CHROTE grows only where it makes host-owned work easier to understand and
+deliberately coordinate. It does not become a second IDE, orchestration harness,
+host supervisor, or pile of dashboards for work already clearer in a terminal.
 
 ## Product contract
-
-CHROTE gives one trusted operator a coherent control surface over a configured
-Linux or WSL workspace. It keeps existing tmux-backed work visible, makes local
-state inspectable, and adds explicit orchestration primitives without moving the
-source of truth into the browser.
 
 ### Current goals
 
 1. Make tmux sessions visible and controllable from a browser.
-2. Keep device disconnects and CHROTE restarts from deliberately terminating
+2. Keep browser disconnects and CHROTE restarts from deliberately terminating
    externally owned tmux work.
-3. Put terminal sessions and relevant files beside each other without pretending
-   to be an IDE.
-4. Surface agent sessions, Beads work, scheduled tasks, services, and server
-   health in one cockpit.
-5. Keep experimental orchestration work explicit and isolated from the shipped
-   cockpit until it earns a release.
-6. Keep the deployment private to localhost or an operator-controlled private
+3. Put terminal sessions and configured files beside each other without
+   pretending to be an IDE.
+4. Surface Beads, scheduled tasks, server health, and optional local adapters in
+   the cockpit.
+5. Keep deployment private to localhost or an operator-controlled private
    network unless explicitly configured otherwise.
 
 ### Current non-goals
 
-- CHROTE is not a hosted multi-tenant SaaS product.
-- CHROTE is not an OS sandbox or a security boundary around tmux agents.
-- CHROTE is not an IDE and does not make the browser the workspace source of truth.
-- CHROTE does not replace `tmux`, `bd`, Git, or the underlying AI harnesses.
-- CHROTE does not promise autonomous agent society, implicit agent-to-agent chat,
-  or magic recovery of arbitrary shell state.
-- CHROTE does not promise that ordinary sessions or agent processes survive
-  process death or host reboot.
-- CHROTE does not install a universal workload supervisor. Rare workloads that
-  need reboot recovery use explicit operator-owned host configuration outside
-  CHROTE.
-- CHROTE does not require Gastown, Ralph, or a single preferred agent harness.
-- CHROTE does not implement rare, judgment-heavy operations — recovery, restore,
-  cleanup, migration, one-off repair — in code; they are agent skills, and CHROTE
-  code is for what runs on every request.
-- CHROTE does not restrict access to make itself safer: everything it can reach it
-  shows, and the only asymmetry is Unix permissions, never CHROTE code.
+- hosted multi-tenant SaaS, an application identity system, or an OS sandbox;
+- replacing tmux, `bd`, Git, or an agent's native harness;
+- autonomous agent society, implicit agent-to-agent chat, or a required harness;
+- automatic reconstruction of ordinary work after process death or host reboot;
+- recovery, restore, cleanup, migration, or one-off repair in request-path code;
+- restricting accessible host state beyond configured roots and Unix permissions.
+
+Rare, judgment-heavy operations are agent skills. A workload that truly needs
+reboot durability belongs in explicit operator-owned host configuration.
 
 ## Current views
 
+The core product jobs are Terminal, Files, Beads, Scheduled, Server, and
+Settings. Three configurable terminal workspaces present the Terminal job.
+Services is an optional adapter surface and is not a prerequisite for the core.
+
 | View | Operator job |
 | --- | --- |
-| Terminal 1 | First independent terminal workspace with 1-4 tmux-backed windows |
+| Terminal 1 | First independent terminal workspace with one to four tmux-backed windows |
 | Terminal 2 | Second independent terminal workspace |
 | Terminal 3 | Third independent terminal workspace |
 | Files | Browse, inspect, edit, compare, and send configured workspace files |
-| Agents | Inspect agent personas/sessions and the mission/run context around them |
 | Beads | Inspect configured `bd` workspaces, issues, ready work, and health |
-| Formations | Develop and inspect file-backed orchestration contracts without presenting them as shipped product |
-| Services | Operate explicitly configured local service adapters through CHROTE-owned routes |
-| Scheduled | Inspect and manage CHROTE scheduled tasks and their run history |
+| Services | Operate explicitly configured local adapters through CHROTE-owned routes |
+| Scheduled | Inspect and manage scheduled prompt tasks and their run history |
 | Server | Inspect server health, resources, events, and bounded history |
 | Settings | Configure appearance, terminal behavior, feature flags, and session cleanup |
 
-Help and keyboard guidance are available from the application shell rather than
-as a separate persistent workspace.
+Help and keyboard guidance live in the application shell rather than a persistent
+workspace.
 
 ## Durable terminal workspace
 
-### Terminal panes
-
-- Each terminal workspace owns its own layout, attached sessions, labels, and
-  Files state. Sessions presentation is application-global.
+- Each terminal workspace owns its layout, attached sessions, labels, and Files
+  state. Sessions presentation is application-global.
 - A workspace can show one to four terminal windows.
-- tmux, not CHROTE, owns process and session lifetime; CHROTE does not copy shell
-  state into browser storage.
-- Browser/device disconnects and CHROTE restarts must not cause CHROTE to
-  terminate tmux sessions.
-- A tmux session or workload may still exit naturally, be stopped externally,
-  or be lost with the host. CHROTE does not automatically recreate it.
-- Refit and reconnect controls are explicit operator actions.
-
-### Sessions and Files sidecar
-
-Sessions is one application-global sidecar, including when exposed from Scheduled for target selection. Files is a peer sidecar whose state belongs to each terminal workspace.
-
-- Sessions and each workspace's Files sidecar are closed by default and reserve no permanent terminal width.
-- Wide layouts may pin a sidecar. When Files is open in any workspace while
-  Sessions is open, every terminal tab presents Sessions as a pinned rail and
-  the active workspace's Files rail sits beside it; the stored global Sessions
-  pin preference resumes after all Files panels close. Narrow layouts overlay
-  the open sidecar views.
-- Session row selection means **Peek**. It must not detach, reassign, or mutate
-  terminal-window assignment metadata.
-- Navigating an attached session occurs through its explicit location chip.
-- Sessions open state, pin preference, width, filter, and group collapse are shared across terminal workspaces and Scheduled; session creation there routes through the last active terminal workspace.
-- Files open state, pin preference, width, path, selection, view, and panel state
-  persist independently for each terminal workspace.
-- The `/` shortcut opens the global Sessions surface and focuses its search when
-  no visible dialog or menu owns the key.
-
-### Session lifetime and optional host durability
-
-- Ordinary sessions and agents are transient, best-effort host work. Their
-  continued existence is not a CHROTE product promise.
-- CHROTE does not offer a "make permanent" or per-session supervision contract.
-  It does not install or control host units to restart ordinary agent sessions.
-- A rare workload that genuinely needs process-death or reboot recovery belongs
-  in explicit operator-owned host configuration. CHROTE may observe such a
-  workload, but it does not become its recovery owner.
-- This boundary does not permit CHROTE to kill external work during its own
-  restart. Non-interference is required; automatic reconstruction is not.
+- tmux owns process and session lifetime; browser storage owns presentation, not
+  shell state.
+- A disconnect or CHROTE restart must not terminate external tmux work. A
+  session may still exit naturally, be stopped externally, or disappear with
+  its process or host.
+- Session-row selection means **Peek**. Navigation and assignment are explicit
+  actions.
+- Sessions and Files sidecars are closed by default. Sessions state is shared
+  across workspaces; Files state persists independently per workspace.
+- Refit, reconnect, bulk cleanup, and Send to Session remain explicit operator
+  actions.
 
 ## Files
 
-- File access is constrained to configured roots and the Unix permissions of the
-  CHROTE process.
-- Owner-private paths stay hidden by default; explicit owner-root opt-in never overrides deny/Formations roots or canonical checks.
-- Cross-user roots additionally require effective service-identity list/read/write ACLs; permission failure is not an empty root.
-- The Files view is a terminal companion: browse, inspect, edit, compare, and
-  send context to a session without becoming a general-purpose IDE.
+- `CHROTE_ROOTS` plus canonical-path checks define the application boundary.
+- CHROTE exposes everything under those roots that its service identity can
+  access. The only cross-user asymmetry is Unix permissions; CHROTE does not
+  encode a second access policy.
 - Symlinks and mutations must remain within configured roots after resolution.
-- Browser convenience does not weaken the host filesystem boundary.
+- Unix permission errors are reported plainly, not disguised as empty or
+  missing paths.
+- Files is a terminal companion, not a general-purpose IDE.
 
 ## Beads and agent observability
 
-- CHROTE uses configured `bd` commands and JSON output.
-- Multiple Beads workspaces may be configured; absence of Beads is a degraded
-  integration, not a dashboard crash.
-- `bv` is optional and remains a terminal-side graph viewer, not CHROTE's issue
-  source of truth.
-- Agent observation is harness-neutral and may use configured session prefixes
-  and persona metadata.
-- Absence of agent sessions is normal.
-
-## Experimental Formations and missions
-
-Formations is implemented on `main` as an unreleased experimental orchestration
-surface. Its presence in a development build is not a promise that it ships in
-the latest tagged alpha or belongs in the public quick-start path.
-
-- Boards, layouts, personas, missions, formations, gates, connections, and run
-  ledgers remain durable host-owned files.
-- Inputs and outputs are typed ports; fan-in waits and fan-out follows explicit
-  output connections.
-- Gates produce explicit verdicts and ledger events.
-- Mission and formation runs are inspectable and resumable only within their
-  documented execution contract.
-- The deterministic lab executor is the safest proving environment.
-- Isolated and live tmux execution require explicit configuration and promotion;
-  Formations must not create or kill unrelated tmux sessions.
-- Formations is not a text-routing fallback and does not silently invent missing
-  connections, workers, or gate outcomes.
-
-`FORMATIONS.md`, `ARCHON.md`, and `DATA-MODEL.md` own the detailed experimental
-contracts. Promotion requires an explicit release decision, current media, and
-installer/runtime evidence.
+- CHROTE uses configured modern `bd` commands and JSON output.
+- Multiple Beads workspaces may be configured; an unavailable workspace is a
+  degraded integration, not a dashboard crash.
+- `bv` is optional and remains a terminal-side viewer, not the issue source of
+  truth.
+- Agent work is observed through tmux and native harness state without requiring
+  one agent runtime or persona model.
 
 ## Services
 
-The Services view hosts adapters for explicitly configured local capabilities.
-The public build does not bundle an upstream service, service URL, or working
-credential. Adapter code in the tree is not evidence that an integration is
-configured or currently authenticated.
+Services hosts adapters for explicitly configured local capabilities. The public
+build bundles no upstream, service URL, or working credential.
 
-- Browser code calls CHROTE-owned routes rather than raw upstream ports.
-- Tokens stay in server-side runtime configuration.
-- Missing or unhealthy upstream services render a clear degraded state.
-- Service adapters do not become hidden prerequisites for terminals, Files,
-  Beads, Formations, or Server health.
+- Browser code calls CHROTE-owned routes; tokens remain server-side.
+- Missing or unhealthy upstreams render a clear degraded state.
+- Optional adapters do not become hidden prerequisites for core views.
 
 ## Scheduled tasks and Server status
 
-- Scheduled tasks are stored as host-owned definitions with explicit enabled,
-  run, lock, and history state.
-- Stale locks may be diagnosed and recovered without silently double-running a
-  task.
+- Scheduled tasks are host-owned definitions with explicit enabled, paused,
+  run, and history state.
+- A task sends its prompt literally through CHROTE's guarded tmux path. Delivery
+  receipts do not claim that the terminal application consumed the prompt.
 - Server status exposes health, resource observations, runtime events, and
-  bounded history useful for diagnosing restarts and degradation.
-- Telemetry is operational evidence, not an external analytics pipeline.
+  bounded history. Telemetry is operational evidence, not analytics.
 
 ## Security and deployment boundary
 
 - Default HTTP binding is loopback-only.
-- CHROTE has no built-in application login. Anyone who can reach the dashboard is
-  inside the trusted operator boundary and can reach terminal-grade capabilities.
-- Remote access belongs behind operator-controlled private networking and HTTPS.
-- CORS configuration is not authentication.
-- File roots constrain CHROTE APIs; they do not sandbox tmux agents or their Unix
-  user.
+- CHROTE has no built-in login. Anyone who can reach it is inside the trusted
+  operator boundary and can reach terminal-grade capabilities.
+- Remote access belongs behind operator-controlled private networking and HTTPS;
+  CORS is not authentication.
+- Configured roots constrain file APIs but do not sandbox tmux agents.
+- Access is broad by design. CHROTE never tightens ownership, modes, or ACLs to
+  manufacture isolation; explicit grants may only add access.
 - Secrets live in private runtime configuration, never tracked docs or browser
   storage.
 
-See `SECURITY.md` for the public security contract.
+See [`SECURITY.md`](SECURITY.md) for the public security contract.
 
 ## Roadmap boundary
 
-### Shipped foundation
-
-- Three tmux-backed terminal workspaces
-- Unified Sessions/Files sidecars
-- Files, Agents, Beads, Services, Scheduled, and Server views
-
-### Deliberate next steps
-
-- Promote Formations only after its authoring, execution, security, install, and
-  recovery contracts pass an explicit release gate
-- Broader clean-install and release portability
-- Stronger reusable harness adapters and run provenance
-- Better agent-team ownership, reservation, handoff, and human-approval flows
-- Additional local service adapters only when they earn a place in the operator workflow
+CHROTE may improve the six core jobs and add local adapters that earn a real
+operator workflow. Experimental Formations and Archon orchestration contracts
+were extracted to
+[chrote-agent-formations](https://github.com/Perttulands/chrote-agent-formations)
+and are not part of this product's release promise.
 
 Roadmap text is not permission to claim unshipped behavior in the README.
 
 ## Acceptance criteria
 
-- The embedded dashboard and Go API build from one reproducible source tree.
-- Go tests, race tests, vet, dashboard lint/unit/browser tests, dependency audits,
-  and documentation checks pass in CI.
+- The dashboard and Go API build reproducibly from one source tree.
+- The single CI quality job runs Go format/vet/race coverage, dashboard unit,
+  lint and browser tests, source contracts, and the built-server contract.
 - `/api/health` returns a healthy response on a supported installation.
-- Browser disconnects do not cause CHROTE to terminate tmux sessions.
-- Unknown or unavailable optional integrations degrade clearly.
-- File access remains under configured roots.
-- Formations execution and destructive actions fail loud at their safety
-  boundaries.
-- Public documentation describes supported generic installation and behavior,
-  not one operator's private host layout.
+- Browser disconnects and CHROTE restarts do not terminate external tmux work.
+- Optional integrations degrade clearly.
+- File access remains under configured roots and Unix permissions.
+- Public docs stay generic and host-neutral.

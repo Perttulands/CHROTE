@@ -2,11 +2,11 @@
 
 ## Status
 
-Accepted 2026-08-09 — product and architecture decision.
+Accepted 2026-08-09; reaffirmed 2026-08-30 by
+[ADR-0016](0016-core-boundary-and-formations-extraction.md).
 
-Supersedes [ADR-0014](0014-persistent-agents-supervised-by-systemd.md)
-entirely. It also supersedes the former CHROTE workload-recovery and continuous
-supervision rules.
+Supersedes retired ADR-0014 and the former CHROTE workload-recovery and
+continuous-supervision rules.
 
 ## Context
 

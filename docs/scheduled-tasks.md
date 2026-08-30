@@ -2,10 +2,10 @@
 
 Scheduled tasks are CHROTE-owned persisted jobs that send a prompt literally into a configured tmux session. They are stored by the CHROTE service under its data lane, not in browser local state, host cron, or Hermes cron.
 
-Default API base on the `/srv` lane:
+The from-scratch installer default is:
 
 ```text
-http://127.0.0.1:8095
+http://127.0.0.1:8094
 ```
 
 ## Task schema
@@ -19,10 +19,6 @@ http://127.0.0.1:8095
     {"unixUser": "alice", "sessionName": "planner"},
     {"unixUser": "alice", "sessionName": "planner-2"}
   ],
-  "target": {
-    "unixUser": "alice",
-    "sessionName": "planner"
-  },
   "schedule": {
     "type": "interval",
     "everyMinutes": 60,
@@ -40,9 +36,8 @@ http://127.0.0.1:8095
 
 Targets are always `unixUser + sessionName`. Do **not** send socket paths: CHROTE resolves allowed tmux sockets server-side from its terminal configuration.
 
-One task may fan the same prompt out to several sessions. Send `targets` as an array;
-the single `target` object is still accepted on create/update and is mirrored back in
-responses as the first target so older clients keep working. A `PATCH` carrying
+One task may fan the same prompt out to several sessions. Send `targets` as an
+array; the retired singular `target` field is rejected. A `PATCH` carrying
 `targets` replaces the whole list.
 
 Targets are independent at fire time: a session that is gone is recorded against that
@@ -70,19 +65,19 @@ the terminal application accepted or began processing the prompt.
 ## List tasks
 
 ```bash
-curl -fsS http://127.0.0.1:8095/api/scheduled-tasks | jq .
+curl -fsS http://127.0.0.1:8094/api/scheduled-tasks | jq .
 ```
 
 ## Create an interval task
 
 ```bash
-curl -fsS -X POST http://127.0.0.1:8095/api/scheduled-tasks \
+curl -fsS -X POST http://127.0.0.1:8094/api/scheduled-tasks \
   -H 'Content-Type: application/json' \
   -H 'X-Chrote-Intent: scheduled-task' \
   -d '{
     "name": "Hourly planner nudge",
     "prompt": "Review current plan and post blockers.",
-    "target": {"unixUser": "alice", "sessionName": "planner"},
+    "targets": [{"unixUser": "alice", "sessionName": "planner"}],
     "schedule": {"type": "interval", "everyMinutes": 60, "timezone": "UTC"},
     "enabled": true,
     "paused": false,
@@ -96,7 +91,7 @@ The response includes `data.task.id`; keep that ID for updates/actions.
 ## Create a task that targets several sessions
 
 ```bash
-curl -fsS -X POST http://127.0.0.1:8095/api/scheduled-tasks \
+curl -fsS -X POST http://127.0.0.1:8094/api/scheduled-tasks \
   -H 'Content-Type: application/json' \
   -H 'X-Chrote-Intent: scheduled-task' \
   -d '{
@@ -117,13 +112,13 @@ curl -fsS -X POST http://127.0.0.1:8095/api/scheduled-tasks \
 Cron schedules use five fields: minute, hour, day-of-month, month, day-of-week.
 
 ```bash
-curl -fsS -X POST http://127.0.0.1:8095/api/scheduled-tasks \
+curl -fsS -X POST http://127.0.0.1:8094/api/scheduled-tasks \
   -H 'Content-Type: application/json' \
   -H 'X-Chrote-Intent: scheduled-task' \
   -d '{
     "name": "Weekday morning review",
     "prompt": "Check overnight CHROTE runs and summarize anything stuck.",
-    "target": {"unixUser": "alice", "sessionName": "planner"},
+    "targets": [{"unixUser": "alice", "sessionName": "planner"}],
     "schedule": {"type": "cron", "expression": "0 9 * * 1-5", "timezone": "Europe/Helsinki"},
     "enabled": true,
     "paused": false,
@@ -136,12 +131,12 @@ curl -fsS -X POST http://127.0.0.1:8095/api/scheduled-tasks \
 
 ```bash
 TASK_ID=tsk_example
-curl -fsS -X POST "http://127.0.0.1:8095/api/scheduled-tasks/${TASK_ID}/pause" \
+curl -fsS -X POST "http://127.0.0.1:8094/api/scheduled-tasks/${TASK_ID}/pause" \
   -H 'Content-Type: application/json' \
   -H 'X-Chrote-Intent: scheduled-task' \
   -d '{"updatedBy":"agent:athena"}' | jq .
 
-curl -fsS -X POST "http://127.0.0.1:8095/api/scheduled-tasks/${TASK_ID}/resume" \
+curl -fsS -X POST "http://127.0.0.1:8094/api/scheduled-tasks/${TASK_ID}/resume" \
   -H 'Content-Type: application/json' \
   -H 'X-Chrote-Intent: scheduled-task' \
   -d '{"updatedBy":"agent:athena"}' | jq .
@@ -153,7 +148,7 @@ curl -fsS -X POST "http://127.0.0.1:8095/api/scheduled-tasks/${TASK_ID}/resume" 
 
 ```bash
 TASK_ID=tsk_example
-curl -fsS -X POST "http://127.0.0.1:8095/api/scheduled-tasks/${TASK_ID}/run-now" \
+curl -fsS -X POST "http://127.0.0.1:8094/api/scheduled-tasks/${TASK_ID}/run-now" \
   -H 'Content-Type: application/json' \
   -H 'X-Chrote-Intent: scheduled-task' \
   -d '{"updatedBy":"agent:athena"}' | jq .
@@ -163,13 +158,14 @@ curl -fsS -X POST "http://127.0.0.1:8095/api/scheduled-tasks/${TASK_ID}/run-now"
 
 ```bash
 TASK_ID=tsk_example
-curl -fsS -X DELETE "http://127.0.0.1:8095/api/scheduled-tasks/${TASK_ID}" \
+curl -fsS -X DELETE "http://127.0.0.1:8094/api/scheduled-tasks/${TASK_ID}" \
   -H 'X-Chrote-Intent: scheduled-task' | jq .
 ```
 
 ## Dashboard readback
 
-Open the dashboard at `http://127.0.0.1:8095`, then use the **Scheduled** tab. Agent-created tasks are user-visible there and show:
+Open the dashboard at `http://127.0.0.1:8094`, then use the **Scheduled** tab.
+Tasks are user-visible there and show:
 
 - task ID;
 - prompt text;
