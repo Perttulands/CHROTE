@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-const guardFormat = "#{client_tty}\t#{client_session}\t#{client_width}\t#{client_height}\t#{client_activity}\t#{client_flags}"
+const guardFormat = "#{client_tty}\t#{client_session}\t#{window_id}\t#{client_width}\t#{client_height}\t#{client_activity}\t#{client_flags}\t#{@chrote-size-guard}"
 
 func TestParseTmuxClientsReadsSizeActivityAndFlags(t *testing.T) {
 	output := strings.Join([]string{
-		"/dev/pts/14\tclaude-iris\t80\t24\t1785114088\tattached,focused,UTF-8",
-		"/dev/pts/17\tclaude-vw-1\t152\t68\t1785114088\tattached,focused,ignore-size,UTF-8",
+		"/dev/pts/14\tclaude-iris\t@1\t80\t24\t1785114088\tattached,focused,UTF-8",
+		"/dev/pts/17\tclaude-vw-1\t@2\t152\t68\t1785114088\tattached,focused,ignore-size,UTF-8\t1",
 		"garbage line",
-		"/dev/pts/23\tcodex-anim\tnot-a-number\t24\t1785114088\tattached",
+		"/dev/pts/23\tcodex-anim\t@3\tnot-a-number\t24\t1785114088\tattached",
 	}, "\n")
 
 	clients := parseTmuxClients(output)
@@ -23,11 +23,11 @@ func TestParseTmuxClientsReadsSizeActivityAndFlags(t *testing.T) {
 	if len(clients) != 2 {
 		t.Fatalf("parsed %d clients, want the two well-formed ones: %+v", len(clients), clients)
 	}
-	if clients[0].TTY != "/dev/pts/14" || clients[0].Width != 80 || clients[0].Height != 24 || clients[0].IgnoreSize {
+	if clients[0].TTY != "/dev/pts/14" || clients[0].WindowID != "@1" || clients[0].Width != 80 || clients[0].Height != 24 || clients[0].IgnoreSize {
 		t.Fatalf("first client = %+v, want the un-negotiated 80x24 client without the flag", clients[0])
 	}
-	if !clients[1].IgnoreSize || clients[1].Width != 152 {
-		t.Fatalf("second client = %+v, want the flagged 152-wide client", clients[1])
+	if clients[1].WindowID != "@2" || !clients[1].IgnoreSize || !clients[1].GuardOwned || clients[1].Width != 152 {
+		t.Fatalf("second client = %+v, want the guard-owned flagged 152-wide client", clients[1])
 	}
 	if !clients[0].ActivityAt.Equal(time.Unix(1785114088, 0)) {
 		t.Fatalf("activity = %v, want the parsed unix timestamp", clients[0].ActivityAt)
@@ -101,12 +101,17 @@ func TestApplySizeGuardFlagsIdleClientAndLeavesOthersAlone(t *testing.T) {
 for arg in "$@"; do
   case "$arg" in
     list-clients)
-      printf '/dev/pts/14\tclaude-iris\t80\t24\t1\tattached,focused,UTF-8\n'
-      printf '/dev/pts/17\tclaude-vw-1\t152\t68\t1\tattached,focused,UTF-8\n'
+      printf '/dev/pts/14\tclaude-iris\t@1\t80\t24\t1\tattached,focused,UTF-8\n'
+      printf '/dev/pts/17\tclaude-vw-1\t@2\t152\t68\t1\tattached,focused,UTF-8\n'
       exit 0
       ;;
   esac
 done
+case "$*" in
+  *"show-options"*"window-size"*)
+    printf 'latest\n'
+    ;;
+esac
 exit 0
 `
 	if err := osWriteFileExecutable(fakeTmux, script); err != nil {
@@ -130,10 +135,10 @@ exit 0
 		t.Fatalf("read fake tmux args: %v", err)
 	}
 	calls := splitScheduledTmuxCalls(raw)
-	// list-clients, one refresh-client, and a widen for the session whose only
-	// client just lost its say. claude-vw-1 keeps a sizing client, so it is left alone.
-	if len(calls) != 3 {
-		t.Fatalf("tmux calls = %#v, want list-clients, refresh-client, resize-window", calls)
+	// claude-vw-1 keeps a sizing client and is not guard-owned, so only the
+	// newly ignored claude-iris window is marked and widened.
+	if len(calls) != 5 {
+		t.Fatalf("tmux calls = %#v, want list-clients, refresh-client, policy read, ownership mark, resize-window", calls)
 	}
 	if calls[0][2] != "list-clients" || calls[0][4] != guardFormat {
 		t.Fatalf("first call = %#v, want the client listing with the guard format", calls[0])
@@ -142,32 +147,42 @@ exit 0
 	if strings.Join(calls[1], "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("second call = %#v, want %#v", calls[1], want)
 	}
-	if calls[2][2] != "resize-window" || calls[2][4] != "claude-iris" {
-		t.Fatalf("third call = %#v, want a widen for claude-iris only", calls[2])
+	if calls[2][2] != "show-options" || calls[2][5] != "@1" {
+		t.Fatalf("third call = %#v, want a policy read for claude-iris only", calls[2])
+	}
+	if calls[3][2] != "set-window-option" || calls[3][5] != "@1" {
+		t.Fatalf("fourth call = %#v, want an ownership mark for claude-iris only", calls[3])
+	}
+	if calls[4][2] != "resize-window" || calls[4][4] != "@1" {
+		t.Fatalf("fifth call = %#v, want a widen for claude-iris only", calls[4])
 	}
 }
 
-func TestSessionsNeedingResizeOnlyCoversFullyIgnoredSessions(t *testing.T) {
+func TestWindowsBySizeOwnershipSeparatesFullyIgnoredWindows(t *testing.T) {
 	clients := []tmuxClient{
-		// Only client on this session, about to be flagged: nothing left to size it.
-		{TTY: "/dev/pts/14", Session: "agent-alone"},
-		// Two clients; one keeps its say, so tmux still sizes this session.
-		{TTY: "/dev/pts/15", Session: "agent-watched"},
-		{TTY: "/dev/pts/16", Session: "agent-watched"},
+		// Only client on this window, about to be flagged: nothing left to size it.
+		{TTY: "/dev/pts/14", WindowID: "@1"},
+		// Two clients; one keeps its say, so tmux still sizes this window.
+		{TTY: "/dev/pts/15", WindowID: "@2"},
+		{TTY: "/dev/pts/16", WindowID: "@2"},
 	}
 	decisions := []sizeGuardDecision{
 		{TTY: "/dev/pts/14", IgnoreSize: true},
 		{TTY: "/dev/pts/15", IgnoreSize: true},
 	}
 
-	needing := sessionsNeedingResize(clients, decisions)
+	sizing, ignored := windowsBySizeOwnership(clients, decisions)
 
-	if len(needing) != 1 || needing[0] != "agent-alone" {
-		t.Fatalf("sessions needing resize = %v, want only agent-alone", needing)
+	if len(sizing) != 1 || sizing[0] != "@2" {
+		t.Fatalf("windows with sizing clients = %v, want only @2", sizing)
+	}
+	if len(ignored) != 1 || ignored[0] != "@1" {
+		t.Fatalf("fully ignored windows = %v, want only @1", ignored)
 	}
 }
 
-func TestApplySizeGuardWidensASessionLeftWithoutASizingClient(t *testing.T) {
+func applySizeGuardWithFake(t *testing.T, clients, policy string) ([]sizeGuardDecision, [][]string) {
+	t.Helper()
 	tmpDir := t.TempDir()
 	argsPath := tmpDir + "/tmux-argv.txt"
 	fakeTmux := tmpDir + "/tmux"
@@ -178,95 +193,123 @@ func TestApplySizeGuardWidensASessionLeftWithoutASizingClient(t *testing.T) {
     printf '%s\n' "$arg"
   done
 } >> "$TMUX_ARGS_FILE"
-for arg in "$@"; do
-  case "$arg" in
-    list-clients)
-      printf '/dev/pts/14\tagent-alone\t80\t24\t1\tattached,focused,UTF-8\n'
-      exit 0
-      ;;
-  esac
-done
+case "$3" in
+  list-clients)
+    printf '%s\n' "$TMUX_CLIENTS"
+    ;;
+  show-options)
+    printf '%s\n' "$TMUX_WINDOW_SIZE"
+    ;;
+esac
 exit 0
 `
 	if err := osWriteFileExecutable(fakeTmux, script); err != nil {
 		t.Fatalf("write fake tmux: %v", err)
 	}
 	t.Setenv("TMUX_ARGS_FILE", argsPath)
+	t.Setenv("TMUX_CLIENTS", clients)
+	t.Setenv("TMUX_WINDOW_SIZE", policy)
 	t.Setenv("PATH", tmpDir+":/usr/bin:/bin")
-	t.Setenv("CHROTE_TERMINAL_UNOBSERVED_COLS", "200")
-	t.Setenv("CHROTE_TERMINAL_UNOBSERVED_ROWS", "50")
 
-	handler := NewTmuxHandler()
-	if _, err := handler.applySizeGuard(context.Background(), "/tmp/guard-test.sock", time.Unix(1785200000, 0), 5*time.Minute); err != nil {
+	applied, err := NewTmuxHandler().applySizeGuard(context.Background(), "/tmp/guard-test.sock", time.Unix(1785200000, 0), 5*time.Minute)
+	if err != nil {
 		t.Fatalf("applySizeGuard returned error: %v", err)
 	}
-
 	raw, err := osReadFileString(argsPath)
 	if err != nil {
 		t.Fatalf("read fake tmux args: %v", err)
 	}
-	calls := splitScheduledTmuxCalls(raw)
-	if len(calls) != 3 {
-		t.Fatalf("tmux calls = %#v, want list-clients, refresh-client, resize-window", calls)
+	return applied, splitScheduledTmuxCalls(raw)
+}
+
+func TestApplySizeGuardOwnsOnlyItsManualFallback(t *testing.T) {
+	list := []string{"-S", "/tmp/guard-test.sock", "list-clients", "-F", guardFormat}
+	ignore := []string{"-S", "/tmp/guard-test.sock", "refresh-client", "-f", "ignore-size", "-t", "/dev/pts/14"}
+	reinstate := []string{"-S", "/tmp/guard-test.sock", "refresh-client", "-f", "!ignore-size", "-t", "/dev/pts/14"}
+	policy := []string{"-S", "/tmp/guard-test.sock", "show-options", "-wAv", "-t", "@42", "window-size"}
+	mark := []string{"-S", "/tmp/guard-test.sock", "set-window-option", "-q", "-t", "@42", sizeGuardOwnerOption, "1"}
+	resize := []string{"-S", "/tmp/guard-test.sock", "resize-window", "-t", "@42", "-x", "200", "-y", "50"}
+	latest := []string{"-S", "/tmp/guard-test.sock", "set-window-option", "-q", "-t", "@42", "window-size", "latest"}
+	clear := []string{"-S", "/tmp/guard-test.sock", "set-window-option", "-qu", "-t", "@42", sizeGuardOwnerOption}
+
+	tests := []struct {
+		name        string
+		clients     string
+		policy      string
+		wantApplied int
+		wantCalls   [][]string
+	}{
+		{
+			name:        "automatic window gets an owned unobserved fallback",
+			clients:     "/dev/pts/14\tagent-watched\t@42\t80\t24\t1\tattached,focused,UTF-8",
+			policy:      "latest",
+			wantApplied: 1,
+			wantCalls:   [][]string{list, ignore, policy, mark, resize},
+		},
+		{
+			name:        "intentional manual window is not claimed or resized",
+			clients:     "/dev/pts/14\tagent-watched\t@42\t80\t24\t1\tattached,focused,UTF-8",
+			policy:      "manual",
+			wantApplied: 1,
+			wantCalls:   [][]string{list, ignore, policy},
+		},
+		{
+			name:        "same client reports its viewport",
+			clients:     "/dev/pts/14\tagent-watched\t@42\t152\t68\t1\tattached,focused,ignore-size,UTF-8\t1",
+			wantApplied: 1,
+			wantCalls:   [][]string{list, reinstate, latest, clear},
+		},
+		{
+			name:        "replacement client arrives already visible",
+			clients:     "/dev/pts/19\tagent-watched\t@42\t132\t55\t1\tattached,focused,UTF-8\t1",
+			wantApplied: 0,
+			wantCalls:   [][]string{list, latest, clear},
+		},
 	}
-	want := []string{"-S", "/tmp/guard-test.sock", "resize-window", "-t", "agent-alone", "-x", "200", "-y", "50"}
-	if strings.Join(calls[2], "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("third call = %#v, want %#v", calls[2], want)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			applied, calls := applySizeGuardWithFake(t, tt.clients, tt.policy)
+			if len(applied) != tt.wantApplied {
+				t.Fatalf("applied = %+v, want %d client flag changes", applied, tt.wantApplied)
+			}
+			if len(calls) != len(tt.wantCalls) {
+				t.Fatalf("tmux calls = %#v, want %#v", calls, tt.wantCalls)
+			}
+			for i := range tt.wantCalls {
+				if strings.Join(calls[i], "\x00") != strings.Join(tt.wantCalls[i], "\x00") {
+					t.Fatalf("call %d = %#v, want %#v", i+1, calls[i], tt.wantCalls[i])
+				}
+			}
+		})
 	}
 }
 
-func TestApplySizeGuardReturnsAReinstatedSessionToAutomaticSizing(t *testing.T) {
-	tmpDir := t.TempDir()
-	argsPath := tmpDir + "/tmux-argv.txt"
-	fakeTmux := tmpDir + "/tmux"
-	// The client was flagged while hidden and has now reported a real viewport.
-	script := `#!/bin/sh
-{
-  printf 'CALL\n'
-  for arg in "$@"; do
-    printf '%s\n' "$arg"
-  done
-} >> "$TMUX_ARGS_FILE"
-for arg in "$@"; do
-  case "$arg" in
-    list-clients)
-      printf '/dev/pts/14\tagent-watched\t152\t68\t1\tattached,focused,ignore-size,UTF-8\n'
-      exit 0
-      ;;
-  esac
-done
-exit 0
-`
-	if err := osWriteFileExecutable(fakeTmux, script); err != nil {
-		t.Fatalf("write fake tmux: %v", err)
+func TestApplySizeGuardGroupsLinkedSessionsByStableWindowID(t *testing.T) {
+	// Both clients expose the same linked window. One session's client is
+	// becoming ignored, while the other session still has a visible sizing
+	// client, so the physical window must never enter the ignored fallback.
+	clients := strings.Join([]string{
+		"/dev/pts/14\thidden-link\t@42\t80\t24\t1\tattached,focused,UTF-8\t1",
+		"/dev/pts/15\tvisible-link\t@42\t132\t55\t1\tattached,focused,UTF-8\t1",
+	}, "\n")
+	applied, calls := applySizeGuardWithFake(t, clients, "latest")
+	if len(applied) != 1 || applied[0].TTY != "/dev/pts/14" || !applied[0].IgnoreSize {
+		t.Fatalf("applied = %+v, want only the hidden linked client ignored", applied)
 	}
-	t.Setenv("TMUX_ARGS_FILE", argsPath)
-	t.Setenv("PATH", tmpDir+":/usr/bin:/bin")
-
-	handler := NewTmuxHandler()
-	applied, err := handler.applySizeGuard(context.Background(), "/tmp/guard-test.sock", time.Unix(1785200000, 0), 5*time.Minute)
-	if err != nil {
-		t.Fatalf("applySizeGuard returned error: %v", err)
+	wantCalls := [][]string{
+		{"-S", "/tmp/guard-test.sock", "list-clients", "-F", guardFormat},
+		{"-S", "/tmp/guard-test.sock", "refresh-client", "-f", "ignore-size", "-t", "/dev/pts/14"},
+		{"-S", "/tmp/guard-test.sock", "set-window-option", "-q", "-t", "@42", "window-size", "latest"},
+		{"-S", "/tmp/guard-test.sock", "set-window-option", "-qu", "-t", "@42", sizeGuardOwnerOption},
 	}
-	if len(applied) != 1 || applied[0].IgnoreSize {
-		t.Fatalf("applied = %+v, want the flag cleared", applied)
+	if len(calls) != len(wantCalls) {
+		t.Fatalf("tmux calls = %#v, want one linked-window restore and no ignored fallback: %#v", calls, wantCalls)
 	}
-
-	raw, err := osReadFileString(argsPath)
-	if err != nil {
-		t.Fatalf("read fake tmux args: %v", err)
-	}
-	calls := splitScheduledTmuxCalls(raw)
-	if len(calls) != 3 {
-		t.Fatalf("tmux calls = %#v, want list-clients, refresh-client, resize-window -A", calls)
-	}
-	want := []string{"-S", "/tmp/guard-test.sock", "refresh-client", "-f", "!ignore-size", "-t", "/dev/pts/14"}
-	if strings.Join(calls[1], "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("second call = %#v, want %#v", calls[1], want)
-	}
-	wantAuto := []string{"-S", "/tmp/guard-test.sock", "resize-window", "-A", "-t", "agent-watched"}
-	if strings.Join(calls[2], "\x00") != strings.Join(wantAuto, "\x00") {
-		t.Fatalf("third call = %#v, want %#v so the window follows the viewport again", calls[2], wantAuto)
+	for i := range wantCalls {
+		if strings.Join(calls[i], "\x00") != strings.Join(wantCalls[i], "\x00") {
+			t.Fatalf("call %d = %#v, want %#v", i+1, calls[i], wantCalls[i])
+		}
 	}
 }
 

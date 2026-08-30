@@ -28,25 +28,26 @@ const (
 	// reports anything else has told us about a real viewport.
 	unnegotiatedClientWidth  = 80
 	unnegotiatedClientHeight = 24
-	// Size given to a session whose only remaining clients ignore sizing, so an
+	// Size given to a window whose only remaining clients ignore sizing, so an
 	// unobserved agent renders wide instead of staying clamped at 80 columns.
 	defaultUnobservedWidth  = 200
 	defaultUnobservedHeight = 50
+	sizeGuardOwnerOption    = "@chrote-size-guard"
 )
 
 type tmuxClient struct {
 	TTY        string
-	Session    string
+	WindowID   string
 	Width      int
 	Height     int
 	ActivityAt time.Time
 	IgnoreSize bool
+	GuardOwned bool
 }
 
 // sizeGuardDecision is what the sweep wants to change about one client.
 type sizeGuardDecision struct {
 	TTY        string
-	Session    string
 	IgnoreSize bool
 }
 
@@ -55,26 +56,29 @@ func parseTmuxClients(output string) []tmuxClient {
 	clients := []tmuxClient{}
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		fields := strings.Split(strings.TrimSpace(line), "\t")
-		if len(fields) < 6 {
+		if len(fields) < 7 {
 			continue
 		}
-		width, widthErr := strconv.Atoi(strings.TrimSpace(fields[2]))
-		height, heightErr := strconv.Atoi(strings.TrimSpace(fields[3]))
-		activity, activityErr := strconv.ParseInt(strings.TrimSpace(fields[4]), 10, 64)
+		width, widthErr := strconv.Atoi(strings.TrimSpace(fields[3]))
+		height, heightErr := strconv.Atoi(strings.TrimSpace(fields[4]))
+		activity, activityErr := strconv.ParseInt(strings.TrimSpace(fields[5]), 10, 64)
 		if widthErr != nil || heightErr != nil || activityErr != nil {
 			continue
 		}
 		tty := strings.TrimSpace(fields[0])
-		if tty == "" {
+		windowID := strings.TrimSpace(fields[2])
+		if tty == "" || windowID == "" {
 			continue
 		}
+		guardOwned := len(fields) > 7 && strings.TrimSpace(fields[7]) == "1"
 		clients = append(clients, tmuxClient{
 			TTY:        tty,
-			Session:    strings.TrimSpace(fields[1]),
+			WindowID:   windowID,
 			Width:      width,
 			Height:     height,
 			ActivityAt: time.Unix(activity, 0),
-			IgnoreSize: strings.Contains(fields[5], "ignore-size"),
+			IgnoreSize: strings.Contains(fields[6], "ignore-size"),
+			GuardOwned: guardOwned,
 		})
 	}
 	return clients
@@ -95,15 +99,14 @@ func planSizeGuard(clients []tmuxClient, now time.Time, idleAfter time.Duration)
 		if shouldIgnore == client.IgnoreSize {
 			continue
 		}
-		decisions = append(decisions, sizeGuardDecision{TTY: client.TTY, Session: client.Session, IgnoreSize: shouldIgnore})
+		decisions = append(decisions, sizeGuardDecision{TTY: client.TTY, IgnoreSize: shouldIgnore})
 	}
 	return decisions
 }
 
-// sessionsNeedingResize lists sessions whose every client will be ignoring size
-// after the plan is applied. tmux leaves such a window at whatever the last
-// sizing client imposed, so the guard has to widen it back explicitly.
-func sessionsNeedingResize(clients []tmuxClient, decisions []sizeGuardDecision) []string {
+// windowsBySizeOwnership partitions physical windows by whether at least one
+// client will still be sizing them after the plan is applied.
+func windowsBySizeOwnership(clients []tmuxClient, decisions []sizeGuardDecision) (sizing, ignored []string) {
 	ignoring := map[string]bool{}
 	for _, client := range clients {
 		ignoring[client.TTY] = client.IgnoreSize
@@ -113,28 +116,29 @@ func sessionsNeedingResize(clients []tmuxClient, decisions []sizeGuardDecision) 
 	}
 
 	authoritative := map[string]bool{}
-	sessions := []string{}
+	windows := []string{}
 	seen := map[string]bool{}
 	for _, client := range clients {
-		if client.Session == "" {
+		if client.WindowID == "" {
 			continue
 		}
-		if !seen[client.Session] {
-			seen[client.Session] = true
-			sessions = append(sessions, client.Session)
+		if !seen[client.WindowID] {
+			seen[client.WindowID] = true
+			windows = append(windows, client.WindowID)
 		}
 		if !ignoring[client.TTY] {
-			authoritative[client.Session] = true
+			authoritative[client.WindowID] = true
 		}
 	}
 
-	needing := []string{}
-	for _, session := range sessions {
-		if !authoritative[session] {
-			needing = append(needing, session)
+	for _, windowID := range windows {
+		if authoritative[windowID] {
+			sizing = append(sizing, windowID)
+		} else {
+			ignored = append(ignored, windowID)
 		}
 	}
-	return needing
+	return sizing, ignored
 }
 
 func unobservedWindowSize() (int, int) {
@@ -207,7 +211,7 @@ func (h *TmuxHandler) guardedSockets() []string {
 // applySizeGuard runs one sweep over one socket and returns the applied decisions.
 func (h *TmuxHandler) applySizeGuard(ctx context.Context, socket string, now time.Time, idleAfter time.Duration) ([]sizeGuardDecision, error) {
 	output, err := h.runTmuxOnSocketContext(ctx, socket,
-		"list-clients", "-F", "#{client_tty}\t#{client_session}\t#{client_width}\t#{client_height}\t#{client_activity}\t#{client_flags}")
+		"list-clients", "-F", "#{client_tty}\t#{client_session}\t#{window_id}\t#{client_width}\t#{client_height}\t#{client_activity}\t#{client_flags}\t#{@chrote-size-guard}")
 	if err != nil {
 		return nil, err
 	}
@@ -226,26 +230,48 @@ func (h *TmuxHandler) applySizeGuard(ctx context.Context, socket string, now tim
 		applied = append(applied, decision)
 	}
 
-	if len(applied) == 0 {
-		return applied, nil
+	sizingWindows, ignoredWindows := windowsBySizeOwnership(clients, applied)
+	guardOwned := map[string]bool{}
+	for _, client := range clients {
+		if client.GuardOwned {
+			guardOwned[client.WindowID] = true
+		}
 	}
-
-	// An explicit resize-window pins the window to manual sizing, so a session
-	// whose client just got its say back has to be handed to automatic sizing
-	// again or it would ignore the viewport the client reports.
-	for _, decision := range applied {
-		if decision.IgnoreSize || decision.Session == "" {
+	// Reconcile every sizing window, not only flag transitions: a replacement
+	// client may arrive already valid after the ignored client disappeared.
+	for _, windowID := range sizingWindows {
+		if !guardOwned[windowID] {
 			continue
 		}
-		if _, err := h.runTmuxOnSocketContext(ctx, socket, "resize-window", "-A", "-t", decision.Session); err != nil {
+		if _, err := h.runTmuxOnSocketContext(ctx, socket,
+			"set-window-option", "-q", "-t", windowID, "window-size", "latest"); err != nil {
 			continue
 		}
+		_, _ = h.runTmuxOnSocketContext(ctx, socket,
+			"set-window-option", "-qu", "-t", windowID, sizeGuardOwnerOption)
 	}
 
 	width, height := unobservedWindowSize()
-	for _, session := range sessionsNeedingResize(clients, applied) {
+	for _, windowID := range ignoredWindows {
+		policy, err := h.runTmuxOnSocketContext(ctx, socket,
+			"show-options", "-wAv", "-t", windowID, "window-size")
+		if err != nil {
+			continue
+		}
+		switch strings.TrimSpace(policy) {
+		case "latest", "largest", "smallest":
+		default:
+			// A manual window without our marker belongs to the operator.
+			continue
+		}
 		if _, err := h.runTmuxOnSocketContext(ctx, socket,
-			"resize-window", "-t", session, "-x", strconv.Itoa(width), "-y", strconv.Itoa(height)); err != nil {
+			"set-window-option", "-q", "-t", windowID, sizeGuardOwnerOption, "1"); err != nil {
+			continue
+		}
+		if _, err := h.runTmuxOnSocketContext(ctx, socket,
+			"resize-window", "-t", windowID, "-x", strconv.Itoa(width), "-y", strconv.Itoa(height)); err != nil {
+			_, _ = h.runTmuxOnSocketContext(ctx, socket,
+				"set-window-option", "-qu", "-t", windowID, sizeGuardOwnerOption)
 			continue
 		}
 	}
