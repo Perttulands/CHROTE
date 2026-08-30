@@ -69,6 +69,22 @@ function staleSessionKeysInWorkspaces(
   return stale
 }
 
+function mergeFailedUserSessions(
+  previous: TmuxSession[],
+  received: TmuxSession[],
+  failedUsers: readonly LaunchUser[],
+): TmuxSession[] {
+  const failed = new Set(failedUsers)
+  return [...received, ...previous.filter(session => session.unixUser && failed.has(session.unixUser))]
+}
+
+function groupSessions(sessions: TmuxSession[]): Record<string, TmuxSession[]> {
+  return sessions.reduce<Record<string, TmuxSession[]>>((groups, session) => {
+    (groups[session.group] ??= []).push(session)
+    return groups
+  }, {})
+}
+
 interface SessionsPollOptions {
   autoRefreshInterval: number
   setWorkspaces: Dispatch<SetStateAction<Record<WorkspaceId, TerminalWorkspace>>>
@@ -87,6 +103,7 @@ export function useSessionsPoll({
   const [terminalUsers, setTerminalUsers] = useState<LaunchUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const sessionsRef = useRef<TmuxSession[]>([])
   const staleSessionCandidatesRef = useRef<Set<string>>(new Set())
   const staleSessionProtectionRef = useRef<Map<string, number>>(new Map())
   const refreshMountedRef = useRef(false)
@@ -185,10 +202,19 @@ export function useSessionsPoll({
           setError(typeof data.error === 'string' ? data.error : 'Failed to fetch sessions')
           return
         }
-        const nextSessions = Array.isArray(data.sessions) ? data.sessions : []
+        const receivedSessions = Array.isArray(data.sessions) ? data.sessions : []
+        const partialFailedUsers = isPartial && Array.isArray(data.successfulUsers) && Array.isArray(data.failedUsers)
+          ? data.failedUsers
+          : null
+        const nextSessions = partialFailedUsers
+          ? mergeFailedUserSessions(sessionsRef.current, receivedSessions, partialFailedUsers)
+          : receivedSessions
         setError(typeof data.error === 'string' ? data.error : null)
+        sessionsRef.current = nextSessions
         setSessions(nextSessions)
-        setGroupedSessions(isRecord(data.grouped) ? data.grouped as Record<string, TmuxSession[]> : {})
+        setGroupedSessions(partialFailedUsers
+          ? groupSessions(nextSessions)
+          : (isRecord(data.grouped) ? data.grouped as Record<string, TmuxSession[]> : {}))
         if (Array.isArray(data.terminalUsers)) setTerminalUsers(normalizeTerminalUsers(data.terminalUsers))
 
         if (Array.isArray(data.sessions)) {

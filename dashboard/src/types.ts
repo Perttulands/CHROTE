@@ -300,6 +300,8 @@ export interface SessionsResponse {
   timestamp: string
   error?: string
   partial?: boolean
+  successfulUsers?: LaunchUser[]
+  failedUsers?: LaunchUser[]
 }
 
 export interface TerminalWindow {

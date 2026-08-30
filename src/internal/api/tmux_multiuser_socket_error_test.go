@@ -27,6 +27,9 @@ func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 		"    *) shift ;;\n" +
 		"  esac\n" +
 		"done\n" +
+		"if [ -n \"$TMUX_EMPTY_FOR\" ]; then\n" +
+		"  case \"$sock\" in *\"$TMUX_EMPTY_FOR\"*) printf 'no server running on %s\\n' \"$sock\" >&2; exit 1 ;; esac\n" +
+		"fi\n" +
 		"case \"$sock\" in\n" +
 		"  *" + failFor + "*) printf '%s\\n' \"$TMUX_STDERR\" >&2; exit 1 ;;\n" +
 		"esac\n" +
@@ -37,6 +40,7 @@ func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 		t.Fatalf("write selective fake tmux: %v", err)
 	}
 	t.Setenv("TMUX_STDERR", stderr)
+	t.Setenv("TMUX_EMPTY_FOR", "")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
@@ -119,6 +123,49 @@ func TestTmuxHandler_ListSessionsStillReturnsHealthyUsersSessionsWhenOneSocketFa
 	payload := decodeJSONMap(t, rec)
 	if partial, ok := payload["partial"].(bool); !ok || !partial {
 		t.Fatalf("partial = %#v, want true for healthy sessions plus a per-user error", payload["partial"])
+	}
+}
+
+// A zero-session user is still authoritative: its absence of rows means old
+// sessions may be deleted. The response therefore has to name both successful
+// and failed users instead of asking clients to infer authority from sessions.
+func TestTmuxHandler_ListSessionsPartialNamesSuccessfulAndFailedUsers(t *testing.T) {
+	installSelectiveTmux(t, "denied", "error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)")
+	t.Setenv("TMUX_EMPTY_FOR", "empty")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/fixture-alice/empty.sock,build=/tmp/fixture-build/denied.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
+
+	handler := NewTmuxHandler()
+	rec := httptest.NewRecorder()
+	handler.ListSessions(rec, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+
+	payload := decodeJSONMap(t, rec)
+	if partial, ok := payload["partial"].(bool); !ok || !partial {
+		t.Fatalf("partial = %#v, want true when an empty healthy source accompanies a failed source", payload["partial"])
+	}
+	if sessions, ok := payload["sessions"].([]interface{}); !ok || len(sessions) != 0 {
+		t.Fatalf("sessions = %#v, want no rows from the healthy zero-session user", payload["sessions"])
+	}
+	assertJSONStrings(t, payload, "successfulUsers", []string{"alice"})
+	assertJSONStrings(t, payload, "failedUsers", []string{"build"})
+}
+
+func assertJSONStrings(t *testing.T, payload map[string]interface{}, field string, want []string) {
+	t.Helper()
+	values, ok := payload[field].([]interface{})
+	if !ok {
+		t.Fatalf("%s = %#v, want a JSON string array", field, payload[field])
+	}
+	got := make([]string, len(values))
+	for index, value := range values {
+		var stringValue bool
+		got[index], stringValue = value.(string)
+		if !stringValue {
+			t.Fatalf("%s[%d] = %#v, want a string", field, index, value)
+		}
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("%s = %#v, want %#v", field, got, want)
 	}
 }
 
