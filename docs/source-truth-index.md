@@ -43,11 +43,10 @@ deliberately rather than relying on prose discipline.
 | Document | Role |
 | --- | --- |
 | [`COMPONENTS.md`](../COMPONENTS.md) | Public component and optional-integration map |
-| [`docs/CHROTE_VISION.md`](CHROTE_VISION.md) | Short product thesis |
 | [`docs/TEST_STRATEGY.md`](TEST_STRATEGY.md) | Test layers, commands, and CI policy |
 | [`docs/private-beads-sidecar.md`](private-beads-sidecar.md) | Host-neutral contract for private Beads transport, revision pairing, and restore |
 | [`docs/PRD-terminal-lifecycle.md`](PRD-terminal-lifecycle.md) | Terminal iframe and tmux lifecycle constraints |
-| [`docs/adr/`](adr/) | Accepted architectural decisions; [`ADR-0015`](adr/0015-access-first-non-interference.md) records the access-first and session-lifetime boundary |
+| [`docs/adr/`](adr/) | Accepted decisions; [`ADR-0016`](adr/0016-core-boundary-and-formations-extraction.md) records the core boundary and extraction |
 | [`dashboard/README.md`](../dashboard/README.md) | Dashboard contributor map and local commands |
 
 Supporting docs explain or operationalize the source-truth specs. They do not
@@ -67,47 +66,22 @@ operator's host layout.
 not end-user installation guides. If they contain local execution context, it
 must not be copied into public onboarding prose.
 
-## Plans, explorations, and historical material
+## Non-current ideas
 
-The following are useful context but are not current product authority:
-
-- [`docs/plans/`](plans/) — implementation plans;
-- [`docs/archive/`](archive/) — retired or historical material;
-- `docs/gascity-*` — evaluation material, not a hidden runtime dependency.
-
-If historical text conflicts with an active source-truth spec, the active spec
-wins. Do not repair history into looking current; label or archive it.
-
-## Intentionally absent documents and tools
-
-These names have appeared in older plans but are not current authority:
-
-- `CHROTE.md`
-- `SPEC-CHANGELOG.md`
-- `ARCHON_BDD.md`
-- `FORMATIONS_BDD.md`
-- `scripts/dead-link-check.py`
-- `scripts/agent-check`
-
-Do not invent them to satisfy stale prose. Add a new canonical document or tool
-only when it has a clear owner and enforcement role.
+[`docs/legacy-ideas.md`](legacy-ideas.md) is the only idea graveyard. It is not a
+plan, backlog, or product authority. Worthwhile work must become a Bead before
+implementation; all current claims remain in the sources above.
 
 ## Current enforcement boundary
 
 `scripts/doc-lint.py` checks:
 
 1. required source-truth frontmatter;
-2. valid `enforced_by` paths;
-3. required index entries and local links;
-4. theme-id parity between code and specs;
-5. stable security/runtime facts;
-6. absence of host-local operator lanes from public product docs;
-7. the shipped PRD view inventory;
-8. placeholder repository links.
+2. the shipped PRD view inventory;
+3. local Markdown links.
 
-It intentionally does not decide whether every roadmap paragraph is wise or
-every archived note is still interesting. Those are review problems, not regex
-problems.
+`scripts/host-neutrality.py` separately checks tracked files for operator-local
+topology. Review owns product judgment that cannot be reduced to these checks.
 
 When stable drift recurs, extend the lint. When a check would merely encode a
 transient implementation detail, leave it to tests and review.

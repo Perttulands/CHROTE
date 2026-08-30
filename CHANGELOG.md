@@ -17,17 +17,10 @@ release.
 - Scheduled tasks and Server health/history cockpit views.
 - Documentation source-truth index and contract lint.
 
-### Experimental
-
-- Unreleased file-backed Formations, missions, typed ports, gates, personas, run
-  ledgers, controlled executors, resume, and escalation work on `main`.
-- Unreleased `archon` CLI and mission-room projection work over the same
-  experimental storage contracts.
-
 ### Changed
 
-- Filesystem operations now resolve and constrain symlink mutations under
-  configured roots.
+- Files now exposes everything under `CHROTE_ROOTS` that the service identity's
+  Unix permissions allow, while canonical paths remain inside configured roots.
 - Terminal drag/drop, assignment, iframe lifecycle, and layout persistence were
   hardened for dense multi-window use.
 - Session rows now Peek without changing assignment metadata; location chips
@@ -38,6 +31,10 @@ release.
 
 ### Removed
 
+- Extracted the unreleased Formations and Archon experiment, including its
+  history, to `chrote-agent-formations`.
+- Removed the Agents tab; agent work remains visible through tmux and native
+  harness state.
 - Retired the unreleased session-locking and Persistent Agents capability,
   including CHROTE-owned agent units and reboot-recovery claims. CHROTE preserves
   external tmux work across its own lifecycle but does not supervise ordinary
@@ -54,8 +51,8 @@ release.
 
 - Removed the revoked access-token/authentication experiment; CHROTE retains its
   documented localhost/private-network trust model.
-- Tightened file-root, symlink, terminal-origin, command-argument, and gate-output
-  boundaries.
+- Kept canonical file-root and symlink containment while removing the extra
+  sensitive-path classifier.
 - Release builds are being moved to a patched Go baseline with blocking source
   and binary vulnerability scans before the next tagged alpha.
 

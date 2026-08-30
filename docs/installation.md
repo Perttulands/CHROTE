@@ -57,7 +57,7 @@ The installer:
 1. builds the dashboard and exact embedded Go binary from the checkout;
 2. injects the version from `VERSION`;
 3. installs `chrote-server`, ttyd, and `terminal-launch.sh` under the user prefix;
-4. writes XDG-scoped state paths for schedules, session drops, and agent cards;
+4. writes XDG-scoped state paths for schedules and session drops;
 5. writes the `chrote.service` user unit that runs the cockpit itself;
 6. enables, starts, and health-checks the service.
 
@@ -78,11 +78,9 @@ workspace when practical:
 That path becomes:
 
 - `CHROTE_ROOTS`
-- `CHROTE_WRITE_ROOTS`
 - `CHROTE_WORKDIR`
 - the default tmux working directory
 - the initial Beads discovery root
-- the Formations workspace
 
 Configured roots constrain CHROTE file APIs. They do not sandbox commands or AI
 agents running in tmux.
@@ -139,10 +137,9 @@ systemctl --user restart chrote.service
 ```
 
 Common advanced settings are documented in [`.env.example`](../.env.example).
-Cross-user terminal sockets, Formations tmux execution, and script gates require
-deliberate host setup. They are not enabled by the generic installer. CHROTE may
-apply explicitly configured additive tmux access grants, but must not remove or
-narrow the session owner's access.
+Cross-user terminal sockets require deliberate host setup and are not enabled by
+the generic installer. CHROTE may apply explicitly configured additive tmux
+access grants, but must not remove or narrow the session owner's access.
 
 ## Upgrade
 
@@ -155,11 +152,6 @@ git pull --ff-only
 The installer rebuilds from the checked-out commit, atomically replaces the
 managed binary, rewrites managed non-secret configuration, preserves
 `secrets.env` and durable state, then restarts and health-checks the user service.
-
-Previously installed `chrote-agent@*.service` units and their configuration are
-not automatically stopped or removed. If the unreleased capability was ever
-activated, inspect them explicitly through the host's service-management
-procedure.
 
 Review release notes and `git diff` before upgrading alpha builds.
 

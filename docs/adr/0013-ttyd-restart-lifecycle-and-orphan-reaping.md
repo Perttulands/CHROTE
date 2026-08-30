@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted 2026-07-27 — engineering decision, recorded for `chrote-5mj.3.11`.
+Accepted 2026-07-27; amended 2026-08-30 after the Formations extraction recorded
+by [ADR-0016](0016-core-boundary-and-formations-extraction.md).
 
 Scope note: this settles the ttyd lifecycle and the orphan-reaping story. The one
 operator-facing consequence — a visible terminal blink on every deploy — is
@@ -93,19 +94,15 @@ say what may outlive it and what cleans up:
 - **tmux servers** — deliberately outside this cgroup and owned by their own
   units. Not this unit's to reap; reaping them here is what `KillMode=process`
   exists to prevent.
-- **Formations tmux servers** — the open case. A Formations server started as a
-  live child of this unit would be an orphan this unit cannot account for. It
-  must be owned by its own unit before that path goes live, consistent with
-  ADR-0010's agent-user socket ownership.
 - **Agent-revival tmux servers** — retired 2026-08-09 by
   [ADR-0015](0015-access-first-non-interference.md). CHROTE no longer has an
   agent-revival path that creates replacement tmux servers.
 
 Known sharp edge, deliberately left as follow-up rather than changed in passing:
 `fuser -k <port>/tcp` kills whatever holds the port, not specifically our ttyd.
-A reaper targeting the recorded ttyd pid would be narrower. Filed as
-`chrote-3zw` because changing the startup kill path is not free and this ADR is
-a decision record, not a refactor.
+A reaper targeting the recorded ttyd pid would be narrower. The actionable work
+is tracked by `chrote-bgp`; the earlier `chrote-3zw` was closed by an
+administrative signal reset without implementation.
 
 ## Consequences
 
@@ -121,6 +118,6 @@ a decision record, not a refactor.
 
 ## Reversal criteria
 
-Reopen if a Formations tmux server becomes a live child of `chrote-srv.service`,
-or if terminal reconnect stops being self-healing — for example if a reconnect
-begins losing scrollback or leaving sessions detached rather than re-attached.
+Reopen if terminal reconnect stops being self-healing — for example if a
+reconnect begins losing scrollback or leaving sessions detached rather than
+re-attached.

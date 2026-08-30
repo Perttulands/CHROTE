@@ -32,8 +32,7 @@ Anyone who can reach the dashboard holds, at once:
   arbitrary command execution as each of those users, not just one;
 - the file APIs across everything under `CHROTE_ROOTS` with the service
   identity's Unix permissions — deployments may configure broad roots, up to `/`;
-- Beads data, local service proxies, schedules, and any
-  experimental Formations surface included in that build.
+- Beads data, local service proxies, and schedules.
 
 The control is the network perimeter, not application authentication and not
 same-user isolation. Default runtime values are loopback-only:
@@ -74,8 +73,6 @@ configured user's sessions, not the service account's alone.
 - A terminal is arbitrary command execution as that Unix user.
 - Cross-user socket access requires deliberate filesystem and tmux ACL setup.
 - CHROTE must not guess socket ownership or silently widen access.
-- Experimental Formations executor access does not permit creating or killing unrelated tmux
-  sessions.
 - Browser/device disconnects and CHROTE restarts must not cause CHROTE to kill
   external tmux work. CHROTE does not promise to recreate that work after it or
   the host exits.
@@ -93,31 +90,26 @@ default working directory for new sessions.
 - Symlinks are resolved before access and mutation authorization.
 - A broad root permits every operation the CHROTE API exposes within the Unix
   permissions of the service identity.
-- `.ssh`, `.gnupg`, `.hermes`, and peers are denied by default; explicit
-  `CHROTE_FILE_ALLOW_SENSITIVE_PATHS` roots grant direct browser CRUD.
-- Opt-in never overrides default/configured deny roots, private Formations
-  authority, or canonical/symlink checks.
-- Cross-user access also requires service-account traversal/read/write ACLs.
+- There is no second sensitive-path classifier or write-root policy. Everything
+  under `CHROTE_ROOTS` that the service identity can access is visible through
+  CHROTE; choose roots and service permissions accordingly.
+- Cross-user access requires the ordinary traversal/read/write permissions or
+  explicitly configured additive grants.
 - File roots do **not** sandbox tmux agents; those processes retain their Unix
   user's filesystem permissions.
-- Experimental Formations artifact hydration and script-gate working directories have their
-  own documented root checks.
 
-## Services, schedules, and executors
+## Services and schedules
 
 Optional service URLs and tokens are server-side runtime configuration. Browser
 clients call CHROTE-owned proxy routes and must never receive service bearer
 tokens.
 
-Scheduled tasks and experimental Formations executors cross from observation
-into host mutation. Their contracts must:
+Scheduled tasks cross from observation into host mutation. Their contract must:
 
 - require explicit configuration and operator intent;
 - use argument vectors instead of implicit shell parsing where possible;
-- constrain working directories and executable boundaries;
-- cap and redact recorded output;
-- fail loud in durable history or ledgers;
-- refuse unsafe promotion from lab/isolated environments to live host state.
+- resolve tmux sockets server-side rather than accepting client paths;
+- fail loud in durable run history.
 
 CHROTE does not provide per-session agent supervision or a universal host-reboot
 recovery promise. Workloads that need that lifecycle use explicit,

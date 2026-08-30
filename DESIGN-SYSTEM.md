@@ -21,7 +21,7 @@ fast, slightly theatrical, and hard to mistake for a toy.
 2. **Host-state first.** UI elements should make clear what is durable host state
    versus browser preference.
 3. **Local directness.** Context menus, drag/drop, inline popovers, and visible
-   run projection beat modal-heavy workflows.
+   state beat modal-heavy workflows.
 4. **Failure visibility.** Empty, degraded, blocked, and errored states should be
    explicit and actionable.
 5. **No fake calm.** Agentic work is messy. The UI can have character without
@@ -75,17 +75,8 @@ Components should use tokens rather than hard-coded theme-specific colors.
 - Avoid layout shifts in controls that users hit repeatedly.
 - Preserve visible context around destructive actions.
 - Use sidebars/panels for persistent operational surfaces.
-- Use popovers/context menus for local canvas edits.
+- Use popovers/context menus for local edits.
 - Prefer progressive detail over wall-of-text help in the main workspace.
-
-## Formations canvas rules
-
-- The canvas should communicate graph structure immediately.
-- Missions, formations, gates, wires, slots, and run states need distinct shapes
-  and affordances.
-- Direct manipulation is the expected interaction model.
-- Wires and cards should show run progress, errors, blocked gates, and outputs.
-- Empty first-run state must still be useful; never show a blank dead canvas.
 
 ## Copy tone
 

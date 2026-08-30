@@ -7,11 +7,11 @@ ACLs, and rollback layouts belong in private operator configuration.
 
 | Component | Role | Required? |
 | --- | --- | --- |
-| Go server | HTTP API, embedded dashboard, terminal proxy, scheduling, and optional experimental runtimes | Yes |
+| Go server | HTTP API, embedded dashboard, terminal proxy, scheduling, and optional adapters | Yes |
 | React dashboard | Browser cockpit served from the Go binary | Yes |
 | tmux | Terminal and process substrate with a lifecycle independent of the browser | Yes for terminal workspaces |
 | ttyd | Browser terminal transport behind CHROTE | Yes for interactive terminals |
-| Host filesystem | Files, schedules, and experimental definitions when used | Yes |
+| Host filesystem | Files, schedules, and configuration | Yes |
 
 The browser is a client of this runtime. It is not the source of truth. tmux
 sessions have a lifecycle independent of CHROTE, and a CHROTE restart must not
@@ -25,9 +25,8 @@ process or the host exits.
 | Terminal 1-3 | Independent layouts over tmux sessions |
 | Sessions/Files sidecar | Session discovery, Peek, assignment navigation, and workspace-local files |
 | Files | Configured-root file operations and terminal handoff |
-| Agents | Agent/persona/session observability and mission context |
 | Beads | Configured `bd` workspaces and issue data |
-| Formations (experimental, unreleased) | Boards, missions, ports, gates, connections, and run ledgers in development builds |
+| Services | Optional local adapters through CHROTE-owned routes |
 | Scheduled | Scheduled-task definitions, locks, runs, and history |
 | Server | Health, resources, runtime events, and bounded system history |
 | Settings | Appearance, terminal behavior, flags, and session cleanup |
@@ -44,20 +43,6 @@ process or the host exits.
 
 Optional integrations must degrade clearly when unavailable. They must not make
 the core dashboard fail to load.
-
-## Formations execution environments
-
-Development builds that include Formations expose one file-backed authoring and
-run-inspection surface. Formations remains unreleased. Executor promotion is a
-separate safety ladder inside that experiment:
-
-1. deterministic lab executor;
-2. isolated tmux executor;
-3. explicitly promoted live tmux executor.
-
-The executor never gains permission to create or kill unrelated sessions merely
-because the Formations UI is available. See
-[chrote-agent-formations](https://github.com/Perttulands/chrote-agent-formations).
 
 ## Trust boundary
 

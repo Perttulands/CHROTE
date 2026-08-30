@@ -36,8 +36,8 @@ go mod download
 
 ## Stable local gates
 
-Run the narrow test first while developing, then the relevant broader gates.
-Before opening a pull request, reproduce the repository contract:
+Run the narrow test first while developing. Before opening a pull request,
+reproduce the single CI quality job:
 
 ```bash
 # Documentation and source-truth contract
@@ -46,41 +46,46 @@ python3 scripts/doc-lint.py
 # Host neutrality: no deployment specifics in tracked files (all file types, not just Markdown)
 python3 scripts/host-neutrality.py
 
-# Dashboard
+# Build the assets and server CI tests exercise
+npm ci --prefix dashboard
+./scripts/build-embedded-dashboard.sh
+
+# Dashboard unit, lint, and mocked browser journeys
 cd dashboard
+npm run test:unit
 npm run lint
-npm run test:unit -- --coverage
-npm audit --audit-level=moderate
-npm test -- --project=chromium
+npm test
 cd ..
 
-# Build the exact dashboard embedded by Go
-./scripts/build-embedded-dashboard.sh
-diff -qr dashboard/dist src/internal/dashboard/dist
-
-# Go
+# Go format, vet, and one race pass with coverage
 cd src
 test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
 go vet ./...
-go test ./...
-go test -race ./...
-go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
-go build -o /tmp/chrote-server-contributor ./cmd/server
-go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 -mode=binary /tmp/chrote-server-contributor
+go test -race -coverprofile=coverage.out ./...
+go build -trimpath -o ../chrote-server-ci ./cmd/server
+cd ..
+
+# Source and built-server contracts
+python3 scripts/check-embedded-dashboard.py
+test -z "$(cd src && go run golang.org/x/tools/cmd/deadcode@latest ./cmd/server)"
+! grep -R -n --include='*.go' 't\.Skip(' src
+CHROTE_SERVER_BINARY="$PWD/chrote-server-ci" ./scripts/test-built-server-contract.sh
 ```
 
 Live browser/terminal tests are separate because they operate an actual CHROTE
 backend and tmux substrate. Run them only against an approved disposable or
 operator-controlled instance.
 
+`govulncheck` and `npm audit --audit-level=moderate` run on the weekly CI
+schedule rather than every pull request.
+
 ## Documentation rules
 
 - `PRD.md` owns the current product and roadmap boundary.
-- `FORMATIONS.md`, `ARCHON.md`, `DATA-MODEL.md`, and `DESIGN-SYSTEM.md` own their
-  declared contracts.
+- `DESIGN-SYSTEM.md` owns dashboard visual and interaction contracts.
 - Public docs describe generic supported behavior, not one maintainer's service
   names, home paths, sockets, ports, or rollback layout.
-- Archive material is context, not authority.
+- `docs/legacy-ideas.md` is non-current context, never roadmap authority.
 - README prose should sound like CHROTE, not generated launch copy.
 - Public screenshots must contain no terminal transcripts, credentials, private
   paths, personal usernames, content belonging to a second local account, or

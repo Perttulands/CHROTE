@@ -82,15 +82,15 @@ The dashboard and ttyd ports must differ.
 Inspect the configured roots:
 
 ```bash
-grep -E '^CHROTE_(ROOTS|WRITE_ROOTS|WORKDIR)=' ~/.config/chrote/chrote.env
+grep -E '^CHROTE_(ROOTS|WORKDIR)=' ~/.config/chrote/chrote.env
 ```
 
 Rules:
 
 - requested paths must resolve under `CHROTE_ROOTS`;
-- mutations must also remain under `CHROTE_WRITE_ROOTS`;
-- symlink resolution must not escape those roots;
-- the CHROTE Unix user still needs ordinary filesystem permission.
+- reads and mutations must remain under those roots after symlink resolution;
+- the CHROTE Unix user still needs ordinary filesystem permission; a denied
+  path is reported as a permission error, not an empty root.
 
 Re-run the installer with the intended workspace instead of widening roots to
 `/` as a debugging shortcut:
@@ -122,20 +122,7 @@ bundled with CHROTE, and a degraded card does not mean the core is unhealthy.
 - Check the upstream directly from the host without printing tokens.
 - Never paste bearer values into browser storage, screenshots, issues, or logs.
 
-## 7. Formations exists but cannot execute
-
-That is often correct. Formations authoring and run inspection are always
-available; execution promotion is separately gated.
-
-1. Start with the deterministic lab executor.
-2. Use an isolated temp tmux socket for executor dogfood.
-3. Promote to a live socket only with explicit configuration and an approved
-   operator boundary.
-
-Check `FORMATIONS.md` and the relevant ledger events. Do not enable script gates
-or live tmux execution merely to make a button look green.
-
-## 8. Scheduled task is stuck
+## 7. Scheduled task is stuck
 
 Inspect the Scheduled view and service logs for lock age, last run, and failure
 history. CHROTE may reclaim a stale lock according to its scheduling contract;
@@ -144,7 +131,7 @@ it must not silently double-run a task with a fresh lock.
 Do not delete lock/state files until you understand whether another process is
 still running.
 
-## 9. Browser state looks stale
+## 8. Browser state looks stale
 
 First:
 
@@ -157,7 +144,7 @@ Only then consider clearing CHROTE local storage. Local storage owns presentatio
 preferences and workspace assignments; clearing it should not kill tmux sessions
 or delete host files, but it will reset layout state.
 
-## 10. Reinstall without losing work
+## 9. Reinstall without losing work
 
 ```bash
 cd CHROTE
