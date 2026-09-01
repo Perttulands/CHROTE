@@ -34,8 +34,7 @@ func TestRuntimeRoutesCanDisableSystemHistorySampler(t *testing.T) {
 	mux := http.NewServeMux()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	_, _, stopRuntimeMaintenance := registerRuntimeRoutes(mux, Config{
-		TtydPort:           1,
+	_, stopRuntimeMaintenance := registerRuntimeRoutes(mux, Config{
 		StartSystemHistory: false,
 	}, ctx)
 	<-ctx.Done()
