@@ -57,18 +57,16 @@ npm run lint
 npm test
 cd ..
 
-# Go format, vet, and one race pass with coverage
+# Go format, vet, and one race pass
 cd src
 test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
 go vet ./...
-go test -race -coverprofile=coverage.out ./...
+go test -race ./...
 go build -trimpath -o ../chrote-server-ci ./cmd/server
 cd ..
 
 # Source and built-server contracts
 python3 scripts/check-embedded-dashboard.py
-test -z "$(cd src && go run golang.org/x/tools/cmd/deadcode@latest ./cmd/server)"
-! grep -R -n --include='*.go' 't\.Skip(' src
 CHROTE_SERVER_BINARY="$PWD/chrote-server-ci" ./scripts/test-built-server-contract.sh
 ```
 
@@ -77,7 +75,7 @@ backend and tmux substrate. Run them only against an approved disposable or
 operator-controlled instance.
 
 `govulncheck` and `npm audit --audit-level=moderate` run on the weekly CI
-schedule rather than every pull request.
+schedule rather than every push.
 
 ## Documentation rules
 

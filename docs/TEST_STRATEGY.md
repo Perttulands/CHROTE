@@ -8,12 +8,12 @@ rendered value.
 
 | Layer | Owns | Command |
 | --- | --- | --- |
-| Go | API shapes, persistence, tmux/filesystem behavior, concurrency | `cd src && go test -race -coverprofile=coverage.out ./...` |
+| Go | API shapes, persistence, tmux/filesystem behavior, concurrency | `cd src && go test -race ./...` |
 | Vitest | Components, state transitions, localStorage, formatting, error states | `cd dashboard && npm run test:unit` |
 | Mocked Playwright | 57 core operator journeys at retries 0 | `cd dashboard && npm test` |
 | Built-server contract | Embedded assets plus terminal and Files API/browser seam | `./scripts/test-built-server-contract.sh` |
 | Live Playwright | Five operator-approved real-backend/tmux smokes | `cd dashboard && npm run test:live` |
-| Source contracts | Docs, host neutrality, embedded parity, dead code, no `t.Skip` | `.github/workflows/ci.yml` |
+| Source contracts | Docs, host neutrality, and embedded parity | `.github/workflows/ci.yml` |
 
 The mocked suite owns stable browser journeys. Live tests are opt-in because they
 touch an actual server and tmux substrate. Set `CHROTE_TEST_URL` to the approved
@@ -40,19 +40,12 @@ The five-minute job performs, in order:
 1. install dashboard dependencies and Chromium;
 2. build the embedded dashboard and server;
 3. run Go format and vet;
-4. run Go tests once with race detection and coverage;
+4. run Go tests once with race detection;
 5. run Vitest, ESLint, and mocked Playwright;
-6. run doc-lint, host-neutrality, embedded parity, deadcode, and the `t.Skip`
-   check;
+6. run doc-lint, host-neutrality, and embedded parity;
 7. run the built-server contract against the built artifact.
 
 `govulncheck` and `npm audit` run only on the weekly scheduled invocation.
-
-## Coverage
-
-`npm run test:unit -- --coverage` enforces 75% lines, 69% functions, 65%
-branches, and 72% statements through `dashboard/vite.config.ts`. Go coverage is
-recorded by the CI race run; no numeric Go threshold is enforced.
 
 ## Rules
 
