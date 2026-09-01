@@ -5,14 +5,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-// mockTtydServer creates a mock ttyd server that accepts WebSocket connections
-func mockTtydServer() *httptest.Server {
+// mockTtydServer creates a mock ttyd server that accepts WebSocket connections.
+// Any non-WebSocket request it receives is recorded: the relay must never
+// forward one, because ttyd's own page is no longer part of the product.
+func mockTtydServer(pageRequests *atomic.Int32) *httptest.Server {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
@@ -37,6 +40,7 @@ func mockTtydServer() *httptest.Server {
 				}
 			}
 		} else {
+			pageRequests.Add(1)
 			w.Header().Set("Content-Type", "text/html")
 			w.Write([]byte("<html>ttyd mock</html>"))
 		}
@@ -52,7 +56,8 @@ func TestTerminalProxyStopBeforeStart(t *testing.T) {
 
 func TestTerminalProxy_WebSocketUpgrade(t *testing.T) {
 	// Start mock ttyd server
-	mockTtyd := mockTtydServer()
+	var ttydPageRequests atomic.Int32
+	mockTtyd := mockTtydServer(&ttydPageRequests)
 	defer mockTtyd.Close()
 
 	// Extract port from mock server URL
@@ -76,17 +81,24 @@ func TestTerminalProxy_WebSocketUpgrade(t *testing.T) {
 	}))
 	defer proxyServer.Close()
 
-	// Test HTTP request works
-	t.Run("HTTP request", func(t *testing.T) {
+	// The dashboard renders the terminal itself, so ttyd's page must not be
+	// reachable through the relay (ADR-0018).
+	t.Run("plain HTTP is not served", func(t *testing.T) {
 		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Get(proxyServer.URL + "/terminal/")
-		if err != nil {
-			t.Fatalf("HTTP request failed: %v", err)
-		}
-		defer resp.Body.Close()
+		for _, path := range []string{"/terminal/", "/terminal/token", "/terminal/xterm.css"} {
+			resp, err := client.Get(proxyServer.URL + path)
+			if err != nil {
+				t.Fatalf("HTTP request to %s failed: %v", path, err)
+			}
+			resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200, got %d", resp.StatusCode)
+			if resp.StatusCode != http.StatusNotFound {
+				t.Errorf("Expected status 404 for %s, got %d", path, resp.StatusCode)
+			}
+		}
+
+		if got := ttydPageRequests.Load(); got != 0 {
+			t.Errorf("Expected the relay to forward no page requests to ttyd, got %d", got)
 		}
 	})
 

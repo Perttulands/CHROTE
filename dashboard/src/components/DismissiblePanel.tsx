@@ -11,7 +11,7 @@ interface DismissiblePanelProps {
 
 /**
  * Renders one floating menu above a full-viewport sibling layer.
- * The first outside pointer is intentionally consumed so iframe boundaries cannot bypass dismissal.
+ * The first outside pointer is intentionally consumed so a nested surface cannot bypass dismissal.
  */
 function DismissiblePanel({
   children,

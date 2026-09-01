@@ -126,7 +126,7 @@
 }
 
 /* Drag overlay */
-.dashboard.is-dragging iframe {
+.dashboard.is-dragging .terminal-surface-host {
   pointer-events: none;
 }
 

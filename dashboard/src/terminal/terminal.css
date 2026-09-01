@@ -1,0 +1,31 @@
+/* The in-page terminal surface. One element per terminal, moved between
+   containers by the terminal pool and by peek. */
+
+/* The slot a terminal is put into. React owns the host; the pool owns the
+   surface inside it. */
+.terminal-surface-host {
+  position: absolute;
+  inset: 0;
+}
+
+.terminal-surface {
+  position: absolute;
+  inset: 0;
+  background: #0a0a0a;
+  overflow: hidden;
+}
+
+.terminal-surface .xterm {
+  height: 100%;
+  padding: 2px 4px;
+}
+
+/* Under tmux the xterm scrollback stays empty, so the permanent viewport
+   gutter is dead UI. The setting flips a class; nothing is injected. */
+.terminal-surface--no-scrollbar .xterm-viewport {
+  scrollbar-width: none;
+}
+
+.terminal-surface--no-scrollbar .xterm-viewport::-webkit-scrollbar {
+  display: none;
+}

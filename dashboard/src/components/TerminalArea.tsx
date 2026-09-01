@@ -7,7 +7,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { getSessionKey } from '../types'
 import type { WorkspaceId } from '../types'
-import { useIframePool } from './IframePool'
+import { useTerminalPool } from './TerminalPool'
 
 interface TerminalAreaProps {
   workspaceId: WorkspaceId
@@ -18,7 +18,7 @@ interface TerminalAreaProps {
 
 function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspaceActive = true }: TerminalAreaProps) {
   const { workspaces, setWindowCount, clearStaleSessionsFromWindow, sessions, windowRevealRequest } = useSession()
-  const pool = useIframePool()
+  const pool = useTerminalPool()
   const workspace = workspaces[workspaceId]
   const windows = workspace.windows
   const windowCount = workspace.windowCount
@@ -73,7 +73,7 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
     visibleWindows.forEach(window => window.boundSessions.forEach(sessionName => {
       if (sessionName && sessionName !== 'INIT-PENDING') sessionNames.add(sessionName)
     }))
-    sessionNames.forEach(sessionName => pool.reconnectIframe(sessionName))
+    sessionNames.forEach(sessionName => pool.terminals.get(sessionName)?.reconnect())
     closeControlsMenu()
   }
 

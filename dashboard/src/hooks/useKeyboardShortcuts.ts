@@ -6,9 +6,15 @@ interface KeyboardShortcutsConfig {
   isHelpOpen: boolean
 }
 
+// The terminal is rendered in this document now (ADR-0018), so its keystrokes
+// bubble here. Anything typed into a terminal belongs to the shell.
+function isTerminal(target: HTMLElement): boolean {
+  return Boolean(target.closest('.terminal-window-body, .floating-modal-body'))
+}
+
 function isDashboardChrome(target: HTMLElement): boolean {
   if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return false
-  return !target.closest('.terminal-window-body, .floating-modal-body')
+  return !isTerminal(target)
 }
 
 export function useKeyboardShortcuts({ onShowHelp, isHelpOpen }: KeyboardShortcutsConfig) {
@@ -40,7 +46,7 @@ export function useKeyboardShortcuts({ onShowHelp, isHelpOpen }: KeyboardShortcu
         ? event.target
         : (document.activeElement instanceof HTMLElement ? document.activeElement : document.body)
 
-      if (event.key === 'Escape' && floatingSession) {
+      if (event.key === 'Escape' && floatingSession && !isTerminal(target)) {
         event.preventDefault()
         closeFloatingModal()
         return

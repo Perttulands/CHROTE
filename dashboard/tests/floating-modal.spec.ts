@@ -2,18 +2,9 @@ import { test, expect } from './fixtures'
 import { mockApiRoutes } from './mock-api'
 import { openSessionsSidecar } from './helpers'
 
-const terminalRoutePattern = /\/terminal(\/|\?|$)/
-
 test.describe('Floating Modal (pol-9a4a)', () => {
   test('drag modal header to reposition', async ({ page }) => {
     await mockApiRoutes(page)
-    await page.route(terminalRoutePattern, async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'text/html',
-        body: '<html><body>mock terminal</body></html>',
-      })
-    })
     await page.goto('/')
     await page.waitForSelector('.dashboard')
     await openSessionsSidecar(page, { pin: false })

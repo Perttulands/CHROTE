@@ -78,17 +78,12 @@
 
 .floating-modal-body {
   flex: 1;
+  position: relative;
   overflow: hidden;
   scrollbar-width: none;
 }
 
-.floating-modal-body iframe {
-  overflow: hidden;
-  scrollbar-width: none;
-}
-
-.floating-modal-body::-webkit-scrollbar,
-.floating-modal-body iframe::-webkit-scrollbar {
+.floating-modal-body::-webkit-scrollbar {
   display: none;
 }
 

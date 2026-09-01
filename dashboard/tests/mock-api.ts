@@ -193,16 +193,30 @@ export async function mockFileApiRoutes(page: Page) {
   })
 }
 
-export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: SessionsResponse }) {
-  // Terminal proxy path only — must not swallow module URLs such as
-  // /src/utils/terminalIframe.ts (see the matching route in fixtures.ts).
-  await page.route(/\/terminal(\/|\?|$)/, async route => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'text/html',
-      body: '<html><body><div class="xterm"><div class="xterm-viewport"><div class="xterm-screen">mock terminal</div></div></div></body></html>',
+const TTYD_OUTPUT = 0x30
+
+/**
+ * A ttyd stand-in on /terminal/ws. It answers the client's opening handshake
+ * the way a freshly attached tmux session would: with output.
+ */
+export async function mockTerminalSocket(page: Page) {
+  await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
+    const sessionName = new URL(ws.url()).searchParams.getAll('arg')[0] ?? 'session'
+    ws.onMessage(message => {
+      const text = typeof message === 'string' ? message : message.toString('utf8')
+      // Only the unprefixed JSON handshake spawns a pty; the rest is input,
+      // resize and flow control.
+      if (!text.startsWith('{')) return
+      ws.send(Buffer.concat([
+        Buffer.from([TTYD_OUTPUT]),
+        Buffer.from(`mock terminal ${sessionName}\r\n$ `),
+      ]))
     })
   })
+}
+
+export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: SessionsResponse }) {
+  await mockTerminalSocket(page)
 
   await page.route(tmuxAppearancePattern, async route => {
     await route.fulfill({

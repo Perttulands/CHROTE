@@ -47,20 +47,21 @@ test.describe('live terminal interactions', () => {
     await expect(firstWindow.locator('.tag-name')).toHaveText(sessionName!)
     await sessionsSidecar.click()
     await expect(sessionsSidecar).toHaveAttribute('aria-expanded', 'false')
-    const terminalFrame = firstWindow.locator(`iframe[title="Terminal - ${sessionName}"]`)
-    await expect(terminalFrame).toBeVisible({ timeout: 15000 })
+    // The terminal now shares the dashboard's document, so nothing but this
+    // assertion stops the dashboard from swallowing the operator's native
+    // right-click menu inside the terminal.
+    const terminal = firstWindow.locator('.terminal-window-body .terminal-surface')
+    await expect(terminal.locator('.xterm')).toBeVisible({ timeout: 15000 })
 
-    const frameBody = terminalFrame.contentFrame().locator('body')
-    await expect(frameBody).toBeVisible({ timeout: 15000 })
-    await frameBody.evaluate(() => {
+    await terminal.evaluate(element => {
       const marker = window as Window & { __chroteContextMenuPrevented?: boolean }
       marker.__chroteContextMenuPrevented = true
-      document.addEventListener('contextmenu', event => {
+      element.addEventListener('contextmenu', event => {
         marker.__chroteContextMenuPrevented = event.defaultPrevented
       }, { once: true })
     })
-    await frameBody.click({ button: 'right', position: { x: 20, y: 20 } })
-    await expect.poll(() => frameBody.evaluate(() => (
+    await terminal.click({ button: 'right', position: { x: 20, y: 20 } })
+    await expect.poll(() => page.evaluate(() => (
       window as Window & { __chroteContextMenuPrevented?: boolean }
     ).__chroteContextMenuPrevented)).toBe(false)
   })

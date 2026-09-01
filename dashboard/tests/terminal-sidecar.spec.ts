@@ -10,11 +10,6 @@ async function box(locator: Locator) {
 async function openFreshTerminal(page: Page, viewport?: { width: number; height: number }) {
   if (viewport) await page.setViewportSize(viewport)
   await mockApiRoutes(page)
-  await page.route(/\/terminal(\/|\?|$)/, route => route.fulfill({
-    status: 200,
-    contentType: 'text/html',
-    body: '<html><body>mock terminal</body></html>',
-  }))
   await page.goto('/')
   await expect(page.getByRole('button', { name: 'Sessions sidecar' })).toBeVisible()
 }

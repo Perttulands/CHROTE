@@ -98,4 +98,19 @@ describe('useKeyboardShortcuts', () => {
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     expect(closeFloatingModal).toHaveBeenCalledTimes(1)
   })
+
+  it('leaves Escape to the shell when it is typed into a terminal', () => {
+    mockUseSession.mockReturnValue({ floatingSession: 'alice:shell', closeFloatingModal })
+    mount()
+    const peekBody = document.createElement('div')
+    peekBody.className = 'floating-modal-body'
+    const terminalInput = document.createElement('textarea')
+    terminalInput.className = 'xterm-helper-textarea'
+    peekBody.appendChild(terminalInput)
+    document.body.appendChild(peekBody)
+
+    terminalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+
+    expect(closeFloatingModal).not.toHaveBeenCalled()
+  })
 })

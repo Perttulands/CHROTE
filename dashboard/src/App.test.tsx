@@ -49,7 +49,7 @@ vi.mock('./components/TerminalWorkspaceDock', () => ({
   default: ({ workspaceId, active }: { workspaceId: string; active?: boolean }) => (
     <div data-workspace={workspaceId} data-active={String(active)}>
       {active && <div className="session-panel" data-active-workspace={workspaceId} />}
-      <iframe title={`${workspaceId} frame`} />
+      <div data-testid={`${workspaceId} frame`} />
     </div>
   ),
 }))
@@ -58,7 +58,7 @@ vi.mock('./components/SessionPanel', () => ({
 }))
 vi.mock('./components/TerminalArea', () => ({
   default: ({ workspaceId, active }: { workspaceId: string; active?: boolean }) => (
-    <div data-workspace={workspaceId} data-active={String(active)}><iframe title={`${workspaceId} frame`} /></div>
+    <div data-workspace={workspaceId} data-active={String(active)}><div data-testid={`${workspaceId} frame`} /></div>
   ),
 }))
 vi.mock('./components/FilesView', () => ({ default: () => null }))
@@ -74,7 +74,7 @@ vi.mock('./components/ErrorBoundary', () => ({ default: ({ children }: { childre
 vi.mock('./components/ToastNotification', () => ({ ToastContainer: () => null }))
 vi.mock('./components/KeyboardShortcutsOverlay', () => ({ default: () => null }))
 vi.mock('./components/LayoutPresetsPanel', () => ({ default: () => null }))
-vi.mock('./components/IframePool', () => ({ IframePoolProvider: ({ children }: { children: React.ReactNode }) => children }))
+vi.mock('./components/TerminalPool', () => ({ TerminalPoolProvider: ({ children }: { children: React.ReactNode }) => children }))
 vi.mock('./hooks/useKeyboardShortcuts', () => ({ useKeyboardShortcuts: vi.fn() }))
 vi.mock('./featureFlags', () => ({ installFeatureFlagHelpers: vi.fn(), isFeatureEnabled: () => false }))
 

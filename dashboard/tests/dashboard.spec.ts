@@ -122,9 +122,9 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.terminal-files-panel')).toHaveCount(0)
 
       await dragAndDrop(page, '.session-item:has-text("hq-mayor")', '.terminal-window')
-      const terminalFrame = page.locator('iframe[title^="Terminal -"]').first()
-      await expect(terminalFrame).toBeAttached()
-      await terminalFrame.evaluate(element => { element.setAttribute('data-dock-identity', 'preserved') })
+      const terminal = page.locator('.terminal-window-body .terminal-surface').first()
+      await expect(terminal).toBeAttached()
+      await terminal.evaluate(element => { element.setAttribute('data-dock-identity', 'preserved') })
 
       await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
       const files = page.locator('.terminal-files-panel')
@@ -144,7 +144,7 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.session-panel')).toHaveClass(/sidecar-pinned/)
       await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
       await expect(page.locator('.session-panel')).toHaveCount(0)
-      await expect(terminalFrame).toHaveAttribute('data-dock-identity', 'preserved')
+      await expect(terminal).toHaveAttribute('data-dock-identity', 'preserved')
     })
 
   })
@@ -226,7 +226,7 @@ test.describe('Arena Dashboard', () => {
 
       await page.fill('.session-search-input', 'gastown')
       await expect(page.locator('.session-group')).toHaveCount(1)
-      await expect(page.locator('.session-group .group-name')).toContainText('Gastown')
+      await expect(page.locator('.session-group .group-name')).toContainText('gt-gastown')
 
       await page.fill('.session-search-input', '')
       await expect(page.locator('.session-item:visible')).toHaveCount(8)

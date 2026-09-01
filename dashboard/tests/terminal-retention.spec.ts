@@ -1,0 +1,113 @@
+import { test, expect, type Page } from './fixtures'
+import { mockApiRoutes } from './mock-api'
+
+/**
+ * Retention gate (beads: chrote-g1r, chrote-9bf, chrote-jkzk.1).
+ *
+ * A terminal taken off screen keeps its connection and its rendered frame.
+ * Both routes off screen are covered: shrinking the window count inside a
+ * workspace, and shrinking the settings-controlled terminal tab count. Either
+ * one reconnecting would drop the operator's session output and hand tmux a
+ * second client.
+ */
+
+const TTYD_OUTPUT = 0x30
+
+/** Count terminal connections and stamp each one into the rendered output. */
+async function trackTerminalConnections(page: Page) {
+  const connections = { count: 0 }
+  await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
+    connections.count += 1
+    const generation = connections.count
+    ws.onMessage(message => {
+      const text = typeof message === 'string' ? message : message.toString('utf8')
+      if (!text.startsWith('{')) return
+      ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(`connection-${generation}`)]))
+    })
+  })
+  return connections
+}
+
+function seededState(workspaces: Record<string, unknown>) {
+  return {
+    workspaces,
+    sidebarCollapsed: false,
+    settings: { theme: 'dark', fontSize: 14, autoRefreshInterval: 1000 },
+  }
+}
+
+const emptyWorkspace = (id: string) => ({
+  windowCount: 1,
+  windows: [{ id: `${id}-window-0`, boundSessions: [], activeSession: null, colorIndex: 0 }],
+})
+
+async function open(page: Page, workspaces: Record<string, unknown>) {
+  await mockApiRoutes(page)
+  const connections = await trackTerminalConnections(page)
+  await page.addInitScript((state) => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
+  }, seededState(workspaces))
+  await page.goto('/')
+  return connections
+}
+
+test.describe('Terminal retention', () => {
+  test('survives a window-count shrink and grow inside a workspace', async ({ page }) => {
+    const connections = await open(page, {
+      terminal1: {
+        windowCount: 2,
+        windows: [
+          { id: 'terminal1-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
+          { id: 'terminal1-window-1', boundSessions: ['main'], activeSession: 'main', colorIndex: 1 },
+        ],
+      },
+      terminal2: emptyWorkspace('terminal2'),
+      terminal3: emptyWorkspace('terminal3'),
+    })
+
+    const terminal = page.locator('.terminal-grid[data-workspace="terminal1"] .xterm-rows')
+    await expect(terminal).toContainText('connection-1')
+
+    const activeDock = page.locator('[data-active="true"]')
+    await activeDock.getByTitle('1 window').click()
+    await expect(terminal).toHaveCount(0)
+
+    await activeDock.getByTitle('2 windows').click()
+
+    await expect(terminal).toContainText('connection-1')
+    expect(connections.count).toBe(1)
+  })
+
+  test('survives a terminal tab-count shrink and grow, with session refreshes landing meanwhile', async ({ page }) => {
+    const connections = await open(page, {
+      terminal1: emptyWorkspace('terminal1'),
+      terminal2: emptyWorkspace('terminal2'),
+      terminal3: {
+        windowCount: 1,
+        windows: [{ id: 'terminal3-window-0', boundSessions: ['main'], activeSession: 'main', colorIndex: 0 }],
+      },
+    })
+
+    await page.getByRole('button', { name: 'Terminal 3' }).click()
+    const terminal = page.locator('.terminal-grid[data-workspace="terminal3"] .xterm-rows')
+    await expect(terminal).toContainText('connection-1')
+
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('combobox', { name: 'Terminal tabs' }).selectOption('2')
+    await expect(page.getByRole('button', { name: 'Terminal 3' })).toHaveCount(0)
+
+    // Adversarial window: session refreshes must land while the workspace is
+    // unreachable. A visibility-derived binding list would let the pool
+    // dispose the terminal here.
+    await page.waitForRequest(request => request.url().includes('/api/tmux/sessions'))
+    await page.waitForRequest(request => request.url().includes('/api/tmux/sessions'))
+
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click()
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('combobox', { name: 'Terminal tabs' }).selectOption('3')
+    await page.getByRole('button', { name: 'Terminal 3' }).click()
+
+    await expect(terminal).toContainText('connection-1')
+    expect(connections.count).toBe(1)
+  })
+})

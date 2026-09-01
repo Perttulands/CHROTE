@@ -1,4 +1,6 @@
-// Package proxy provides reverse proxy functionality for ttyd
+// Package proxy relays terminal WebSockets to ttyd and owns its process
+// lifecycle. The dashboard renders the terminal itself (ADR-0018), so no ttyd
+// HTML, CSS, JS or /token is served.
 package proxy
 
 import (
@@ -6,8 +8,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -18,20 +18,10 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// WebSocket upgrader for incoming connections
-var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins (CORS is handled by middleware)
-	},
-	ReadBufferSize:  4096,
-	WriteBufferSize: 4096,
-}
-
-// TerminalProxy manages ttyd process and proxies requests
+// TerminalProxy manages the ttyd process and relays terminal WebSockets to it.
 type TerminalProxy struct {
 	ttydPort     int
 	ttydCmd      *exec.Cmd
-	proxy        *httputil.ReverseProxy
 	mu           sync.Mutex
 	running      bool
 	launchScript string
@@ -39,30 +29,8 @@ type TerminalProxy struct {
 
 // NewTerminalProxy creates the default TerminalProxy served at /terminal/.
 func NewTerminalProxy(ttydPort int) *TerminalProxy {
-	target, _ := url.Parse(fmt.Sprintf("http://localhost:%d", ttydPort)) //nolint:errcheck // static URL format cannot fail
-
-	proxy := httputil.NewSingleHostReverseProxy(target)
-
-	// Customize the director to handle WebSocket upgrade
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-
-		// Preserve WebSocket headers
-		if strings.EqualFold(req.Header.Get("Upgrade"), "websocket") {
-			req.Header.Set("Connection", "Upgrade")
-		}
-	}
-
-	// Custom error handler
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		log.Printf("Terminal proxy error: %v", err)
-		http.Error(w, "Terminal not available", http.StatusBadGateway)
-	}
-
 	return &TerminalProxy{
 		ttydPort:     ttydPort,
-		proxy:        proxy,
 		launchScript: core.GetLaunchScript(),
 	}
 }
@@ -170,22 +138,23 @@ func (tp *TerminalProxy) Stop() error {
 	return nil
 }
 
-// Handler returns an http.Handler that proxies to ttyd
+// Handler returns an http.Handler that relays terminal WebSockets to ttyd.
+// Only the upgrade is served: the dashboard is the terminal client, so ttyd's
+// own page and its assets are never exposed.
 func (tp *TerminalProxy) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Strip /terminal prefix before proxying
+		// Strip /terminal prefix before relaying
 		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/terminal")
 		if r.URL.Path == "" {
 			r.URL.Path = "/"
 		}
 
-		// Check if this is a WebSocket upgrade request
-		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-			tp.proxyWebSocket(w, r)
+		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			http.NotFound(w, r)
 			return
 		}
 
-		tp.proxy.ServeHTTP(w, r)
+		tp.proxyWebSocket(w, r)
 	})
 }
 

@@ -124,10 +124,10 @@ export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
       })
     })
 
-    // Match only the terminal proxy path (/terminal, /terminal/, /terminal?arg=…),
-    // never source modules like /src/utils/terminalIframe.ts — serving HTML for a
-    // module URL breaks the whole app with a MIME error.
-    await page.route(/\/terminal(\/|\?|$)/, async (route) => {
+    // The dashboard renders the terminal itself and reaches ttyd only over the
+    // WebSocket, so any HTTP request under /terminal is a regression. Matched by
+    // pathname so source modules under /src/terminal/ are left alone.
+    await page.route(url => url.pathname === '/terminal' || url.pathname.startsWith('/terminal/'), async (route) => {
       const request = route.request()
       unexpectedBackendRequests.push(`${request.method()} ${request.url()}`)
       await route.fulfill({

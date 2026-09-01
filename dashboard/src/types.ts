@@ -190,7 +190,7 @@ export interface UserSettings {
   musicEnabled: boolean              // Whether music is playing
   tmuxAppearance: TmuxAppearance     // tmux color customization
   mouseScroll: boolean               // tmux mouse mode: scroll wheel scrolls history
-  hideScrollbar: boolean             // Hide the dead xterm scrollbar gutter in terminal iframes
+  hideScrollbar: boolean             // Hide the dead xterm scrollbar gutter in terminals
   beadsProjectPaths?: string[]       // Manually added beads project paths
 }
 

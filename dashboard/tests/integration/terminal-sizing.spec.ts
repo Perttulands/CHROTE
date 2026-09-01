@@ -1,79 +1,65 @@
-import { test, expect, Page, Frame, Locator, APIRequestContext } from '@playwright/test';
+import { test, expect, Page, Locator, APIRequestContext } from '@playwright/test';
 import {
   cleanupTrackedSessions as reconcileTrackedSessions,
   LiveSessionIdentity,
 } from '../helpers/liveSessionCleanup';
 
 /**
- * Integration tests for terminal iframe sizing and fit behavior.
- * Tests against the real CHROTE backend.
+ * Integration tests for terminal sizing against the real CHROTE backend.
  *
- * Verifies that:
- * - Terminal iframes fill their container completely
- * - xterm.js fit() is triggered after iframe load (input prompt visible)
- * - Terminals re-fit correctly on layout changes and tab switches
+ * The terminal is rendered in the dashboard's own document (ADR-0018), so the
+ * grid, the viewport and the rendered rows are all directly observable.
  *
- * Beads: pol-8dca, pol-3798, pol-1c0b
+ * Beads: pol-8dca, pol-3798, pol-1c0b, chrote-qlx, chrote-jkzk.1
  */
-test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', () => {
+test.describe.serial('Terminal sizing: the pane fits its frame', () => {
   test.describe.configure({ retries: 0 });
   const createdSessions: LiveSessionIdentity[] = [];
 
-  // Helper: get the visible terminal grid (scoped to active workspace)
   function visibleArea(page: Page) {
     return page.locator('.terminal-grid[data-workspace="terminal1"]');
   }
 
-  // Helper: get the visible layout controls
   function layoutControls(page: Page) {
     return page.locator('.terminal-area-controls').first();
   }
 
-  // Helper: find the terminal iframe's Frame object for evaluate() calls
-  function getTerminalFrame(page: Page): Frame | null {
-    return page.frames().find(f => f.url().includes('/terminal/')) ?? null;
+  function terminal(page: Page): Locator {
+    return page.locator('.terminal-window-body .terminal-surface').first();
   }
 
-  // Helper: wait for xterm to be ready inside terminal iframe
-  async function waitForXterm(page: Page, timeout = 10000): Promise<Frame> {
-    const frameLocator = page.locator('.terminal-window-body iframe').first().contentFrame();
-    await frameLocator.locator('.xterm').waitFor({ state: 'visible', timeout });
-    const frame = getTerminalFrame(page);
-    if (!frame) throw new Error('Terminal iframe frame not found');
-    return frame;
+  async function waitForTerminal(page: Page, timeout = 15000): Promise<void> {
+    await terminal(page).locator('.xterm').waitFor({ state: 'visible', timeout });
   }
 
-  // Helper: wait for xterm fit() to complete (viewport contains screen without clipping)
-  async function waitForFit(frame: Frame, timeout = 5000): Promise<void> {
+  /** The rendered rows must not overflow the viewport they sit in. */
+  async function expectNotClipped(page: Page, timeout = 5000): Promise<void> {
     await expect(async () => {
-      const fitted = await frame.evaluate(() => {
-        const viewport = document.querySelector('.xterm-viewport') as HTMLElement;
-        const screen = document.querySelector('.xterm-screen') as HTMLElement;
-        if (!viewport || !screen) return false;
-        return screen.scrollHeight <= viewport.clientHeight + 5;
+      const clipped = await terminal(page).evaluate(surface => {
+        const viewport = surface.querySelector('.xterm-viewport') as HTMLElement | null;
+        const screen = surface.querySelector('.xterm-screen') as HTMLElement | null;
+        if (!viewport || !screen) return true;
+        return screen.scrollHeight > viewport.clientHeight + 5;
       });
-      expect(fitted).toBe(true);
+      expect(clipped).toBe(false);
     }).toPass({ timeout });
   }
 
-  // Helper: type a marker until the shell echoes it. A freshly created
-  // session can swallow keystrokes typed before its pty/shell is ready, so
-  // retype on a fresh line when nothing echoes. Each attempt gives the echo
-  // time to round-trip before reading — clearing and retyping inside a tight
-  // read loop would erase the echo and re-race it forever.
-  async function typeMarkerUntilEchoed(frame: Frame, marker: string, attempts = 5): Promise<void> {
-    const readCursorLine = () => frame.evaluate(() => {
-      const term = (window as typeof window & { term?: { buffer: { active: { baseY: number; cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
-      // Cursor line is baseY + cursorY: cursorY alone indexes scrollback
-      // whenever the buffer has scrolled or shrunk (baseY > 0).
-      return term?.buffer.active.getLine(term.buffer.active.baseY + term.buffer.active.cursorY)?.translateToString(true) ?? '';
-    });
+  const rowsText = (page: Page) => terminal(page).locator('.xterm-rows').innerText();
+
+  /**
+   * Type a marker until the shell echoes it. A freshly created session can
+   * swallow keystrokes typed before its pty is ready, so retype on a fresh
+   * line when nothing echoes.
+   */
+  async function typeMarkerUntilEchoed(page: Page, marker: string, attempts = 5): Promise<void> {
+    const input = terminal(page).locator('.xterm-helper-textarea');
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      await frame.locator('.xterm-helper-textarea').press('Control+u');
-      await frame.locator('.xterm-helper-textarea').pressSequentially(marker);
+      await input.press('Control+u');
+      await input.pressSequentially(marker);
       try {
         await expect(async () => {
-          expect(await readCursorLine()).toContain(marker);
+          expect(await rowsText(page)).toContain(marker);
         }).toPass({ timeout: 2000, intervals: [100, 250, 500] });
         return;
       } catch {
@@ -121,24 +107,21 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
   });
 
   test('input marker stays visible after a hidden-tab viewport change WITHOUT manual Refit', async ({ page }) => {
-    // No-Refit variant (chrote-qlx acceptance): the closed-loop fit path —
-    // font-then-fit on load plus ResizeObserver-driven term.fit() — must
-    // recover the final geometry on its own. The Refit button is never
-    // clicked anywhere in this test.
+    // The Refit button is never clicked: the automatic path must recover the
+    // geometry on its own (chrote-qlx acceptance).
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     await page.waitForSelector('.dashboard', { timeout: 10000 });
 
-    const controls = layoutControls(page);
-    await controls.locator('.layout-btn').filter({ hasText: '1' }).click();
+    await layoutControls(page).locator('.layout-btn').filter({ hasText: '1' }).click();
     const firstWindow = visibleArea(page).locator('.terminal-window').first();
 
     await createTrackedSession(page, firstWindow);
+    await waitForTerminal(page);
 
-    const termFrameBefore = await waitForXterm(page);
     const promptMarker = 'CHROTE_AUTOFIT_INPUT_MARKER';
-    await typeMarkerUntilEchoed(termFrameBefore, promptMarker);
+    await typeMarkerUntilEchoed(page, promptMarker);
 
     // Hide Terminal behind Files, change viewport geometry while hidden.
     await page.click('.tab:has-text("Files")');
@@ -153,46 +136,36 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
 
     // Return to Terminal 1 and let the automatic paths settle — no Refit.
     await page.click('.tab:has-text("Terminal")');
-    await page.waitForSelector('.terminal-window', { timeout: 5000 });
-    const termFrameAfter = getTerminalFrame(page);
-    if (!termFrameAfter) throw new Error('Terminal iframe disappeared after tab return');
-    await waitForFit(termFrameAfter);
+    await waitForTerminal(page);
+    await expectNotClipped(page);
 
+    // The marker's own row must sit entirely inside the visible viewport:
+    // a grid left at the old geometry pushes the input row out of frame.
     await expect(async () => {
-      const state = await termFrameAfter.evaluate(marker => {
-        const viewport = document.querySelector('.xterm-viewport') as HTMLElement;
-        const screen = document.querySelector('.xterm-screen') as HTMLElement;
-        const term = (window as typeof window & { term?: { cols: number; rows: number; buffer: { active: { baseY: number; cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
-        const renderCanvas = Array.from(screen?.querySelectorAll('canvas') ?? [])
-          .find(canvas => !canvas.classList.contains('xterm-link-layer'));
-        if (!viewport || !screen || !term || !renderCanvas) return null;
-
-        const inputLine = term.buffer.active.getLine(term.buffer.active.baseY + term.buffer.active.cursorY)?.translateToString(true) ?? '';
-        const markerColumn = inputLine.indexOf(marker);
+      const placement = await terminal(page).evaluate(marker => {
+        const viewport = surfaceViewport();
+        const row = rowContaining(marker);
+        if (!viewport || !row) return null;
         const viewportRect = viewport.getBoundingClientRect();
-        const canvasRect = renderCanvas.getBoundingClientRect();
-        const cellWidthCss = canvasRect.width / term.cols;
-        const cellHeightCss = canvasRect.height / term.rows;
-        const markerBottom = canvasRect.top + (term.buffer.active.cursorY + 1) * cellHeightCss;
-        const markerTop = canvasRect.top + term.buffer.active.cursorY * cellHeightCss;
-        const markerLeft = canvasRect.left + markerColumn * cellWidthCss;
-        const markerRight = canvasRect.left + (markerColumn + marker.length) * cellWidthCss;
-
+        const rowRect = row.getBoundingClientRect();
         return {
-          isClipped: screen.scrollHeight > viewport.clientHeight + 5,
-          inputLine,
-          markerFullyVisible: markerColumn >= 0
-            && markerLeft >= viewportRect.left
-            && markerRight <= viewportRect.right
-            && markerTop >= viewportRect.top
-            && markerBottom <= viewportRect.bottom,
+          fullyVisible: rowRect.top >= viewportRect.top - 1
+            && rowRect.bottom <= viewportRect.bottom + 1
+            && rowRect.left >= viewportRect.left - 1
+            && rowRect.right <= viewportRect.right + 1,
         };
+
+        function surfaceViewport(): HTMLElement | null {
+          return document.querySelector('.terminal-window-body .terminal-surface .xterm-viewport');
+        }
+        function rowContaining(text: string): HTMLElement | null {
+          const rows = document.querySelectorAll<HTMLElement>('.terminal-window-body .terminal-surface .xterm-rows > div');
+          return Array.from(rows).find(candidate => candidate.textContent?.includes(text)) ?? null;
+        }
       }, promptMarker);
 
-      expect(state).not.toBeNull();
-      expect(state!.isClipped).toBe(false);
-      expect(state!.inputLine).toContain(promptMarker);
-      expect(state!.markerFullyVisible).toBe(true);
+      expect(placement, 'the marker row must still be rendered').not.toBeNull();
+      expect(placement!.fullyVisible).toBe(true);
     }).toPass({ timeout: 5000 });
   });
 });

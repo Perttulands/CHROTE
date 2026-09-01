@@ -1,5 +1,5 @@
 import { test, expect, Page } from './fixtures'
-import { mockFileApiRoutes, mockSessions } from './mock-api'
+import { mockFileApiRoutes, mockSessions, mockTerminalSocket } from './mock-api'
 import { openSessionsSidecar } from './helpers'
 
 /**
@@ -8,13 +8,7 @@ import { openSessionsSidecar } from './helpers'
  * After a rename, the old name is replaced in subsequent GET responses.
  */
 async function mockApiRoutesWithMutations(page: Page) {
-  await page.route(/\/terminal(\/|\?|$)/, async route => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'text/html',
-      body: '<html><body>mock terminal</body></html>',
-    })
-  })
+  await mockTerminalSocket(page)
 
   await page.route('**/api/tmux/appearance', async route => {
     await route.fulfill({

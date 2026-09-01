@@ -4,7 +4,7 @@ import TerminalArea from './TerminalArea'
 
 const setWindowCount = vi.fn()
 const clearStaleSessionsFromWindow = vi.fn()
-const reconnectIframe = vi.fn()
+const reconnect = vi.fn()
 const sessionState = vi.hoisted(() => ({
   isMobile: false,
   windowCount: 2,
@@ -37,8 +37,17 @@ vi.mock('../hooks/useMediaQuery', () => ({
   useMediaQuery: () => sessionState.isMobile,
 }))
 
-vi.mock('./IframePool', () => ({
-  useIframePool: () => ({ reconnectIframe }),
+const pooledTerminals = new Map<string, { reconnect: () => void }>()
+vi.mock('./TerminalPool', () => ({
+  useTerminalPool: () => ({
+    terminals: {
+      get(sessionKey: string) {
+        if (!pooledTerminals.has(sessionKey)) pooledTerminals.set(sessionKey, { reconnect: () => reconnect(sessionKey) })
+        return pooledTerminals.get(sessionKey)
+      },
+    },
+    connectionStates: new Map(),
+  }),
 }))
 
 vi.mock('./TerminalWindow', () => ({
@@ -63,9 +72,7 @@ describe('TerminalArea layout controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
     fireEvent.click(screen.getByRole('button', { name: /Reconnect frames/i }))
 
-    expect(reconnectIframe).toHaveBeenCalledWith('alice:alpha')
-    expect(reconnectIframe).toHaveBeenCalledWith('bare-session')
-    expect(reconnectIframe).toHaveBeenCalledWith('bob:beta')
+    expect(reconnect.mock.calls.flat().sort()).toEqual(['alice:alpha', 'bare-session', 'bob:beta'])
   })
 
   it('renders the current desktop layout controls and default visible window count', () => {

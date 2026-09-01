@@ -176,7 +176,7 @@ test.describe('terminal drag lifecycle', () => {
     await expect(row).not.toHaveClass(/assigned/)
   })
 
-  test('Escape explicitly restores iframe pointer events without moving the tag', async ({ page }) => {
+  test('Escape explicitly restores terminal pointer events without moving the tag', async ({ page }) => {
     const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
     const firstWindow = page.locator('.terminal-window:visible').nth(0)
     const secondWindow = page.locator('.terminal-window:visible').nth(1)
@@ -185,26 +185,19 @@ test.describe('terminal drag lifecycle', () => {
     await finishMouseDrag(page)
 
     const tag = firstWindow.locator('.session-tag:has-text("gt-gastown-jack")')
-    const iframe = firstWindow.locator('iframe')
-    await expect(iframe).toHaveCount(1)
-    await iframe.evaluate(element => {
-      element.setAttribute('data-drag-identity', 'preserved')
-      element.setAttribute('data-drag-loads', '0')
-      element.addEventListener('load', () => {
-        const loads = Number(element.getAttribute('data-drag-loads') || '0') + 1
-        element.setAttribute('data-drag-loads', String(loads))
-      })
-    })
+    const terminal = firstWindow.locator('.terminal-surface-host')
+    await expect(terminal).toHaveCount(1)
+    await terminal.evaluate(element => { element.setAttribute('data-drag-identity', 'preserved') })
+
     await startMouseDrag(page, tag, secondWindow.locator('.terminal-window-body'))
-    await expect(iframe).toHaveCSS('pointer-events', 'none')
+    await expect(terminal).toHaveCSS('pointer-events', 'none')
 
     await page.keyboard.press('Escape')
     await page.mouse.up()
 
     await expect(page.locator('.dragging-overlay')).toHaveCount(0)
-    await expect(iframe).toHaveCSS('pointer-events', 'auto')
-    await expect(iframe).toHaveAttribute('data-drag-identity', 'preserved')
-    await expect(iframe).toHaveAttribute('data-drag-loads', '0')
+    await expect(terminal).toHaveCSS('pointer-events', 'auto')
+    await expect(terminal).toHaveAttribute('data-drag-identity', 'preserved')
     await expectTagAssignment(firstWindow, secondWindow, 1, 0)
   })
 

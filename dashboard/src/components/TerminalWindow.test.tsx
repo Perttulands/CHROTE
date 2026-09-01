@@ -13,8 +13,8 @@ const addToast = vi.fn()
 const removeSessionFromWindow = vi.fn()
 const renameSession = vi.fn()
 const deleteSession = vi.fn()
-const reconnectIframe = vi.fn()
-const triggerFit = vi.fn()
+const reconnect = vi.fn()
+const fit = vi.fn()
 const setFocusedWindowKey = vi.fn()
 const setActiveSession = vi.fn()
 const cycleSession = vi.fn()
@@ -28,7 +28,8 @@ const droppableState = vi.hoisted(() => ({
   isOver: false,
   active: null as { data: { current: Record<string, unknown> } } | null,
 }))
-const poolState = vi.hoisted(() => ({ loadedSessions: new Set<string>() }))
+const poolState = vi.hoisted(() => ({ connectionStates: new Map<string, string>() }))
+const pooledTerminals = new Map<string, { reconnect: () => void; fit: () => void; focus: () => void }>()
 
 vi.mock('@dnd-kit/core', () => ({
   useDraggable: () => ({
@@ -84,16 +85,26 @@ vi.mock('../context/ToastContext', () => ({
   useToast: () => ({ addToast }),
 }))
 
-vi.mock('./IframePool', () => ({
-  useIframePool: () => ({
-    claimIframe: vi.fn(() => vi.fn()),
-    isLoaded: vi.fn(() => false),
-    loadedSessions: poolState.loadedSessions,
-    getIframe: vi.fn(() => null),
-    triggerFit,
-    focusIframe: vi.fn(),
-    reconnectIframe,
+vi.mock('./TerminalPool', () => ({
+  useTerminalPool: () => ({
+    terminals: {
+      get(sessionKey: string) {
+        if (!pooledTerminals.has(sessionKey)) {
+          pooledTerminals.set(sessionKey, {
+            reconnect: () => reconnect(sessionKey),
+            fit: () => fit(sessionKey),
+            focus: vi.fn(),
+          })
+        }
+        return pooledTerminals.get(sessionKey)
+      },
+    },
+    connectionStates: poolState.connectionStates,
   }),
+}))
+
+vi.mock('./TerminalSurface', () => ({
+  default: () => <div className="terminal-surface-host" />,
 }))
 
 const testDir = dirname(fileURLToPath(import.meta.url))
@@ -116,7 +127,7 @@ describe('TerminalWindow launch user', () => {
     draggableState.listeners.onPointerDown.mockClear()
     droppableState.isOver = false
     droppableState.active = null
-    poolState.loadedSessions = new Set()
+    poolState.connectionStates = new Map()
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as any)
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
@@ -227,11 +238,11 @@ describe('TerminalWindow launch user', () => {
 
     openInactiveMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect frame' }))
-    expect(reconnectIframe).toHaveBeenCalledWith('alice:shell-existing')
+    expect(reconnect).toHaveBeenCalledWith('alice:shell-existing')
 
     openInactiveMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Refit frame' }))
-    expect(triggerFit).toHaveBeenCalledWith('alice:shell-existing')
+    expect(fit).toHaveBeenCalledWith('alice:shell-existing')
 
     openInactiveMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Open files in working directory' }))
@@ -283,7 +294,7 @@ describe('TerminalWindow launch user', () => {
     expect(screen.getByText('shell-existing')).toBeInTheDocument()
   })
 
-  it('uses the original bound key for iframe actions on supported bare legacy tags', () => {
+  it('uses the original bound key for terminal actions on supported bare legacy tags', () => {
     render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -298,11 +309,11 @@ describe('TerminalWindow launch user', () => {
 
     dispatchContextMenu(screen.getByText('shell-existing'))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect frame' }))
-    expect(reconnectIframe).toHaveBeenCalledWith('shell-existing')
+    expect(reconnect).toHaveBeenCalledWith('shell-existing')
 
     dispatchContextMenu(screen.getByText('shell-existing'))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Refit frame' }))
-    expect(triggerFit).toHaveBeenCalledWith('shell-existing')
+    expect(fit).toHaveBeenCalledWith('shell-existing')
   })
 
   it('opens the tag menu from the keyboard and restores focus on Escape', () => {

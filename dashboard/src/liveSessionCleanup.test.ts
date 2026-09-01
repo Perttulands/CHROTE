@@ -51,8 +51,8 @@ describe('live terminal session cleanup ledger', () => {
     expect(afterAll).toContain("expect(failures, 'final live sizing reconciliation");
   });
 
-  it('pins response-derived exact cleanup for the iframe-pool live smoke', () => {
-    const spec = readFileSync(resolve(process.cwd(), 'tests/integration/iframe-pool.spec.ts'), 'utf8');
+  it('pins response-derived exact cleanup for the terminal-pool live smoke', () => {
+    const spec = readFileSync(resolve(process.cwd(), 'tests/integration/terminal-pool.spec.ts'), 'utf8');
     expect(spec).toContain('test.describe.configure({ retries: 0 });');
     expect(spec).toContain("response.request().postDataJSON()");
     expect(spec).toContain("createdSessions.push({ name: payload.session!, unixUser: requestPayload?.unixUser });");
@@ -64,10 +64,10 @@ describe('live terminal session cleanup ledger', () => {
 
     const afterEach = spec.match(/test\.afterEach\([\s\S]*?\n {2}\}\);/)?.[0];
     expect(afterEach).toContain('cleanupTrackedSessions(request, 2)');
-    expect(afterEach).toContain("expect(failures, 'every iframe-pool smoke session must be deleted");
+    expect(afterEach).toContain("expect(failures, 'every terminal-pool smoke session must be deleted");
 
     const afterAll = spec.match(/test\.afterAll\([\s\S]*?\n {2}\}\);/)?.[0];
     expect(afterAll).toContain('cleanupTrackedSessions(request, 3)');
-    expect(afterAll).toContain("expect(failures, 'final iframe-pool reconciliation");
+    expect(afterAll).toContain("expect(failures, 'final terminal-pool reconciliation");
   });
 });

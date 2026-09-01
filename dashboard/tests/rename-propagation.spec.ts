@@ -2,8 +2,6 @@ import { test, expect, Page } from './fixtures'
 import { mockApiRoutes, mockSessions } from './mock-api'
 import { openSessionsSidecar } from './helpers'
 
-const terminalRoutePattern = /\/terminal(\/|\?|$)/
-
 // Helper: drag-and-drop for dnd-kit (same as dashboard.spec.ts)
 async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: string) {
   const source = page.locator(sourceSelector).first()
@@ -47,14 +45,6 @@ function buildRenamedSessions(oldName: string, newName: string) {
 test.describe('Rename Propagation (pol-ace3)', () => {
   test.beforeEach(async ({ page }) => {
     await mockApiRoutes(page)
-    // Mock terminal iframe requests
-    await page.route(terminalRoutePattern, async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'text/html',
-        body: '<html><body>mock terminal</body></html>',
-      })
-    })
     await page.goto('/')
     await page.waitForSelector('.dashboard')
     await openSessionsSidecar(page)

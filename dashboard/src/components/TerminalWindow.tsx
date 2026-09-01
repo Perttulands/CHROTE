@@ -1,9 +1,10 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
 import { Send } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
-import { useIframePool } from './IframePool'
+import { useTerminalPool } from './TerminalPool'
+import TerminalSurface from './TerminalSurface'
 import { WINDOW_COLORS, getForegroundCommandLabel, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
 import DismissiblePanel from './DismissiblePanel'
@@ -58,7 +59,7 @@ interface SessionTagProps {
 
 function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive, contextActionsEnabled }: SessionTagProps) {
   const { sessions, settings, deleteSession, renameSession, openSendToSession } = useSession()
-  const pool = useIframePool()
+  const pool = useTerminalPool()
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
@@ -240,11 +241,11 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
               <span className="session-context-icon" aria-hidden="true">↗</span>
               Send to session
             </button>
-            <button role="menuitem" className="session-context-item" onClick={() => runContextAction(() => pool.reconnectIframe(sessionName))}>
+            <button role="menuitem" className="session-context-item" onClick={() => runContextAction(() => pool.terminals.get(sessionName)?.reconnect())}>
               <span className="session-context-icon" aria-hidden="true">↻</span>
               Reconnect frame
             </button>
-            <button role="menuitem" className="session-context-item" onClick={() => runContextAction(() => pool.triggerFit(sessionName))}>
+            <button role="menuitem" className="session-context-item" onClick={() => runContextAction(() => pool.terminals.get(sessionName)?.fit())}>
               <span className="session-context-icon" aria-hidden="true">↔</span>
               Refit frame
             </button>
@@ -289,7 +290,6 @@ interface TerminalWindowProps {
 }
 
 function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, style, onOpenFilesAtPath, workspaceActive = true }: TerminalWindowProps) {
-  const bodyRef = useRef<HTMLDivElement | null>(null)
   const windowRef = useRef<HTMLDivElement>(null)
   const { setNodeRef: setDropNodeRef, isOver, active } = useDroppable({
     id: `drop-${workspaceId}-${windowConfig.id}`,
@@ -303,12 +303,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     && activeDragData.sourceWorkspaceId === workspaceId
     && activeDragData.sourceWindowId === windowConfig.id
   const isDropTarget = isOver && isSessionDrag && !isDragSourceWindow
-  const setBodyRef = useCallback((node: HTMLDivElement | null) => {
-    bodyRef.current = node
-    setDropNodeRef(node)
-  }, [setDropNodeRef])
-
-  const pool = useIframePool()
+  const pool = useTerminalPool()
 
   const {
     removeSessionFromWindow,
@@ -326,93 +321,26 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
 
   const activeSession = windowConfig.activeSession
 
-  // Check if active session is loaded via pool
-  const activeSessionLoaded = activeSession ? pool.loadedSessions.has(activeSession) : false
+  const activeTerminal = activeSession ? pool.terminals.get(activeSession) ?? null : null
+  const activeSessionLive = activeSession ? pool.connectionStates.get(activeSession) === 'open' : false
 
-  // Claim/release iframes from the pool as boundSessions change.
-  // Layout effect, not passive: on unmount (e.g. window-count shrink) a
-  // passive cleanup runs AFTER React removes this window's DOM subtree, so
-  // the iframe is already disconnected and can only be re-inserted into the
-  // pool — which reloads its document and kills the ttyd WebSocket. Layout
-  // cleanups run during the mutation phase, before detach, letting the pool
-  // move the still-connected iframe with state-preserving moveBefore.
-  useLayoutEffect(() => {
-    const body = bodyRef.current
-    if (!body) return
-
-    const cleanups: (() => void)[] = []
-    windowConfig.boundSessions.forEach(sessionName => {
-      if (sessionName && sessionName !== 'INIT-PENDING') {
-        const cleanup = pool.claimIframe(sessionName, body)
-        cleanups.push(cleanup)
-      }
-    })
-
-    return () => {
-      cleanups.forEach(fn => fn())
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool.claimIframe is a stable ref
-  }, [windowConfig.boundSessions])
-
-  // Manage visibility of claimed iframes based on active session.
-  // CSS (.terminal-window-body iframe) handles position/size via position:absolute + inset.
-  // This effect only toggles display to show/hide the correct iframe.
+  // The Refit control and the workspace-level refit both land here. Each
+  // surface already refits itself on container resize; this is the explicit
+  // operator request. Retired by chrote-xl5 once auto-fit is proven.
   useEffect(() => {
-    windowConfig.boundSessions.forEach(sessionName => {
-      const iframe = pool.getIframe(sessionName)
-      if (!iframe) return
-      const isActive = sessionName === activeSession
-      iframe.style.display = isActive ? 'block' : 'none'
-    })
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool functions are stable refs
-  }, [activeSession, windowConfig.boundSessions])
+    if (!activeTerminal) return
+    const frame = requestAnimationFrame(() => activeTerminal.fit())
+    return () => cancelAnimationFrame(frame)
+  }, [activeTerminal, refitNonce])
 
   useEffect(() => {
-    if (!activeSession || !activeSessionLoaded) return
-    const rafId = requestAnimationFrame(() => pool.triggerFit(activeSession))
-    return () => cancelAnimationFrame(rafId)
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool.triggerFit is a stable ref
-  }, [activeSession, activeSessionLoaded, refitNonce])
-
-  // Focus iframe when this window is focused
-  useEffect(() => {
-    if (isFocused && activeSession) {
-      pool.focusIframe(activeSession)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool.focusIframe is a stable ref
-  }, [isFocused, activeSession])
+    if (isFocused) activeTerminal?.focus()
+  }, [isFocused, activeTerminal])
 
   // Handle click on this window to focus it for keyboard navigation
   const handleWindowClick = useCallback(() => {
     setFocusedWindowKey(windowKey)
   }, [windowKey, setFocusedWindowKey])
-
-
-  // Store activeSession in ref for ResizeObserver callback
-  const activeSessionRef = useRef(activeSession)
-  useEffect(() => { activeSessionRef.current = activeSession }, [activeSession])
-
-  // ResizeObserver to trigger fit() when container size changes
-  useEffect(() => {
-    const body = bodyRef.current
-    if (!body) return
-
-    let timeoutId: ReturnType<typeof setTimeout>
-    const observer = new ResizeObserver(() => {
-      clearTimeout(timeoutId)
-      timeoutId = setTimeout(() => {
-        if (activeSessionRef.current) pool.triggerFit(activeSessionRef.current)
-      }, 100)
-    })
-
-    observer.observe(body)
-    return () => {
-      clearTimeout(timeoutId)
-      observer.disconnect()
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool.triggerFit is a stable ref
-  }, [])
 
   const colorTheme = WINDOW_COLORS[windowConfig.colorIndex % WINDOW_COLORS.length]
 
@@ -504,13 +432,15 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               <Send size={12} aria-hidden="true" />
             </button>
           )}
-          {activeSession && !activeSessionLoaded && (
-            <span className="terminal-loading-state">Loading terminal…</span>
+          {activeSession && activeSession !== 'INIT-PENDING' && !activeSessionLive && (
+            <span className="terminal-loading-state">
+              {pool.connectionStates.get(activeSession) === 'closed' ? 'Terminal disconnected' : 'Loading terminal…'}
+            </span>
           )}
         </div>
       </div>
 
-      <div ref={setBodyRef} className="terminal-window-body" onClick={handleWindowClick}>
+      <div ref={setDropNodeRef} className="terminal-window-body" onClick={handleWindowClick}>
         {activeSession === 'INIT-PENDING' ? (
           <div style={{
             display: 'flex',
@@ -527,7 +457,15 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
             <span className="empty-window-hint">or drag a session here</span>
           </div>
         ) : null}
-        {/* Iframes are injected here by the IframePool via DOM manipulation */}
+        {windowConfig.boundSessions.map(sessionName => (
+          sessionName === 'INIT-PENDING' ? null : (
+            <TerminalSurface
+              key={sessionName}
+              session={pool.terminals.get(sessionName) ?? null}
+              hidden={sessionName !== activeSession}
+            />
+          )
+        ))}
         {isDropTarget && (
           <div className="terminal-drop-overlay" style={{ inset: 0, pointerEvents: 'none' }}>
             <span className="drop-hint">Release to add</span>

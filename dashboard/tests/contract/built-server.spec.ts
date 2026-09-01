@@ -30,18 +30,27 @@ test('built server serves embedded assets and preserves terminal and Files workf
 
   await sessionItem.getByRole('button', { name: `Session actions for ${contractSession}` }).click()
   await page.getByRole('button', { name: 'Attach to Window' }).click()
-  const terminalResponsePromise = page.waitForResponse(response => (
-    response.request().resourceType() === 'document' &&
-    response.url().includes('/terminal/')
-  ))
   await page.getByRole('button', { name: 'Window 1', exact: true }).click()
-  const terminalResponse = await terminalResponsePromise
-  expect(terminalResponse.ok(), `terminal route returned ${terminalResponse.status()}`).toBeTruthy()
-  expect(terminalResponse.url()).toContain('/terminal/')
-  expect(await terminalResponse.text()).toContain('CHROTE_OWC_TTYD_SENTINEL')
-  await expect(page.locator(`iframe[title="Terminal - ${contractSession}"]`)).toHaveAttribute('src', /\/terminal\//)
-  await expect(page.frameLocator(`iframe[title="Terminal - ${contractSession}"]`).locator('body'))
-    .toContainText('CHROTE_OWC_TTYD_SENTINEL')
+
+  // The dashboard renders the terminal itself, in this document (ADR-0018).
+  await expect(terminal1Dock.locator('.terminal-window-body .terminal-surface')).toBeVisible()
+
+  // ttyd's page, assets and /token are gone: the built binary answers nothing
+  // under /terminal over plain HTTP, even though a sentinel is listening on
+  // the configured ttyd port and would happily serve HTML.
+  for (const removedPath of ['/terminal/', '/terminal/token', '/terminal/xterm.css']) {
+    const removed = await request.get(removedPath)
+    expect(removed.status(), `${removedPath} should not be served`).toBe(404)
+    expect(await removed.text()).not.toContain('CHROTE_OWC_TTYD_SENTINEL')
+  }
+
+  // The relay itself is still wired to the configured ttyd port: an upgrade
+  // reaches the sentinel, which is not a WebSocket server, so the relay fails
+  // at the backend rather than at the route.
+  const relay = await request.get('/terminal/ws?arg=' + contractSession, {
+    headers: { Upgrade: 'websocket', Connection: 'Upgrade' },
+  })
+  expect(relay.status(), 'the terminal WebSocket relay must still be routed').toBe(502)
 
   for (const contractPath of [contractFilesTerminal1, contractFilesTerminal2]) {
     const filesResponse = await request.get(`/api/files/resources${contractPath}`)

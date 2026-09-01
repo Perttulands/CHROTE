@@ -11,7 +11,7 @@ import Skeleton from './components/LoadingSkeleton'
 import { ToastContainer } from './components/ToastNotification'
 import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
 import LayoutPresetsPanel from './components/LayoutPresetsPanel'
-import { IframePoolProvider } from './components/IframePool'
+import { TerminalPoolProvider } from './components/TerminalPool'
 import {
   readSessionsDockState,
   writeSessionsDockState,
@@ -24,7 +24,7 @@ import type { UserSettings, WorkspaceId } from './types'
 
 // Non-terminal views load as route-level chunks on first visit. The terminal
 // docks and everything they depend on stay eager: they are the startup surface
-// and their iframe pool must never be interrupted by a chunk load. Each lazy
+// and their pooled terminals must never be interrupted by a chunk load. Each lazy
 // view gets its OWN Suspense boundary inside its mount branch — one shared
 // boundary around .dashboard-content would swap the whole tree (terminal docks
 // included) for a fallback while a chunk loads, killing live terminals.
@@ -192,7 +192,7 @@ function DashboardContent() {
   }, [sessionsDockState])
 
   // Every workspace in state keeps its dock mounted — including ones hidden by
-  // a shrunken tab count — so panel state and pooled iframe claims survive.
+  // a shrunken tab count — so panel state and pooled terminals survive.
   const mountedWorkspaceIds = useMemo(
     () => sortTerminalWorkspaceIds(Object.keys(workspaces) as WorkspaceId[]),
     [workspaces],
@@ -306,7 +306,7 @@ function DashboardContent() {
         />
 
         <div className="dashboard-content">
-          {/* Terminal workspaces stay mounted so panel state and pooled iframe connections survive tab switches. */}
+          {/* Terminal workspaces stay mounted so panel state and pooled terminal connections survive tab switches. */}
           {mountedWorkspaceIds.map(workspaceId => (
             <TerminalWorkspaceDock
               key={workspaceId}
@@ -419,9 +419,9 @@ function DashboardContent() {
 function App() {
   return (
     <SessionProvider>
-      <IframePoolProvider>
+      <TerminalPoolProvider>
         <DashboardContent />
-      </IframePoolProvider>
+      </TerminalPoolProvider>
     </SessionProvider>
   )
 }

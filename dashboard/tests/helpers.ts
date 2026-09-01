@@ -1,9 +1,9 @@
-import { Page, Frame, Locator } from '@playwright/test';
+import { Page, Locator } from '@playwright/test';
 
 /**
  * Shared test helpers for CHROTE dashboard integration tests.
  *
- * Extracted from terminal-sizing.spec.ts, iframe-pool.spec.ts, and
+ * Extracted from terminal-sizing.spec.ts, terminal-pool.spec.ts, and
  * dashboard.spec.ts to avoid duplication across test suites.
  *
  * Bead: pol-346b
@@ -141,27 +141,19 @@ export async function createAndBindSession(
 }
 
 // ---------------------------------------------------------------------------
-// Terminal iframe helpers
+// Terminal helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Return the Playwright Frame object whose URL contains `/terminal/`.
- * Returns null if no such frame exists yet.
- */
-export function getTerminalFrame(page: Page): Frame | null {
-  return page.frames().find(f => f.url().includes('/terminal/')) ?? null;
+/** The visible terminal in the first terminal window. */
+export function terminalSurface(page: Page): Locator {
+  return page.locator('.terminal-window-body .terminal-surface-host:not([style*="display: none"]) .xterm').first();
 }
 
-/**
- * Wait until a `.xterm` element is visible inside the first terminal iframe,
- * then return the Frame for further evaluate() calls.
- */
-export async function waitForXtermReady(page: Page, timeout = 10_000): Promise<Frame> {
-  const frameLocator = page.locator('.terminal-window-body iframe').first().contentFrame();
-  await frameLocator.locator('.xterm').waitFor({ state: 'visible', timeout });
-  const frame = getTerminalFrame(page);
-  if (!frame) throw new Error('Terminal iframe frame not found after xterm became visible');
-  return frame;
+/** Wait until the first terminal window has a rendered terminal. */
+export async function waitForTerminal(page: Page, timeout = 10_000): Promise<Locator> {
+  const surface = terminalSurface(page);
+  await surface.waitFor({ state: 'visible', timeout });
+  return surface;
 }
 
 // ---------------------------------------------------------------------------
