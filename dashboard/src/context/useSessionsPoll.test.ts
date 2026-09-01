@@ -358,7 +358,7 @@ describe('refreshSessions', () => {
     vi.useRealTimers()
   })
 
-  it('reports a mounted timeout while preserving known state, bindings, modals, and stale confirmation', async () => {
+  it('reports a mounted timeout while preserving known state, bindings, and modals', async () => {
     vi.useFakeTimers()
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
       version: 3,
@@ -433,24 +433,21 @@ describe('refreshSessions', () => {
     })
     expect(vi.getTimerCount()).toBe(1)
 
-    const firstAuthoritativeMissing = result.current.refreshSessions()
-    expect(requests).toHaveLength(3)
-    await act(async () => {
-      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
-      await firstAuthoritativeMissing
+    // The session is gone for good, and the binding still holds: a poll reports
+    // what tmux lists, it does not revoke what the operator asked for.
+    for (const requestIndex of [2, 3]) {
+      const authoritativeMissing = result.current.refreshSessions()
+      await act(async () => {
+        requests[requestIndex].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
+        await authoritativeMissing
+      })
+    }
+    expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
+      boundSessions: ['alice:known'],
+      activeSession: 'alice:known',
     })
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:known'])
     expect(result.current.floatingSession).toBe('alice:known')
     expect(result.current.sendToSessionTarget).toBe('alice:known')
-
-    const secondAuthoritativeMissing = result.current.refreshSessions()
-    await act(async () => {
-      requests[3].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
-      await secondAuthoritativeMissing
-    })
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
-    expect(result.current.floatingSession).toBeNull()
-    expect(result.current.sendToSessionTarget).toBeNull()
 
     unmount()
     expect(vi.getTimerCount()).toBe(0)
@@ -520,7 +517,7 @@ describe('refreshSessions', () => {
     expect(result.current.terminalUsers).toEqual(['alice', 'build'])
     expect(result.current.error).toBe('build: tmux source permission denied')
     expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
-      boundSessions: ['build:worker'],
+      boundSessions: ['alice:old', 'build:worker'],
       activeSession: 'build:worker',
     })
     expect(result.current.floatingSession).toBe('build:worker')
@@ -531,7 +528,7 @@ describe('refreshSessions', () => {
     vi.useRealTimers()
   })
 
-  it('preserves authoritative state and stale confirmation across failed, non-ok, and aborted refreshes', async () => {
+  it('preserves authoritative state across failed, non-ok, and aborted refreshes', async () => {
     vi.useFakeTimers()
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
       version: 3,
@@ -612,39 +609,24 @@ describe('refreshSessions', () => {
     expect(result.current).toMatchObject(knownState)
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:stale', 'alice:protected'])
 
-    const firstMissing = result.current.refreshSessions()
-    await act(async () => {
-      requests[4].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: ['alice'] }))
-      await firstMissing
-    })
+    // Four clean polls that list neither binding, and both still hold.
+    for (const requestIndex of [4, 5, 6, 7]) {
+      const missing = result.current.refreshSessions()
+      await act(async () => {
+        requests[requestIndex].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: ['alice'] }))
+        await missing
+      })
+    }
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:stale', 'alice:protected'])
     expect(result.current.floatingSession).toBe('alice:stale')
     expect(result.current.sendToSessionTarget).toBe('alice:stale')
-
-    const secondMissing = result.current.refreshSessions()
-    await act(async () => {
-      requests[5].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: ['alice'] }))
-      await secondMissing
-    })
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:protected'])
-    expect(result.current.floatingSession).toBeNull()
-    expect(result.current.sendToSessionTarget).toBeNull()
-
-    for (const requestIndex of [6, 7]) {
-      const refresh = result.current.refreshSessions()
-      await act(async () => {
-        requests[requestIndex].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: ['alice'] }))
-        await refresh
-      })
-    }
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
 
     consoleError.mockRestore()
     vi.useRealTimers()
   })
 
   it.each(['invalid JSON', 'a non-aborted network rejection'] as const)(
-    'preserves all authoritative state and stale confirmation after %s',
+    'preserves all authoritative state after %s',
     async failureMode => {
       vi.useFakeTimers()
       localStorage.setItem('chrote-dashboard-state', JSON.stringify({
@@ -715,29 +697,19 @@ describe('refreshSessions', () => {
         activeSession: 'alice:known',
       })
 
-      const firstMissing = result.current.refreshSessions()
-      await act(async () => {
-        requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
-        await firstMissing
-      })
+      for (const requestIndex of [2, 3]) {
+        const missing = result.current.refreshSessions()
+        await act(async () => {
+          requests[requestIndex].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
+          await missing
+        })
+      }
       expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
         boundSessions: ['alice:known'],
         activeSession: 'alice:known',
       })
       expect(result.current.floatingSession).toBe('alice:known')
       expect(result.current.sendToSessionTarget).toBe('alice:known')
-
-      const secondMissing = result.current.refreshSessions()
-      await act(async () => {
-        requests[3].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
-        await secondMissing
-      })
-      expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
-        boundSessions: [],
-        activeSession: null,
-      })
-      expect(result.current.floatingSession).toBeNull()
-      expect(result.current.sendToSessionTarget).toBeNull()
 
       unmount()
       expect(vi.getTimerCount()).toBe(0)
@@ -746,7 +718,7 @@ describe('refreshSessions', () => {
     },
   )
 
-  it('auto-removes stale terminal bindings after repeated successful session refreshes', async () => {
+  it('keeps every binding, and the tile the operator was reading, across repeated successful refreshes', async () => {
     const liveSessions = [
       { name: 'alive', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
       { name: 'legacy-live', windows: 1, attached: false, group: 'shell' },
@@ -806,12 +778,18 @@ describe('refreshSessions', () => {
       await result.current.refreshSessions()
     })
 
-    await waitFor(() => {
-      expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:alive', 'legacy-live'])
-      expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('alice:alive')
-      expect(result.current.workspaces.terminal2.windows[0].boundSessions).toEqual(['build:agent-live'])
-      expect(result.current.workspaces.terminal2.windows[0].activeSession).toBe('build:agent-live')
+    await act(async () => {
+      await result.current.refreshSessions()
     })
+
+    // The headline regression: nothing is unbound, and no other session is
+    // promoted into the frame the operator was reading.
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions)
+      .toEqual(['alice:alive', 'alice:gone', 'legacy-live', 'legacy-gone'])
+    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('alice:gone')
+    expect(result.current.workspaces.terminal2.windows[0].boundSessions)
+      .toEqual(['build:agent-live', 'build:agent-dead'])
+    expect(result.current.workspaces.terminal2.windows[0].activeSession).toBe('build:agent-dead')
   })
 
   it('preserves terminal bindings when a refresh fails instead of sweeping on uncertainty', async () => {

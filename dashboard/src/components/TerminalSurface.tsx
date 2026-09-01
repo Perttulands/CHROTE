@@ -6,6 +6,8 @@ interface TerminalSurfaceProps {
   session: TerminalSession | null
   /** Kept mounted and connected, but not on screen. */
   hidden?: boolean
+  /** False for an ended tile: show the last frame without dialling again. */
+  connect?: boolean
 }
 
 const FIT_DEBOUNCE_MS = 100
@@ -14,15 +16,15 @@ const FIT_DEBOUNCE_MS = 100
  * The one place a terminal is put on screen. Tiles and peek both render this;
  * only the ownership of the session differs.
  */
-function TerminalSurface({ session, hidden = false }: TerminalSurfaceProps) {
+function TerminalSurface({ session, hidden = false, connect = true }: TerminalSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const host = hostRef.current
     if (!host || !session) return
-    session.attach(host)
+    session.attach(host, { connect })
     return () => session.detach()
-  }, [session])
+  }, [session, connect])
 
   useEffect(() => {
     const host = hostRef.current

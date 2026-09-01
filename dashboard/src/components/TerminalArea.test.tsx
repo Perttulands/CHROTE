@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TerminalArea from './TerminalArea'
 
 const setWindowCount = vi.fn()
-const clearStaleSessionsFromWindow = vi.fn()
 const reconnect = vi.fn()
 const sessionState = vi.hoisted(() => ({
   isMobile: false,
@@ -28,7 +27,6 @@ vi.mock('../context/SessionContext', () => ({
       },
     },
     setWindowCount,
-    clearStaleSessionsFromWindow,
     windowRevealRequest: sessionState.windowRevealRequest,
   }),
 }))
@@ -86,7 +84,7 @@ describe('TerminalArea layout controls', () => {
     expect(container.querySelectorAll('[data-testid^="terminal-window-"]')).toHaveLength(2)
   })
 
-  it('keeps Refit directly visible while stale cleanup remains in the maintenance menu', () => {
+  it('keeps Refit directly visible and offers no binding cleanup at all', () => {
     render(<TerminalArea workspaceId="terminal1" />)
 
     const refit = screen.getByRole('button', { name: 'Refit terminal layout' })
@@ -96,14 +94,11 @@ describe('TerminalArea layout controls', () => {
     expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveAttribute('data-refit-nonce', '1')
     expect(screen.getByTestId('terminal-window-terminal1-window-1')).toHaveAttribute('data-refit-nonce', '1')
 
-    expect(screen.queryByRole('button', { name: /Clean 2 stale sessions/i })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
     const menu = document.querySelector('.session-context-menu') as HTMLElement
     expect(within(menu).queryByRole('button', { name: /Refit terminal layout/i })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Clear 2 stale sessions/i }))
-
-    expect(clearStaleSessionsFromWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-0')
-    expect(clearStaleSessionsFromWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-1')
+    // Bindings are operator intent, so no control sweeps them wholesale.
+    expect(within(menu).queryByRole('button', { name: /stale/i })).not.toBeInTheDocument()
   })
 
   it('selects a newly revealed hidden slot as the active mobile window after it enters the visible slice', () => {

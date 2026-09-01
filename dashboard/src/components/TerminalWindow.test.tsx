@@ -19,6 +19,7 @@ const setFocusedWindowKey = vi.fn()
 const setActiveSession = vi.fn()
 const cycleSession = vi.fn()
 const openSendToSession = vi.fn()
+const restartSession = vi.fn()
 const draggableState = vi.hoisted(() => ({
   transform: null as { x: number, y: number } | null,
   isDragging: false,
@@ -70,7 +71,9 @@ vi.mock('../context/SessionContext', () => ({
     setActiveSession,
     cycleSession,
     setWindowCount: vi.fn(),
-    clearStaleSessionsFromWindow: vi.fn(),
+    restartSession,
+    loading: false,
+    error: null,
     focusedWindowKey: null,
     setFocusedWindowKey,
     openSendToSession,
@@ -669,6 +672,88 @@ describe('TerminalWindow launch user', () => {
     expect(css).not.toContain('background-image: url(')
   })
 
+  it('holds an ended binding in its own tile, showing the last frame with Restart and Remove', () => {
+    poolState.connectionStates = new Map([['alice:departed', 'closed']])
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{
+          id: 'terminal3-window-0',
+          boundSessions: ['alice:departed', 'shell-existing'],
+          activeSession: 'alice:departed',
+          colorIndex: 0,
+        }}
+      />
+    )
+
+    // The binding the operator was reading is still the one on screen; the live
+    // session bound beside it is not promoted into the frame.
+    expect(container.querySelector('.terminal-window-body')).toHaveAttribute('data-tile-state', 'ended')
+    expect(setActiveSession).not.toHaveBeenCalled()
+    expect(removeSessionFromWindow).not.toHaveBeenCalled()
+    expect(screen.getByText(/departed ended/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Restart' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reclaim' })).not.toBeInTheDocument()
+    expect(container.querySelector('.session-tag[data-tile-state="ended"] .tag-state')).toHaveTextContent('ended')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    expect(removeSessionFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'alice:departed')
+  })
+
+  it('recreates an ended session in the same tile and dials the pooled terminal again', async () => {
+    restartSession.mockResolvedValue(true)
+    poolState.connectionStates = new Map([['alice:departed', 'closed']])
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['alice:departed'], activeSession: 'alice:departed', colorIndex: 0 }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restart' }))
+    await waitFor(() => expect(restartSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'alice:departed'))
+    await waitFor(() => expect(reconnect).toHaveBeenCalledWith('alice:departed'))
+  })
+
+  it('offers Reclaim, not Restart, when the session is alive but the connection was taken', () => {
+    poolState.connectionStates = new Map([['shell-existing', 'closed']])
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['shell-existing'], activeSession: 'shell-existing', colorIndex: 0 }}
+      />
+    )
+
+    expect(container.querySelector('.terminal-window-body')).toHaveAttribute('data-tile-state', 'takenOver')
+    expect(screen.getByText(/shell-existing is attached elsewhere/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Restart' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reclaim' }))
+    expect(reconnect).toHaveBeenCalledWith('shell-existing')
+  })
+
+  it('leaves a bound session that is not on screen idle, with no detached affordance', () => {
+    poolState.connectionStates = new Map([['alice:departed', 'closed']])
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{
+          id: 'terminal3-window-0',
+          boundSessions: ['alice:departed', 'shell-existing'],
+          activeSession: 'shell-existing',
+          colorIndex: 0,
+        }}
+        workspaceActive={false}
+      />
+    )
+
+    expect(container.querySelector('.terminal-window-body')).toHaveAttribute('data-tile-state', 'idle')
+    expect(container.querySelector('.terminal-tile-detached')).not.toBeInTheDocument()
+    // The ended fact still shows on the tag it belongs to.
+    expect(container.querySelector('.session-tag[data-tile-state="ended"] .tag-state')).toHaveTextContent('ended')
+  })
+
   it('removes the misleading status dot and focuses only from the terminal body', () => {
     const { container } = render(
       <TerminalWindow
@@ -682,7 +767,7 @@ describe('TerminalWindow launch user', () => {
     expect(setFocusedWindowKey).not.toHaveBeenCalled()
 
     expect(container.querySelector('.status-dot')).not.toBeInTheDocument()
-    expect(screen.getByText('Loading terminal…')).toBeInTheDocument()
+    expect(screen.getByText('Connecting…')).toBeInTheDocument()
 
     fireEvent.click(container.querySelector('.terminal-window-body')!)
     expect(setFocusedWindowKey).toHaveBeenCalledWith('terminal3-terminal3-window-0')

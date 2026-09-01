@@ -1,72 +1,18 @@
+// The session poll reports what tmux lists and nothing else.
+//
+// It used to also own a prune: bindings, peek and the send target were removed
+// when a session stopped appearing, behind a stale-candidate set and a two-tick
+// protection counter that existed only to stop that prune eating sessions the
+// poll had not seen yet. Bindings are operator intent now (ADR-0017 decision
+// 5), so a session that disappears changes what a tile *shows*, never what it
+// holds, and none of that machinery has anything left to protect.
+
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Dispatch, SetStateAction } from 'react'
-import type { LaunchUser, SessionsResponse, TerminalWindow, TerminalWorkspace, TmuxSession, WorkspaceId } from '../types'
-import { getSessionKey, normalizeTerminalUsers } from '../types'
-import { idsInWorkspaces } from './workspaceLayouts'
+import type { LaunchUser, SessionsResponse, TmuxSession } from '../types'
+import { normalizeTerminalUsers } from '../types'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
-}
-
-export function liveSessionKeys(sessions: TmuxSession[]): Set<string> {
-  const live = new Set<string>()
-  sessions.forEach(session => {
-    live.add(getSessionKey(session.name, session.unixUser))
-    live.add(session.name)
-  })
-  return live
-}
-
-export function pruneWindowToLiveSessions(
-  window: TerminalWindow,
-  live: Set<string>,
-  pruneCandidates?: Set<string>,
-): TerminalWindow {
-  const boundSessions = window.boundSessions.filter(session => (
-    session === 'INIT-PENDING' || live.has(session) || (pruneCandidates ? !pruneCandidates.has(session) : false)
-  ))
-  const activeSession = window.activeSession && boundSessions.includes(window.activeSession)
-    ? window.activeSession
-    : (pruneCandidates
-        ? (boundSessions.find(sessionName => sessionName === 'INIT-PENDING' || live.has(sessionName)) ?? null)
-        : (boundSessions[0] ?? null))
-  if (boundSessions.length === window.boundSessions.length && activeSession === window.activeSession) return window
-  return { ...window, boundSessions, activeSession }
-}
-
-function pruneWorkspacesToLiveSessions(
-  workspaces: Record<WorkspaceId, TerminalWorkspace>,
-  sessions: TmuxSession[],
-  pruneCandidates?: Set<string>,
-): Record<WorkspaceId, TerminalWorkspace> {
-  const live = liveSessionKeys(sessions)
-  let changed = false
-  const next: Record<WorkspaceId, TerminalWorkspace> = { ...workspaces }
-  idsInWorkspaces(workspaces).forEach(workspaceId => {
-    const workspace = workspaces[workspaceId]
-    const windows = workspace.windows.map(window => {
-      const pruned = pruneWindowToLiveSessions(window, live, pruneCandidates)
-      if (pruned !== window) changed = true
-      return pruned
-    })
-    next[workspaceId] = windows === workspace.windows ? workspace : { ...workspace, windows }
-  })
-  return changed ? next : workspaces
-}
-
-function staleSessionKeysInWorkspaces(
-  workspaces: Record<WorkspaceId, TerminalWorkspace>,
-  live: Set<string>,
-): Set<string> {
-  const stale = new Set<string>()
-  idsInWorkspaces(workspaces).forEach(workspaceId => {
-    workspaces[workspaceId].windows.forEach(window => {
-      window.boundSessions.forEach(sessionName => {
-        if (sessionName !== 'INIT-PENDING' && !live.has(sessionName)) stale.add(sessionName)
-      })
-    })
-  })
-  return stale
 }
 
 function mergeFailedUserSessions(
@@ -87,25 +33,15 @@ function groupSessions(sessions: TmuxSession[]): Record<string, TmuxSession[]> {
 
 interface SessionsPollOptions {
   autoRefreshInterval: number
-  setWorkspaces: Dispatch<SetStateAction<Record<WorkspaceId, TerminalWorkspace>>>
-  setFloatingSession: Dispatch<SetStateAction<string | null>>
-  setSendToSessionTarget: Dispatch<SetStateAction<string | null>>
 }
 
-export function useSessionsPoll({
-  autoRefreshInterval,
-  setWorkspaces,
-  setFloatingSession,
-  setSendToSessionTarget,
-}: SessionsPollOptions) {
+export function useSessionsPoll({ autoRefreshInterval }: SessionsPollOptions) {
   const [sessions, setSessions] = useState<TmuxSession[]>([])
   const [groupedSessions, setGroupedSessions] = useState<Record<string, TmuxSession[]>>({})
   const [terminalUsers, setTerminalUsers] = useState<LaunchUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const sessionsRef = useRef<TmuxSession[]>([])
-  const staleSessionCandidatesRef = useRef<Set<string>>(new Set())
-  const staleSessionProtectionRef = useRef<Map<string, number>>(new Map())
   const refreshMountedRef = useRef(false)
   const refreshGenerationRef = useRef(0)
   const trailingRefreshRef = useRef(false)
@@ -114,16 +50,6 @@ export function useSessionsPoll({
     promise: Promise<void>
     cancel: (reason: 'timeout' | 'lifecycle') => void
   } | null>(null)
-
-  const forgetStaleSessionAliases = useCallback((aliases: string[]) => {
-    aliases.forEach(alias => staleSessionCandidatesRef.current.delete(alias))
-  }, [])
-
-  const protectStaleSessionAliases = useCallback((aliases: string[]) => {
-    aliases.forEach(alias => {
-      if (alias) staleSessionProtectionRef.current.set(alias, 2)
-    })
-  }, [])
 
   const refreshSessions: () => Promise<void> = useCallback(() => {
     if (!refreshMountedRef.current) return Promise.resolve()
@@ -216,25 +142,6 @@ export function useSessionsPoll({
           ? groupSessions(nextSessions)
           : (isRecord(data.grouped) ? data.grouped as Record<string, TmuxSession[]> : {}))
         if (Array.isArray(data.terminalUsers)) setTerminalUsers(normalizeTerminalUsers(data.terminalUsers))
-
-        if (Array.isArray(data.sessions)) {
-          const live = liveSessionKeys(nextSessions)
-          const protectedKeys = new Set(staleSessionProtectionRef.current.keys())
-          const pruneCandidates = new Set([...staleSessionCandidatesRef.current].filter(key => !protectedKeys.has(key)))
-          setWorkspaces(previous => {
-            const pruned = pruneWorkspacesToLiveSessions(previous, nextSessions, pruneCandidates)
-            const currentStale = staleSessionKeysInWorkspaces(pruned, live)
-            protectedKeys.forEach(key => currentStale.delete(key))
-            staleSessionCandidatesRef.current = currentStale
-            return pruned
-          })
-          setFloatingSession(previous => previous && (live.has(previous) || protectedKeys.has(previous) || !pruneCandidates.has(previous)) ? previous : null)
-          setSendToSessionTarget(previous => previous && (live.has(previous) || protectedKeys.has(previous) || !pruneCandidates.has(previous)) ? previous : null)
-          staleSessionProtectionRef.current.forEach((remaining, key) => {
-            if (remaining <= 1) staleSessionProtectionRef.current.delete(key)
-            else staleSessionProtectionRef.current.set(key, remaining - 1)
-          })
-        }
       } catch (e) {
         if (isAuthoritative()) {
           setError('Failed to fetch sessions')
@@ -256,7 +163,7 @@ export function useSessionsPoll({
       }
     })()
     return active.promise
-  }, [setFloatingSession, setSendToSessionTarget, setWorkspaces])
+  }, [])
 
   useEffect(() => {
     refreshMountedRef.current = true
@@ -286,7 +193,5 @@ export function useSessionsPoll({
     loading,
     error,
     refreshSessions,
-    forgetStaleSessionAliases,
-    protectStaleSessionAliases,
   }
 }

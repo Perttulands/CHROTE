@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
 import { Send } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
@@ -7,6 +7,7 @@ import { useTerminalPool } from './TerminalPool'
 import TerminalSurface from './TerminalSurface'
 import { WINDOW_COLORS, getForegroundCommandLabel, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
+import { isDetached, liveSessionKeys, tileStateFor, type TileState } from '../terminal/tileState'
 import DismissiblePanel from './DismissiblePanel'
 
 interface CreateSessionButtonProps {
@@ -55,9 +56,10 @@ interface SessionTagProps {
   onOpenFilesAtPath?: (path: string) => void
   workspaceActive: boolean
   contextActionsEnabled: boolean
+  tileState: TileState
 }
 
-function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive, contextActionsEnabled }: SessionTagProps) {
+function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive, contextActionsEnabled, tileState }: SessionTagProps) {
   const { sessions, settings, deleteSession, renameSession, openSendToSession } = useSession()
   const pool = useTerminalPool()
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
@@ -157,6 +159,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
       <div
         ref={setTagNodeRef}
         className={`session-tag ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
+        data-tile-state={tileState}
         style={style}
         title={dragLabel}
         {...attributes}
@@ -201,7 +204,12 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
             }}
             onBlur={() => void submitRename()}
           />
-        ) : <span className="tag-name">{displayName}</span>}
+        ) : (
+          <>
+            <span className="tag-name">{displayName}</span>
+            {tileState === 'ended' && <span className="tag-state">ended</span>}
+          </>
+        )}
         <button
           className="tag-remove"
           onPointerDown={event => event.stopPropagation()}
@@ -280,6 +288,41 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   )
 }
 
+interface DetachedTileProps {
+  /** Taken over and Ended are the same shape: no connection, last frame, an action. */
+  state: 'takenOver' | 'ended'
+  sessionName: string
+  restarting: boolean
+  onReclaim: () => void
+  onRestart: () => void
+  onRemove: () => void
+}
+
+function DetachedTile({ state, sessionName, restarting, onReclaim, onRestart, onRemove }: DetachedTileProps) {
+  const takenOver = state === 'takenOver'
+  return (
+    <div className="terminal-tile-detached" data-tile-state={state} role="status">
+      <span className="terminal-tile-detached-note">
+        {takenOver
+          ? `${sessionName} is attached elsewhere. This frame shows its last output.`
+          : `${sessionName} ended. This frame shows its last output.`}
+      </span>
+      <div className="terminal-tile-detached-actions">
+        {takenOver ? (
+          <button className="terminal-tile-action" type="button" onClick={onReclaim}>Reclaim</button>
+        ) : (
+          <>
+            <button className="terminal-tile-action" type="button" disabled={restarting} onClick={onRestart}>
+              {restarting ? 'Restarting…' : 'Restart'}
+            </button>
+            <button className="terminal-tile-action" type="button" onClick={onRemove}>Remove</button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 interface TerminalWindowProps {
   workspaceId: WorkspaceId
   window: TerminalWindowType
@@ -312,8 +355,12 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     focusedWindowKey,
     setFocusedWindowKey,
     openSendToSession,
+    restartSession,
     sessions,
+    loading,
+    error,
   } = useSession()
+  const [restarting, setRestarting] = useState(false)
 
   // Generate a unique key for this window
   const windowKey = `${workspaceId}-${windowConfig.id}`
@@ -322,7 +369,27 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
   const activeSession = windowConfig.activeSession
 
   const activeTerminal = activeSession ? pool.terminals.get(activeSession) ?? null : null
-  const activeSessionLive = activeSession ? pool.connectionStates.get(activeSession) === 'open' : false
+
+  // The one fact joined in from the host. A list that has not arrived, or one
+  // that arrived alongside an error, proves nothing about a binding, so no tile
+  // is called ended on it.
+  const liveSessions = useMemo(
+    () => (loading || error ? null : liveSessionKeys(sessions)),
+    [loading, error, sessions],
+  )
+  // A window hidden by the mobile carousel or by an inactive workspace tab is
+  // not on screen, whatever its bindings say.
+  const windowOnScreen = workspaceActive && style?.display !== 'none'
+  const tileStates = useMemo(() => new Map(windowConfig.boundSessions.map(sessionKey => [
+    sessionKey,
+    tileStateFor({
+      sessionKey,
+      onScreen: windowOnScreen && sessionKey === windowConfig.activeSession,
+      liveSessions,
+      connection: pool.connectionStates.get(sessionKey) ?? 'idle',
+    }),
+  ])), [windowConfig.boundSessions, windowConfig.activeSession, windowOnScreen, liveSessions, pool.connectionStates])
+  const activeTileState = activeSession ? tileStates.get(activeSession) ?? 'idle' : 'idle'
 
   // The Refit control and the workspace-level refit both land here. Each
   // surface already refits itself on container resize; this is the explicit
@@ -350,6 +417,23 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
 
   const handleTagClick = (sessionName: string) => {
     setActiveSession(workspaceId, windowConfig.id, sessionName)
+  }
+
+  // Reclaim attaches again; the tile attaches with -d, so it takes the session
+  // back from whichever client displaced it.
+  const handleReclaim = (sessionKey: string) => pool.terminals.get(sessionKey)?.reconnect()
+
+  // The pooled terminal is keyed by the binding, which Restart does not change,
+  // so the recreated session needs an explicit dial on the existing terminal.
+  const handleRestart = async (sessionKey: string) => {
+    setRestarting(true)
+    try {
+      if (await restartSession(workspaceId, windowConfig.id, sessionKey)) {
+        pool.terminals.get(sessionKey)?.reconnect()
+      }
+    } finally {
+      setRestarting(false)
+    }
   }
 
 
@@ -391,6 +475,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               onOpenFilesAtPath={onOpenFilesAtPath}
               workspaceActive={workspaceActive}
               contextActionsEnabled={sessionName !== 'INIT-PENDING'}
+              tileState={tileStates.get(sessionName) ?? 'idle'}
             />
           ))}
         </div>
@@ -432,15 +517,20 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               <Send size={12} aria-hidden="true" />
             </button>
           )}
-          {activeSession && activeSession !== 'INIT-PENDING' && !activeSessionLive && (
-            <span className="terminal-loading-state">
-              {pool.connectionStates.get(activeSession) === 'closed' ? 'Terminal disconnected' : 'Loading terminal…'}
-            </span>
+          {/* The two detached states say so in the tile itself; only a tile on
+              its way up has nothing else to show for it. */}
+          {sendableSession && activeTileState === 'live' && pool.connectionStates.get(sendableSession) !== 'open' && (
+            <span className="terminal-loading-state">Connecting…</span>
           )}
         </div>
       </div>
 
-      <div ref={setDropNodeRef} className="terminal-window-body" onClick={handleWindowClick}>
+      <div
+        ref={setDropNodeRef}
+        className={isDetached(activeTileState) ? 'terminal-window-body detached' : 'terminal-window-body'}
+        data-tile-state={activeTileState}
+        onClick={handleWindowClick}
+      >
         {activeSession === 'INIT-PENDING' ? (
           <div style={{
             display: 'flex',
@@ -463,9 +553,20 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               key={sessionName}
               session={pool.terminals.get(sessionName) ?? null}
               hidden={sessionName !== activeSession}
+              connect={tileStates.get(sessionName) !== 'ended'}
             />
           )
         ))}
+        {sendableSession && isDetached(activeTileState) && (
+          <DetachedTile
+            state={activeTileState}
+            sessionName={getSessionNameFromKey(sendableSession)}
+            restarting={restarting}
+            onReclaim={() => handleReclaim(sendableSession)}
+            onRestart={() => { void handleRestart(sendableSession) }}
+            onRemove={() => handleRemoveSession(sendableSession)}
+          />
+        )}
         {isDropTarget && (
           <div className="terminal-drop-overlay" style={{ inset: 0, pointerEvents: 'none' }}>
             <span className="drop-hint">Release to add</span>

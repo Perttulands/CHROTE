@@ -1,11 +1,10 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
 import DismissiblePanel from './DismissiblePanel'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
-import { getSessionKey } from '../types'
 import type { WorkspaceId } from '../types'
 import { useTerminalPool } from './TerminalPool'
 
@@ -17,7 +16,7 @@ interface TerminalAreaProps {
 }
 
 function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspaceActive = true }: TerminalAreaProps) {
-  const { workspaces, setWindowCount, clearStaleSessionsFromWindow, sessions, windowRevealRequest } = useSession()
+  const { workspaces, setWindowCount, windowRevealRequest } = useSession()
   const pool = useTerminalPool()
   const workspace = workspaces[workspaceId]
   const windows = workspace.windows
@@ -33,17 +32,6 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
     { estimatedSize: { width: 220, height: 130 } },
   )
   const visibleWindows = windows.slice(0, windowCount)
-  const liveSessions = useMemo(() => {
-    const live = new Set<string>()
-    sessions.forEach(session => {
-      live.add(getSessionKey(session.name, session.unixUser))
-      live.add(session.name)
-    })
-    return live
-  }, [sessions])
-  const staleSessionCount = useMemo(() => visibleWindows.reduce((count, window) => (
-    count + window.boundSessions.filter(sessionName => sessionName !== 'INIT-PENDING' && !liveSessions.has(sessionName)).length
-  ), 0), [liveSessions, visibleWindows])
 
   // Ensure valid mobile index when configuration changes
   useEffect(() => {
@@ -74,11 +62,6 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
       if (sessionName && sessionName !== 'INIT-PENDING') sessionNames.add(sessionName)
     }))
     sessionNames.forEach(sessionName => pool.terminals.get(sessionName)?.reconnect())
-    closeControlsMenu()
-  }
-
-  const clearStaleSessions = () => {
-    visibleWindows.forEach(window => clearStaleSessionsFromWindow(workspaceId, window.id))
     closeControlsMenu()
   }
 
@@ -187,10 +170,6 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
             <button className="session-context-item" onClick={reconnectFrames} disabled={visibleWindows.every(window => window.boundSessions.length === 0)}>
               <span className="session-context-icon">↻</span>
               Reconnect frames
-            </button>
-            <button className="session-context-item" onClick={clearStaleSessions} disabled={staleSessionCount === 0}>
-              <span className="session-context-icon">⌫</span>
-              {staleSessionCount > 0 ? `Clear ${staleSessionCount} stale sessions` : 'No stale sessions'}
             </button>
           </div>
         </DismissiblePanel>

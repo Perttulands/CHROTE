@@ -15,8 +15,12 @@ import './terminal.css'
 export type TerminalConnectionState = 'idle' | 'connecting' | 'open' | 'closed'
 
 export interface TerminalSession {
-  /** Attach into a live container, connecting on first attach. */
-  attach(container: HTMLElement): void
+  /**
+   * Attach into a live container, connecting on first attach. An ended tile
+   * passes `connect: false` so its last frame can be shown without dialling a
+   * session that is no longer there.
+   */
+  attach(container: HTMLElement, options?: { connect?: boolean }): void
   /** Detach from the document, keeping the connection and the rendered frame. */
   detach(): void
   /** Resize the grid to the container. A no-op while detached or hidden. */
@@ -91,7 +95,7 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   setScrollbarHidden(options.hideScrollbar)
 
   return {
-    attach(container) {
+    attach(container, attachOptions) {
       if (disposed) return
       container.appendChild(element)
       if (!opened) {
@@ -99,7 +103,7 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
         opened = true
       }
       fit()
-      if (!connection) connect()
+      if (!connection && attachOptions?.connect !== false) connect()
     },
     detach() {
       element.remove()

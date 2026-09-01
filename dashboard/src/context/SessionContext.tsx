@@ -8,10 +8,10 @@ import type {
   TmuxSession,
   WorkspaceId,
 } from '../types'
-import { getSessionKey, getSessionPrefixForUser, resolveLaunchUser } from '../types'
+import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getSessionPrefixForUser, resolveLaunchUser } from '../types'
 import { useToast } from './ToastContext'
 import { useSendToSession } from './useSendToSession'
-import { liveSessionKeys, pruneWindowToLiveSessions, useSessionsPoll } from './useSessionsPoll'
+import { useSessionsPoll } from './useSessionsPoll'
 import { applyInitialTmuxSettings, useWorkspaceLayouts } from './useWorkspaceLayouts'
 import {
   deduplicateWorkspaceBindings,
@@ -38,31 +38,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const layouts = useWorkspaceLayouts()
   const send = useSendToSession()
   const [floatingSession, setFloatingSession] = useState<string | null>(null)
-  const poll = useSessionsPoll({
-    autoRefreshInterval: layouts.settings.autoRefreshInterval,
-    setWorkspaces: layouts.setWorkspaces,
-    setFloatingSession,
-    setSendToSessionTarget: send.setSendToSessionTarget,
-  })
+  const poll = useSessionsPoll({ autoRefreshInterval: layouts.settings.autoRefreshInterval })
 
   useEffect(() => applyInitialTmuxSettings(layouts.settings), []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const clearStaleSessionsFromWindow = useCallback((workspaceId: WorkspaceId, windowId: string) => {
-    const liveSessions = liveSessionKeys(poll.sessions)
-    layouts.setWorkspaces(previous => {
-      const workspace = previous[workspaceId]
-      if (!workspace) return previous
-      return {
-        ...previous,
-        [workspaceId]: {
-          ...workspace,
-          windows: workspace.windows.map(window =>
-            window.id === windowId ? pruneWindowToLiveSessions(window, liveSessions) : window,
-          ),
-        },
-      }
-    })
-  }, [poll.sessions, layouts.setWorkspaces])
 
   const addSessionToWindow = useCallback((
     workspaceId: WorkspaceId,
@@ -71,9 +49,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     unixUser?: LaunchUser,
   ) => {
     const sessionKey = getSessionKey(sessionName, unixUser)
-    const aliases = unixUser ? [sessionKey, sessionName] : [sessionKey]
-    poll.forgetStaleSessionAliases(aliases)
-    poll.protectStaleSessionAliases(aliases)
     layouts.setWorkspaces(previous => {
       const targetWorkspace = previous[workspaceId]
       if (!targetWorkspace?.windows.some(window => window.id === windowId)) return previous
@@ -106,7 +81,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return next
       }, {} as Record<WorkspaceId, TerminalWorkspace>)
     })
-  }, [layouts.setWorkspaces, poll.forgetStaleSessionAliases, poll.protectStaleSessionAliases])
+  }, [layouts.setWorkspaces])
 
   const createSession = useCallback(async (options: CreateSessionOptions = {}): Promise<string | null> => {
     const workspaceId = options.workspaceId ?? options.attachTo?.workspaceId ?? 'terminal1'
@@ -136,6 +111,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return null
     }
   }, [addSessionToWindow, addToast, layouts.settings, poll.refreshSessions, poll.sessions, poll.terminalUsers])
+
+  // Restart an ended binding in place: same name, same Unix user, same tile.
+  // The previous command is deliberately not re-run — the poll reports only
+  // `pane_current_command`, which gives `node` or `bash` rather than the
+  // invocation, and guessing wrong is worse than not offering.
+  const restartSession = useCallback(async (
+    workspaceId: WorkspaceId,
+    windowId: string,
+    sessionKey: string,
+  ): Promise<boolean> => {
+    const created = await createSession({
+      name: getSessionNameFromKey(sessionKey),
+      unixUser: getSessionUserFromKey(sessionKey) || undefined,
+      workspaceId,
+      attachTo: { workspaceId, windowId },
+    })
+    return created !== null
+  }, [createSession])
 
   const openFloatingModal = useCallback((sessionName: string) => setFloatingSession(sessionName), [])
   const closeFloatingModal = useCallback(() => setFloatingSession(null), [])
@@ -199,9 +192,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   ): Promise<boolean> => {
     const qualifiedUsers = qualifiedUsersBySessionName(layouts.workspaces)
     const newKey = getSessionKey(newName, unixUser)
-    const sourceAliases = safeSessionAliases(oldName, unixUser, qualifiedUsers)
-    const targetAliases = safeSessionAliases(newName, unixUser, qualifiedUsers)
-    const sourceAliasSet = new Set(sourceAliases)
+    const sourceAliasSet = new Set(safeSessionAliases(oldName, unixUser, qualifiedUsers))
     try {
       const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
       const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(oldName)}${query}`, {
@@ -215,8 +206,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         addToast('Failed to rename session', 'error')
         return false
       }
-      poll.forgetStaleSessionAliases(sourceAliases.concat(targetAliases))
-      poll.protectStaleSessionAliases(targetAliases)
       layouts.setWorkspaces(previous => {
         const next: Record<WorkspaceId, TerminalWorkspace> = { ...previous }
         idsInWorkspaces(previous).forEach(workspaceId => {
@@ -240,7 +229,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       addToast('Failed to rename session', 'error')
       return false
     }
-  }, [addToast, layouts.setWorkspaces, layouts.workspaces, poll.forgetStaleSessionAliases, poll.protectStaleSessionAliases, poll.refreshSessions])
+  }, [addToast, layouts.setWorkspaces, layouts.workspaces, poll.refreshSessions])
 
   const contextValue: DashboardContextType = useMemo(() => ({
     sessions: poll.sessions,
@@ -262,7 +251,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     layoutPresets: layouts.layoutPresets,
     setWindowCount: layouts.setWindowCount,
     clearWorkspaceAssignments: layouts.clearWorkspaceAssignments,
-    clearStaleSessionsFromWindow,
     addSessionToWindow,
     removeSessionFromWindow: layouts.removeSessionFromWindow,
     setActiveSession: layouts.setActiveSession,
@@ -278,6 +266,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     focusSessionAssignment,
     refreshSessions: poll.refreshSessions,
     createSession,
+    restartSession,
     deleteSession,
     renameSession,
     updateSettings: layouts.updateSettings,
@@ -296,8 +285,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     layouts.setFocusedWindowKey, layouts.revealWindow, layouts.saveCurrentLayout, layouts.loadPreset,
     layouts.deletePreset, layouts.renamePreset, floatingSession, send.sendToSessionTarget,
     send.sendToSessionPrefill, send.sendToSessionRequestId, send.openSendToSession,
-    send.closeSendToSession, send.listSessionPanes, send.sendToSession, clearStaleSessionsFromWindow,
-    addSessionToWindow, openFloatingModal, closeFloatingModal, handleSessionClick,
+    send.closeSendToSession, send.listSessionPanes, send.sendToSession,
+    addSessionToWindow, restartSession, openFloatingModal, closeFloatingModal, handleSessionClick,
     focusSessionAssignment, createSession, deleteSession, renameSession,
   ])
 

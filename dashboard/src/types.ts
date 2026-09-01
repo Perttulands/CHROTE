@@ -465,7 +465,6 @@ export interface DashboardActions {
   // Window management
   setWindowCount: (workspaceId: WorkspaceId, count: number) => void
   clearWorkspaceAssignments: (workspaceId: WorkspaceId) => void
-  clearStaleSessionsFromWindow: (workspaceId: WorkspaceId, windowId: string) => void
   addSessionToWindow: (workspaceId: WorkspaceId, windowId: string, sessionName: string, unixUser?: LaunchUser) => void
   removeSessionFromWindow: (workspaceId: WorkspaceId, windowId: string, sessionName: string) => void
   setActiveSession: (workspaceId: WorkspaceId, windowId: string, sessionName: string) => void
@@ -489,6 +488,9 @@ export interface DashboardActions {
 
   // Create a tmux session, optionally attaching it to a terminal window
   createSession: (options?: CreateSessionOptions) => Promise<string | null>
+
+  // Recreate an ended binding's session in place, under the same name and tile
+  restartSession: (workspaceId: WorkspaceId, windowId: string, sessionKey: string) => Promise<boolean>
 
   // Delete a session
   deleteSession: (sessionName: string, unixUser?: LaunchUser) => Promise<boolean>

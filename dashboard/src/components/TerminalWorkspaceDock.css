@@ -347,6 +347,71 @@
   white-space: nowrap;
 }
 
+/* A tile with no live connection: the last frame stays readable but recedes,
+   and it stops taking input that would go nowhere. Text, not colour, says
+   which of the two states it is. */
+.terminal-window-body.detached .terminal-surface-host {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.terminal-tile-detached {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background-color: var(--surface-primary);
+  border-top: 1px solid var(--divider);
+}
+
+.terminal-tile-detached-note {
+  color: var(--text-secondary);
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-tile-detached-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.terminal-tile-action {
+  background: transparent;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.terminal-tile-action:hover:not(:disabled) {
+  border-color: var(--window-accent, var(--accent));
+}
+
+.terminal-tile-action:disabled {
+  color: var(--text-dim);
+  cursor: wait;
+}
+
+.tag-state {
+  color: var(--text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex: 0 0 auto;
+}
+
 .terminal-window-body {
   flex: 1;
   overflow: hidden;
