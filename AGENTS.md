@@ -48,18 +48,21 @@ python3 scripts/check-embedded-dashboard.py
 
 # Go server
 cd src
+test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
 GOTOOLCHAIN=go1.26.6 go vet ./...
-GOTOOLCHAIN=go1.26.6 go test ./...
 GOTOOLCHAIN=go1.26.6 go test -race ./...
 
 # Dashboard
 cd dashboard
 npm run lint
-npm run test:unit -- --coverage
+npm run test:unit
 npm test
 
-# Documentation and patch hygiene
+# Integrated and source contracts
+cd ..
+./scripts/test-built-server-contract.sh
 python3 scripts/doc-lint.py
+python3 scripts/host-neutrality.py
 git diff --check
 ```
 

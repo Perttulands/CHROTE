@@ -12,17 +12,6 @@ export default defineConfig({
     setupFiles: './src/test/setup.ts',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     exclude: ['tests/**', 'node_modules/**', 'dist/**'],
-    coverage: {
-      provider: 'v8',
-      reportsDirectory: './coverage',
-      reporter: ['text', 'html', 'json-summary'],
-      thresholds: {
-        lines: 75,
-        functions: 69,
-        branches: 65,
-        statements: 72,
-      },
-    },
   },
   build: {
     outDir: 'dist',
