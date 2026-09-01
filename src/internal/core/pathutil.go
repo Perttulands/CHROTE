@@ -92,12 +92,3 @@ func GetWorkDir() string {
 	}
 	return "/code"
 }
-
-// GetLaunchScript returns the terminal launch script path
-// Reads from CHROTE_LAUNCH_SCRIPT env var, defaults to /usr/local/bin/terminal-launch.sh
-func GetLaunchScript() string {
-	if script := os.Getenv("CHROTE_LAUNCH_SCRIPT"); script != "" {
-		return script
-	}
-	return "/usr/local/bin/terminal-launch.sh"
-}

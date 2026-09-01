@@ -111,10 +111,10 @@ func ValidateSessionName(name, paramName string) (bool, string) {
 }
 
 // TmuxBin returns the tmux client binary every CHROTE code path must invoke.
-// CHROTE_TMUX_BIN pins one client version across the Go server,
-// terminal-launch.sh and the grants helper: a tmux 3.4 client cannot talk to a
-// 3.6a server at all, so resolving "tmux" from PATH per code path silently
-// breaks terminals. Falls back to PATH lookup when unset.
+// CHROTE_TMUX_BIN pins one client version across the Go server and the grants
+// helper: a tmux 3.4 client cannot talk to a 3.6a server at all, so resolving
+// "tmux" from PATH per code path silently breaks terminals. Falls back to PATH
+// lookup when unset.
 func TmuxBin() string {
 	if bin := strings.TrimSpace(os.Getenv("CHROTE_TMUX_BIN")); bin != "" {
 		return bin

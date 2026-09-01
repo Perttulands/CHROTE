@@ -25,8 +25,8 @@ grep -q -- '--no-enable)' "$installer"
 grep -q -- '--no-start)' "$installer"
 ! grep -q 'CHROTE_PERSISTENT_AGENTS_PATH' "$installer"
 grep -q 'CHROTE_SCHEDULED_TASKS_DIR' "$installer"
-if grep -q 'chrote-ttyd.service' "$installer" "$uninstaller"; then
-  echo "installer must use the Go server's managed ttyd, not a second service" >&2
+if grep -qi 'ttyd' "$installer"; then
+  echo "the installer must not install ttyd: CHROTE serves terminals itself (ADR-0018)" >&2
   exit 1
 fi
 grep -q -- '--purge-state)' "$uninstaller"
@@ -201,23 +201,19 @@ def stop(_signum, _frame):
 
 signal.signal(signal.SIGTERM, stop)
 try:
-    for _ in range(2):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(('127.0.0.1', 0))
-        sock.listen(1)
-        sockets.append(sock)
-    ports = [sock.getsockname()[1] for sock in sockets]
-    if len(set(ports)) != 2:
-        raise RuntimeError('dynamic port reservation returned duplicate ports')
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(('127.0.0.1', 0))
+    sock.listen(1)
+    sockets.append(sock)
     with open(sys.argv[1], 'x', encoding='ascii') as receipt:
-        receipt.write(f'{ports[0]} {ports[1]}\n')
+        receipt.write(f'{sock.getsockname()[1]}\n')
         receipt.flush()
         os.fsync(receipt.fileno())
     signal.pause()
 except SystemExit:
     raise
 except Exception as exc:
-    print(f'failed to reserve distinct loopback ports: {exc}', file=sys.stderr)
+    print(f'failed to reserve a loopback port: {exc}', file=sys.stderr)
     raise SystemExit(1)
 finally:
     close_sockets()
@@ -245,19 +241,14 @@ if [ ! -s "$port_receipt" ]; then
   echo 'port reserver did not write its receipt' >&2
   exit 1
 fi
-if ! read -r port ttyd_port < "$port_receipt"; then
-  echo 'failed to read distinct loopback ports' >&2
-  exit 1
-fi
-if [ "$port" = "$ttyd_port" ]; then
-  echo "dynamic port reservation returned duplicate ports: $port" >&2
+if ! read -r port < "$port_receipt"; then
+  echo 'failed to read the reserved loopback port' >&2
   exit 1
 fi
 
 install_args=(
   --workspace "$workspace"
   --port "$port"
-  --ttyd-port "$ttyd_port"
   --no-systemd
   --no-enable
   --no-start
@@ -275,17 +266,17 @@ TMUX_TMPDIR="$runtime_dir" \
   "$installer" "${install_args[@]}"
 
 installed_binary="$prefix/bin/chrote-server"
-launch_script="$prefix/lib/chrote/terminal-launch.sh"
 env_file="$config_home/chrote/chrote.env"
 unit_file="$service_dir/chrote.service"
 
-for path in "$installed_binary" "$prefix/bin/ttyd" "$launch_script" "$env_file" "$unit_file"; do
+for path in "$installed_binary" "$env_file" "$unit_file"; do
   [ -f "$path" ] || { echo "missing installed path: $path" >&2; exit 1; }
 done
 [ -x "$installed_binary" ]
-[ -x "$prefix/bin/ttyd" ]
-[ -x "$launch_script" ]
-[ ! -e "$service_dir/chrote-ttyd.service" ]
+# The terminal is served by chrote-server itself, so nothing else is installed
+# alongside it (ADR-0018).
+[ ! -e "$prefix/bin/ttyd" ]
+[ ! -e "$prefix/lib/chrote" ]
 
 grep -F 'CHROTE_ROOTS=' "$env_file" | grep -Fq "$workspace"
 grep -F 'CHROTE_TMUX_SOCKET=' "$env_file" | grep -Fq "$(id -un)=$tmux_socket"
@@ -341,8 +332,20 @@ names={item['name'] for item in payload.get('sessions',[])}
 assert 'public-smoke' in names, payload
 PY
 
-curl -fsS "http://127.0.0.1:$port/terminal/" >"$tmp/terminal.html"
-grep -qi 'ttyd' "$tmp/terminal.html"
+# The terminal is a WebSocket CHROTE serves itself: nothing under /terminal
+# answers a plain HTTP request, and the upgrade route is still wired.
+terminal_page_status="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/terminal/")"
+if [ "$terminal_page_status" != "404" ]; then
+  echo "plain HTTP under /terminal/ returned $terminal_page_status, expected 404" >&2
+  exit 1
+fi
+terminal_ws_status="$(curl -s -o /dev/null -w '%{http_code}' \
+  -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  "http://127.0.0.1:$port/terminal/ws?arg=tile&arg=public-smoke")"
+if [ "$terminal_ws_status" = "404" ]; then
+  echo "the terminal WebSocket route is not served" >&2
+  exit 1
+fi
 
 kill "$server_pid"
 wait "$server_pid" 2>/dev/null || true
@@ -355,7 +358,7 @@ CHROTE_INSTALL_PREFIX="$prefix" \
 CHROTE_SERVICE_DIR="$service_dir" \
   "$uninstaller" --yes --no-systemd
 
-for path in "$installed_binary" "$prefix/bin/ttyd" "$launch_script" "$env_file" "$unit_file"; do
+for path in "$installed_binary" "$env_file" "$unit_file"; do
   [ ! -e "$path" ] || { echo "uninstaller left managed path: $path" >&2; exit 1; }
 done
 [ -d "$workspace" ]
@@ -372,4 +375,4 @@ CHROTE_SERVICE_DIR="$service_dir" \
 [ ! -e "$config_home/chrote/secrets.env" ]
 [ -d "$workspace" ]
 
-printf 'PASS: disposable public installer smoke (health/version, tmux, ttyd, conservative uninstall, explicit purge)\n'
+printf 'PASS: disposable public installer smoke (health/version, tmux, terminal route, conservative uninstall, explicit purge)\n'

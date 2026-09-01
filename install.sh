@@ -2,7 +2,6 @@
 set -euo pipefail
 
 readonly REPO="Perttulands/CHROTE"
-readonly TTYD_VERSION="1.7.7"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PREFIX="${CHROTE_INSTALL_PREFIX:-$HOME/.local}"
@@ -11,7 +10,6 @@ STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 SERVICE_DIR="${CHROTE_SERVICE_DIR:-$CONFIG_HOME/systemd/user}"
 WORKSPACE="${CHROTE_WORKSPACE:-$HOME}"
 PORT="8094"
-TTYD_PORT="7683"
 BINARY_SOURCE=""
 MANAGE_SYSTEMD=1
 ENABLE_SERVICE=1
@@ -38,7 +36,6 @@ Options:
   --binary PATH       Install an already-built chrote-server instead of building
   --workspace PATH    Allowed file root and default session directory (default: $HOME)
   --port PORT         Loopback dashboard port (default: 8094)
-  --ttyd-port PORT    Loopback ttyd port managed by CHROTE (default: 7683)
   --prefix PATH       Installation prefix (default: $HOME/.local)
   --no-systemd        Write the unit but do not reload, enable, or start systemd
   --no-enable         Do not enable the user service
@@ -65,11 +62,6 @@ while [ "$#" -gt 0 ]; do
     --port)
       [ "$#" -ge 2 ] || die "--port requires a value"
       PORT="$2"
-      shift 2
-      ;;
-    --ttyd-port)
-      [ "$#" -ge 2 ] || die "--ttyd-port requires a value"
-      TTYD_PORT="$2"
       shift 2
       ;;
     --prefix)
@@ -183,41 +175,17 @@ build_server() {
   )
 }
 
-install_ttyd() {
-  local destination="$1" existing arch asset url
-  existing="$(command -v ttyd || true)"
-  if [ -n "$existing" ]; then
-    if [ "$(absolute_path "$existing")" != "$(absolute_path "$destination")" ]; then
-      install -m 0755 "$existing" "$destination"
-    fi
-    return
-  fi
-
-  require_command curl
-  arch="$(uname -m)"
-  case "$arch" in
-    x86_64|aarch64) asset="$arch" ;;
-    *) die "unsupported ttyd architecture: $arch" ;;
-  esac
-  url="https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${asset}"
-  log "Downloading ttyd $TTYD_VERSION for $asset..."
-  curl --fail --location --silent --show-error "$url" -o "$destination"
-  chmod 0755 "$destination"
-}
-
 write_environment() {
-  local env_file="$1" state_dir="$2" launch_script="$3" service_path tmux_mapping
+  local env_file="$1" state_dir="$2" service_path tmux_mapping
   service_path="$PREFIX/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
   tmux_mapping="${CHROTE_TMUX_SOCKET:-$(id -un)=$(default_tmux_socket)}"
   cat > "$env_file" <<EOF
 # Managed by CHROTE install.sh. Put private optional service values in secrets.env.
 HOST=$(quote_env_value "127.0.0.1")
 PORT=$(quote_env_value "$PORT")
-TTYD_PORT=$(quote_env_value "$TTYD_PORT")
 CHROTE_ROOTS=$(quote_env_value "$WORKSPACE")
 CHROTE_WORKDIR=$(quote_env_value "$WORKSPACE")
 CHROTE_TMUX_SOCKET=$(quote_env_value "$tmux_mapping")
-CHROTE_LAUNCH_SCRIPT=$(quote_env_value "$launch_script")
 CHROTE_BEADS_WORKSPACES=$(quote_env_value "$WORKSPACE")
 CHROTE_SESSION_DROPS_DIR=$(quote_env_value "$state_dir/session-drops")
 CHROTE_SCHEDULED_TASKS_DIR=$(quote_env_value "$state_dir/scheduled-tasks")
@@ -351,7 +319,7 @@ health_check() {
 }
 
 main() {
-  local bin_dir lib_dir config_dir state_dir binary launch_script env_file secrets_file unit_file build_tmp
+  local bin_dir config_dir state_dir binary env_file secrets_file unit_file build_tmp
 
   require_command install
   require_command realpath
@@ -362,8 +330,6 @@ main() {
     require_command systemctl
   fi
   validate_port "--port" "$PORT"
-  validate_port "--ttyd-port" "$TTYD_PORT"
-  [ "$PORT" != "$TTYD_PORT" ] || die "dashboard and ttyd ports must differ"
 
   PREFIX="$(absolute_path "$PREFIX")"
   CONFIG_HOME="$(absolute_path "$CONFIG_HOME")"
@@ -373,16 +339,14 @@ main() {
 
   mkdir -p "$WORKSPACE"
   bin_dir="$PREFIX/bin"
-  lib_dir="$PREFIX/lib/chrote"
   config_dir="$CONFIG_HOME/chrote"
   state_dir="$STATE_HOME/chrote"
   binary="$bin_dir/chrote-server"
-  launch_script="$lib_dir/terminal-launch.sh"
   env_file="$config_dir/chrote.env"
   secrets_file="$config_dir/secrets.env"
   unit_file="$SERVICE_DIR/chrote.service"
 
-  install -d -m 0755 "$bin_dir" "$lib_dir" "$SERVICE_DIR"
+  install -d -m 0755 "$bin_dir" "$SERVICE_DIR"
   install -d -m 0700 "$config_dir" "$state_dir"
   install -d -m 0700 \
     "$state_dir/session-drops" \
@@ -395,9 +359,7 @@ main() {
   mv -f "$build_tmp" "$binary"
   trap - EXIT
 
-  install_ttyd "$bin_dir/ttyd"
-  install -m 0755 "$SCRIPT_DIR/terminal-launch.sh" "$launch_script"
-  write_environment "$env_file" "$state_dir" "$launch_script"
+  write_environment "$env_file" "$state_dir"
   [ -e "$secrets_file" ] || { : > "$secrets_file"; chmod 0600 "$secrets_file"; }
   write_service "$unit_file" "$binary" "$env_file" "$secrets_file"
   grant_tmux_access

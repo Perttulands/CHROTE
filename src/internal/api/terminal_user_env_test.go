@@ -57,7 +57,7 @@ func TestValidateTerminalUserEnv_RejectsNonAbsoluteSocket(t *testing.T) {
 	}
 }
 
-// The Go parser and terminal-launch.sh must agree on the socket for every
+// Terminal listing and terminal attach must agree on the socket for every
 // configured user. With duplicates rejected at startup, agreement holds because
 // exactly one entry can match.
 func TestParseUserValueMap_ResolvesTheSingleEntryPerUser(t *testing.T) {

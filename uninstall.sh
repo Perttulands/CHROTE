@@ -77,11 +77,15 @@ fi
 
 rm -f \
   "$PREFIX/bin/chrote-server" \
-  "$PREFIX/bin/ttyd" \
-  "$PREFIX/lib/chrote/terminal-launch.sh" \
   "$SERVICE_DIR/chrote.service" \
   "$CONFIG_HOME/chrote/chrote.env"
 
+# CHROTE serves terminals from its own process since ADR-0018 and installs
+# neither of these any more. They are removed so an upgraded install does not
+# keep a stray helper binary and launch script behind.
+rm -f \
+  "$PREFIX/bin/ttyd" \
+  "$PREFIX/lib/chrote/terminal-launch.sh"
 rmdir "$PREFIX/lib/chrote" 2>/dev/null || true
 rmdir "$PREFIX/lib" 2>/dev/null || true
 

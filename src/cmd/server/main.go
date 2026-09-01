@@ -33,16 +33,13 @@ var BuildCommit = ""
 const (
 	defaultBindHost   = "127.0.0.1"
 	defaultServerPort = 8094
-	defaultTtydPort   = 7683
 )
 
 // Config holds server configuration
 type Config struct {
 	Host               string
 	Port               int
-	TtydPort           int
 	CORSOrigins        []string
-	StartTtyd          bool
 	StartSystemHistory bool
 }
 
@@ -51,8 +48,6 @@ func main() {
 	config := Config{StartSystemHistory: true}
 	flag.StringVar(&config.Host, "host", defaultBindHost, "Bind address")
 	flag.IntVar(&config.Port, "port", defaultServerPort, "Server port")
-	flag.IntVar(&config.TtydPort, "ttyd-port", defaultTtydPort, "ttyd port")
-	flag.BoolVar(&config.StartTtyd, "start-ttyd", true, "Start ttyd child process")
 	flag.BoolVar(&config.StartSystemHistory, "start-system-history", true, "Start system history sampler")
 	flag.Parse()
 
@@ -62,9 +57,6 @@ func main() {
 	}
 	if port := os.Getenv("PORT"); port != "" {
 		config.Port = mustParsePort("PORT", port)
-	}
-	if port := os.Getenv("TTYD_PORT"); port != "" {
-		config.TtydPort = mustParsePort("TTYD_PORT", port)
 	}
 	warnRemovedAccessTokenSetting()
 	if err := api.ValidateTerminalUserEnv(); err != nil {
@@ -81,7 +73,7 @@ func main() {
 	mux := http.NewServeMux()
 	runtimeCtx, stopRuntime := context.WithCancel(context.Background())
 
-	terminalProxy, scheduledTasks, stopRuntimeMaintenance := registerRuntimeRoutes(mux, config, runtimeCtx)
+	scheduledTasks, stopRuntimeMaintenance := registerRuntimeRoutes(mux, config, runtimeCtx)
 	registerAPIFallback(mux)
 
 	// Serve embedded dashboard at root
@@ -102,13 +94,6 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	// Start ttyd if configured
-	if config.StartTtyd {
-		if err := terminalProxy.Start(); err != nil {
-			log.Printf("Warning: failed to start ttyd: %v", err)
-			log.Printf("Terminal functionality will not be available")
-		}
-	}
 	if err := scheduledTasks.StartScheduler(); err != nil {
 		log.Printf("Warning: failed to start scheduled tasks: %v", err)
 	}
@@ -137,9 +122,6 @@ func main() {
 	stopRuntime()
 	stopRuntimeMaintenance()
 	scheduledTasks.StopScheduler()
-	if config.StartTtyd {
-		terminalProxy.Stop()
-	}
 
 	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -152,7 +134,7 @@ func main() {
 	log.Println("Server stopped")
 }
 
-func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Context) (*proxy.TerminalProxy, *api.ScheduledHandler, context.CancelFunc) {
+func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Context) (*api.ScheduledHandler, context.CancelFunc) {
 	tmuxHandler := api.NewTmuxHandler()
 	tmuxHandler.RegisterRoutes(mux)
 
@@ -178,8 +160,10 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	}
 	systemHandler.RegisterRoutes(mux)
 
-	// Create terminal proxy
-	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
+	// CHROTE owns the terminal transport itself (ADR-0018): the attach runs on
+	// a pty this process allocates, resolved by the one implementation of the
+	// socket rules that also serves session listing.
+	terminalProxy := proxy.NewTerminalProxy(resolveTerminalTarget)
 	terminalProxy.RegisterRoutes(mux)
 	var stopOnce sync.Once
 	stopRuntimeMaintenance := func() {
@@ -187,7 +171,17 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 			stopSystemHistory()
 		})
 	}
-	return terminalProxy, scheduledHandler, stopRuntimeMaintenance
+	return scheduledHandler, stopRuntimeMaintenance
+}
+
+// resolveTerminalTarget adapts the API package's resolution to the transport's
+// view of it, so neither package has to know the other's types.
+func resolveTerminalTarget(unixUser string) (proxy.Target, error) {
+	target, err := api.ResolveTerminalTarget(unixUser)
+	if err != nil {
+		return proxy.Target{}, err
+	}
+	return proxy.Target{Socket: target.Socket, WorkDir: target.WorkDir, UnixUser: target.UnixUser}, nil
 }
 
 var startDefaultSystemHistorySampler = (*api.SystemHandler).StartDefaultHistorySampler
