@@ -446,23 +446,16 @@ export const WINDOW_COLORS = [
 
 // Group display names and priorities
 export const GROUP_CONFIG: Record<string, { displayName: string; priority: number }> = {
-  'hq': { displayName: 'HQ', priority: 0 },
   'main': { displayName: 'Main', priority: 1 },
   'other': { displayName: 'Other', priority: 100 },
 }
 
 export function getGroupDisplayName(group: string): string {
   if (GROUP_CONFIG[group]) return GROUP_CONFIG[group].displayName
-  if (group.startsWith('gt-')) {
-    // gt-gastown → Gastown
-    const rigName = group.slice(3)
-    return rigName.charAt(0).toUpperCase() + rigName.slice(1)
-  }
   return group
 }
 
 export function getGroupPriority(group: string): number {
   if (GROUP_CONFIG[group]) return GROUP_CONFIG[group].priority
-  if (group.startsWith('gt-')) return 3 // Rigs after main
   return 99
 }

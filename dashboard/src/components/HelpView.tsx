@@ -209,21 +209,15 @@ function SessionsSection() {
         <div className="help-shortcuts-table">
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
-              <code>hq-*</code>
+              <code>project-*</code>
             </div>
-            <span>HQ group (top priority)</span>
+            <span>Groups sessions by the text before the first dash</span>
           </div>
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
               <code>main</code> / <code>shell</code>
             </div>
             <span>Main group</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <code>gt-*</code>
-            </div>
-            <span>Gastown workers</span>
           </div>
         </div>
       </div>

@@ -22,8 +22,8 @@ type Session struct {
 
 // GroupPriority defines the sort order for session groups
 var GroupPriority = map[string]int{
-	"hq":   0,
-	"main": 1,
+	"main":  1,
+	"other": 100,
 }
 
 // GetGroupPriority returns the sort priority for a group
@@ -31,26 +31,13 @@ func GetGroupPriority(group string) int {
 	if p, ok := GroupPriority[group]; ok {
 		return p
 	}
-	if strings.HasPrefix(group, "gt-") {
-		return 3
-	}
 	return 4
 }
 
 // CategorizeSession determines the group for a session based on its name
 func CategorizeSession(name string) string {
-	if strings.HasPrefix(name, "hq-") {
-		return "hq"
-	}
 	if name == "main" || name == "shell" {
 		return "main"
-	}
-	if strings.HasPrefix(name, "gt-") {
-		parts := strings.Split(name, "-")
-		if len(parts) >= 2 {
-			return parts[0] + "-" + parts[1]
-		}
-		return "gt-unknown"
 	}
 	if prefix, _, ok := strings.Cut(name, "-"); ok && prefix != "" {
 		return prefix

@@ -5,11 +5,27 @@ import {
   MIN_TERMINAL_TAB_COUNT,
   TERMINAL_WORKSPACE_IDS,
   getDefaultLaunchUser,
+  getGroupDisplayName,
+  getGroupPriority,
   getTerminalLabel,
   isTerminalWorkspaceId,
   normalizeTerminalTabCount,
   terminalWorkspaceIds,
 } from './types'
+
+describe('session group presentation', () => {
+  it('presents arbitrary name-prefix groups without harness-specific rewriting', () => {
+    expect(getGroupDisplayName('project')).toBe('project')
+    expect(getGroupDisplayName('team-tools')).toBe('team-tools')
+    expect(getGroupPriority('project')).toBe(getGroupPriority('team-tools'))
+  })
+
+  it('keeps only the product-wide main and ungrouped ordering', () => {
+    expect(getGroupDisplayName('main')).toBe('Main')
+    expect(getGroupPriority('main')).toBeLessThan(getGroupPriority('project'))
+    expect(getGroupPriority('project')).toBeLessThan(getGroupPriority('other'))
+  })
+})
 
 describe('normalizeTerminalTabCount', () => {
   it('passes through integers in range', () => {

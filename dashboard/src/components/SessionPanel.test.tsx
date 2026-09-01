@@ -75,26 +75,26 @@ describe('SessionPanel new-session context menu', () => {
     expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal3' })
   })
 
-  it('renders prioritized groups, count badges, and case-insensitive filtered values', () => {
+  it('renders generic named groups before ungrouped sessions with counts and filtering', () => {
     mockState.groupedSessions = {
       other: [{ name: 'worker-beta', windows: 1, attached: false, group: 'other' }],
-      hq: [
-        { name: 'MAYOR', windows: 1, attached: false, group: 'hq' },
-        { name: 'deacon', windows: 1, attached: false, group: 'hq' },
+      project: [
+        { name: 'PROJECT-API', windows: 1, attached: false, group: 'project' },
+        { name: 'project-worker', windows: 1, attached: false, group: 'project' },
       ],
     }
     const { container } = render(<SessionPanel activeWorkspaceId="terminal1" />)
 
-    expect(Array.from(container.querySelectorAll('.group-name'), node => node.textContent)).toEqual(['HQ', 'Other'])
+    expect(Array.from(container.querySelectorAll('.group-name'), node => node.textContent)).toEqual(['project', 'Other'])
     expect(Array.from(container.querySelectorAll('.session-count'), node => node.textContent)).toEqual(['2', '1'])
 
-    fireEvent.change(screen.getByPlaceholderText('Filter sessions...'), { target: { value: 'may' } })
-    expect(screen.getByText('MAYOR')).toBeInTheDocument()
-    expect(screen.queryByText('deacon')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText('Filter sessions...'), { target: { value: 'api' } })
+    expect(screen.getByText('PROJECT-API')).toBeInTheDocument()
+    expect(screen.queryByText('project-worker')).not.toBeInTheDocument()
     expect(screen.queryByText('Other')).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByPlaceholderText('Filter sessions...'), { target: { value: '' } })
-    expect(screen.getByText('deacon')).toBeInTheDocument()
+    expect(screen.getByText('project-worker')).toBeInTheDocument()
     expect(screen.getByText('worker-beta')).toBeInTheDocument()
   })
 

@@ -8,11 +8,11 @@ func TestGetGroupPriority(t *testing.T) {
 		group    string
 		expected int
 	}{
-		{"hq group", "hq", 0},
 		{"main group", "main", 1},
-		{"gastown rig", "gt-gastown", 3},
-		{"another rig", "gt-otherrig", 3},
+		{"named group", "project", 4},
+		{"another named group", "team", 4},
 		{"other group", "random", 4},
+		{"ungrouped sessions last", "other", 100},
 		{"empty group", "", 4},
 	}
 
@@ -32,13 +32,10 @@ func TestCategorizeSession(t *testing.T) {
 		session  string
 		expected string
 	}{
-		{"hq session", "hq-main", "hq"},
-		{"hq coordinator", "hq-coordinator", "hq"},
 		{"main session", "main", "main"},
 		{"shell session", "shell", "main"},
-		{"gastown worker", "gt-gastown-jack", "gt-gastown"},
-		{"gastown simple", "gt-gastown", "gt-gastown"},
-		{"gt-only", "gt-", "gt-"},
+		{"generic project session", "project-api", "project"},
+		{"generic project worker", "project-worker-1", "project"},
 		{"dynamic dashed prefix", "alice-shell", "alice"},
 		{"dynamic multi dash prefix", "worker-agent-1", "worker"},
 		{"dynamic numeric suffix prefix", "forge1", "forge"},
@@ -60,16 +57,16 @@ func TestCategorizeSession(t *testing.T) {
 func TestSortSessions(t *testing.T) {
 	sessions := []Session{
 		{Name: "random1", Group: "other"},
-		{Name: "gt-gastown-1", Group: "gt-gastown"},
+		{Name: "team-worker", Group: "team"},
 		{Name: "main", Group: "main"},
-		{Name: "hq-main", Group: "hq"},
-		{Name: "gt-otherrig-1", Group: "gt-otherrig"},
+		{Name: "project-api", Group: "project"},
+		{Name: "project-worker", Group: "project"},
 	}
 
 	SortSessions(sessions)
 
-	// Expected order: hq, main, gt-gastown, gt-otherrig, other
-	expectedOrder := []string{"hq-main", "main", "gt-gastown-1", "gt-otherrig-1", "random1"}
+	// Main comes first, then named groups alphabetically, and ungrouped sessions last.
+	expectedOrder := []string{"main", "project-api", "project-worker", "team-worker", "random1"}
 
 	for i, expected := range expectedOrder {
 		if sessions[i].Name != expected {
@@ -80,15 +77,15 @@ func TestSortSessions(t *testing.T) {
 
 func TestGroupSessions(t *testing.T) {
 	sessions := []Session{
-		{Name: "hq-1", Group: "hq"},
-		{Name: "hq-2", Group: "hq"},
+		{Name: "project-1", Group: "project"},
+		{Name: "project-2", Group: "project"},
 		{Name: "main", Group: "main"},
 	}
 
 	grouped := GroupSessions(sessions)
 
-	if len(grouped["hq"]) != 2 {
-		t.Errorf("Expected 2 hq sessions, got %d", len(grouped["hq"]))
+	if len(grouped["project"]) != 2 {
+		t.Errorf("Expected 2 project sessions, got %d", len(grouped["project"]))
 	}
 	if len(grouped["main"]) != 1 {
 		t.Errorf("Expected 1 main session, got %d", len(grouped["main"]))
