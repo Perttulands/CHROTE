@@ -38,9 +38,10 @@ function FloatingModal() {
   const canOpenSession = Boolean(floatingSession && (session || unixUser.trim()))
 
   // Peek owns its terminal for the life of the modal: it is a second observer
-  // of the session, not the tile's terminal moved onto the overlay.
+  // of the session, not the tile's terminal moved onto the overlay. It attaches
+  // as an observer, so it never displaces the tile or resizes the window.
   const socketUrl = useMemo(
-    () => (canOpenSession ? terminalSocketUrl(displayName, unixUser) : null),
+    () => (canOpenSession ? terminalSocketUrl(displayName, unixUser, 'peek') : null),
     [canOpenSession, displayName, unixUser],
   )
   const { session: terminal, connectionState } = useTerminalSession(socketUrl, settings.fontSize, settings.hideScrollbar)

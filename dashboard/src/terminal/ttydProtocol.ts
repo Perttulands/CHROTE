@@ -100,9 +100,20 @@ export function connectTtyd(
   }
 }
 
-/** WebSocket URL for a tmux session, carrying ttyd's `-a` argument fragments. */
-export function terminalSocketUrl(sessionName: string, unixUser: string): string {
+/**
+ * How this connection views the session. A `tile` is the operator's viewing
+ * seat and takes the session over, so it is the window's one sizing client; a
+ * `peek` observes without displacing the tile or resizing the window.
+ */
+export type TerminalViewingMode = 'tile' | 'peek'
+
+/**
+ * WebSocket URL for a tmux session, carrying ttyd's `-a` argument fragments.
+ * The mode leads because the Unix user is optional, so the launch script would
+ * have no way to tell a trailing mode from a user.
+ */
+export function terminalSocketUrl(sessionName: string, unixUser: string, mode: TerminalViewingMode): string {
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const userArg = unixUser.trim() ? `&arg=${encodeURIComponent(unixUser)}` : ''
-  return `${scheme}//${window.location.host}/terminal/ws?arg=${encodeURIComponent(sessionName)}${userArg}`
+  return `${scheme}//${window.location.host}/terminal/ws?arg=${mode}&arg=${encodeURIComponent(sessionName)}${userArg}`
 }

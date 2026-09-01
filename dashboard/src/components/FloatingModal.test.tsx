@@ -54,11 +54,11 @@ describe('FloatingModal Send to Session action', () => {
     expect(modal.style.left).toBe(initialLeft)
   })
 
-  it('peeks through the same in-page terminal as a tile, on its own connection', () => {
+  it('peeks through the same in-page terminal as a tile, on its own observer connection', () => {
     const { unmount } = render(<FloatingModal />)
 
     expect(document.querySelector('.terminal-surface-host .terminal-surface')).not.toBeNull()
-    expect(FakeSocket.latest().url).toContain('/terminal/ws?arg=alice-shell&arg=alice')
+    expect(FakeSocket.latest().url).toContain('/terminal/ws?arg=peek&arg=alice-shell&arg=alice')
 
     unmount()
 

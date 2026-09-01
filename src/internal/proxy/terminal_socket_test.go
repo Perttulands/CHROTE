@@ -29,7 +29,7 @@ func TestLaunchScript_SoleMappingSupportsLegacyAttachWithoutUnixUser(t *testing.
 	argsPath := filepath.Join(tmpDir, "tmux.args")
 	writeFakeTmux(t, filepath.Join(tmpDir, "tmux"))
 
-	cmd := exec.Command("bash", scriptPath, "shell-one")
+	cmd := exec.Command("bash", scriptPath, "tile", "shell-one")
 	cmd.Env = append(os.Environ(),
 		"PATH="+tmpDir+":"+os.Getenv("PATH"),
 		"TMUX_ARGS="+argsPath,
@@ -40,7 +40,7 @@ func TestLaunchScript_SoleMappingSupportsLegacyAttachWithoutUnixUser(t *testing.
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("launch script failed: %v\n%s", err, output)
 	}
-	if raw, err := os.ReadFile(argsPath); err != nil || !strings.Contains(string(raw), "-S /tmp/tmux-a attach-session -t shell-one") {
+	if raw, err := os.ReadFile(argsPath); err != nil || !strings.Contains(string(raw), "-S /tmp/tmux-a attach-session -d -t shell-one") {
 		t.Fatalf("legacy attach did not resolve the sole configured mapping: args=%q err=%v", raw, err)
 	}
 }
@@ -54,7 +54,7 @@ func TestLaunchScript_RejectsDuplicateUserSocketKey(t *testing.T) {
 	argsPath := filepath.Join(tmpDir, "tmux.args")
 	writeFakeTmux(t, filepath.Join(tmpDir, "tmux"))
 
-	cmd := exec.Command("bash", scriptPath, "shell-one", "bob")
+	cmd := exec.Command("bash", scriptPath, "tile", "shell-one", "bob")
 	cmd.Env = append(os.Environ(),
 		"PATH="+tmpDir+":"+os.Getenv("PATH"),
 		"TMUX_ARGS="+argsPath,
@@ -92,7 +92,7 @@ func TestLaunchScript_UsesPinnedTmuxBin(t *testing.T) {
 	writeFakeTmuxRecording(t, pinnedTmux, pinnedArgs)
 	writeFakeTmuxRecording(t, filepath.Join(pathDir, "tmux"), pathArgs)
 
-	cmd := exec.Command("bash", scriptPath, "shell-one", "bob")
+	cmd := exec.Command("bash", scriptPath, "tile", "shell-one", "bob")
 	cmd.Env = append(os.Environ(),
 		"PATH="+pathDir+":"+os.Getenv("PATH"),
 		"HOME="+tmpDir,
@@ -108,11 +108,79 @@ func TestLaunchScript_UsesPinnedTmuxBin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pinned tmux was never invoked (CHROTE_TMUX_BIN ignored): %v", err)
 	}
-	if !strings.Contains(string(pinnedRaw), "-S /tmp/tmux-b attach-session -t shell-one") {
+	if !strings.Contains(string(pinnedRaw), "-S /tmp/tmux-b attach-session -d -t shell-one") {
 		t.Fatalf("pinned tmux args %q do not show the attach", string(pinnedRaw))
 	}
 	if raw, readErr := os.ReadFile(pathArgs); readErr == nil && strings.TrimSpace(string(raw)) != "" {
 		t.Fatalf("launch script used the PATH tmux instead of CHROTE_TMUX_BIN; args=%q", string(raw))
+	}
+}
+
+// One sizing client per window is what the flags buy: a tile takes the session
+// over with -d, and a peek attaches without ever sizing the window.
+func TestLaunchScript_ViewingModeSelectsTheAttachFlags(t *testing.T) {
+	for _, tt := range []struct {
+		mode string
+		want string
+	}{
+		{mode: "tile", want: "-S /tmp/tmux-b attach-session -d -t shell-one"},
+		{mode: "peek", want: "-S /tmp/tmux-b attach-session -f ignore-size -t shell-one"},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			scriptPath := launchScriptPath(t)
+			tmpDir := t.TempDir()
+			argsPath := filepath.Join(tmpDir, "tmux.args")
+			writeFakeTmux(t, filepath.Join(tmpDir, "tmux"))
+
+			cmd := exec.Command("bash", scriptPath, tt.mode, "shell-one", "bob")
+			cmd.Env = append(os.Environ(),
+				"PATH="+tmpDir+":"+os.Getenv("PATH"),
+				"TMUX_ARGS="+argsPath,
+				"HOME="+tmpDir,
+				"CHROTE_WORKDIR="+tmpDir,
+				"CHROTE_TMUX_SOCKET=bob=/tmp/tmux-b",
+			)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("launch script failed: %v\n%s", err, output)
+			}
+			raw, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatalf("read fake tmux args: %v", err)
+			}
+			if !strings.Contains(string(raw), tt.want) {
+				t.Fatalf("%s attach args %q do not contain %q", tt.mode, string(raw), tt.want)
+			}
+			if strings.Contains(string(raw), "resize-window") {
+				t.Fatalf("attach used resize-window, which pins window-size manual; args=%q", string(raw))
+			}
+		})
+	}
+}
+
+// A caller that names no mode must not be attached under a guessed one.
+func TestLaunchScript_RejectsAnUnknownViewingMode(t *testing.T) {
+	scriptPath := launchScriptPath(t)
+	tmpDir := t.TempDir()
+	argsPath := filepath.Join(tmpDir, "tmux.args")
+	writeFakeTmux(t, filepath.Join(tmpDir, "tmux"))
+
+	cmd := exec.Command("bash", scriptPath, "shell-one", "bob")
+	cmd.Env = append(os.Environ(),
+		"PATH="+tmpDir+":"+os.Getenv("PATH"),
+		"TMUX_ARGS="+argsPath,
+		"HOME="+tmpDir,
+		"CHROTE_WORKDIR="+tmpDir,
+		"CHROTE_TMUX_SOCKET=bob=/tmp/tmux-b",
+	)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("launch script attached without a viewing mode; output=%s", output)
+	}
+	if !strings.Contains(string(output), "viewing mode") {
+		t.Fatalf("launch script output %q does not explain the missing viewing mode", string(output))
+	}
+	if raw, readErr := os.ReadFile(argsPath); readErr == nil && strings.TrimSpace(string(raw)) != "" {
+		t.Fatalf("launch script invoked tmux despite the unknown mode; args=%q", string(raw))
 	}
 }
 
@@ -162,7 +230,7 @@ exit 0
 		t.Fatalf("write fake tmux: %v", err)
 	}
 
-	cmd := exec.Command("bash", scriptPath, "shell-one", "bob")
+	cmd := exec.Command("bash", scriptPath, "tile", "shell-one", "bob")
 	cmd.Env = append(os.Environ(),
 		"PATH="+tmpDir+":"+os.Getenv("PATH"),
 		"TMUX_ARGS="+argsPath,
@@ -183,7 +251,7 @@ exit 0
 	if !strings.Contains(args, "-S /tmp/tmux-b has-session -t shell-one") {
 		t.Fatalf("fake tmux args %q do not show trimmed socket has-session", args)
 	}
-	if !strings.Contains(args, "-S /tmp/tmux-b attach-session -t shell-one") {
+	if !strings.Contains(args, "-S /tmp/tmux-b attach-session -d -t shell-one") {
 		t.Fatalf("fake tmux args %q do not show trimmed socket attach", args)
 	}
 	if strings.Contains(args, "set-option") || strings.Contains(args, " mouse on") {

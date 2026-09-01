@@ -68,7 +68,7 @@ export function TerminalPoolProvider({ children }: { children: ReactNode }) {
     sessionUsers.forEach((unixUser, sessionKey) => {
       if (pool.has(sessionKey)) return
       pool.set(sessionKey, createTerminalSession({
-        url: terminalSocketUrl(getSessionNameFromKey(sessionKey), unixUser),
+        url: terminalSocketUrl(getSessionNameFromKey(sessionKey), unixUser, 'tile'),
         fontSize: settingsRef.current.fontSize,
         hideScrollbar: settingsRef.current.hideScrollbar,
         onStateChange: state => setConnectionStates(prev => new Map(prev).set(sessionKey, state)),

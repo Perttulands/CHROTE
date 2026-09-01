@@ -82,8 +82,8 @@ describe('terminal pool', () => {
 
     expect(Array.from(pool.terminals.keys()).sort()).toEqual(['alice:alpha', 'bob:beta'])
     expect(created.map(session => session.url)).toEqual([
-      expect.stringContaining('/terminal/ws?arg=alpha&arg=alice'),
-      expect.stringContaining('/terminal/ws?arg=beta&arg=bob'),
+      expect.stringContaining('/terminal/ws?arg=tile&arg=alpha&arg=alice'),
+      expect.stringContaining('/terminal/ws?arg=tile&arg=beta&arg=bob'),
     ])
   })
 

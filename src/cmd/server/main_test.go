@@ -20,7 +20,6 @@ func TestRuntimeRoutesCanDisableSystemHistorySampler(t *testing.T) {
 		return func() {}
 	}
 	t.Cleanup(func() { startDefaultSystemHistorySampler = original })
-	t.Setenv("CHROTE_TERMINAL_SIZE_GUARD", "off")
 	tmuxLog := filepath.Join(t.TempDir(), "tmux-calls.log")
 	fakeTmux := filepath.Join(t.TempDir(), "tmux")
 	if err := os.WriteFile(tmuxLog, nil, 0o600); err != nil {
@@ -48,7 +47,7 @@ func TestRuntimeRoutesCanDisableSystemHistorySampler(t *testing.T) {
 	if raw, err := os.ReadFile(tmuxLog); err != nil {
 		t.Fatalf("read tmux call log: %v", err)
 	} else if len(raw) != 0 {
-		t.Fatalf("system-history test dispatched tmux size-guard calls: %q", raw)
+		t.Fatalf("runtime routes dispatched background tmux calls; nothing should sweep tmux on its own: %q", raw)
 	}
 }
 

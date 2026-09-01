@@ -143,12 +143,19 @@ describe('ttyd transport', () => {
 })
 
 describe('terminalSocketUrl', () => {
-  it('carries the session and the Unix user as ttyd argument fragments', () => {
-    expect(terminalSocketUrl('my session', 'alice'))
-      .toBe(`ws://${window.location.host}/terminal/ws?arg=my%20session&arg=alice`)
+  it('carries the viewing mode, the session and the Unix user as ttyd argument fragments', () => {
+    expect(terminalSocketUrl('my session', 'alice', 'tile'))
+      .toBe(`ws://${window.location.host}/terminal/ws?arg=tile&arg=my%20session&arg=alice`)
   })
 
   it('omits the user fragment when the session carries no Unix user', () => {
-    expect(terminalSocketUrl('main', '  ')).toBe(`ws://${window.location.host}/terminal/ws?arg=main`)
+    expect(terminalSocketUrl('main', '  ', 'tile'))
+      .toBe(`ws://${window.location.host}/terminal/ws?arg=tile&arg=main`)
+  })
+
+  // The mode leads so a session with no Unix user cannot shift it out of place.
+  it('keeps the mode first for a peek without a Unix user', () => {
+    expect(terminalSocketUrl('main', '', 'peek'))
+      .toBe(`ws://${window.location.host}/terminal/ws?arg=peek&arg=main`)
   })
 })

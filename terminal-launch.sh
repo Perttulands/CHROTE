@@ -5,8 +5,25 @@
 export LANG=en_US.UTF-8
 # REASON: cd to preferred dir is optional, fallthrough is intentional
 cd "${CHROTE_WORKDIR:-$HOME}" 2>/dev/null || cd ~ || exit
-SESSION="$1"
-UNIX_USER="${2:-}"
+# REASON: the viewing mode comes first because the Unix user is optional, so a
+# trailing mode argument would be positionally ambiguous. An unknown or missing
+# mode fails loud rather than attaching as some default.
+MODE="$1"
+SESSION="$2"
+UNIX_USER="${3:-}"
+
+case "$MODE" in
+  # A tile is the session's one sizing client: -d displaces every other client,
+  # CHROTE's own and foreign alike, so exactly one client sizes the window.
+  tile) ATTACH_FLAGS=(-d) ;;
+  # Peek only observes: ignore-size stops it sizing a window somebody is already
+  # sizing, and it never displaces the tile. Input is not suppressed.
+  peek) ATTACH_FLAGS=(-f ignore-size) ;;
+  *)
+    echo "CHROTE terminal requires a viewing mode of 'tile' or 'peek', got '$MODE'" >&2
+    exit 2
+    ;;
+esac
 # REASON: pin one tmux client. A 3.4 client cannot talk to a 3.6a server at all,
 # so bare "tmux" made the attach path depend on whatever PATH happened to be.
 TMUX_BIN="${CHROTE_TMUX_BIN:-tmux}"
@@ -77,7 +94,7 @@ attach_explicit_socket() {
   # the invoking user's ambient tmux server when the configured session is
   # unavailable — a silent fallback would attach the operator to the wrong pool.
   if "$TMUX_BIN" -S "$socket" has-session -t "$session" 2>/dev/null; then
-    exec "$TMUX_BIN" -S "$socket" attach-session -t "$session"
+    exec "$TMUX_BIN" -S "$socket" attach-session "${ATTACH_FLAGS[@]}" -t "$session"
   fi
 
   echo "tmux session '$session' is not available on configured socket '$socket'" >&2
