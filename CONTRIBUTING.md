@@ -79,7 +79,8 @@ schedule rather than every push.
 
 ## Documentation rules
 
-- `PRD.md` owns the current product and roadmap boundary.
+- `VISION.md` owns product intent, `PRD.md` owns durable requirements, and
+  `ARCHITECTURE.md` owns system structure and state ownership.
 - `DESIGN-SYSTEM.md` owns dashboard visual and interaction contracts.
 - Public docs describe generic supported behavior, not one maintainer's service
   names, home paths, sockets, ports, or rollback layout.

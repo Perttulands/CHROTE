@@ -56,6 +56,5 @@ See [`SECURITY.md`](SECURITY.md).
 - Gastown
 - Ralph
 - a hosted identity provider
-- a general-purpose IDE
 - autonomous agent-to-agent chat
 - a mandatory cloud service

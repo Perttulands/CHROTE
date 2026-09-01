@@ -1,155 +1,96 @@
-# CHROTE Product Requirements
+# CHROTE product requirements
 
-## Vision
+[`VISION.md`](VISION.md) explains why CHROTE exists. This document defines the durable product contract. Beads owns planned work, dependencies, status, and outstanding decisions.
 
-CHROTE is a private browser cockpit for host-owned work. The browser is
-disposable glass; the configured Linux or WSL host owns the terminals, agents,
-files, builds, tests, Beads, schedules, runtime history, and local services.
+## Operator and environment
 
-CHROTE gives one trusted operator a coherent view of that state without moving
-its source of truth into the browser. tmux owns terminal sessions, the filesystem
-owns files, `bd` owns issues, and explicit host configuration owns durable
-workloads and integrations.
+CHROTE is a browser-based agentic IDE for one trusted operator managing command-line work on one host.
 
-CHROTE grows only where it makes host-owned work easier to understand and
-deliberately coordinate. It does not become a second IDE, orchestration harness,
-host supervisor, or pile of dashboards for work already clearer in a terminal.
+The host runs tmux, the CHROTE server, and the resources exposed through CHROTE. Remote access uses an operator-controlled private network such as Tailscale. CHROTE does not provide accounts, login, roles, or tenant isolation.
 
-## Product contract
+## Terminal workspace
 
-### Current goals
-
-1. Make tmux sessions visible and controllable from a browser.
-2. Keep browser disconnects and CHROTE restarts from deliberately terminating
-   externally owned tmux work.
-3. Put terminal sessions and configured files beside each other without
-   pretending to be an IDE.
-4. Surface Beads, scheduled tasks, server health, and optional local adapters in
-   the cockpit.
-5. Keep deployment private to localhost or an operator-controlled private
-   network unless explicitly configured otherwise.
-
-### Current non-goals
-
-- hosted multi-tenant SaaS, an application identity system, or an OS sandbox;
-- replacing tmux, `bd`, Git, or an agent's native harness;
-- autonomous agent society, implicit agent-to-agent chat, or a required harness;
-- automatic reconstruction of ordinary work after process death or host reboot;
-- recovery, restore, cleanup, migration, or one-off repair in request-path code;
-- restricting accessible host state beyond configured roots and Unix permissions.
-
-Rare, judgment-heavy operations are agent skills. A workload that truly needs
-reboot durability belongs in explicit operator-owned host configuration.
-
-## Current views
-
-The core product jobs are Terminal, Files, Beads, Scheduled, Server, and
-Settings. Three configurable terminal workspaces present the Terminal job.
-Services is an optional adapter surface and is not a prerequisite for the core.
-
-| View | Operator job |
-| --- | --- |
-| Terminal 1 | First independent terminal workspace with one to four tmux-backed windows |
-| Terminal 2 | Second independent terminal workspace |
-| Terminal 3 | Third independent terminal workspace |
-| Files | Browse, inspect, edit, compare, and send configured workspace files |
-| Beads | Inspect configured `bd` workspaces, issues, ready work, and health |
-| Services | Operate explicitly configured local adapters through CHROTE-owned routes |
-| Scheduled | Inspect and manage scheduled prompt tasks and their run history |
-| Server | Inspect server health, resources, events, and bounded history |
-| Settings | Configure appearance, terminal behavior, feature flags, and session cleanup |
-
-Help and keyboard guidance live in the application shell rather than a persistent
-workspace.
-
-## Durable terminal workspace
-
-- Each terminal workspace owns its layout, attached sessions, labels, and Files
-  state. Sessions presentation is application-global.
-- A workspace can show one to four terminal windows.
-- tmux owns process and session lifetime; browser storage owns presentation, not
-  shell state.
-- A disconnect or CHROTE restart must not terminate external tmux work. A
-  session may still exit naturally, be stopped externally, or disappear with
-  its process or host.
-- Session-row selection means **Peek**. Navigation and assignment are explicit
-  actions.
-- Sessions and Files sidecars are closed by default. Sessions state is shared
-  across workspaces; Files state persists independently per workspace.
-- Refit, reconnect, bulk cleanup, and Send to Session remain explicit operator
-  actions.
+- CHROTE discovers sessions from configured tmux sockets and can create, attach, display, and explicitly delete sessions.
+- Terminal tabs provide independent layouts. A layout can show one to four terminal windows.
+- The Sessions sidecar supports discovery, Peek, navigation, attachment, and creation without silently changing a window's assigned session.
+- Browser disconnects, tab closure, and CHROTE restarts leave existing tmux sessions running.
+- Cleanup may remove only the exact session the operator authorized or the exact test-owned or failed-creation-owned session being cleaned up.
+- Any command-line program can run in a CHROTE terminal. Core terminal behavior does not depend on a particular agent harness.
+- Send to Session reports delivery to tmux. It does not claim that the process consumed or understood the message.
 
 ## Files
 
-- `CHROTE_ROOTS` plus canonical-path checks define the application boundary.
-- CHROTE exposes everything under those roots that its service identity can
-  access. The only cross-user asymmetry is Unix permissions; CHROTE does not
-  encode a second access policy.
-- Symlinks and mutations must remain within configured roots after resolution.
-- Unix permission errors are reported plainly, not disguised as empty or
-  missing paths.
-- Files is a terminal companion, not a general-purpose IDE.
+- The Files view and terminal sidecar browse, read, edit, compare, rename, and send files under configured roots.
+- Canonical-path checks keep file operations inside those roots after symlink resolution.
+- Unix permissions decide what the service identity can access. CHROTE reports permission failures plainly and does not add a second file-access policy.
+- File state remains in the filesystem. CHROTE does not mirror project contents into its own database.
 
-## Beads and agent observability
+## Server and settings
 
-- CHROTE uses configured modern `bd` commands and JSON output.
-- Multiple Beads workspaces may be configured; an unavailable workspace is a
-  degraded integration, not a dashboard crash.
-- `bv` is optional and remains a terminal-side viewer, not the issue source of
-  truth.
-- Agent work is observed through tmux and native harness state without requiring
-  one agent runtime or persona model.
+- Server shows health, resource readings, runtime events, and bounded operational history.
+- Settings owns presentation and explicit operator controls for terminal behavior.
+- Layouts, labels, presets, themes, and other device-specific presentation live in browser storage.
+- Opening or reloading CHROTE must not replay stale browser settings into live tmux servers. Host-wide tmux changes require an explicit operator action.
 
-## Services
+## Components
 
-Services hosts adapters for explicitly configured local capabilities. The public
-build bundles no upstream, service URL, or working credential.
+The core product is terminal workspaces, sessions, files, server status, and settings. These first-party components add separate capabilities:
 
-- Browser code calls CHROTE-owned routes; tokens remain server-side.
-- Missing or unhealthy upstreams render a clear degraded state.
-- Optional adapters do not become hidden prerequisites for core views.
+| View | Operator job |
+| --- | --- |
+| Terminal 1 | First independent tmux workspace |
+| Terminal 2 | Second independent tmux workspace |
+| Terminal 3 | Third independent tmux workspace |
+| Files | Work with files under configured roots |
+| Server | Inspect host and CHROTE health |
+| Settings | Configure presentation and explicit terminal controls |
+| Beads | Inspect and update configured project work stores |
+| Scheduled | Send prompts to named tmux sessions on a schedule |
+| Services | Use configured local service adapters through CHROTE routes |
 
-## Scheduled tasks and Server status
+Components remain separated in the codebase and fail independently. A missing Beads workspace or unhealthy service adapter must not prevent terminal work.
 
-- Scheduled tasks are host-owned definitions with explicit enabled, paused,
-  run, and history state.
-- A task sends its prompt literally through CHROTE's guarded tmux path. Delivery
-  receipts do not claim that the terminal application consumed the prompt.
-- Server status exposes health, resource observations, runtime events, and
-  bounded history. Telemetry is operational evidence, not analytics.
+Agent formations may integrate as a component. Mission design, chains, gates, and the ARCHON command-line tool are owned outside the terminal core.
 
-## Security and deployment boundary
+## State ownership
 
-- Default HTTP binding is loopback-only.
-- CHROTE has no built-in login. Anyone who can reach it is inside the trusted
-  operator boundary and can reach terminal-grade capabilities.
-- Remote access belongs behind operator-controlled private networking and HTTPS;
-  CORS is not authentication.
-- Configured roots constrain file APIs but do not sandbox tmux agents.
-- Access is broad by design. CHROTE never tightens ownership, modes, or ACLs to
-  manufacture isolation; explicit grants may only add access.
-- Secrets live in private runtime configuration, never tracked docs or browser
-  storage.
+- tmux owns live sessions and the processes inside them.
+- The filesystem owns files.
+- Each project's Beads store owns its work state.
+- Host configuration owns schedules, service adapters, executable paths, and tmux socket mappings.
+- The browser owns device-local presentation.
+- CHROTE stores only state required for behavior it uniquely owns.
 
-See [`SECURITY.md`](SECURITY.md) for the public security contract.
+## Trust and deployment
 
-## Roadmap boundary
+- The default server binding is loopback-only.
+- Anyone who can reach CHROTE is inside its trusted operator boundary and receives terminal-grade capabilities.
+- Private networking and HTTPS protect remote access. CORS is not authentication.
+- Tokens and service credentials remain in private server configuration. Browser code calls CHROTE-owned routes rather than receiving those credentials.
+- Broad access within configured roots is intentional. CHROTE may add an explicit access grant but must not silently narrow ownership, modes, ACLs, or roots.
 
-CHROTE may improve the six core jobs and add local adapters that earn a real
-operator workflow. Experimental Formations and Archon orchestration contracts
-were extracted to
-[chrote-agent-formations](https://github.com/Perttulands/chrote-agent-formations)
-and are not part of this product's release promise.
+See [`SECURITY.md`](SECURITY.md) for the public trust contract.
 
-Roadmap text is not permission to claim unshipped behavior in the README.
+## Cross-device behavior
 
-## Acceptance criteria
+Desktop is the full workspace. Phones and tablets must preserve the essential loop: see sessions, inspect output, answer prompts, send messages, and perform bounded session actions. Complex multi-window arrangement may remain desktop-first.
 
-- The dashboard and Go API build reproducibly from one source tree.
-- The single CI quality job runs Go format/vet/race coverage, dashboard unit,
-  lint and browser tests, source contracts, and the built-server contract.
-- `/api/health` returns a healthy response on a supported installation.
-- Browser disconnects and CHROTE restarts do not terminate external tmux work.
-- Optional integrations degrade clearly.
-- File access remains under configured roots and Unix permissions.
-- Public docs stay generic and host-neutral.
+Device-local layouts may differ. Shared sessions, files, Beads, schedules, and services still refer to the same host resources.
+
+## Non-goals
+
+- Multi-user collaboration, tenant isolation, or a hosted SaaS control plane.
+- Replacing tmux, Git, Beads, the filesystem, or an agent's command-line interface.
+- A third-party plugin marketplace.
+- Reconstructing ordinary processes after a host reboot or process death.
+- A second access-control system layered over configured roots and Unix permissions.
+- Keeping project plans, roadmap, or status in product documentation.
+
+## Product acceptance
+
+- The React dashboard and Go server build reproducibly from one source tree.
+- The server exposes a healthy `/api/health` endpoint on a supported installation.
+- Existing tmux work survives browser disconnects and CHROTE service restarts.
+- Optional components degrade without breaking the terminal core.
+- File operations remain inside configured roots and preserve Unix permission errors.
+- Public source and documentation remain host-neutral and contain no credentials.

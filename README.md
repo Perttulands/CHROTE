@@ -169,7 +169,9 @@ The dashboard is embedded in the binary, so build it with
 
 | Need | Read |
 | --- | --- |
+| Why CHROTE exists | [VISION.md](VISION.md) |
 | Product contract and non-goals | [PRD.md](PRD.md) |
+| System ownership and runtime shape | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Security and trust boundary | [SECURITY.md](SECURITY.md) |
 | Install, upgrade, remote access | [docs/installation.md](docs/installation.md) |
 | An install that is not healthy | [docs/troubleshooting.md](docs/troubleshooting.md) |

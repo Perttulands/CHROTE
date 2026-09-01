@@ -13,7 +13,9 @@ notes.
 | Need | Start here |
 | --- | --- |
 | What CHROTE is and whether to use it | [`README.md`](../README.md) |
-| Current shipped product and roadmap boundary | [`PRD.md`](../PRD.md) |
+| Why CHROTE exists | [`VISION.md`](../VISION.md) |
+| Durable product requirements | [`PRD.md`](../PRD.md) |
+| System ownership and runtime shape | [`ARCHITECTURE.md`](../ARCHITECTURE.md) |
 | Install or upgrade | [`docs/installation.md`](installation.md) |
 | Diagnose a supported install | [`docs/troubleshooting.md`](troubleshooting.md) |
 | Security and trust boundary | [`SECURITY.md`](../SECURITY.md) |
@@ -27,16 +29,18 @@ When it conflicts with the PRD or an active source-truth spec, fix the README.
 
 | Spec | Owns |
 | --- | --- |
-| [`PRD.md`](../PRD.md) | Current product, shipped views, operator outcomes, non-goals, and roadmap boundary |
+| [`VISION.md`](../VISION.md) | Product purpose, intended experience, and enduring direction |
+| [`PRD.md`](../PRD.md) | Durable product requirements, operator outcomes, and non-goals |
+| [`ARCHITECTURE.md`](../ARCHITECTURE.md) | Runtime structure, state ownership, component boundaries, and failure behavior |
 | [`DESIGN-SYSTEM.md`](../DESIGN-SYSTEM.md) | Dashboard visual and interaction principles and theme ids |
 | [`SECURITY.md`](../SECURITY.md) | Public network, identity, filesystem, terminal, and secret-handling boundary |
 
 `DESIGN-SYSTEM.md` is the machine-frontmattered spec. It carries
 `authority: source-of-truth` and `enforced_by: scripts/doc-lint.py`.
 
-`PRD.md` is product-level authority and is linted for its stable shipped-view
-inventory. If it starts carrying more executable invariants, extend the lint
-deliberately rather than relying on prose discipline.
+`PRD.md` is product-level authority and is linted for its stable view inventory.
+If it starts carrying more executable invariants, extend the lint deliberately
+rather than relying on prose discipline.
 
 ## Supporting active docs
 

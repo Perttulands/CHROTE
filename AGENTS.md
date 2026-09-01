@@ -12,7 +12,7 @@ CHROTE is a browser-based agentic IDE for one trusted operator. It makes tmux-ho
 - `scripts/` owns the canonical build, validation, installation, and source-contract entrypoints.
 - `docs/` contains durable product, architecture, user, and maintainer documentation.
 
-Read `PRD.md` for the durable product contract and `SECURITY.md` for the trust and access boundary. Use Beads, never Markdown, for roadmap, status, dependencies, or outstanding work.
+Read `VISION.md` for product intent, `PRD.md` for the durable product contract, `ARCHITECTURE.md` for system ownership and boundaries, and `SECURITY.md` for the trust boundary. Use Beads, never Markdown, for roadmap, status, dependencies, or outstanding work.
 
 ## Golden invariants
 
