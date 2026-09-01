@@ -204,6 +204,7 @@ After=network.target
 
 [Service]
 Type=simple
+KillMode=process
 WorkingDirectory=$(quote_unit_value "$WORKSPACE")
 EnvironmentFile=$(quote_unit_value "$env_file")
 EnvironmentFile=-$(quote_unit_value "$secrets_file")

@@ -282,6 +282,7 @@ grep -F 'CHROTE_ROOTS=' "$env_file" | grep -Fq "$workspace"
 grep -F 'CHROTE_TMUX_SOCKET=' "$env_file" | grep -Fq "$(id -un)=$tmux_socket"
 grep -F 'CHROTE_SCHEDULED_TASKS_DIR=' "$env_file" | grep -Fq "$state_home/chrote/scheduled-tasks"
 grep -Fq "ExecStart=$installed_binary" "$unit_file"
+grep -Fq 'KillMode=process' "$unit_file"
 ! grep -Fq 'Environment=TMUX_TMPDIR=' "$unit_file"
 
 systemd-analyze verify "$unit_file" >/dev/null
