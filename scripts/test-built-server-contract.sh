@@ -21,7 +21,6 @@ fi
 
 workspace="$artifact_root/workspace"
 contract_session="chrote-owc-contract"
-sentinel_marker="CHROTE_OWC_TTYD_SENTINEL"
 mkdir -p \
   "$workspace/contract-files-terminal1" \
   "$workspace/contract-files-terminal2" \
@@ -38,11 +37,8 @@ chmod 700 \
   "$artifact_root/session-drops" \
   "$artifact_root/tmux" \
   "$artifact_root/tmp"
-sentinel_port_file="$artifact_root/terminal-sentinel-port"
 server_log="$artifact_root/server.log"
-sentinel_log="$artifact_root/terminal-sentinel.log"
 tmux_socket="$artifact_root/tmux/default"
-sentinel_pid=""
 server_pid=""
 
 tmux_probe_output=""
@@ -110,10 +106,6 @@ cleanup() {
       exit_status=1
     fi
   fi
-  if [ -n "$sentinel_pid" ]; then
-    kill "$sentinel_pid" 2>/dev/null || true
-    wait "$sentinel_pid" 2>/dev/null || true
-  fi
   if [ -n "$server_pid" ]; then
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
@@ -121,76 +113,6 @@ cleanup() {
   exit "$exit_status"
 }
 trap cleanup EXIT INT TERM
-
-python3 -c '
-import http.server
-import os
-import sys
-
-marker = sys.argv[1]
-receipt_path = sys.argv[2]
-
-class Sentinel(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        body = f"<!doctype html><title>{marker}</title><body>{marker}</body>".encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *_):
-        pass
-
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Sentinel)
-with open(receipt_path, "x", encoding="ascii") as receipt:
-    receipt.write(str(server.server_address[1]))
-    receipt.flush()
-    os.fsync(receipt.fileno())
-server.serve_forever()
-' "$sentinel_marker" "$sentinel_port_file" >"$sentinel_log" 2>&1 &
-sentinel_pid=$!
-
-sentinel_port=""
-sentinel_ready=false
-for _ in $(seq 1 100); do
-  if [ -s "$sentinel_port_file" ]; then
-    candidate_port="$(tr -d '[:space:]' <"$sentinel_port_file")"
-    if [[ "$candidate_port" =~ ^[0-9]+$ ]] && [ "$candidate_port" -ge 1 ] && [ "$candidate_port" -le 65535 ]; then
-      sentinel_port="$candidate_port"
-      sentinel_ready=true
-      break
-    fi
-  fi
-  if ! kill -0 "$sentinel_pid" 2>/dev/null; then
-    break
-  fi
-  sleep 0.1
-done
-
-if [ "$sentinel_ready" != true ]; then
-  echo "Terminal sentinel did not report its bound port; log follows:" >&2
-  tail -n 100 "$sentinel_log" >&2 || true
-  exit 1
-fi
-
-sentinel_http_ready=false
-for _ in $(seq 1 100); do
-  if curl -fsS "http://127.0.0.1:$sentinel_port/marker" | grep -Fq "$sentinel_marker"; then
-    sentinel_http_ready=true
-    break
-  fi
-  if ! kill -0 "$sentinel_pid" 2>/dev/null; then
-    break
-  fi
-  sleep 0.1
-done
-
-if [ "$sentinel_http_ready" != true ]; then
-  echo "Terminal sentinel did not serve its marker; log follows:" >&2
-  tail -n 100 "$sentinel_log" >&2 || true
-  exit 1
-fi
 
 port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 
@@ -208,8 +130,7 @@ CHROTE_BEADS_WORKSPACES="$workspace" \
 CHROTE_BEADS_AUTO_DISCOVER=false \
 CHROTE_SCHEDULED_TASKS_DIR="$artifact_root/scheduled-tasks" \
 CHROTE_SESSION_DROPS_DIR="$artifact_root/session-drops" \
-TTYD_PORT="$sentinel_port" \
-  "$server_binary" -host 127.0.0.1 -port "$port" -start-ttyd=false -start-system-history=false >"$server_log" 2>&1 &
+  "$server_binary" -host 127.0.0.1 -port "$port" -start-system-history=false >"$server_log" 2>&1 &
 server_pid=$!
 
 ready=false

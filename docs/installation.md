@@ -1,7 +1,7 @@
 # Installing CHROTE
 
 > **Scope: a fresh, from-scratch install.** Everything below — the
-> `chrote.service` user unit, port `8094`, ttyd port `7683` — describes what
+> `chrote.service` user unit and port `8094` — describes what
 > `install.sh` creates on a machine that has never run CHROTE, using the
 > compiled defaults. It is **not** a description of any already-operated
 > deployment: an existing host may run a different unit, port, and socket,
@@ -14,9 +14,9 @@ WSL user service built from the checked-out source**. This keeps the installed
 binary tied to an inspectable commit instead of silently selecting an older
 prerelease artifact.
 
-The installer does not use `sudo`, create a dedicated Unix user, or start a
-second ttyd service. The Go server owns one loopback ttyd child and connects to
-the installing user's normal tmux server.
+The installer does not use `sudo` or create a dedicated Unix user. The Go
+server serves terminals itself and connects to the installing user's normal tmux
+server.
 
 ## Requirements
 
@@ -27,9 +27,6 @@ the installing user's normal tmux server.
 - tmux
 - curl
 - Git
-
-`ttyd` 1.7.7 is copied from the current `PATH` or downloaded into the user
-prefix when absent.
 
 ## Install
 
@@ -44,7 +41,6 @@ Defaults:
 | Setting | Default |
 | --- | --- |
 | Dashboard | `http://127.0.0.1:8094` |
-| ttyd child | `127.0.0.1:7683` |
 | Workspace/file root | `$HOME` |
 | Binary prefix | `$HOME/.local` |
 | Managed config | `$XDG_CONFIG_HOME/chrote/chrote.env` or `$HOME/.config/chrote/chrote.env` |
@@ -56,7 +52,7 @@ The installer:
 
 1. builds the dashboard and exact embedded Go binary from the checkout;
 2. injects the version from `VERSION`;
-3. installs `chrote-server`, ttyd, and `terminal-launch.sh` under the user prefix;
+3. installs `chrote-server` under the user prefix;
 4. writes XDG-scoped state paths for schedules and session drops;
 5. writes the `chrote.service` user unit that runs the cockpit itself;
 6. enables, starts, and health-checks the service.
@@ -91,11 +87,10 @@ agents running in tmux.
 ./install.sh \
   --workspace "$HOME/work" \
   --port 8094 \
-  --ttyd-port 7683 \
   --prefix "$HOME/.local"
 ```
 
-The dashboard and ttyd ports must differ. Both remain loopback-only.
+The dashboard port remains loopback-only.
 
 ## Verify
 
@@ -163,8 +158,8 @@ Review release notes and `git diff` before upgrading alpha builds.
 
 The default uninstall removes:
 
-- managed CHROTE and ttyd executables;
-- the managed terminal launcher;
+- the managed CHROTE executable, and any ttyd and terminal launcher left by an
+  install that predates the built-in terminal transport;
 - `chrote.service`;
 - managed `chrote.env`.
 

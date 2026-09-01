@@ -35,22 +35,20 @@ test('built server serves embedded assets and preserves terminal and Files workf
   // The dashboard renders the terminal itself, in this document (ADR-0018).
   await expect(terminal1Dock.locator('.terminal-window-body .terminal-surface')).toBeVisible()
 
-  // ttyd's page, assets and /token are gone: the built binary answers nothing
-  // under /terminal over plain HTTP, even though a sentinel is listening on
-  // the configured ttyd port and would happily serve HTML.
-  for (const removedPath of ['/terminal/', '/terminal/token', '/terminal/xterm.css']) {
+  // CHROTE serves the terminal itself (ADR-0018): nothing under /terminal
+  // answers a plain HTTP request, and there is no ttyd page, asset or /token
+  // behind it any more.
+  for (const removedPath of ['/terminal/', '/terminal/token', '/terminal/xterm.css', '/terminal/ws']) {
     const removed = await request.get(removedPath)
-    expect(removed.status(), `${removedPath} should not be served`).toBe(404)
-    expect(await removed.text()).not.toContain('CHROTE_OWC_TTYD_SENTINEL')
+    expect(removed.status(), `${removedPath} should not be served over plain HTTP`).toBe(404)
   }
 
-  // The relay itself is still wired to the configured ttyd port: an upgrade
-  // reaches the sentinel, which is not a WebSocket server, so the relay fails
-  // at the backend rather than at the route.
-  const relay = await request.get('/terminal/ws?arg=' + contractSession, {
+  // The upgrade route is still wired: this request asks for one without a
+  // WebSocket key, so it is refused by the upgrade rather than by the route.
+  const upgrade = await request.get(`/terminal/ws?arg=tile&arg=${contractSession}`, {
     headers: { Upgrade: 'websocket', Connection: 'Upgrade' },
   })
-  expect(relay.status(), 'the terminal WebSocket relay must still be routed').toBe(502)
+  expect(upgrade.status(), 'the terminal WebSocket route must still be served').not.toBe(404)
 
   for (const contractPath of [contractFilesTerminal1, contractFilesTerminal2]) {
     const filesResponse = await request.get(`/api/files/resources${contractPath}`)

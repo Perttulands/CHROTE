@@ -20,7 +20,7 @@ operator data into a product change.
 - Node.js 20.19+ or 22.12+
 - npm
 - Python 3 for documentation checks
-- tmux and ttyd only for approved live terminal integration work
+- tmux only for approved live terminal integration work
 
 ## Setup
 

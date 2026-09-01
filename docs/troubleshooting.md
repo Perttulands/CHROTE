@@ -1,8 +1,8 @@
 # Troubleshooting CHROTE
 
 > **Scope: the from-scratch install this repo's `install.sh` creates** — the
-> `chrote.service` user unit with the compiled default ports `8094` (dashboard)
-> and `7683` (ttyd). An already-operated deployment may run under a different
+> `chrote.service` user unit with the compiled default port `8094`. An
+> already-operated deployment may run under a different
 > unit and port known only to local operator configuration; health-checking or
 > restarting the defaults on such a host inspects the wrong process and can
 > touch a retired service. Resolve the real unit and port from local operator
@@ -33,19 +33,18 @@ If the port was customized, read `PORT` from
 
 ## 2. Dashboard loads, but terminals fail
 
-CHROTE starts and proxies one loopback ttyd child. Check the service log for:
+CHROTE serves the terminal itself, running the tmux attach on a pseudo-terminal
+it allocates. Check the service log for:
 
-- `Started ttyd on port ...`
-- `failed to start ttyd`
-- `Terminal proxy error`
-- `tmux session ... is not available`
+- `terminal attach refused: ...`
+- `tmux session ... is not available on configured socket ...`
+- `terminal WebSocket upgrade failed`
 
 Verify the installed pieces:
 
 ```bash
 command -v tmux
-~/.local/bin/ttyd --version
-test -x ~/.local/lib/chrote/terminal-launch.sh
+test -x ~/.local/bin/chrote-server
 ```
 
 Then verify the same user's tmux server:
@@ -61,21 +60,19 @@ verify each exact socket path and its filesystem permissions. CHROTE intentional
 fails loud instead of discovering or falling back to another ambient server.
 
 Do **not** kill a healthy tmux server merely because the browser terminal is
-broken. tmux owns the session lifetime; ttyd and CHROTE are replaceable clients.
+broken. tmux owns the session lifetime; CHROTE is a replaceable client.
 
 ## 3. Port already in use
 
 ```bash
-ss -ltnp | grep -E ':(8094|7683)\b'
+ss -ltnp | grep -E ':8094\b'
 ```
 
 Choose unused loopback ports and reinstall:
 
 ```bash
-./install.sh --port 8096 --ttyd-port 7685
+./install.sh --port 8096
 ```
-
-The dashboard and ttyd ports must differ.
 
 ## 4. Files view is empty or denied
 

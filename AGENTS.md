@@ -7,7 +7,7 @@ CHROTE is a browser-based agentic IDE for one trusted operator. It makes tmux-ho
 - `dashboard/src/` owns the React user interface and device-local workspace presentation.
 - `src/cmd/server/` assembles and starts the Go server.
 - `src/internal/api/` exposes host resources and component APIs to the browser.
-- `src/internal/proxy/` owns terminal transport and ttyd lifecycle.
+- `src/internal/proxy/` owns terminal transport and the pseudo-terminals it attaches on.
 - `src/internal/dashboard/` embeds the built dashboard served by the Go binary.
 - `scripts/` owns the canonical build, validation, installation, and source-contract entrypoints.
 - `docs/` contains durable product, architecture, user, and maintainer documentation.

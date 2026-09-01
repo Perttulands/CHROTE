@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted 2026-09-01. Amends [ADR-0013](0013-ttyd-restart-lifecycle-and-orphan-reaping.md),
-whose ttyd lifecycle analysis stops applying once ttyd is removed.
+Accepted 2026-09-01; both stages implemented 2026-09-01. Amends
+[ADR-0013](0013-ttyd-restart-lifecycle-and-orphan-reaping.md), whose ttyd
+lifecycle analysis stopped applying when ttyd was removed.
 
 Scope note: this settles how terminal bytes reach the browser and what renders
 them. Who owns the *size* of a tmux window is settled by

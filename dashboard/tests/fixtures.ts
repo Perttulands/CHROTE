@@ -124,8 +124,8 @@ export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
       })
     })
 
-    // The dashboard renders the terminal itself and reaches ttyd only over the
-    // WebSocket, so any HTTP request under /terminal is a regression. Matched by
+    // The dashboard renders the terminal itself and reaches the server only over
+    // the WebSocket, so any HTTP request under /terminal is a regression. Matched by
     // pathname so source modules under /src/terminal/ are left alone.
     await page.route(url => url.pathname === '/terminal' || url.pathname.startsWith('/terminal/'), async (route) => {
       const request = route.request()

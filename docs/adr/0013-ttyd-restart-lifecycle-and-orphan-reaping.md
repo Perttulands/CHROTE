@@ -3,7 +3,16 @@
 ## Status
 
 Accepted 2026-07-27; amended 2026-08-30 after the Formations extraction recorded
-by [ADR-0016](0016-core-boundary-and-formations-extraction.md).
+by [ADR-0016](0016-core-boundary-and-formations-extraction.md), and again
+2026-09-01 by [ADR-0018](0018-terminal-transport-ownership.md), which removed
+ttyd.
+
+**What still holds:** the decision. Browser terminal attaches are not required
+to survive a `chrote-srv` restart, and they do not. **What is now history:** the
+ttyd process, its `fuser -k` port reaper and `terminal-launch.sh`. CHROTE runs
+each attach on a pseudo-terminal it owns, so the kernel hangs that attach up
+when the server process exits by any means. The measurements below were taken
+under ttyd and are kept because they are what the decision rests on.
 
 Scope note: this settles the ttyd lifecycle and the orphan-reaping story. The one
 operator-facing consequence — a visible terminal blink on every deploy — is
@@ -14,14 +23,13 @@ analysis.
 
 `KillMode=process` on `chrote-srv.service` does not preserve browser terminal
 attaches, because the loss is application-level rather than cgroup-level. Two
-code paths on main cause it, both still verbatim at the time of this decision:
+code paths caused it at the time of this decision:
 
-1. `src/internal/proxy/terminal.go:161` — the SIGTERM handler calls
-   `TerminalProxy.Stop()`, which sends `os.Interrupt` to ttyd. ttyd then kills
-   every pty child, i.e. every `terminal-launch.sh` and its tmux attach client.
-2. `src/internal/proxy/terminal.go:101` — `TerminalProxy.Start()` runs
-   `fuser -k <ttyd-port>/tcp` before spawning ttyd, so a ttyd that somehow
-   survived step 1 is killed by the incoming instance.
+1. The SIGTERM handler called `TerminalProxy.Stop()`, which sent
+   `os.Interrupt` to ttyd. ttyd then killed every pty child, i.e. every
+   `terminal-launch.sh` and its tmux attach client.
+2. `TerminalProxy.Start()` ran `fuser -k <ttyd-port>/tcp` before spawning ttyd,
+   so a ttyd that somehow survived step 1 was killed by the incoming instance.
 
 ### Measured, not assumed
 
@@ -85,12 +93,12 @@ restart is cosmetic.
 `KillMode=process` means systemd stops only the main process, so this unit must
 say what may outlive it and what cleans up:
 
-- **ttyd** — never intentionally orphaned. `Stop()` sends SIGINT, waits up to
-  five seconds, then kills. Startup's `fuser -k <ttyd-port>/tcp` is the
-  belt-and-braces reaper for a ttyd that survived an ungraceful exit (SIGKILL of
-  the server, a crash before `Stop()` ran).
-- **pty children** (`terminal-launch.sh` and its tmux attach client) — die with
-  ttyd by design, which is the mechanism behind this whole ADR.
+- **tmux attach clients** — each runs on a pseudo-terminal CHROTE holds the
+  master of, so closing that master hangs it up. The master is closed when the
+  browser disconnects, and by the kernel when the server process exits, so
+  there is no orphan to reap and no port-based reaper. This is the mechanism
+  behind this whole ADR; before [ADR-0018](0018-terminal-transport-ownership.md)
+  ttyd held the master and the same hangup applied.
 - **tmux servers** — deliberately outside this cgroup and owned by their own
   units. Not this unit's to reap; reaping them here is what `KillMode=process`
   exists to prevent.
@@ -98,11 +106,9 @@ say what may outlive it and what cleans up:
   [ADR-0015](0015-access-first-non-interference.md). CHROTE no longer has an
   agent-revival path that creates replacement tmux servers.
 
-Known sharp edge, deliberately left as follow-up rather than changed in passing:
-`fuser -k <port>/tcp` kills whatever holds the port, not specifically our ttyd.
-A reaper targeting the recorded ttyd pid would be narrower. The actionable work
-is tracked by `chrote-bgp`; the earlier `chrote-3zw` was closed by an
-administrative signal reset without implementation.
+The sharp edge this ADR left as follow-up — `fuser -k <port>/tcp` killing
+whatever held the port rather than specifically our ttyd — is gone with the
+reaper it described, closing `chrote-bgp`.
 
 ## Consequences
 

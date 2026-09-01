@@ -11,16 +11,17 @@ RuntimeDirectory=chrote
 RuntimeDirectoryMode=0750
 UMask=0002
 ExecStartPre=+/bin/sh -lc 'install -d -o "${CHROTE_SERVICE_USER:-chrote}" -g "${CHROTE_SERVICE_GROUP:-chrote}" -m "${CHROTE_RUNTIME_MODE:-0750}" "${CHROTE_RUNTIME_ROOT:-/run/chrote}/tmux"'
-ExecStart=/bin/sh -lc 'cd "$CHROTE_SERVICE_ROOT" && exec "$CHROTE_SERVICE_ROOT/chrote-server" --host "${HOST:-127.0.0.1}" --port "${PORT:-8095}" --ttyd-port "${TTYD_PORT:-7686}"'
+ExecStart=/bin/sh -lc 'cd "$CHROTE_SERVICE_ROOT" && exec "$CHROTE_SERVICE_ROOT/chrote-server" --host "${HOST:-127.0.0.1}" --port "${PORT:-8095}"'
 # KillMode=process is ruled on by docs/adr/0013-ttyd-restart-lifecycle-and-orphan-reaping.md,
-# which owns the lifecycle and reaping story. Read that before changing this line.
+# as amended by docs/adr/0018-terminal-transport-ownership.md, which own the
+# lifecycle and reaping story. Read those before changing this line.
 #
 # Two measurements worth keeping next to the setting, because both invite wrong
 # conclusions from `systemctl status` alone:
 #
-#   ttyd is not what this protects. The next start reclaims its port with
-#   `fuser -k` (src/internal/proxy/terminal.go), so a preserved ttyd is killed
-#   moments later anyway.
+#   Browser terminals are not what this protects. Each attach runs on a
+#   pseudo-terminal this process owns, so it is hung up the moment the process
+#   exits, whatever KillMode says.
 #
 #   Sessions surviving a restart are NOT evidence that this setting works. The
 #   tmux servers holding them are owned by other users and sit outside this

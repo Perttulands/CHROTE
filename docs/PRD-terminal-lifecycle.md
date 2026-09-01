@@ -1,6 +1,11 @@
 # PRD: Terminal Iframe Lifecycle & Session Resize
 
-**Status:** Review
+**Status:** Historical. Both mechanisms this document specifies are gone. The
+iframe pool was replaced by an in-page terminal, and ttyd by a pseudo-terminal
+the Go server owns, under
+[ADR-0018](adr/0018-terminal-transport-ownership.md); window sizing is settled
+by [ADR-0017](adr/0017-terminal-viewing-model.md). Kept as a record of the
+problem, not as requirements.
 **Author:** polis + claude
 **Date:** 2026-03-16
 

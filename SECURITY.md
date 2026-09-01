@@ -39,7 +39,6 @@ same-user isolation. Default runtime values are loopback-only:
 
 - `HOST=127.0.0.1`
 - `PORT=8094`
-- `TTYD_PORT=7683`
 
 Use a private access layer such as Tailscale for remote access. Do not bind
 CHROTE directly to an untrusted LAN or the public internet. Treat exposing the
@@ -64,8 +63,8 @@ direct network clients, or replace the private-network trust boundary.
 
 ## Terminal boundary
 
-CHROTE and ttyd can attach to tmux sessions available to their Unix identity and
-to any explicitly configured socket mapping. A deployment commonly runs the
+CHROTE can attach to tmux sessions available to its Unix identity and to any
+explicitly configured socket mapping. A deployment commonly runs the
 server as a dedicated service account while fronting other Unix users' sessions
 through deliberate socket grants, so the reachable surface is the union of every
 configured user's sessions, not the service account's alone.

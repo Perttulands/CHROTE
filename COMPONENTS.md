@@ -10,7 +10,6 @@ ACLs, and rollback layouts belong in private operator configuration.
 | Go server | HTTP API, embedded dashboard, terminal proxy, scheduling, and optional adapters | Yes |
 | React dashboard | Browser cockpit served from the Go binary | Yes |
 | tmux | Terminal and process substrate with a lifecycle independent of the browser | Yes for terminal workspaces |
-| ttyd | Browser terminal transport behind CHROTE | Yes for interactive terminals |
 | Host filesystem | Files, schedules, and configuration | Yes |
 
 The browser is a client of this runtime. It is not the source of truth. tmux

@@ -1,6 +1,6 @@
 # CHROTE architecture
 
-CHROTE is one browser application backed by one Go server. The server exposes host resources through HTTP APIs, serves the embedded React dashboard, and proxies browser terminals to ttyd. tmux remains the owner of terminal sessions.
+CHROTE is one browser application backed by one Go server. The server exposes host resources through HTTP APIs, serves the embedded React dashboard, and hosts browser terminals on pseudo-terminals it owns. tmux remains the owner of terminal sessions.
 
 ## System shape
 
@@ -11,7 +11,7 @@ Browser
   `-- terminal WebSocket under /terminal/
              |
         CHROTE Go server
-          |-- tmux and ttyd
+          |-- tmux
           |-- configured filesystem roots
           |-- project Beads stores
           |-- scheduled-task state
@@ -39,16 +39,16 @@ If CHROTE stops, tmux sessions, files, and Beads remain where they were.
 
 The dashboard asks the tmux API for sessions on configured sockets. Attaching a terminal opens the CHROTE terminal route with an exact socket and session identity.
 
-The Go server proxies that connection to its ttyd child. ttyd runs the terminal launcher, which attaches to the requested tmux session. It fails if the socket or session is not the requested target. It never falls back to an ambient tmux server.
+The Go server runs the tmux attach on a pseudo-terminal it allocates and relays that pseudo-terminal over the WebSocket. It fails if the socket or session is not the requested target. It never falls back to an ambient tmux server.
 
-CHROTE may supervise the ttyd child it owns. It does not own the tmux server or the long-lived processes inside it. Shutdown and cleanup code must distinguish CHROTE-owned transport from operator-owned tmux work.
+CHROTE owns the pseudo-terminal and the attach client on it, and nothing else. It does not own the tmux server or the long-lived processes inside it. Shutdown and cleanup code must distinguish CHROTE-owned transport from operator-owned tmux work.
 
 ## Server composition
 
 `src/cmd/server/` assembles the process and registers the runtime routes.
 
 - `src/internal/api/` contains tmux, files, Beads, scheduled tasks, services, health, and system handlers.
-- `src/internal/proxy/` owns the ttyd child and terminal transport.
+- `src/internal/proxy/` owns the terminal transport and the pseudo-terminals it attaches on.
 - `src/internal/dashboard/` embeds the built dashboard into the Go binary.
 - `src/internal/scheduled/` contains scheduled-task persistence and execution support.
 - `dashboard/src/` contains the React interface, browser-local state, API clients, and views.

@@ -102,8 +102,7 @@ CHROTE has no login, and the current design does not add one. Anyone who can
 open it gets a terminal as the account CHROTE runs under. The network is the
 boundary.
 
-The server binds `127.0.0.1:8094` by default and runs one ttyd child on
-`127.0.0.1:7683`. To reach it from another device, put it behind a private
+The server binds `127.0.0.1:8094` by default. To reach it from another device, put it behind a private
 network with HTTPS, such as Tailscale Serve. CORS is not authentication.
 
 `CHROTE_ROOTS` limits the file API. It does not sandbox anything an agent runs
@@ -112,8 +111,7 @@ inside tmux. Read [SECURITY.md](SECURITY.md) before you expose this anywhere.
 ## Install
 
 You need Linux or WSL with user systemd, Go 1.26.6 or newer, Node.js 20.19+ or
-22.12+, npm, tmux, curl, and Git. The installer copies ttyd 1.7.7 from your
-`PATH` or downloads it into the user prefix.
+22.12+, npm, tmux, curl, and Git.
 
 ```bash
 git clone https://github.com/Perttulands/CHROTE.git
@@ -126,8 +124,7 @@ Then open <http://127.0.0.1:8094>.
 The installer builds the dashboard and the Go binary from your checkout,
 installs them under `$HOME/.local`, writes a `chrote.service` user unit, starts
 it, and checks `/api/health`. It never calls `sudo`. Use `--workspace PATH` to
-narrow the file root from `$HOME`, or `--port` and `--ttyd-port` to move the
-ports.
+narrow the file root from `$HOME`, or `--port` to move the port.
 
 [docs/installation.md](docs/installation.md) covers upgrades, optional
 integrations, and remote access. [docs/troubleshooting.md](docs/troubleshooting.md)
@@ -137,16 +134,16 @@ covers an install that comes up unhealthy.
 
 One Go process serves everything. It embeds the built React dashboard, exposes
 the JSON API under `/api/`, runs the scheduler, calls optional adapters, and
-reverse-proxies `/terminal/` to a ttyd child it starts and supervises on
-loopback. ttyd runs `terminal-launch.sh`, which attaches to one named session on
-one configured tmux socket. If that session is not there, the script fails
-instead of falling back to another tmux server.
+serves `/terminal/` as a WebSocket of its own. It runs the tmux attach for one
+named session on one configured tmux socket on a pseudo-terminal it allocates,
+and relays that pseudo-terminal to the browser. If the session is not on that
+socket, the attach fails instead of falling back to another tmux server.
 
 - `dashboard/src/` is the React UI.
 - `src/cmd/server/` wires the process together.
 - `src/internal/api/` holds the tmux, files, beads, scheduled, services, health,
   and system handlers.
-- `src/internal/proxy/` owns the ttyd lifecycle and terminal transport.
+- `src/internal/proxy/` owns the terminal transport and its pseudo-terminals.
 - `src/internal/dashboard/` embeds the built dashboard into the binary.
 - `scripts/` holds the build, contract, and install entrypoints.
 
