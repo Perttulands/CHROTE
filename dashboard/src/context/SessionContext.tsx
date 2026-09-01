@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type {
   CreateSessionOptions,
@@ -12,7 +12,7 @@ import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getSession
 import { useToast } from './ToastContext'
 import { useSendToSession } from './useSendToSession'
 import { useSessionsPoll } from './useSessionsPoll'
-import { applyInitialTmuxSettings, useWorkspaceLayouts } from './useWorkspaceLayouts'
+import { useWorkspaceLayouts } from './useWorkspaceLayouts'
 import {
   deduplicateWorkspaceBindings,
   idsInWorkspaces,
@@ -39,8 +39,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const send = useSendToSession()
   const [floatingSession, setFloatingSession] = useState<string | null>(null)
   const poll = useSessionsPoll({ autoRefreshInterval: layouts.settings.autoRefreshInterval })
-
-  useEffect(() => applyInitialTmuxSettings(layouts.settings), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const addSessionToWindow = useCallback((
     workspaceId: WorkspaceId,

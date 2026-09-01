@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TmuxAppearance, TerminalWorkspace, UserSettings, WindowRevealRequest, WorkspaceId } from '../types'
-import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, normalizeTerminalTabCount } from '../types'
+import { DEFAULT_SETTINGS, MAX_PRESETS, normalizeTerminalTabCount } from '../types'
 import { useToast } from './ToastContext'
 import {
   CANONICAL_WINDOW_COUNT,
@@ -44,11 +44,6 @@ async function applyTmuxMouse(enabled: boolean): Promise<void> {
   } catch (e) {
     console.warn('Failed to apply tmux mouse mode:', e)
   }
-}
-
-export function applyInitialTmuxSettings(settings: UserSettings): void {
-  applyTmuxAppearance({ ...DEFAULT_TMUX_APPEARANCE, ...settings.tmuxAppearance })
-  applyTmuxMouse(settings.mouseScroll)
 }
 
 export function useWorkspaceLayouts() {

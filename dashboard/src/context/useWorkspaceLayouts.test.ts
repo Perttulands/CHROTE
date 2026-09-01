@@ -160,7 +160,7 @@ describe('dashboard persisted storage contract', () => {
     })
   })
 
-  it('applies saved tmux mouse mode on initial load and when settings change', async () => {
+  it('does not mutate tmux on initial load and applies mouse mode only after an explicit setting change', async () => {
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
       version: 3,
       settingsSchemaVersion: 2,
@@ -178,7 +178,9 @@ describe('dashboard persisted storage contract', () => {
         JSON.parse(String(init?.body)).enabled === enabled
     })
 
-    await waitFor(() => expect(hasMouseCall(false)).toBe(true))
+    await waitFor(() => expect(result.current.settings.mouseScroll).toBe(false))
+    expect(hasMouseCall(false)).toBe(false)
+    expect(fetchMock.mock.calls.some((call: unknown[]) => String(call[0]) === '/api/tmux/appearance')).toBe(false)
 
     fetchMock.mockClear()
     act(() => {
