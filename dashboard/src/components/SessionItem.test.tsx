@@ -108,6 +108,56 @@ describe('SessionItem user badge and context actions', () => {
     expect(screen.queryByRole('button', { name: /Focus assigned window/ })).not.toBeInTheDocument()
   })
 
+  it('marks a session whose facts contradict its appearance, with the fact on hover', () => {
+    render(
+      <SessionItem
+        session={{
+          name: 'alice-shell',
+          windows: 2,
+          attached: true,
+          group: 'main',
+          unixUser: 'alice',
+          panes: 1,
+          width: 100,
+          height: 30,
+          sizePinned: true,
+          mouseEnabled: false,
+          foreignClients: ['/dev/pts/12'],
+        }}
+      />
+    )
+
+    const pinned = screen.getByLabelText(/^Fixed size:/)
+    expect(pinned).toHaveTextContent('⊡')
+    expect(pinned).toHaveAttribute('title', expect.stringContaining('100x30'))
+    expect(screen.getByLabelText(/^Foreign client attached:/)).toHaveAttribute(
+      'title',
+      expect.stringContaining('/dev/pts/12'),
+    )
+    expect(screen.getByLabelText(/^More than one window or pane:/)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^Mouse off:/)).toBeInTheDocument()
+  })
+
+  it('marks nothing on a session that is what it looks like', () => {
+    const { container } = render(
+      <SessionItem
+        session={{
+          name: 'alice-shell',
+          windows: 1,
+          attached: true,
+          group: 'main',
+          unixUser: 'alice',
+          panes: 1,
+          width: 120,
+          height: 40,
+          mouseEnabled: true,
+        }}
+      />
+    )
+
+    expect(container.querySelectorAll('.session-badge')).toHaveLength(0)
+  })
+
   it('cancels rename with Escape and rejects an empty replacement', () => {
     render(
       <SessionItem

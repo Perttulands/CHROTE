@@ -25,6 +25,10 @@ import (
 // TmuxHandler handles tmux-related API endpoints
 type TmuxHandler struct {
 	colorRegex *regexp.Regexp
+	// proc locates the process filesystem used to recognise the ptys this
+	// server spawned. Its zero value owns no pty, so a handler built without
+	// it reports every attached client as foreign rather than as CHROTE's.
+	proc procSource
 }
 
 // SessionsResponse is the response for listing sessions
@@ -63,6 +67,7 @@ func isReservedInternalSessionName(name string) bool {
 func NewTmuxHandler() *TmuxHandler {
 	return &TmuxHandler{
 		colorRegex: regexp.MustCompile(`^#[0-9A-Fa-f]{3,6}$|^[a-zA-Z]+$|^default$`),
+		proc:       systemProcSource(os.Getpid()),
 	}
 }
 
@@ -393,7 +398,25 @@ func (h *TmuxHandler) runTmuxOnSocketInput(parent context.Context, socket, input
 	return output, nil
 }
 
-func parseSessionsOutput(output string, unixUser string) []core.Session {
+// sessionInventoryFormat is the one command per socket that answers every
+// question the session list asks. Facts that contradict a session's
+// appearance are read here rather than by a follow-up call per fact.
+const sessionInventoryFormat = "#{session_id}\t" +
+	"#{session_name}\t" +
+	"#{session_windows}\t" +
+	"#{session_attached}\t" +
+	"#{pane_current_path}\t" +
+	"#{pane_current_command}\t" +
+	"#{window_panes}\t" +
+	"#{window_width}\t" +
+	"#{window_height}\t" +
+	"#{window-size}\t" +
+	"#{mouse}\t" +
+	"#{session_attached_list}"
+
+const sessionInventoryFieldCount = 12
+
+func parseSessionsOutput(output string, unixUser string, ownedPTYs map[string]bool) []core.Session {
 	sessions := []core.Session{}
 	lines := strings.Split(strings.TrimRight(output, "\r\n"), "\n")
 	for _, line := range lines {
@@ -401,36 +424,49 @@ func parseSessionsOutput(output string, unixUser string) []core.Session {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		sessionID := ""
-		name := ""
-		windowsText := ""
-		attachedText := ""
-		cwd := ""
-		currentCommand := ""
-		if parts := strings.SplitN(line, "	", 6); len(parts) == 6 {
-			sessionID, name, windowsText, attachedText, cwd, currentCommand = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
-		} else if len(parts) == 5 {
-			sessionID, name, windowsText, attachedText, cwd = parts[0], parts[1], parts[2], parts[3], parts[4]
-		} else {
+		// Older shapes stop after the working directory or the foreground
+		// command. They still describe a session; they just raise none of the
+		// claims the badges make.
+		parts := strings.SplitN(line, "\t", sessionInventoryFieldCount)
+		if len(parts) != sessionInventoryFieldCount && len(parts) != 6 && len(parts) != 5 {
 			continue
 		}
+		field := func(index int) string {
+			if index < len(parts) {
+				return parts[index]
+			}
+			return ""
+		}
+		name := field(1)
 		if isReservedInternalSessionName(name) {
 			continue
 		}
-		windows, _ := strconv.Atoi(windowsText) //nolint:errcheck // defaults to 0 on parse failure, corrected to 1 below
+		windows, _ := strconv.Atoi(field(2)) //nolint:errcheck // defaults to 0 on parse failure, corrected to 1 below
 		if windows == 0 {
 			windows = 1
 		}
-		sessions = append(sessions, core.Session{
-			ID:             sessionID,
+		session := core.Session{
+			ID:             field(0),
 			Name:           name,
 			Windows:        windows,
-			Attached:       attachedText == "1",
+			Attached:       field(3) == "1",
 			Group:          core.CategorizeSession(name),
 			UnixUser:       unixUser,
-			CWD:            cwd,
-			CurrentCommand: currentCommand,
-		})
+			CWD:            field(4),
+			CurrentCommand: field(5),
+		}
+		if len(parts) == sessionInventoryFieldCount {
+			session.Panes, _ = strconv.Atoi(field(6))  //nolint:errcheck // an unparsable count claims nothing
+			session.Width, _ = strconv.Atoi(field(7))  //nolint:errcheck // an unparsable size claims nothing
+			session.Height, _ = strconv.Atoi(field(8)) //nolint:errcheck // an unparsable size claims nothing
+			session.SizePinned = field(9) == "manual"
+			if mouse := field(10); mouse == "0" || mouse == "1" {
+				enabled := mouse == "1"
+				session.MouseEnabled = &enabled
+			}
+			session.ForeignClients = foreignClientTTYs(field(11), ownedPTYs)
+		}
+		sessions = append(sessions, session)
 	}
 	return sessions
 }
@@ -452,8 +488,8 @@ func publicTmuxSourceError(err error) string {
 	return "tmux source unavailable"
 }
 
-func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget) ([]core.Session, string) {
-	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_id}	#{session_name}	#{session_windows}	#{session_attached}	#{pane_current_path}	#{pane_current_command}")
+func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget, ownedPTYs map[string]bool) ([]core.Session, string) {
+	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", sessionInventoryFormat)
 	if err != nil {
 		diagnostic := tmuxErrorDiagnostic(err)
 		if isTmuxNoServerErrorForSocket(diagnostic, target.socket) {
@@ -461,7 +497,7 @@ func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget) ([]core.Session, 
 		}
 		return []core.Session{}, publicTmuxSourceError(err)
 	}
-	return parseSessionsOutput(output, target.unixUser), ""
+	return parseSessionsOutput(output, target.unixUser, ownedPTYs), ""
 }
 
 // ListSessions handles GET /api/tmux/sessions
@@ -477,6 +513,9 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		TerminalUsers: advertisedTerminalUsers(),
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 	}
+	// The ptys this server spawned are the same set for every socket, so the
+	// walk happens once per listing rather than once per target.
+	ownedPTYs := h.proc.ownedPTYs()
 	if queryUnixUser == "" {
 		var errors, successfulUsers, failedUsers []string
 		for _, unixUser := range configuredTerminalUsers() {
@@ -487,7 +526,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 				failedUsers = append(failedUsers, unixUser)
 				continue
 			}
-			sessions, errStr := h.listSessionsForTarget(target)
+			sessions, errStr := h.listSessionsForTarget(target, ownedPTYs)
 			if errStr != "" {
 				errors = append(errors, fmt.Sprintf("%s: %s", unixUser, errStr))
 				failedUsers = append(failedUsers, unixUser)
@@ -510,7 +549,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 			return
 		}
-		sessions, errStr := h.listSessionsForTarget(target)
+		sessions, errStr := h.listSessionsForTarget(target, ownedPTYs)
 		response.Sessions = append(response.Sessions, sessions...)
 		if errStr != "" {
 			response.Error = errStr

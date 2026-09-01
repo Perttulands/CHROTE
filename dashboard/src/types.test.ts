@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { TmuxSession } from './types'
 import {
   DEFAULT_TERMINAL_TAB_COUNT,
   MAX_TERMINAL_TAB_COUNT,
@@ -7,6 +8,7 @@ import {
   getDefaultLaunchUser,
   getGroupDisplayName,
   getGroupPriority,
+  getSessionBadges,
   getTerminalLabel,
   isTerminalWorkspaceId,
   normalizeTerminalTabCount,
@@ -114,5 +116,66 @@ describe('getDefaultLaunchUser terminal3 rule', () => {
   it('falls back to the first user when no second user exists', () => {
     expect(getDefaultLaunchUser('terminal3', ['alice'])).toBe('alice')
     expect(getDefaultLaunchUser('terminal3', [])).toBe('')
+  })
+})
+
+describe('getSessionBadges', () => {
+  const plain: TmuxSession = {
+    name: 'alice-shell',
+    windows: 1,
+    attached: true,
+    group: 'main',
+    panes: 1,
+    width: 120,
+    height: 40,
+    mouseEnabled: true,
+  }
+
+  it('says nothing about a session that is what it looks like', () => {
+    expect(getSessionBadges(plain)).toEqual([])
+  })
+
+  it('reports a pinned window with the size CHROTE cannot change', () => {
+    const [badge] = getSessionBadges({ ...plain, sizePinned: true, width: 100, height: 30 })
+    expect(badge.id).toBe('pinned-size')
+    expect(badge.detail).toContain('100x30')
+    expect(badge.detail).toContain('window-size is manual')
+  })
+
+  it('names the foreign clients a takeover would disconnect', () => {
+    const [badge] = getSessionBadges({ ...plain, foreignClients: ['/dev/pts/12'] })
+    expect(badge.id).toBe('foreign-client')
+    expect(badge.detail).toContain('/dev/pts/12')
+    expect(badge.detail).toContain('disconnects them')
+  })
+
+  it('reports structure the session list cannot show', () => {
+    expect(getSessionBadges({ ...plain, windows: 3 })[0].detail).toContain('3 tmux windows')
+    expect(getSessionBadges({ ...plain, panes: 2 })[0].detail).toContain('2 panes in the current window')
+    expect(getSessionBadges({ ...plain, windows: 3, panes: 2 })[0].detail)
+      .toBe('This session has 3 tmux windows and 2 panes in the current window. A terminal shows the current window only.')
+  })
+
+  it('reports mouse mode only when the server said it is off', () => {
+    expect(getSessionBadges({ ...plain, mouseEnabled: false }).map(badge => badge.id)).toEqual(['mouse-off'])
+    expect(getSessionBadges({ ...plain, mouseEnabled: undefined })).toEqual([])
+  })
+
+  it('raises no claim from a session the server described without the new facts', () => {
+    expect(getSessionBadges({ name: 'legacy', windows: 1, attached: false, group: 'other' })).toEqual([])
+  })
+
+  it('carries every fact at once and keeps the markers distinct', () => {
+    const badges = getSessionBadges({
+      ...plain,
+      windows: 2,
+      panes: 2,
+      sizePinned: true,
+      mouseEnabled: false,
+      foreignClients: ['/dev/pts/12', '/dev/pts/13'],
+    })
+    expect(badges.map(badge => badge.id)).toEqual(['pinned-size', 'foreign-client', 'structure', 'mouse-off'])
+    expect(new Set(badges.map(badge => badge.marker)).size).toBe(4)
+    expect(badges[1].detail).toContain('2 clients')
   })
 })

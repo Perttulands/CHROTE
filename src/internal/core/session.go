@@ -18,6 +18,26 @@ type Session struct {
 	UnixUser       string `json:"unixUser,omitempty"`
 	CWD            string `json:"cwd,omitempty"`
 	CurrentCommand string `json:"currentCommand,omitempty"`
+
+	// The fields below carry facts that contradict what a session looks like
+	// from the outside, so the dashboard can say so. They describe the
+	// session's current window. Each is optional: an older or degraded
+	// inventory simply omits it, and an omitted fact raises no claim.
+
+	// Panes counts the panes in the current window. More than one means the
+	// terminal shows only part of what is running.
+	Panes int `json:"panes,omitempty"`
+	// Width and Height are the current window's size in cells.
+	Width  int `json:"width,omitempty"`
+	Height int `json:"height,omitempty"`
+	// SizePinned reports tmux window-size manual, which fixes the window at
+	// Width by Height and makes CHROTE unable to resize it.
+	SizePinned bool `json:"sizePinned,omitempty"`
+	// MouseEnabled is the session's tmux mouse option. Nil when unknown.
+	MouseEnabled *bool `json:"mouseEnabled,omitempty"`
+	// ForeignClients lists the ttys of attached clients CHROTE did not
+	// create, such as an SSH login. Opening the session displaces them.
+	ForeignClients []string `json:"foreignClients,omitempty"`
 }
 
 // GroupPriority defines the sort order for session groups

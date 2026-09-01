@@ -221,6 +221,82 @@ export interface TmuxSession {
   unixUser?: LaunchUser
   cwd?: string
   currentCommand?: string
+  /** Panes in the current window. */
+  panes?: number
+  /** Current window size in cells. */
+  width?: number
+  height?: number
+  /** tmux window-size is manual, so CHROTE cannot resize this session. */
+  sizePinned?: boolean
+  /** tmux mouse mode. Absent when the server did not report it. */
+  mouseEnabled?: boolean
+  /** ttys of attached clients CHROTE did not create, such as an SSH login. */
+  foreignClients?: string[]
+}
+
+export type SessionBadgeId = 'pinned-size' | 'foreign-client' | 'structure' | 'mouse-off'
+
+export interface SessionBadge {
+  id: SessionBadgeId
+  /** Compact marker shown in the session list. */
+  marker: string
+  /** Short name, read out to assistive technology. */
+  label: string
+  /** The full fact, shown on hover. */
+  detail: string
+}
+
+/**
+ * A badge means this session is not what you would assume from looking at it.
+ * That rule is the whole membership test: anything a glance already tells the
+ * operator does not belong here, or the set decays into decoration.
+ */
+export function getSessionBadges(session: TmuxSession): SessionBadge[] {
+  const badges: SessionBadge[] = []
+
+  if (session.sizePinned) {
+    const size = session.width && session.height ? ` at ${session.width}x${session.height}` : ''
+    badges.push({
+      id: 'pinned-size',
+      marker: '⊡',
+      label: 'Fixed size',
+      detail: `Pinned${size}. tmux window-size is manual on this window, so CHROTE cannot resize it.`,
+    })
+  }
+
+  const foreign = session.foreignClients ?? []
+  if (foreign.length > 0) {
+    const plural = foreign.length === 1 ? 'client' : 'clients'
+    badges.push({
+      id: 'foreign-client',
+      marker: '◈',
+      label: 'Foreign client attached',
+      detail: `Attached by ${foreign.length} ${plural} CHROTE did not create (${foreign.join(', ')}). Opening this session takes it over and disconnects them.`,
+    })
+  }
+
+  const structure: string[] = []
+  if (session.windows > 1) structure.push(`${session.windows} tmux windows`)
+  if ((session.panes ?? 1) > 1) structure.push(`${session.panes} panes in the current window`)
+  if (structure.length > 0) {
+    badges.push({
+      id: 'structure',
+      marker: '⊞',
+      label: 'More than one window or pane',
+      detail: `This session has ${structure.join(' and ')}. A terminal shows the current window only.`,
+    })
+  }
+
+  if (session.mouseEnabled === false) {
+    badges.push({
+      id: 'mouse-off',
+      marker: '⊗',
+      label: 'Mouse off',
+      detail: 'tmux mouse mode is off for this session, so scrolling and clicking reach the running program instead of tmux.',
+    })
+  }
+
+  return badges
 }
 
 const SHELL_COMMANDS = new Set(['sh', 'bash', 'dash', 'fish', 'ksh', 'zsh'])

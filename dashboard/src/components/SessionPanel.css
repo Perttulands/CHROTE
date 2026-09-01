@@ -322,6 +322,27 @@
   font-size: 10px;
 }
 
+/* A badge says the session is not what it looks like. Marker only, with the
+   fact on hover; no colour, because none of these are errors. */
+.session-badges {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.session-badge {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1;
+  cursor: help;
+}
+
+.session-badge:hover,
+.session-badge:focus-visible {
+  color: var(--text-secondary);
+}
+
 .session-item.assigned {
   /* No longer greyed out - text is colored based on window assignment */
 }

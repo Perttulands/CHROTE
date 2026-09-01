@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import type { TmuxSession } from '../types'
 import { useSession } from '../context/SessionContext'
-import { WINDOW_COLORS, getForegroundCommandLabel, getSessionKey, getTerminalLabel, getTerminalUserColor, getTerminalUserInitial } from '../types'
+import { WINDOW_COLORS, getForegroundCommandLabel, getSessionBadges, getSessionKey, getTerminalLabel, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import DismissiblePanel from './DismissiblePanel'
 
@@ -214,6 +214,7 @@ function SessionItem({ session }: SessionItemProps) {
   const dragLabel = `Drag ${session.name}${session.unixUser ? ` (Unix user ${session.unixUser})` : ''}`
   const currentCommand = session.currentCommand?.trim()
   const foregroundCommandLabel = getForegroundCommandLabel(currentCommand)
+  const badges = getSessionBadges(session)
 
   return (
     <>
@@ -265,6 +266,22 @@ function SessionItem({ session }: SessionItemProps) {
             title={`Foreground process reported by tmux: ${currentCommand}`}
           >
             {foregroundCommandLabel}
+          </span>
+        )}
+        {badges.length > 0 && (
+          <span className="session-badges">
+            {badges.map(badge => (
+              <span
+                key={badge.id}
+                className="session-badge"
+                data-badge={badge.id}
+                title={`${badge.label}: ${badge.detail}`}
+                aria-label={`${badge.label}: ${badge.detail}`}
+                role="img"
+              >
+                {badge.marker}
+              </span>
+            ))}
           </span>
         )}
         <button
