@@ -16,7 +16,7 @@ Read `PRD.md` for the durable product contract and `SECURITY.md` for the trust a
 
 ## Golden invariants
 
-tmux owns live sessions. CHROTE, its tests, development tools, deployments, browser disconnects, and service restarts must never kill or disrupt tmux sessions. Session termination is an explicit operator action.
+tmux owns live sessions. CHROTE, its tests, development tools, deployments, browser disconnects, and service restarts must never implicitly or accidentally terminate or disrupt existing tmux sessions. Exact operator-authorized deletion and exact cleanup of test-owned or failed-creation-owned sessions are allowed.
 
 Broad access within configured roots is intentional. Rely on Unix permissions and report access failures plainly; do not narrow ownership, modes, ACLs, or configured roots as speculative hardening.
 
