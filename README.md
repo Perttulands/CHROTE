@@ -2,152 +2,153 @@
 
 ![CHROTE](CHROTE.png)
 
-**C**ontrol **H**ub for **R**emote **O**perations & **T**mux **E**xecution
+Control Hub for Remote Operations and Tmux Execution.
 
-> **WARNING:** CHROTE is for people who opened several AI coding agents, lost
-> track of which terminal was doing what, and decided the sensible answer was a
-> browser cockpit.
->
-> **CAUTION:** This is private infrastructure for a machine you own. It exposes
-> terminal-grade capabilities and assumes you are comfortable with tmux.
+CHROTE is a browser-based agentic IDE for one operator on one host. It shows
+the tmux sessions running on that host, arranges them into windows you can
+watch side by side, and lets you type into any of them from a laptop, tablet,
+or phone on your own private network.
 
-CHROTE is one person's browser cockpit for host-owned work. tmux sessions,
-files, Beads, schedules, builds, tests, and agent harness state stay on the host.
-The browser is glass, not the vault.
+tmux still owns the sessions. CHROTE is the way in.
 
-[![CHROTE terminal workspace with Codex and Claude Code attached](docs/assets/readme/terminal-agents.png)](docs/assets/readme/attach-hermes-workflow.mp4)
+## Why it exists
 
-<p align="center"><strong><a href="docs/assets/readme/attach-hermes-workflow.mp4">Watch the 18-second workflow</a></strong>: two attached agents, add a third window, attach Hermes.</p>
+One agent in one terminal needs no dashboard. Ten agents across a dozen tmux
+sessions is a different problem. You lose track of which one is waiting on an
+answer, which one exited an hour ago, and which one has been rewriting the same
+file since lunch. SSH and tmux handle that fine at a desk. They handle it badly
+from a phone.
 
-## Why this exists
+CHROTE puts handles on the work without taking it over. Close the browser,
+switch devices, restart the server, and the sessions keep running, because the
+browser never owned them. CHROTE also will not restart a process that died or
+rebuild your work after a reboot. Those jobs belong to tmux, to your shell, or
+to a systemd unit you wrote on purpose.
 
-One agent in one terminal is a workflow. Several agents across tmux sessions, a
-Beads backlog, a file tree, and half-finished builds are a control-room problem.
+Any CLI program can run in a CHROTE window, because a window is a tmux session
+running your shell. Codex, Claude Code, a build, a log tail, `psql`. CHROTE does
+not know which is which and does not need to.
 
-CHROTE gives that work handles without taking ownership away from the tools that
-created it. Close the browser, change devices, and reconnect: externally owned
-tmux work remains because the browser never owned it. CHROTE itself does not
-recreate a process that dies or a workload lost with the host.
+## The terminal workspace
 
-This is a supervised cockpit, not an autonomous software factory. The operator
-decides what runs, what changes, and what ships.
+Terminals are the product. Everything else is here because it saves a trip back
+to the terminal.
 
-## What is on `main`
+- A terminal tab is an independent workspace. Three by default, one to six in
+  Settings.
+- Each tab shows one to four windows at a time.
+- One window can hold several tmux sessions and display one of them. You cycle
+  through the rest without losing the binding.
+- The Sessions sidecar lists the sessions on every tmux socket CHROTE is
+  configured to read. Attach one to a window from its row menu, or create a new
+  session straight into an empty window.
+- Clicking a session row opens a floating preview called Peek. It never
+  reassigns your window. Losing a layout to a stray click is worse than one
+  extra click.
+- A location chip on an attached session jumps to the window already showing it.
+- The Files sidecar opens beside the terminal. Its state belongs to that tab.
+- Both sidecars start closed and reserve no width while closed.
+- You can save ten layout presets and load one back later.
 
-| Surface | Operator job |
+On a viewport narrower than 768 pixels the tab bar collapses into a menu and
+the terminal area shows one window at a time. A phone is good for reading
+output and answering a prompt. Arranging a four-window layout wants a real
+screen.
+
+## What is in the build
+
+| View | What it does |
 | --- | --- |
-| **Terminal 1–3** | Independent workspaces with one to four windows attached to real tmux sessions |
-| **Sessions / Files sidecars** | Find, Peek, attach, navigate, and inspect files beside the active terminal |
-| **Files** | Browse, inspect, edit, compare, and send configured workspace files to a session |
-| **Beads** | Inspect configured `bd` workspaces, issues, ready work, triage, and health |
-| **Scheduled** | Create and inspect literal prompt deliveries to configured tmux sessions |
-| **Server** | Inspect health, resources, runtime events, and bounded history |
-| **Settings** | Configure appearance, terminal behavior, and browser-owned layout preferences |
-| **Services** | Use optional server-side adapters without putting private tokens in the browser |
+| Terminal 1 to N | Attach, arrange, and type into tmux sessions |
+| Files | Browse, read, edit, compare, and send files under the configured roots to a session |
+| Server | Health, resource readings, runtime events, and a bounded history |
+| Settings | Appearance, tmux colors, session defaults, tab count, launch users, cleanup |
+| Beads | Issues, ready work, triage, dependency graph, insights, and comments from configured `bd` workspaces |
+| Scheduled | Host-owned tasks that deliver a prompt to a named tmux session on a schedule |
+| Services | Local adapters called through CHROTE routes, so their tokens stay on the server |
 
-The terminal is the heart of the product. A few interaction rules are
-deliberate:
+Terminal, Files, Server, and Settings are the core. Beads, Scheduled, and
+Services are first-party components built on that core. Each one degrades alone
+when `bd` is missing or an adapter is down, and none of them can stop the core
+from loading.
 
-- Session-row clicks mean **Peek**; they do not reassign a window.
-- Location chips navigate to already attached sessions.
-- Sessions and Files sidecars are closed by default and reserve no width while
-  closed.
-- Sessions presentation persists application-wide; Files state persists per
-  terminal workspace.
-- Narrow layouts overlay sidecars rather than crushing terminals.
-- Browser disconnects and CHROTE restarts must not kill external tmux work.
+A scheduled task sends its prompt into tmux verbatim. The receipt says CHROTE
+delivered the keystrokes. It does not claim the program on the other end read
+them.
 
-Rare recovery, restore, cleanup, migration, and repair remain agent skills or
-operator procedures. Experimental Formations and Archon work lives separately
-in [chrote-agent-formations](https://github.com/Perttulands/chrote-agent-formations),
-not in CHROTE's release promise.
+Formations should eventually compose agents and gates into a mission. None of it
+ships in this build. That work lives in
+[chrote-agent-formations](https://github.com/Perttulands/chrote-agent-formations).
+Treat it as an intention, not something you can install today.
 
-## Beads without leaving the cockpit
+## Where state lives
 
-CHROTE reads configured modern `bd` workspaces and surfaces issue state, ready
-work, triage, dependencies, and health. `bd` remains the source of truth; CHROTE
-does not invent a second issue database.
+CHROTE reads and controls the real thing instead of keeping its own copy.
 
-![CHROTE Beads Kanban with synthetic public demo issues](docs/assets/readme/beads-kanban.png)
+- tmux owns sessions and the processes inside them.
+- The filesystem owns files. `CHROTE_ROOTS` bounds which paths the file API
+  will touch.
+- `bd` owns issues.
+- Host configuration owns scheduled tasks and service adapters, under your XDG
+  config and state directories.
+- The browser owns the parts nobody else needs. Window layout, tab labels,
+  presets, theme, and feature flags live in `localStorage`.
 
-## Who this is for
+Clear your browser storage and you lose an arrangement, not any work.
 
-This is probably for you if you already run agent CLIs in tmux, want terminals,
-files, Beads, and operational state in one private surface, and prefer supervised
-work to agent mythology.
+## Access and trust
 
-It is not for you if you want hosted SaaS, built-in accounts, an OS sandbox, or
-the browser to become the workspace source of truth.
+CHROTE has no login, and the current design does not add one. Anyone who can
+open it gets a terminal as the account CHROTE runs under. The network is the
+boundary.
 
-## Quick start
+The server binds `127.0.0.1:8094` by default and runs one ttyd child on
+`127.0.0.1:7683`. To reach it from another device, put it behind a private
+network with HTTPS, such as Tailscale Serve. CORS is not authentication.
 
-The supported public path is a same-user Linux or WSL user service built from an
-inspectable checkout.
+`CHROTE_ROOTS` limits the file API. It does not sandbox anything an agent runs
+inside tmux. Read [SECURITY.md](SECURITY.md) before you expose this anywhere.
 
-Requirements: Linux or WSL with user systemd, Go 1.26.6+, Node.js 20.19+ or
-22.12+, npm, tmux, curl, and Git.
+## Install
+
+You need Linux or WSL with user systemd, Go 1.26.6 or newer, Node.js 20.19+ or
+22.12+, npm, tmux, curl, and Git. The installer copies ttyd 1.7.7 from your
+`PATH` or downloads it into the user prefix.
 
 ```bash
 git clone https://github.com/Perttulands/CHROTE.git
 cd CHROTE
-./install.sh --workspace "$HOME/work"
+./install.sh
 ```
 
-Open <http://127.0.0.1:8094>.
+Then open <http://127.0.0.1:8094>.
 
-The installer builds the dashboard and embedded Go binary, installs a user
-service, starts it, and checks `/api/health`. It does not require `sudo`.
+The installer builds the dashboard and the Go binary from your checkout,
+installs them under `$HOME/.local`, writes a `chrote.service` user unit, starts
+it, and checks `/api/health`. It never calls `sudo`. Use `--workspace PATH` to
+narrow the file root from `$HOME`, or `--port` and `--ttyd-port` to move the
+ports.
 
-Read [the installation guide](docs/installation.md) before changing ports,
-prefixes, or remote access. Use [troubleshooting](docs/troubleshooting.md) when a
-supported install is not healthy.
-
-## Trust boundary
-
-CHROTE has **no built-in login**. Anyone who can reach it is inside the trusted
-operator boundary and can reach terminal-grade capabilities.
-
-```text
-browser
-  |
-private network / HTTPS
-  |
-loopback CHROTE server
-  |
-  +-- tmux + ttyd
-  +-- configured file roots
-  +-- configured Beads workspaces
-  +-- optional local adapters
-```
-
-Keep CHROTE on loopback and place remote access behind an operator-controlled
-private network. CORS is not authentication. File roots constrain CHROTE APIs;
-they do not sandbox commands running in tmux. Read [SECURITY.md](SECURITY.md).
-
-## Release status
-
-CHROTE v2 is alpha. The latest tagged alpha is `v2.0.0-alpha.1`; current `main`
-is `2.0.0-alpha.2-dev`. An older downloadable binary is not equivalent to
-current source.
+[docs/installation.md](docs/installation.md) covers upgrades, optional
+integrations, and remote access. [docs/troubleshooting.md](docs/troubleshooting.md)
+covers an install that comes up unhealthy.
 
 ## Architecture
 
-CHROTE is a Go server with an embedded React dashboard. One process serves the
-UI, APIs, scheduled tasks, optional service adapters, and loopback terminal
-proxy. Durable state stays inspectable: tmux, configured files, `bd` workspaces,
-host-owned configuration, and Git.
+One Go process serves everything. It embeds the built React dashboard, exposes
+the JSON API under `/api/`, runs the scheduler, calls optional adapters, and
+reverse-proxies `/terminal/` to a ttyd child it starts and supervises on
+loopback. ttyd runs `terminal-launch.sh`, which attaches to one named session on
+one configured tmux socket. If that session is not there, the script fails
+instead of falling back to another tmux server.
 
-## Documentation
-
-| Need | Start here |
-| --- | --- |
-| Product and roadmap boundary | [PRD.md](PRD.md) |
-| Install or upgrade | [docs/installation.md](docs/installation.md) |
-| Troubleshoot | [docs/troubleshooting.md](docs/troubleshooting.md) |
-| Security model | [SECURITY.md](SECURITY.md) |
-| Contribute and reproduce CI | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Component map | [COMPONENTS.md](COMPONENTS.md) |
-| Documentation authority | [docs/source-truth-index.md](docs/source-truth-index.md) |
+- `dashboard/src/` is the React UI.
+- `src/cmd/server/` wires the process together.
+- `src/internal/api/` holds the tmux, files, beads, scheduled, services, health,
+  and system handlers.
+- `src/internal/proxy/` owns the ttyd lifecycle and terminal transport.
+- `src/internal/dashboard/` embeds the built dashboard into the binary.
+- `scripts/` holds the build, contract, and install entrypoints.
 
 ## Development
 
@@ -159,9 +160,28 @@ go test ./...
 go build ./cmd/server
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full verification contract.
+The dashboard is embedded in the binary, so build it with
+`scripts/build-embedded-dashboard.sh` and verify the result with
+`python3 scripts/check-embedded-dashboard.py`. Do not copy build output by hand.
+[CONTRIBUTING.md](CONTRIBUTING.md) lists every gate CI runs.
+
+## Where to read next
+
+| Need | Read |
+| --- | --- |
+| Product contract and non-goals | [PRD.md](PRD.md) |
+| Security and trust boundary | [SECURITY.md](SECURITY.md) |
+| Install, upgrade, remote access | [docs/installation.md](docs/installation.md) |
+| An install that is not healthy | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Contribute and reproduce CI | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Runtime component map | [COMPONENTS.md](COMPONENTS.md) |
+| Which document wins on a conflict | [docs/source-truth-index.md](docs/source-truth-index.md) |
+
+## Status
+
+CHROTE v2 is alpha. `VERSION` holds the current number and
+[CHANGELOG.md](CHANGELOG.md) records what changed.
 
 ## License
 
-MIT. Open source for people who want their own cockpit, not somebody else's
-control plane.
+MIT. See [LICENSE](LICENSE).
