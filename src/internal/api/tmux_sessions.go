@@ -353,6 +353,12 @@ func (h *TmuxHandler) runTmuxOnSocket(socket string, args ...string) (string, er
 }
 
 func (h *TmuxHandler) runTmuxOnSocketContext(parent context.Context, socket string, args ...string) (string, error) {
+	return h.runTmuxOnSocketInput(parent, socket, "", args...)
+}
+
+// runTmuxOnSocketInput runs one tmux command, feeding stdin from input. Only a
+// control-mode client reads commands from stdin; every other caller passes "".
+func (h *TmuxHandler) runTmuxOnSocketInput(parent context.Context, socket, input string, args ...string) (string, error) {
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -367,6 +373,7 @@ func (h *TmuxHandler) runTmuxOnSocketContext(parent context.Context, socket stri
 
 	cmd := exec.CommandContext(ctx, core.TmuxBin(), args...)
 	cmd.Env = os.Environ()
+	cmd.Stdin = strings.NewReader(input)
 	capture := &tmuxCommandCapture{remaining: tmuxCommandOutputLimit}
 	cmd.Stdout = tmuxCommandCaptureWriter{capture: capture}
 	cmd.Stderr = tmuxCommandCaptureWriter{capture: capture, stderr: true}
@@ -632,6 +639,9 @@ func (h *TmuxHandler) createOwnedTmuxSessionWithWindow(parent context.Context, s
 		return ownedTmuxSession{}, h.cleanupOwnedTmuxSessionAfterError(socket, session, parseErr)
 	}
 	session.ID = createdID
+	if sizeErr := h.sizeCreatedSession(parent, socket, session.ID); sizeErr != nil {
+		return ownedTmuxSession{}, h.cleanupOwnedTmuxSessionAfterError(socket, session, sizeErr)
+	}
 	return session, nil
 }
 

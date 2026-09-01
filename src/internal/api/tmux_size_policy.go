@@ -28,11 +28,7 @@ const (
 	// reports anything else has told us about a real viewport.
 	unnegotiatedClientWidth  = 80
 	unnegotiatedClientHeight = 24
-	// Size given to a window whose only remaining clients ignore sizing, so an
-	// unobserved agent renders wide instead of staying clamped at 80 columns.
-	defaultUnobservedWidth  = 200
-	defaultUnobservedHeight = 50
-	sizeGuardOwnerOption    = "@chrote-size-guard"
+	sizeGuardOwnerOption     = "@chrote-size-guard"
 )
 
 type tmuxClient struct {
@@ -141,22 +137,6 @@ func windowsBySizeOwnership(clients []tmuxClient, decisions []sizeGuardDecision)
 	return sizing, ignored
 }
 
-func unobservedWindowSize() (int, int) {
-	width := defaultUnobservedWidth
-	height := defaultUnobservedHeight
-	if raw := strings.TrimSpace(os.Getenv("CHROTE_TERMINAL_UNOBSERVED_COLS")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= unnegotiatedClientWidth {
-			width = parsed
-		}
-	}
-	if raw := strings.TrimSpace(os.Getenv("CHROTE_TERMINAL_UNOBSERVED_ROWS")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= unnegotiatedClientHeight {
-			height = parsed
-		}
-	}
-	return width, height
-}
-
 func sizeGuardIdleAfter() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("CHROTE_TERMINAL_SIZE_GUARD_IDLE"))
 	if raw == "" {
@@ -251,7 +231,7 @@ func (h *TmuxHandler) applySizeGuard(ctx context.Context, socket string, now tim
 			"set-window-option", "-qu", "-t", windowID, sizeGuardOwnerOption)
 	}
 
-	width, height := unobservedWindowSize()
+	width, height := canonicalWindowSize()
 	for _, windowID := range ignoredWindows {
 		policy, err := h.runTmuxOnSocketContext(ctx, socket,
 			"show-options", "-wAv", "-t", windowID, "window-size")

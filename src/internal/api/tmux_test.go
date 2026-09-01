@@ -368,6 +368,7 @@ func TestTmuxHandler_SoleExplicitSocketUsesConfiguredWorkDir(t *testing.T) {
 	got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath))
 	want := []string{
 		"-S /tmp/tmux-2002/default new-session -d -P -F #{session_id} -e CHROTE_CREATION_TOKEN=<token> -s terminal-three-smoke -c /srv/terminal-three",
+		"-S /tmp/tmux-2002/default -C attach-session -t $42",
 		"-S /tmp/tmux-2002/default set-option -g mouse on",
 		"-S /tmp/tmux-2002/default unbind-key -q -n MouseDown3Pane",
 		"-S /tmp/tmux-2002/default unbind-key -q -n MouseDown3Status",
@@ -400,6 +401,7 @@ func TestTmuxHandler_CreateSessionUsesSelectedUnixUserTarget(t *testing.T) {
 	got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath))
 	want := []string{
 		"-S /tmp/tmux-2002/default new-session -d -P -F #{session_id} -e CHROTE_CREATION_TOKEN=<token> -s build-shell -c /home/secondary",
+		"-S /tmp/tmux-2002/default -C attach-session -t $42",
 		"-S /tmp/tmux-2002/default set-option -g mouse off",
 		"-S /tmp/tmux-2002/default unbind-key -q -n MouseDown3Pane",
 		"-S /tmp/tmux-2002/default unbind-key -q -n MouseDown3Status",
