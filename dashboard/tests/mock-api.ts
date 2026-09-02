@@ -201,7 +201,9 @@ const TTYD_OUTPUT = 0x30
  */
 export async function mockTerminalSocket(page: Page) {
   await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
-    const sessionName = new URL(ws.url()).searchParams.getAll('arg')[0] ?? 'session'
+    // The URL carries ttyd's `-a` fragments in order: viewing mode, session
+    // name, then the optional Unix user. Index 0 is the mode, not the name.
+    const sessionName = new URL(ws.url()).searchParams.getAll('arg')[1] ?? 'session'
     ws.onMessage(message => {
       const text = typeof message === 'string' ? message : message.toString('utf8')
       // Only the unprefixed JSON handshake spawns a pty; the rest is input,
