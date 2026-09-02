@@ -25,6 +25,15 @@ attached browser clients, because a terminal released from view keeps its
 connection and therefore keeps its tmux attach client. Under `window-size
 latest` every one of those clients remains a sizing authority:
 
+Retention is not the villain here, and this ADR does not remove it. What made
+those clients harmful was that each one could size the window. Decision 1
+removes that by attaching with `-d` and keeping one terminal per session, so a
+retained connection is at most one client and it is the only one. An off-screen
+tile therefore keeps its connection and its last rendered frame, which is the
+most valuable thing the terminal layer holds. The cost is one process and one
+tmux client per session the operator has viewed, and the operator accepted that
+on 2026-09-02 in preference to a redraw on every switch.
+
 | window | window size | attached clients |
 |---|---|---|
 | A | 122x59 | 56x47, 120x50, 122x60 |
@@ -99,7 +108,9 @@ Probed on scratch sockets, created and destroyed for the probe:
    carry an explicit operator action to release them.
 
 5. **A binding is the operator's stated intent, not a cache of live sessions.**
-   A tile has four states: `Idle` (bound, not on screen), `Live` (attached and
+   A tile has four states: `Idle` (bound, not on screen; it keeps its
+   connection and its last rendered frame once it has been shown), `Live`
+   (attached and
    sizing), `Taken over` (alive elsewhere; last frame plus `Reclaim`), and
    `Ended` (session gone; last frame plus `Restart` and `Remove`). Bindings,
    including ended ones, survive a reload. Nothing is ever removed from a window
