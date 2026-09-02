@@ -97,8 +97,8 @@ func TestCreateSessionSizesOnceWithoutPinningTheWindow(t *testing.T) {
 func TestCreateSessionHonoursConfiguredCanonicalSize(t *testing.T) {
 	_, stdinPath := installSizingRecorderTmux(t)
 	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
-	t.Setenv("CHROTE_TERMINAL_UNOBSERVED_COLS", "160")
-	t.Setenv("CHROTE_TERMINAL_UNOBSERVED_ROWS", "48")
+	t.Setenv("CHROTE_TERMINAL_CREATION_COLS", "160")
+	t.Setenv("CHROTE_TERMINAL_CREATION_ROWS", "48")
 
 	createSessionThroughHandler(t, "configured-size-smoke")
 
@@ -115,8 +115,8 @@ func TestCanonicalWindowSizeIgnoresUnusableConfiguration(t *testing.T) {
 	// Below the tmux default in either dimension, and any value that is not a
 	// number at all, leaves the canonical size alone.
 	for _, unusable := range []string{"", "wide", "0", "-1", "23"} {
-		t.Setenv("CHROTE_TERMINAL_UNOBSERVED_COLS", unusable)
-		t.Setenv("CHROTE_TERMINAL_UNOBSERVED_ROWS", unusable)
+		t.Setenv("CHROTE_TERMINAL_CREATION_COLS", unusable)
+		t.Setenv("CHROTE_TERMINAL_CREATION_ROWS", unusable)
 		cols, rows := canonicalWindowSize()
 		if cols != defaultCanonicalWindowCols || rows != defaultCanonicalWindowRows {
 			t.Fatalf("canonical size with %q = %dx%d, want %dx%d",

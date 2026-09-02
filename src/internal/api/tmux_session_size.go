@@ -28,8 +28,8 @@ const (
 
 // canonicalWindowSize is the one place the canonical size is decided.
 func canonicalWindowSize() (int, int) {
-	cols := canonicalWindowDimension("CHROTE_TERMINAL_UNOBSERVED_COLS", defaultCanonicalWindowCols, minimumCanonicalWindowCols)
-	rows := canonicalWindowDimension("CHROTE_TERMINAL_UNOBSERVED_ROWS", defaultCanonicalWindowRows, minimumCanonicalWindowRows)
+	cols := canonicalWindowDimension("CHROTE_TERMINAL_CREATION_COLS", defaultCanonicalWindowCols, minimumCanonicalWindowCols)
+	rows := canonicalWindowDimension("CHROTE_TERMINAL_CREATION_ROWS", defaultCanonicalWindowRows, minimumCanonicalWindowRows)
 	return cols, rows
 }
 
