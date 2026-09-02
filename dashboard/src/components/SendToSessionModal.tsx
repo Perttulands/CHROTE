@@ -227,7 +227,7 @@ function SendToSessionModal() {
         </header>
 
         <p className="send-session-disclaimer">
-          Sent text and files are retained for seven days by default and cleaned automatically in the background.
+          Sent text and files stay on the host until you delete them. Nothing expires them and nothing cleans them up.
         </p>
 
         {target.ended && (

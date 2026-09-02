@@ -161,7 +161,11 @@ describe('SendToSessionModal', () => {
     render(<SendToSessionModal />)
 
     expect(screen.getByRole('heading', { name: /Send to Session: alice-shell/i })).toBeInTheDocument()
-    expect(screen.getByText(/retained for seven days by default and cleaned automatically in the background/i)).toBeInTheDocument()
+    // Retention is the operator's: no expiry, cron or janitor exists, and the
+    // modal must not promise one.
+    expect(screen.getByText(/stay on the host until you delete them\. Nothing expires them and nothing cleans them up\./i)).toBeInTheDocument()
+    expect(screen.queryByText(/seven days/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/cleaned automatically/i)).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).toBeChecked())
 
     fireEvent.change(screen.getByLabelText(/Message to send/i), {
