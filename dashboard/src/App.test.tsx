@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   windowRevealRequest: null as { workspaceId: string; windowId: string; requestId: number } | null,
   workspaceIds: null as readonly string[] | null,
   settings: null as typeof DEFAULT_SETTINGS | null,
+  sessions: [{ name: 'alpha', windows: 1, attached: false, unixUser: 'alice', currentCommand: 'claude' }],
 }))
 
 vi.mock('@dnd-kit/core', () => ({
@@ -39,6 +40,7 @@ vi.mock('./context/SessionContext', () => ({
       terminal3: { windows: [] },
     },
     workspaceIds: mocks.workspaceIds ?? TERMINAL_WORKSPACE_IDS,
+    sessions: mocks.sessions,
     terminalUsers: ['alice', 'build'],
     focusedWindowKey: null,
     openSendToSession: mocks.openSendToSession,
@@ -176,6 +178,9 @@ describe('App drag lifecycle', () => {
     expect(overlays[0].querySelector('.drag-overlay-grip')).toBeNull()
     expect(overlays[0].querySelector('.session-user-badge')).toHaveTextContent('A')
     expect(overlays[0].querySelector('.session-user-badge')).toHaveAttribute('title', 'Unix user: alice')
+    // The ghost is made of the same pieces as the tag it left: badge, mark, name.
+    expect(overlays[0].querySelector('[data-harness="claude-code"]')).not.toBeNull()
+    expect(overlays[0].querySelector('.session-label')).toHaveTextContent('alpha')
   })
 
   it('moves tags only when dropped on a different explicit window target', () => {

@@ -233,93 +233,52 @@
   border: 1px solid var(--divider);
 }
 
-/* Window Badge */
-.window-badge {
+/* Where a session is assigned, as an outline chip: T1 W2. */
+.window-badge.window-location-chip {
   display: inline-flex;
   justify-content: center;
   align-items: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  font-size: 10px;
-  font-weight: bold;
-  border: 1px solid transparent;
-  margin-right: 4px;
-}
-
-.window-badge.window-location-chip {
-  width: auto;
-  min-width: 48px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 2px;
+  flex: 0 0 auto;
+  padding: 3px 4px;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
   background: transparent;
-  color: inherit;
+  color: var(--text-secondary);
   font-family: inherit;
   font-size: 10px;
-  letter-spacing: 0;
+  line-height: 1;
+  letter-spacing: 0.04em;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .window-location-chip:hover,
 .window-location-chip:focus-visible {
-  border-color: var(--accent);
+  border-color: var(--text-secondary);
   color: var(--text-primary);
   outline: none;
-}
-
-.unix-user-badge {
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 3px;
-  border: 1px solid transparent;
-  color: #0f0f0f;
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1;
-  text-transform: uppercase;
-  flex: 0 0 auto;
 }
 
 /* Session Item */
 .session-item {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  height: 28px;
+  padding: 0 8px;
   cursor: grab;
   touch-action: pan-y;
   transition: background-color 0.2s ease;
-  gap: 8px;
-  font-size: 15px;
+  gap: 6px;
+  font-size: 13px;
 }
 
 .session-item:hover {
   background-color: var(--accent-light);
 }
 
+/* The label itself is .session-label in base.css: head clipped, tail kept. */
 .session-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-foreground-command {
-  flex: 0 1 auto;
-  max-width: 80px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-dim);
-  border: 1px solid var(--divider);
-  border-radius: 3px;
-  padding: 1px 4px;
-  font-size: 10px;
+  cursor: inherit;
 }
 
 /* A badge says the session is not what it looks like. Marker only, with the
@@ -462,7 +421,8 @@
 
 /* Session rename input */
 .session-item.renaming {
-  padding: 4px 12px;
+  height: auto;
+  padding: 4px 8px;
 }
 
 .session-rename-input {
@@ -484,11 +444,8 @@
   box-shadow: none;
 }
 
-.session-agent-name {
-  flex: 1;
-}
-
 .session-item-menu-btn {
+  margin-left: auto;
   flex: 0 0 auto;
   width: 24px;
   height: 24px;

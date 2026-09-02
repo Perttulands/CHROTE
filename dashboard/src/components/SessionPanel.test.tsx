@@ -89,13 +89,14 @@ describe('SessionPanel new-session context menu', () => {
     expect(Array.from(container.querySelectorAll('.session-count'), node => node.textContent)).toEqual(['2', '1'])
 
     fireEvent.change(screen.getByPlaceholderText('Filter sessions...'), { target: { value: 'api' } })
-    expect(screen.getByText('PROJECT-API')).toBeInTheDocument()
-    expect(screen.queryByText('project-worker')).not.toBeInTheDocument()
+    // A row's name is drawn as head and tail spans, so it is found by title.
+    expect(screen.getByTitle('PROJECT-API')).toBeInTheDocument()
+    expect(screen.queryByTitle('project-worker')).not.toBeInTheDocument()
     expect(screen.queryByText('Other')).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByPlaceholderText('Filter sessions...'), { target: { value: '' } })
-    expect(screen.getByText('project-worker')).toBeInTheDocument()
-    expect(screen.getByText('worker-beta')).toBeInTheDocument()
+    expect(screen.getByTitle('project-worker')).toBeInTheDocument()
+    expect(screen.getByTitle('worker-beta')).toBeInTheDocument()
   })
 
   it('creates a new session as the selected configured Unix user from the New Session context menu', async () => {

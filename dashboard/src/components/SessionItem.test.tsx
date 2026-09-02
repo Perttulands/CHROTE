@@ -52,6 +52,10 @@ vi.mock('../context/SessionContext', () => ({
   }),
 }))
 
+// A row draws its name as head and tail spans, so the label is found by the
+// full name it carries in its title rather than as one text node.
+const rowLabel = (name: string) => screen.getByTitle(name)
+
 describe('SessionItem user badge and context actions', () => {
   afterEach(() => {
     mockState.assignedSessions.clear()
@@ -88,22 +92,38 @@ describe('SessionItem user badge and context actions', () => {
     expect(badge).toHaveStyle({ backgroundColor: DEFAULT_THEME.identity[0] })
   })
 
-  it('shows shell-only foreground state separately from tmux attachment', () => {
-    render(
-      <SessionItem
-        session={{
-          name: 'alice-shell',
-          windows: 1,
-          attached: true,
-          group: 'main',
-          unixUser: 'alice',
-          currentCommand: 'bash',
-        }}
-      />
+  // What runs in a row is a mark: the agent's own, nothing at all for a shell,
+  // and the bare command for anything else.
+  it('marks the harness running in the session and says nothing for a shell', () => {
+    const shell = { name: 'alice-shell', windows: 1, attached: true, group: 'main', unixUser: 'alice', currentCommand: 'bash' }
+    const { container, rerender } = render(<SessionItem session={shell} />)
+
+    expect(container.querySelector('.harness-mark, .harness-command')).toBeNull()
+    expect(container.textContent).not.toContain('bash')
+    expect(screen.queryByRole('button', { name: /Focus assigned window/ })).not.toBeInTheDocument()
+
+    rerender(<SessionItem session={{ ...shell, currentCommand: 'claude' }} />)
+    expect(container.querySelector('[data-harness="claude-code"]')).not.toBeNull()
+    expect(screen.getByTitle('tmux reports claude')).toBeInTheDocument()
+
+    rerender(<SessionItem session={{ ...shell, currentCommand: 'codex' }} />)
+    expect(container.querySelector('[data-harness="codex"]')).not.toBeNull()
+
+    rerender(<SessionItem session={{ ...shell, currentCommand: 'sleep' }} />)
+    expect(container.querySelector('.harness-command')).toHaveTextContent('sleep')
+    expect(container.querySelector('[data-harness]')).toBeNull()
+  })
+
+  // Prefixes are shared; the tail is what tells two sessions apart.
+  it('keeps the tail of a hyphenated name and clips only its head', () => {
+    const { container } = render(
+      <SessionItem session={{ name: 'claude-chrote-fable', windows: 1, attached: false, group: 'main', unixUser: 'alice' }} />
     )
 
-    expect(screen.getByTitle('Foreground process reported by tmux: bash')).toHaveTextContent('shell')
-    expect(screen.queryByRole('button', { name: /Focus assigned window/ })).not.toBeInTheDocument()
+    const label = container.querySelector('.session-label') as HTMLElement
+    expect(label).toHaveAttribute('title', 'claude-chrote-fable')
+    expect(label.querySelector('.session-label-head')).toHaveTextContent('claude-chrote-')
+    expect(label.querySelector('.session-label-tail')).toHaveTextContent('fable')
   })
 
   it('marks a session whose facts contradict its appearance, with the fact on hover', () => {
@@ -169,21 +189,21 @@ describe('SessionItem user badge and context actions', () => {
       />
     )
 
-    fireEvent.contextMenu(screen.getByText('alice-shell'))
+    fireEvent.contextMenu(rowLabel('alice-shell'))
     fireEvent.click(screen.getByRole('button', { name: /Rename/ }))
     const cancelled = screen.getByRole('textbox')
     fireEvent.change(cancelled, { target: { value: 'discarded' } })
     fireEvent.keyDown(cancelled, { key: 'Escape' })
     expect(mockState.renameSession).not.toHaveBeenCalled()
-    expect(screen.getByText('alice-shell')).toBeInTheDocument()
+    expect(rowLabel('alice-shell')).toBeInTheDocument()
 
-    fireEvent.contextMenu(screen.getByText('alice-shell'))
+    fireEvent.contextMenu(rowLabel('alice-shell'))
     fireEvent.click(screen.getByRole('button', { name: /Rename/ }))
     const empty = screen.getByRole('textbox')
     fireEvent.change(empty, { target: { value: '' } })
     fireEvent.keyDown(empty, { key: 'Enter' })
     expect(mockState.renameSession).not.toHaveBeenCalled()
-    expect(screen.getByText('alice-shell')).toBeInTheDocument()
+    expect(rowLabel('alice-shell')).toBeInTheDocument()
   })
 
   it('places the Unix user badge before the attached terminal/window badge', () => {
@@ -254,7 +274,7 @@ describe('SessionItem user badge and context actions', () => {
       />
     )
 
-    const row = screen.getByText('alice-shell')
+    const row = rowLabel('alice-shell')
     fireEvent.click(row, { ctrlKey: true })
     expect(mockState.openSendToSession).not.toHaveBeenCalled()
     expect(mockState.handleSessionClick).toHaveBeenCalledWith('alice:alice-shell')
@@ -285,7 +305,7 @@ describe('SessionItem user badge and context actions', () => {
       />
     )
 
-    fireEvent.contextMenu(screen.getByText('alice-shell'))
+    fireEvent.contextMenu(rowLabel('alice-shell'))
     fireEvent.click(screen.getByRole('button', { name: /Unassign/i }))
 
     expect(mockState.removeSessionFromWindow).toHaveBeenCalledWith(
@@ -313,7 +333,7 @@ describe('SessionItem user badge and context actions', () => {
     expect(screen.queryByLabelText('Persistent agent')).toBeNull()
     expect(screen.queryByLabelText(/^Supervision:/)).toBeNull()
 
-    fireEvent.contextMenu(screen.getByText('codex-alpha'))
+    fireEvent.contextMenu(rowLabel('codex-alpha'))
     expect(screen.queryByRole('button', { name: /Make persistent|Make mortal|supervision/i })).toBeNull()
     expect(screen.getByRole('button', { name: /Rename/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Peek/ })).toBeInTheDocument()
@@ -343,13 +363,13 @@ describe('SessionItem user badge and context actions', () => {
     expect(row).toHaveAttribute('title', 'Drag alice-shell (Unix user alice)')
     expect(container.querySelector('.session-drag-handle')).toBeNull()
 
-    fireEvent.pointerDown(screen.getByText('alice-shell'), { pointerType: 'mouse' })
+    fireEvent.pointerDown(rowLabel('alice-shell'), { pointerType: 'mouse' })
     expect(mockState.dragListeners.onPointerDown).toHaveBeenCalledTimes(1)
 
     fireEvent.pointerDown(menuButton, { pointerType: 'mouse' })
     expect(mockState.dragListeners.onPointerDown).toHaveBeenCalledTimes(1)
 
-    fireEvent.click(screen.getByText('alice-shell'))
+    fireEvent.click(rowLabel('alice-shell'))
     expect(mockState.handleSessionClick).toHaveBeenCalledWith('alice:alice-shell')
   })
 
