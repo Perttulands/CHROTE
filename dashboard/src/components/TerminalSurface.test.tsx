@@ -25,6 +25,7 @@ function stubSession() {
     reconnect: vi.fn(),
     claim: vi.fn(),
     redialIfDropped: vi.fn(),
+    applyAppearance: vi.fn(),
     dispose: vi.fn(),
   }
   return { session, element, calls }

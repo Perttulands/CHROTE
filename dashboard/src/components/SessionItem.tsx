@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import type { TmuxSession } from '../types'
 import { useSession } from '../context/SessionContext'
-import { WINDOW_COLORS, getForegroundCommandLabel, getSessionBadges, getSessionKey, getTerminalLabel, getTerminalUserColor, getTerminalUserInitial } from '../types'
+import { getForegroundCommandLabel, getSessionBadges, getSessionKey, getTerminalLabel, getTerminalUserInitial } from '../types'
+import { identityColorFor } from '../theme/theme'
+import { useTheme } from '../theme/ThemeContext'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import DismissiblePanel from './DismissiblePanel'
 
@@ -17,7 +19,8 @@ interface ContextMenuState {
 }
 
 function SessionItem({ session }: SessionItemProps) {
-  const { assignedSessions, handleSessionClick, focusSessionAssignment, deleteSession, renameSession, workspaces, workspaceIds, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, settings } = useSession()
+  const { assignedSessions, handleSessionClick, focusSessionAssignment, deleteSession, renameSession, workspaces, workspaceIds, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, terminalUsers } = useSession()
+  const theme = useTheme()
   const sessionKey = getSessionKey(session.name, session.unixUser)
   const assignmentKey = assignedSessions.has(sessionKey) ? sessionKey : session.name
   const assignment = assignedSessions.get(assignmentKey)
@@ -36,7 +39,7 @@ function SessionItem({ session }: SessionItemProps) {
   const locationLabel = assignment
     ? `${assignment.workspaceId.replace('terminal', 'T')} W${assignment.windowIndex}`
     : ''
-  const userBadgeColor = session.unixUser ? getTerminalUserColor(settings, session.unixUser) : undefined
+  const userBadgeColor = session.unixUser ? identityColorFor(session.unixUser, terminalUsers, theme) : undefined
   const userBadgeStyle = userBadgeColor
     ? {
         backgroundColor: userBadgeColor,
@@ -339,7 +342,6 @@ function SessionItem({ session }: SessionItemProps) {
                 {workspaceIds.flatMap((wsId) => {
                   const ws = workspaces[wsId]
                   return ws.windows.slice(0, ws.windowCount).map((w, idx) => {
-                    const color = WINDOW_COLORS[w.colorIndex % WINDOW_COLORS.length]
                     const isCurrentWindow = assignment?.windowId === w.id
                     const labelPrefix = wsId === 'terminal1' ? '' : `${getTerminalLabel(wsId)} - `
                     return (
@@ -347,7 +349,6 @@ function SessionItem({ session }: SessionItemProps) {
                         key={w.id}
                         className={`session-context-item ${isCurrentWindow ? 'active' : ''}`}
                         onClick={() => handleAssignToWindow(w.id)}
-                        style={{ borderLeft: `3px solid ${color.border}` }}
                       >
                         {labelPrefix}Window {idx + 1}
                         {isCurrentWindow && <span className="session-context-check">✓</span>}

@@ -24,7 +24,6 @@
   margin: 0 0 8px 0;
   text-transform: uppercase;
   letter-spacing: 4px;
-  text-shadow: var(--accent-glow);
 }
 
 .help-subtitle {
@@ -72,7 +71,6 @@
   color: var(--text-primary);
   border-color: var(--accent);
   background: var(--accent-light);
-  box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.2);
 }
 
 .help-nav-icon {

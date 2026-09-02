@@ -12,6 +12,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { connectTtyd, type TtydConnection } from './ttydProtocol'
 import { copyTextToClipboard } from '../utils/clipboard'
+import type { TerminalTheme } from '../theme/theme'
 import '@xterm/xterm/css/xterm.css'
 import './terminal.css'
 
@@ -56,6 +57,12 @@ export interface TerminalSession {
    * alongside whoever else is watching, without the sizing seat.
    */
   redialIfDropped(): void
+  /**
+   * Repaint in the host's theme. The palette arrives after the terminal does —
+   * GET /api/theme is a fetch, terminals are created from bindings already in
+   * local storage — so every live terminal takes it when it lands.
+   */
+  applyAppearance(terminalTheme: TerminalTheme, fontFamily: string): void
   dispose(): void
 }
 
@@ -63,10 +70,28 @@ export interface TerminalSessionOptions {
   url: string
   fontSize: number
   hideScrollbar: boolean
+  /** The theme's terminal object: background, foreground, cursor, selection, 16 ansi. */
+  terminalTheme: TerminalTheme
+  fontFamily: string
   onStateChange?: (state: TerminalConnectionState) => void
 }
 
-const TERMINAL_BACKGROUND = '#0a0a0a'
+// xterm names the 16 ansi entries; the theme carries them as an ordered array,
+// because that is the order every palette in the world is written in.
+function xtermTheme(theme: TerminalTheme) {
+  const [
+    black, red, green, yellow, blue, magenta, cyan, white,
+    brightBlack, brightRed, brightGreen, brightYellow, brightBlue, brightMagenta, brightCyan, brightWhite,
+  ] = theme.ansi
+  return {
+    background: theme.background,
+    foreground: theme.foreground,
+    cursor: theme.cursor,
+    selectionBackground: theme.selectionBackground,
+    black, red, green, yellow, blue, magenta, cyan, white,
+    brightBlack, brightRed, brightGreen, brightYellow, brightBlue, brightMagenta, brightCyan, brightWhite,
+  }
+}
 
 // A grid is only meaningful once the container has real layout. Detached and
 // display:none terminals report zero, and fitting them would push a bogus size
@@ -79,8 +104,8 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
 
   const terminal = new Terminal({
     fontSize: options.fontSize,
-    fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
-    theme: { background: TERMINAL_BACKGROUND },
+    fontFamily: options.fontFamily,
+    theme: xtermTheme(options.terminalTheme),
     // xterm files its Unicode version handling as proposed API, so the width
     // table below cannot be swapped without this. ttyd's client set it too.
     allowProposedApi: true,
@@ -230,6 +255,12 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
       // looking at has nothing to show for the connection it would open.
       if (disposed || connection || !dropped || !isMeasurable()) return
       connect()
+    },
+    applyAppearance(terminalTheme, fontFamily) {
+      if (disposed) return
+      terminal.options.theme = xtermTheme(terminalTheme)
+      terminal.options.fontFamily = fontFamily
+      fit()
     },
     dispose() {
       disposed = true

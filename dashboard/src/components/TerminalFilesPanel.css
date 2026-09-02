@@ -108,7 +108,7 @@
   background: var(--background);
   color: var(--text-primary);
   padding: 0 7px;
-  font: 12px/1.2 'Courier Prime', 'Courier New', monospace;
+  font: 12px/1.2 'JetBrains Mono', 'CHROTE Term Symbols', monospace;
   outline: none;
 }
 
@@ -145,7 +145,7 @@
   overflow: hidden;
   border: 1px solid var(--accent);
   background: var(--surface-primary);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.58), 0 0 24px var(--accent-light);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.58);
 }
 
 .file-peek-header {
@@ -307,7 +307,7 @@
   padding: 16px;
   color: var(--text-primary);
   background: var(--background);
-  font-family: 'Courier Prime', 'Courier New', monospace;
+  font-family: inherit;
   line-height: 1.55;
 }
 

@@ -2,45 +2,11 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSession } from '../context/SessionContext'
 import { useToast } from '../context/ToastContext'
-import type { UserSettings, TmuxAppearance, WorkspaceId, LaunchUser } from '../types'
-import { MAX_TERMINAL_TAB_COUNT, MIN_TERMINAL_TAB_COUNT, TMUX_PRESETS, defaultSessionPrefixForUser, defaultTerminalUserColor, getSessionPrefixForUser, getTerminalLabel, getTerminalUserColor, normalizeTerminalUsers, resolveLaunchUser } from '../types'
+import type { WorkspaceId, LaunchUser } from '../types'
+import { MAX_TERMINAL_TAB_COUNT, MIN_TERMINAL_TAB_COUNT, defaultSessionPrefixForUser, getSessionPrefixForUser, getTerminalLabel, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import FolderPickerModal from './FolderPickerModal'
 import NukeConfirmModal from './NukeConfirmModal'
 import { toDisplayPath } from './FilesView/types'
-
-// Color input component with picker and text field
-interface ColorInputProps {
-  label: string
-  value: string
-  onChange: (value: string) => void
-}
-
-function ColorInput({ label, value, onChange }: ColorInputProps) {
-  const pickerValue = /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000'
-
-  return (
-    <div className="color-input-group">
-      <span className="color-input-label">{label}</span>
-      <div className="color-input-controls">
-        <input
-          type="color"
-          value={pickerValue}
-          onChange={(e) => onChange(e.target.value)}
-          className="color-picker"
-          aria-label={`${label} picker`}
-        />
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="color-text-input"
-          placeholder="#000000"
-          aria-label={`${label} value`}
-        />
-      </div>
-    </div>
-  )
-}
 
 function normalizeProjectPath(path: string): string {
   const trimmed = path.trim()
@@ -60,7 +26,6 @@ function SettingsView() {
     : [
         ...Object.values(settings.terminalLaunchUsers),
         ...Object.keys(settings.terminalSessionPrefixes),
-        ...Object.keys(settings.terminalUserColors),
       ])
 
   const handleAddProjectPath = (path: string) => {
@@ -87,10 +52,6 @@ function SettingsView() {
   const handleRemoveProjectPath = (pathToRemove: string) => {
     const currentPaths = settings.beadsProjectPaths || []
     updateSettings({ beadsProjectPaths: currentPaths.filter(p => p !== pathToRemove) })
-  }
-
-  const handleThemeChange = (theme: UserSettings['theme']) => {
-    updateSettings({ theme })
   }
 
   const handleFontSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -130,31 +91,6 @@ function SettingsView() {
     })
   }
 
-  const handleUserColorChange = (launchUser: LaunchUser, color: string) => {
-    updateSettings({
-      terminalUserColors: {
-        ...settings.terminalUserColors,
-        [launchUser]: color,
-      },
-    })
-  }
-
-  const handleTmuxColorChange = (key: keyof TmuxAppearance, value: string) => {
-    updateSettings({
-      tmuxAppearance: {
-        ...settings.tmuxAppearance,
-        [key]: value,
-      }
-    })
-  }
-
-  const applyTmuxPreset = (presetName: string) => {
-    const preset = TMUX_PRESETS[presetName]
-    if (preset) {
-      updateSettings({ tmuxAppearance: preset })
-    }
-  }
-
   const nukeAllSessions = async () => {
     setNuking(true)
     try {
@@ -183,21 +119,6 @@ function SettingsView() {
       {/* Appearance Section */}
       <section className="settings-section">
         <h2 className="settings-section-title">Appearance</h2>
-
-        <div className="settings-field">
-          <label className="settings-label">Theme</label>
-          <div className="settings-theme-options">
-            {(['matrix', 'dark', 'gastown'] as const).map((theme) => (
-              <button
-                key={theme}
-                className={`theme-option ${settings.theme === theme ? 'selected' : ''} theme-${theme}`}
-                onClick={() => handleThemeChange(theme)}
-              >
-                {theme.charAt(0).toUpperCase() + theme.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
 
         <div className="settings-field">
           <label className="settings-label">
@@ -256,85 +177,6 @@ function SettingsView() {
         </div>
       </section>
 
-      {/* tmux Appearance Section */}
-      <section className="settings-section">
-        <h2 className="settings-section-title">tmux Appearance</h2>
-        <p className="settings-description">
-          Customize tmux colors. Changes apply instantly to all running sessions.
-        </p>
-
-        {/* Preset Buttons */}
-        <div className="settings-field">
-          <label className="settings-label">Presets</label>
-          <div className="settings-theme-options">
-            {(['matrix', 'dark', 'gastown'] as const).map((preset) => (
-              <button
-                key={preset}
-                className={`theme-option theme-${preset}`}
-                onClick={() => applyTmuxPreset(preset)}
-              >
-                {preset.charAt(0).toUpperCase() + preset.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Status Bar Colors */}
-        <div className="settings-field">
-          <label className="settings-label">Status Bar</label>
-          <div className="settings-color-row">
-            <ColorInput
-              label="Background"
-              value={settings.tmuxAppearance?.statusBg ?? '#000000'}
-              onChange={(v) => handleTmuxColorChange('statusBg', v)}
-            />
-            <ColorInput
-              label="Foreground"
-              value={settings.tmuxAppearance?.statusFg ?? '#00ff41'}
-              onChange={(v) => handleTmuxColorChange('statusFg', v)}
-            />
-          </div>
-        </div>
-
-        {/* Pane Border Colors */}
-        <div className="settings-field">
-          <label className="settings-label">Pane Borders</label>
-          <div className="settings-color-row">
-            <ColorInput
-              label="Active"
-              value={settings.tmuxAppearance?.paneBorderActive ?? '#00ff41'}
-              onChange={(v) => handleTmuxColorChange('paneBorderActive', v)}
-            />
-            <ColorInput
-              label="Inactive"
-              value={settings.tmuxAppearance?.paneBorderInactive ?? '#333333'}
-              onChange={(v) => handleTmuxColorChange('paneBorderInactive', v)}
-            />
-          </div>
-        </div>
-
-        {/* Selection / Copy Mode Colors */}
-        <div className="settings-field">
-          <label className="settings-label">Selection / Copy Mode</label>
-          <div className="settings-color-row">
-            <ColorInput
-              label="Background"
-              value={settings.tmuxAppearance?.modeStyleBg ?? '#00ff41'}
-              onChange={(v) => handleTmuxColorChange('modeStyleBg', v)}
-            />
-            <ColorInput
-              label="Foreground"
-              value={settings.tmuxAppearance?.modeStyleFg ?? '#000000'}
-              onChange={(v) => handleTmuxColorChange('modeStyleFg', v)}
-            />
-          </div>
-        </div>
-
-        <p className="settings-hint">
-          Use hex colors (#00ff41) or named colors (green, black, etc.)
-        </p>
-      </section>
-
       {/* Session Defaults Section */}
       <section className="settings-section">
         <h2 className="settings-section-title">Session Defaults</h2>
@@ -383,25 +225,6 @@ function SettingsView() {
             </div>
           )}
           <p className="settings-hint">Prefix used when creating new sessions for each Unix user (e.g., "user-abc123")</p>
-        </div>
-
-        <div className="settings-field">
-          <label className="settings-label">Session User Indicators</label>
-          {configuredUsers.length === 0 ? (
-            <p className="settings-hint">No terminal users configured by the server yet.</p>
-          ) : (
-            <div className="settings-color-row">
-              {configuredUsers.map(launchUser => (
-                <ColorInput
-                  key={launchUser}
-                  label={`${launchUser} badge color`}
-                  value={getTerminalUserColor(settings, launchUser) || defaultTerminalUserColor(launchUser)}
-                  onChange={(value) => handleUserColorChange(launchUser, value)}
-                />
-              ))}
-            </div>
-          )}
-          <p className="settings-hint">Small badges in the Sessions panel use the configured Unix username initial and color.</p>
         </div>
 
         <div className="settings-field">

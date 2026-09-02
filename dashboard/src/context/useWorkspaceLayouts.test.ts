@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import { featureFlagKey } from '../featureFlags'
-import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE } from '../types'
+import { DEFAULT_SETTINGS } from '../types'
 import {
   renderSession,
   setViewportWidth,
@@ -74,9 +74,6 @@ describe('dashboard persisted storage contract', () => {
       sidebarCollapsed: true,
       settings: {
         fontSize: 18,
-        tmuxAppearance: {
-          statusFg: '#ffffff',
-        },
       },
     }))
 
@@ -115,10 +112,6 @@ describe('dashboard persisted storage contract', () => {
     expect(result.current.settings).toEqual({
       ...DEFAULT_SETTINGS,
       fontSize: 18,
-      tmuxAppearance: {
-        ...DEFAULT_TMUX_APPEARANCE,
-        statusFg: '#ffffff',
-      },
     })
   })
 
@@ -142,9 +135,6 @@ describe('dashboard persisted storage contract', () => {
       settingsSchemaVersion: 2,
       settings: {
         fontSize: 17,
-        tmuxAppearance: {
-          paneBorderActive: '#abcdef',
-        },
       },
     }))
 
@@ -153,10 +143,6 @@ describe('dashboard persisted storage contract', () => {
     expect(result.current.settings).toEqual({
       ...DEFAULT_SETTINGS,
       fontSize: 17,
-      tmuxAppearance: {
-        ...DEFAULT_TMUX_APPEARANCE,
-        paneBorderActive: '#abcdef',
-      },
     })
   })
 
@@ -180,7 +166,6 @@ describe('dashboard persisted storage contract', () => {
 
     await waitFor(() => expect(result.current.settings.mouseScroll).toBe(false))
     expect(hasMouseCall(false)).toBe(false)
-    expect(fetchMock.mock.calls.some((call: unknown[]) => String(call[0]) === '/api/tmux/appearance')).toBe(false)
 
     fetchMock.mockClear()
     act(() => {
@@ -383,7 +368,7 @@ describe('migrateStoredState (via loadStoredState)', () => {
     expect(result.current.workspaces.terminal1.windowCount).toBe(2)
     expect(result.current.workspaces.terminal2.windowCount).toBe(2)
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
-    expect(result.current.settings.theme).toBe(DEFAULT_SETTINGS.theme)
+    expect(result.current.settings).toEqual(DEFAULT_SETTINGS)
   })
 
   it('keeps window layouts separate between desktop and mobile viewports', () => {
@@ -1291,50 +1276,45 @@ describe('terminal tab count', () => {
     expect(second.result.current.workspaces.terminal3).toEqual(before)
   })
 
-  it('keeps the version-sensitive theme reset for old stored settings and defaults their count', () => {
+  // The host owns the theme now, and the tmux palette, the per-user badge
+  // colours and the music went with it. A browser that still holds those keys
+  // is the normal case after this ships, so loading has to read past them.
+  it('loads settings saved before the theme moved to the host, ignoring the retired keys', () => {
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
       version: 3,
       settingsSchemaVersion: 1,
       layoutsByViewport: {},
       sidebarCollapsed: false,
-      settings: { ...DEFAULT_SETTINGS, theme: 'matrix', terminalTabCount: undefined },
+      settings: {
+        ...DEFAULT_SETTINGS,
+        theme: 'matrix',
+        tmuxAppearance: { statusFg: '#00ff41' },
+        terminalUserColors: { alice: '#123456' },
+        musicVolume: 0.8,
+        musicEnabled: true,
+        fontSize: 18,
+        terminalTabCount: undefined,
+      },
     }))
 
     const { result } = renderSession()
-    expect(result.current.settings.theme).toBe('dark')
-    expect(result.current.settings.tmuxAppearance).toEqual(DEFAULT_TMUX_APPEARANCE)
+    expect(result.current.settings).toEqual({ ...DEFAULT_SETTINGS, fontSize: 18 })
     expect(result.current.settings.terminalTabCount).toBe(3)
-  })
-
-  it('preserves an explicitly saved Matrix theme at the current settings schema', () => {
-    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
-      version: 3,
-      settingsSchemaVersion: 2,
-      layoutsByViewport: {},
-      sidebarCollapsed: false,
-      settings: { ...DEFAULT_SETTINGS, theme: 'matrix' },
-    }))
-
-    const { result } = renderSession()
-    expect(result.current.settings.theme).toBe('matrix')
   })
 
   it('persists appearance and polling values through the shared settings update', () => {
     const { result } = renderSession()
 
     act(() => result.current.updateSettings({
-      theme: 'gastown',
       fontSize: 18,
       autoRefreshInterval: 10000,
     }))
 
     expect(result.current.settings).toMatchObject({
-      theme: 'gastown',
       fontSize: 18,
       autoRefreshInterval: 10000,
     })
     expect(JSON.parse(localStorage.getItem('chrote-dashboard-state') || '{}').settings).toMatchObject({
-      theme: 'gastown',
       fontSize: 18,
       autoRefreshInterval: 10000,
     })

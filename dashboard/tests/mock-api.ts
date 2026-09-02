@@ -1,8 +1,9 @@
 import { Page, Route } from '@playwright/test'
 import type { SessionsResponse } from '../src/types'
+import { DEFAULT_THEME } from '../src/theme/theme'
 
 const fileResourcesPattern = /.*\/api\/files\/resources(?:\/.*)?$/
-const tmuxAppearancePattern = /.*\/api\/tmux\/appearance\/?$/
+const themePattern = /.*\/api\/theme\/?$/
 const tmuxMousePattern = /.*\/api\/tmux\/mouse\/?$/
 const tmuxSessionsPattern = /.*\/api\/tmux\/sessions\/?$/
 
@@ -217,16 +218,21 @@ export async function mockTerminalSocket(page: Page) {
   })
 }
 
-export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: SessionsResponse }) {
-  await mockTerminalSocket(page)
-
-  await page.route(tmuxAppearancePattern, async route => {
+export async function mockThemeApiRoute(page: Page) {
+  // The dashboard reads its palette from the host once at startup. Serving the
+  // embedded default keeps a journey's colours the ones the source declares.
+  await page.route(themePattern, async route => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ success: true }),
+      body: JSON.stringify(DEFAULT_THEME),
     })
   })
+}
+
+export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: SessionsResponse }) {
+  await mockTerminalSocket(page)
+  await mockThemeApiRoute(page)
 
   await page.route(tmuxMousePattern, async route => {
     const body = route.request().postDataJSON() as { enabled?: boolean } | null

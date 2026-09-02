@@ -1,6 +1,37 @@
 /* Chrote Dashboard - Base Styles */
 /* Global resets, typography, and utility styles */
 
+/*
+ * Both faces are served from this origin: no request for a font leaves the
+ * host. JetBrains Mono carries text. CHROTE Term Symbols is a subset of Iosevka
+ * Term, renamed because Iosevka is a reserved font name under the OFL, and it
+ * sits behind JetBrains Mono to cover the box drawing, braille and powerline
+ * glyphs agent TUIs paint with. Licences are beside the files in public/fonts.
+ */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CHROTE Term Symbols';
+  src: url('/fonts/chrote-term-symbols.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -14,28 +45,9 @@ html, body, #root {
 }
 
 body {
-  font-family: 'Courier Prime', 'Courier New', monospace;
+  font-family: 'JetBrains Mono', 'CHROTE Term Symbols', monospace;
   background-color: var(--background);
   color: var(--text-primary);
-}
-
-/* Subtle scanline effect */
-body::before {
-  content: "";
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(0, 0, 0, 0.03),
-    rgba(0, 0, 0, 0.03) 1px,
-    transparent 1px,
-    transparent 3px
-  );
-  z-index: 9999;
 }
 
 /* Scrollbar */
@@ -169,18 +181,13 @@ textarea:focus-visible,
 
 button,
 [role="button"] {
-  transition: transform 0.1s ease, box-shadow 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
-}
-
-button:active:not(:disabled),
-[role="button"]:active {
-  transform: scale(0.97);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 input,
 select,
 textarea {
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 
 /* Smooth scrollbar */

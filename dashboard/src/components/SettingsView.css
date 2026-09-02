@@ -116,49 +116,6 @@
   margin-top: 6px;
 }
 
-/* Theme Options */
-.settings-theme-options {
-  display: flex;
-  gap: 12px;
-}
-
-.theme-option {
-  flex: 1;
-  padding: 12px 16px;
-  background-color: var(--surface-primary);
-  border: 1px solid var(--divider);
-  border-radius: 6px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.theme-option:hover {
-  border-color: var(--text-dim);
-}
-
-.theme-option.selected {
-  border-color: var(--accent);
-  background-color: var(--accent-light);
-  color: var(--text-primary);
-}
-
-.theme-option.theme-matrix.selected {
-  border-color: #00ff41;
-  box-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
-}
-
-.theme-option.theme-dark.selected {
-  border-color: #6b9fff;
-  box-shadow: 0 0 10px rgba(107, 159, 255, 0.3);
-}
-
-.theme-option.theme-gastown.selected {
-  border-color: #f6cd54;
-  box-shadow: 0 0 10px rgba(246, 205, 84, 0.3);
-}
-
 /* Slider */
 .settings-slider {
   width: 100%;
@@ -179,7 +136,6 @@
   background: var(--accent);
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.4);
 }
 
 .settings-slider::-moz-range-thumb {
@@ -189,7 +145,6 @@
   border-radius: 50%;
   cursor: pointer;
   border: none;
-  box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.4);
 }
 
 .slider-labels {

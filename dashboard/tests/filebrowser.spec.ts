@@ -1,4 +1,5 @@
 import { test, expect, allowBrowserConsoleMessage, Page } from './fixtures'
+import { mockThemeApiRoute } from './mock-api'
 
 const fileResourcesPattern = /.*\/api\/files\/resources(?:\/.*)?$/
 
@@ -35,13 +36,7 @@ async function mockFilebrowserApi(page: Page, options?: {
     })
   })
 
-  await page.route('**/api/tmux/appearance', async route => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ success: true }),
-    })
-  })
+  await mockThemeApiRoute(page)
 
   await page.route('**/api/files/raw/**', async route => {
     await route.fulfill({

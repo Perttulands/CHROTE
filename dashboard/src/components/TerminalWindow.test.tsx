@@ -712,7 +712,10 @@ describe('TerminalWindow launch user', () => {
     expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()
   })
 
-  it('keeps terminal panes on the per-window opaque background palette', () => {
+  // The four coloured window themes are gone. A tile is a surface and a
+  // divider, focus is the accent border, and nothing about the tile says which
+  // slot in the grid it happens to sit in.
+  it('paints every tile on the same surface, whatever its stored window index', () => {
     const { container } = render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -721,12 +724,16 @@ describe('TerminalWindow launch user', () => {
     )
 
     const terminalWindow = container.querySelector('.terminal-window') as HTMLElement
-    expect(terminalWindow.style.getPropertyValue('--window-bg')).toBe('rgba(10, 26, 10, 0.85)')
+    expect(terminalWindow.style.getPropertyValue('--window-bg')).toBe('')
+    expect(terminalWindow.style.getPropertyValue('--window-accent')).toBe('')
+    expect(terminalWindow.style.getPropertyValue('--window-border')).toBe('')
 
     const css = terminalCss()
-    expect(css).toContain('background-color: var(--window-bg, var(--surface-primary));')
-    expect(css).toContain('background-color: var(--window-bg, rgba(0, 0, 0, 0.5));')
+    expect(css).not.toContain('--window-')
+    expect(css).toContain('background-color: var(--surface-primary);')
+    expect(css).toContain('background-color: rgba(0, 0, 0, 0.5);')
     expect(css).not.toContain('background-image: url(')
+    expect(css).toMatch(/\.terminal-window\.focused \{\s*border-color: var\(--accent\);\s*\}/)
   })
 
   it('holds an ended binding in its own tile, showing the last frame with Restart and Remove', () => {

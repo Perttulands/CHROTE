@@ -39,6 +39,7 @@ vi.mock('./context/SessionContext', () => ({
       terminal3: { windows: [] },
     },
     workspaceIds: mocks.workspaceIds ?? TERMINAL_WORKSPACE_IDS,
+    terminalUsers: ['alice', 'build'],
     focusedWindowKey: null,
     openSendToSession: mocks.openSendToSession,
   }),
@@ -221,19 +222,16 @@ describe('App drag lifecycle', () => {
     expect(container.querySelector('[data-workspace="terminal2"]')).toHaveAttribute('data-active', 'false')
     expect(container.querySelector('[data-workspace="terminal3"]')).toHaveAttribute('data-active', 'false')
     expect(container.querySelector('.session-panel')).toHaveAttribute('data-active-workspace', 'terminal1')
-    expect(document.documentElement).toHaveAttribute('data-theme', 'dark')
   })
 
   it('applies restored appearance settings to the document', () => {
-    mocks.settings = { ...DEFAULT_SETTINGS, theme: 'gastown', fontSize: 18 }
+    mocks.settings = { ...DEFAULT_SETTINGS, fontSize: 18 }
     const { rerender } = render(<App />)
 
-    expect(document.documentElement).toHaveAttribute('data-theme', 'gastown')
     expect(document.documentElement.style.getPropertyValue('--terminal-font-size')).toBe('18px')
 
-    mocks.settings = { ...DEFAULT_SETTINGS, theme: 'matrix', fontSize: 16 }
+    mocks.settings = { ...DEFAULT_SETTINGS, fontSize: 16 }
     rerender(<App />)
-    expect(document.documentElement).toHaveAttribute('data-theme', 'matrix')
     expect(document.documentElement.style.getPropertyValue('--terminal-font-size')).toBe('16px')
   })
 

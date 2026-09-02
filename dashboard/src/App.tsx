@@ -19,8 +19,10 @@ import {
 } from './components/workspaceFilesState'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { installFeatureFlagHelpers, isFeatureEnabled } from './featureFlags'
-import { getSessionNameFromKey, getTerminalUserColor, getTerminalUserInitial, isTerminalWorkspaceId, sortTerminalWorkspaceIds } from './types'
-import type { UserSettings, WorkspaceId } from './types'
+import { getSessionNameFromKey, getTerminalUserInitial, isTerminalWorkspaceId, sortTerminalWorkspaceIds } from './types'
+import type { WorkspaceId } from './types'
+import { ThemeProvider, useTheme } from './theme/ThemeContext'
+import { identityColorFor } from './theme/theme'
 
 // Non-terminal views load as route-level chunks on first visit. The terminal
 // docks and everything they depend on stay eager: they are the startup surface
@@ -124,7 +126,9 @@ function readWindowDropData(value: unknown): WindowDropData | null {
 }
 
 // Dragged item overlay component
-function DraggedSessionOverlay({ drag, settings }: { drag: ActiveDrag; settings: UserSettings }) {
+function DraggedSessionOverlay({ drag }: { drag: ActiveDrag }) {
+  const { terminalUsers } = useSession()
+  const theme = useTheme()
   const { name, type, unixUser } = drag
   const displayName = getSessionNameFromKey(name)
   const badgeClassName = type === 'tag' ? 'session-user-badge' : 'unix-user-badge'
@@ -133,7 +137,7 @@ function DraggedSessionOverlay({ drag, settings }: { drag: ActiveDrag; settings:
       {unixUser && (
         <span
           className={badgeClassName}
-          style={{ backgroundColor: getTerminalUserColor(settings, unixUser) }}
+          style={{ backgroundColor: identityColorFor(unixUser, terminalUsers, theme) }}
           title={`Unix user: ${unixUser}`}
           aria-label={`Unix user ${unixUser}`}
         >
@@ -234,11 +238,6 @@ function DashboardContent() {
     onShowHelp: handleShowHelp,
     isHelpOpen: showHelp,
   })
-
-  // Apply theme to document
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', settings.theme)
-  }, [settings.theme])
 
   useEffect(() => {
     installFeatureFlagHelpers()
@@ -410,7 +409,7 @@ function DashboardContent() {
       <ToastContainer />
 
       <DragOverlay className="drag-overlay-wrapper">
-        {activeDrag ? <DraggedSessionOverlay drag={activeDrag} settings={settings} /> : null}
+        {activeDrag ? <DraggedSessionOverlay drag={activeDrag} /> : null}
       </DragOverlay>
     </DndContext>
   )
@@ -418,11 +417,13 @@ function DashboardContent() {
 
 function App() {
   return (
-    <SessionProvider>
-      <TerminalPoolProvider>
-        <DashboardContent />
-      </TerminalPoolProvider>
-    </SessionProvider>
+    <ThemeProvider>
+      <SessionProvider>
+        <TerminalPoolProvider>
+          <DashboardContent />
+        </TerminalPoolProvider>
+      </SessionProvider>
+    </ThemeProvider>
   )
 }
 

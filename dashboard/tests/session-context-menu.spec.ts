@@ -1,5 +1,5 @@
 import { test, expect, Page } from './fixtures'
-import { mockFileApiRoutes, mockSessions, mockTerminalSocket } from './mock-api'
+import { mockFileApiRoutes, mockSessions, mockTerminalSocket, mockThemeApiRoute } from './mock-api'
 import { openSessionsSidecar } from './helpers'
 
 /**
@@ -10,13 +10,7 @@ import { openSessionsSidecar } from './helpers'
 async function mockApiRoutesWithMutations(page: Page) {
   await mockTerminalSocket(page)
 
-  await page.route('**/api/tmux/appearance', async route => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ success: true }),
-    })
-  })
+  await mockThemeApiRoute(page)
 
   await mockFileApiRoutes(page)
 

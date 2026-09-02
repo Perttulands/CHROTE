@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { TmuxAppearance, TerminalWorkspace, UserSettings, WindowRevealRequest, WorkspaceId } from '../types'
+import type { TerminalWorkspace, UserSettings, WindowRevealRequest, WorkspaceId } from '../types'
 import { DEFAULT_SETTINGS, MAX_PRESETS, normalizeTerminalTabCount } from '../types'
 import { useToast } from './ToastContext'
 import {
@@ -19,19 +19,6 @@ import {
   visibleWorkspaceIds,
   type ViewportBucket,
 } from './workspaceLayouts'
-
-async function applyTmuxAppearance(appearance: TmuxAppearance): Promise<void> {
-  try {
-    await fetch('/api/tmux/appearance', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(appearance),
-      signal: AbortSignal.timeout(10000),
-    })
-  } catch (e) {
-    console.warn('Failed to apply tmux appearance:', e)
-  }
-}
 
 async function applyTmuxMouse(enabled: boolean): Promise<void> {
   try {
@@ -224,7 +211,6 @@ export function useWorkspaceLayouts() {
       if (newSettings.terminalTabCount !== undefined) {
         updated.terminalTabCount = normalizeTerminalTabCount(newSettings.terminalTabCount)
       }
-      if (newSettings.tmuxAppearance) applyTmuxAppearance(updated.tmuxAppearance)
       if (newSettings.mouseScroll !== undefined) applyTmuxMouse(updated.mouseScroll)
       return updated
     })

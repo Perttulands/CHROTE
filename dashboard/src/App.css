@@ -65,7 +65,6 @@
 .tab.active {
   color: var(--text-primary);
   border-bottom-color: var(--accent);
-  text-shadow: var(--accent-glow);
 }
 
 .tab.external {
@@ -140,7 +139,7 @@
   max-width: 260px;
   background-color: var(--surface-primary);
   border: 1px solid var(--accent);
-  box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   opacity: 0.95;
   cursor: grabbing;
 }

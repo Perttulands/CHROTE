@@ -11,7 +11,7 @@
 .terminal-surface {
   position: absolute;
   inset: 0;
-  background: #0a0a0a;
+  background: var(--terminal-background);
   overflow: hidden;
 }
 
