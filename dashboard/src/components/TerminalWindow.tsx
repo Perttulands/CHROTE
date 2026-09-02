@@ -5,7 +5,9 @@ import { useSession } from '../context/SessionContext'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { useTerminalPool } from './TerminalPool'
 import TerminalSurface from './TerminalSurface'
-import { WINDOW_COLORS, getForegroundCommandLabel, getSessionBadges, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
+import { getForegroundCommandLabel, getSessionBadges, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserInitial } from '../types'
+import { identityColorFor } from '../theme/theme'
+import { useTheme } from '../theme/ThemeContext'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
 import { isDetached, tileStateFor, type TileState } from '../terminal/tileState'
 import { useSessionEvidence } from '../context/useSessionEvidence'
@@ -14,10 +16,9 @@ import DismissiblePanel from './DismissiblePanel'
 interface CreateSessionButtonProps {
   workspaceId: WorkspaceId
   windowId: string
-  accentColor: string
 }
 
-function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessionButtonProps) {
+function CreateSessionButton({ workspaceId, windowId }: CreateSessionButtonProps) {
   const [creating, setCreating] = useState(false)
   const { createSession } = useSession()
 
@@ -38,7 +39,6 @@ function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessi
       className="tile-action-btn create-session-btn"
       onClick={handleCreate}
       disabled={creating}
-      style={{ '--btn-accent': accentColor } as React.CSSProperties}
       title="Create new session"
     >
       <span className="create-session-icon">{creating ? '...' : '+'}</span>
@@ -60,7 +60,8 @@ interface SessionTagProps {
 }
 
 function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive, tileState }: SessionTagProps) {
-  const { sessions, settings, deleteSession, renameSession, openSendToSession } = useSession()
+  const { sessions, terminalUsers, deleteSession, renameSession, openSendToSession } = useSession()
+  const theme = useTheme()
   const pool = useTerminalPool()
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isRenaming, setIsRenaming] = useState(false)
@@ -182,7 +183,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
         {resolvedUser && (
           <span
             className="session-user-badge"
-            style={{ backgroundColor: getTerminalUserColor(settings, resolvedUser) }}
+            style={{ backgroundColor: identityColorFor(resolvedUser, terminalUsers, theme) }}
             title={`Unix user: ${resolvedUser}`}
           >
             {getTerminalUserInitial(resolvedUser)}
@@ -465,8 +466,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     setFocusedWindowKey(windowKey)
   }, [windowKey, setFocusedWindowKey])
 
-  const colorTheme = WINDOW_COLORS[windowConfig.colorIndex % WINDOW_COLORS.length]
-
   const handleRemoveSession = (sessionName: string) => {
     removeSessionFromWindow(workspaceId, windowConfig.id, sessionName)
   }
@@ -511,12 +510,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
       ref={windowRef}
       className={`terminal-window ${isFocused ? 'focused' : ''} ${isDropTarget ? 'drop-target' : ''}`}
       tabIndex={-1}
-      style={{
-        '--window-accent': colorTheme.accent,
-        '--window-bg': colorTheme.bg,
-        '--window-border': colorTheme.border,
-        ...style,
-      } as React.CSSProperties}
+      style={style}
     >
       <div className="terminal-window-header">
         <div className="session-tags">
@@ -589,7 +583,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
       >
         {!hasSessions && (
           <div className="empty-window-state">
-            <CreateSessionButton workspaceId={workspaceId} windowId={windowConfig.id} accentColor={colorTheme.accent} />
+            <CreateSessionButton workspaceId={workspaceId} windowId={windowConfig.id} />
             <span className="empty-window-hint">or drag a session here</span>
           </div>
         )}

@@ -17,7 +17,6 @@
 
 .nuke-trigger-btn:hover {
   background-color: var(--color-error-light);
-  box-shadow: var(--color-error-glow);
 }
 
 .nuke-trigger-btn:disabled {
@@ -44,7 +43,7 @@
   border-radius: 8px;
   width: 400px;
   max-width: 90vw;
-  box-shadow: 0 0 40px var(--color-error-light);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
 .nuke-modal-header {

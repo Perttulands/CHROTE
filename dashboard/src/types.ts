@@ -1,47 +1,5 @@
 // Chrote Dashboard Types
 
-// tmux appearance customization (hot-reloadable)
-export interface TmuxAppearance {
-  statusBg: string           // Status bar background color (e.g., "#000000", "black")
-  statusFg: string           // Status bar foreground color (e.g., "#00ff41", "green")
-  paneBorderActive: string   // Active pane border color
-  paneBorderInactive: string // Inactive pane border color
-  modeStyleBg: string        // Copy-mode/selection background
-  modeStyleFg: string        // Copy-mode/selection foreground
-}
-
-export const DEFAULT_TMUX_APPEARANCE: TmuxAppearance = {
-  statusBg: 'default',
-  statusFg: '#6b9fff',
-  paneBorderActive: '#6b9fff',
-  paneBorderInactive: '#3a3a3a',
-  modeStyleBg: '#6b9fff',
-  modeStyleFg: '#0f0f0f',
-}
-
-// tmux appearance presets matching dashboard themes
-export const TMUX_PRESETS: Record<string, TmuxAppearance> = {
-  matrix: {
-    statusBg: 'default',
-    statusFg: '#00ff41',
-    paneBorderActive: '#00ff41',
-    paneBorderInactive: '#333333',
-    modeStyleBg: '#00ff41',
-    modeStyleFg: '#000000',
-  },
-  dark: {
-    ...DEFAULT_TMUX_APPEARANCE,
-  },
-  gastown: {
-    statusBg: 'default',
-    statusFg: '#f6cd54',
-    paneBorderActive: '#f6cd54',
-    paneBorderInactive: '#4a2518',
-    modeStyleBg: '#f6cd54',
-    modeStyleFg: '#32160f',
-  },
-}
-
 // Terminal workspaces and launch-user settings.
 // Workspace ids are always terminal1..terminalN and terminalWorkspaceIds() is
 // the only derivation. Persisted layouts, dock state, and settings key off
@@ -107,17 +65,6 @@ export const DEFAULT_TERMINAL_SESSION_PREFIXES: Record<LaunchUser, string> = {}
 
 export const DEFAULT_TERMINAL_LAUNCH_USERS: Record<WorkspaceId, LaunchUser> = {}
 
-export const TERMINAL_USER_COLOR_PALETTE = [
-  '#4a9eff',
-  '#ffb347',
-  '#8bd450',
-  '#c084fc',
-  '#ff6b9d',
-  '#45d6d6',
-] as const
-
-export const DEFAULT_TERMINAL_USER_COLORS: Record<LaunchUser, string> = {}
-
 export function normalizeTerminalUsers(users: readonly string[] | undefined): LaunchUser[] {
   const seen = new Set<string>()
   return (users ?? [])
@@ -162,33 +109,16 @@ export function getTerminalUserInitial(user: LaunchUser): string {
   return Array.from(user.trim())[0]?.toUpperCase() ?? '?'
 }
 
-export function defaultTerminalUserColor(user: LaunchUser): string {
-  const name = user.trim()
-  if (!name) return TERMINAL_USER_COLOR_PALETTE[0]
-  let hash = 0
-  for (const char of name) hash = ((hash << 5) - hash) + char.charCodeAt(0)
-  return TERMINAL_USER_COLOR_PALETTE[Math.abs(hash) % TERMINAL_USER_COLOR_PALETTE.length]
-}
-
-export function getTerminalUserColor(settings: UserSettings, user: LaunchUser): string {
-  return settings.terminalUserColors[user] || defaultTerminalUserColor(user)
-}
-
 // User settings for persistent configuration
 export interface UserSettings {
   terminalMode: 'tmux'              // Terminal mode (tmux only)
   terminalTabCount: number           // Visible terminal tabs (1-6); shrinking hides, never deletes
   fontSize: number                   // Terminal font size (12-20)
-  theme: 'matrix' | 'dark' | 'gastown' // Color theme
   autoRefreshInterval: number        // Session refresh interval in ms (1000-30000)
   defaultSessionPrefix: string       // Legacy fallback for stored settings before per-user prefixes
   terminalSessionPrefixes: Record<LaunchUser, string> // Prefix for new sessions per Unix user
   terminalLaunchUsers: Record<WorkspaceId, LaunchUser> // Unix user for new shells per terminal tab
   terminalLabels: Partial<Record<WorkspaceId, string>> // Optional terminal tab display labels
-  terminalUserColors: Record<LaunchUser, string> // Session panel badge colors per Unix user
-  musicVolume: number                // Music volume (0-1)
-  musicEnabled: boolean              // Whether music is playing
-  tmuxAppearance: TmuxAppearance     // tmux color customization
   mouseScroll: boolean               // tmux mouse mode: scroll wheel scrolls history
   hideScrollbar: boolean             // Hide the dead xterm scrollbar gutter in terminals
   beadsProjectPaths?: string[]       // Manually added beads project paths
@@ -198,16 +128,11 @@ export const DEFAULT_SETTINGS: UserSettings = {
   terminalMode: 'tmux',
   terminalTabCount: DEFAULT_TERMINAL_TAB_COUNT,
   fontSize: 14,
-  theme: 'dark',
   autoRefreshInterval: 5000,
   defaultSessionPrefix: 'shell',
   terminalSessionPrefixes: DEFAULT_TERMINAL_SESSION_PREFIXES,
   terminalLaunchUsers: DEFAULT_TERMINAL_LAUNCH_USERS,
   terminalLabels: {},
-  terminalUserColors: DEFAULT_TERMINAL_USER_COLORS,
-  musicVolume: 0.5,
-  musicEnabled: false,
-  tmuxAppearance: DEFAULT_TMUX_APPEARANCE,
   mouseScroll: true,
   hideScrollbar: true,
 }
@@ -399,7 +324,7 @@ export interface TerminalWindow {
   id: string
   boundSessions: string[] // Session names bound to this window
   activeSession: string | null // Currently displayed session
-  colorIndex: number // 0-3 for window color theme
+  colorIndex: number // 0-3; a stable per-window index kept across the colour cut
 }
 
 export interface TerminalWorkspace {
@@ -533,14 +458,6 @@ export interface DashboardActions {
 }
 
 export type DashboardContextType = DashboardState & DashboardActions
-
-// Window color themes
-export const WINDOW_COLORS = [
-  { name: 'blue', bg: 'rgba(10, 10, 26, 0.85)', border: '#4a9eff', accent: '#4a9eff' },
-  { name: 'purple', bg: 'rgba(15, 10, 26, 0.85)', border: '#9966ff', accent: '#9966ff' },
-  { name: 'green', bg: 'rgba(10, 26, 10, 0.85)', border: '#00ff41', accent: '#00ff41' },
-  { name: 'orange', bg: 'rgba(26, 20, 10, 0.85)', border: '#ff9933', accent: '#ff9933' },
-] as const
 
 // Group display names and priorities
 export const GROUP_CONFIG: Record<string, { displayName: string; priority: number }> = {

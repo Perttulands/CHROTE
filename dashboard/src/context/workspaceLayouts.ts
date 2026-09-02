@@ -1,7 +1,6 @@
 import type { LaunchUser, LayoutPreset, TerminalWindow, TerminalWorkspace, UserSettings, WorkspaceId } from '../types'
 import {
   DEFAULT_SETTINGS,
-  DEFAULT_TMUX_APPEARANCE,
   getSessionKey,
   getSessionNameFromKey,
   getSessionUserFromKey,
@@ -96,14 +95,21 @@ function mergeTerminalSessionPrefixes(raw: unknown, legacyPrefix: unknown, rawLa
   return prefixes
 }
 
+// Settings the dashboard no longer has. The host owns the theme now, and the
+// tmux palette, the per-user badge colours and the music went with it, so a
+// browser holding an older state file must keep loading — these keys are read
+// past, not carried forward.
+const RETIRED_SETTING_KEYS = [
+  'theme', 'tmuxAppearance', 'terminalUserColors', 'musicVolume', 'musicEnabled',
+]
+
 function mergeSettings(rawSettings: unknown): UserSettings {
   if (!isRecord(rawSettings)) return DEFAULT_SETTINGS
-  const tmuxAppearance = isRecord(rawSettings.tmuxAppearance)
-    ? { ...DEFAULT_TMUX_APPEARANCE, ...rawSettings.tmuxAppearance }
-    : DEFAULT_TMUX_APPEARANCE
+  const carried = { ...rawSettings }
+  RETIRED_SETTING_KEYS.forEach(key => { delete carried[key] })
   return {
     ...DEFAULT_SETTINGS,
-    ...rawSettings,
+    ...carried,
     terminalTabCount: normalizeTerminalTabCount(rawSettings.terminalTabCount),
     terminalLaunchUsers: mergeTerminalLaunchUsers(rawSettings.terminalLaunchUsers),
     terminalSessionPrefixes: mergeTerminalSessionPrefixes(
@@ -112,21 +118,7 @@ function mergeSettings(rawSettings: unknown): UserSettings {
       rawSettings.terminalLaunchUsers,
     ),
     terminalLabels: mergeStringMap(rawSettings.terminalLabels),
-    terminalUserColors: mergeStringMap(rawSettings.terminalUserColors),
-    tmuxAppearance,
   } as UserSettings
-}
-
-function migrateSettings(rawSettings: unknown, schemaVersion: unknown): UserSettings {
-  const settings = mergeSettings(rawSettings)
-  if (schemaVersion !== SETTINGS_SCHEMA_VERSION && settings.theme === 'matrix') {
-    return {
-      ...settings,
-      theme: DEFAULT_SETTINGS.theme,
-      tmuxAppearance: DEFAULT_SETTINGS.tmuxAppearance,
-    }
-  }
-  return settings
 }
 
 export function defaultWorkspacesFor(ids: readonly WorkspaceId[]): Record<WorkspaceId, TerminalWorkspace> {
@@ -343,7 +335,7 @@ export function sanitizeWorkspaces(rawWorkspaces: unknown, ids: readonly Workspa
 function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): LoadedStoredState {
   if (isRecord(raw)) {
     if (raw.version === 3 && isRecord(raw.layoutsByViewport)) {
-      const settings = migrateSettings(raw.settings, raw.settingsSchemaVersion)
+      const settings = mergeSettings(raw.settings)
       const ids = visibleWorkspaceIds(settings)
       const layoutsByViewport: Partial<Record<ViewportBucket, StoredLayout>> = {}
       Object.entries(raw.layoutsByViewport).forEach(([key, value]) => {
@@ -361,7 +353,7 @@ function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): Loade
 
     if (isRecord(raw.workspaces) && isRecord(raw.workspaces.terminal1) && isRecord(raw.workspaces.terminal2)) {
       const sidebarCollapsed = typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : false
-      const settings = migrateSettings(raw.settings, raw.settingsSchemaVersion)
+      const settings = mergeSettings(raw.settings)
       const workspaces = sanitizeWorkspaces(raw.workspaces, visibleWorkspaceIds(settings))
       return {
         workspaces,
@@ -373,7 +365,7 @@ function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): Loade
 
     if (Array.isArray(raw.windows) && typeof raw.windowCount === 'number') {
       const sidebarCollapsed = typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : false
-      const settings = migrateSettings(raw.settings, raw.settingsSchemaVersion)
+      const settings = mergeSettings(raw.settings)
       const workspaces = sanitizeWorkspaces({
         terminal1: { windows: raw.windows, windowCount: raw.windowCount },
       }, visibleWorkspaceIds(settings))

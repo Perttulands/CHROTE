@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import SessionItem from './SessionItem'
 import type { TmuxSession } from '../types'
 import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from '../types'
+import { DEFAULT_THEME } from '../theme/theme'
 
 const mockState = vi.hoisted(() => ({
   assignedSessions: new Map<string, { workspaceId: string; windowId: string; windowIndex: number; colorIndex: number }>(),
@@ -46,12 +47,8 @@ vi.mock('../context/SessionContext', () => ({
     renameSession: mockState.renameSession,
     openFloatingModal: mockState.openFloatingModal,
     openSendToSession: mockState.openSendToSession,
-    settings: {
-      ...DEFAULT_SETTINGS,
-      terminalUserColors: {
-        alice: '#123456',
-      },
-    },
+    settings: DEFAULT_SETTINGS,
+    terminalUsers: ['alice', 'bob'],
   }),
 }))
 
@@ -87,7 +84,8 @@ describe('SessionItem user badge and context actions', () => {
     const badge = screen.getByLabelText('Unix user alice')
     expect(badge).toHaveTextContent('A')
     expect(badge).toHaveAttribute('title', 'Unix user: alice')
-    expect(badge).toHaveStyle({ backgroundColor: '#123456' })
+    // alice is the server's first terminal user, so she wears the first identity colour.
+    expect(badge).toHaveStyle({ backgroundColor: DEFAULT_THEME.identity[0] })
   })
 
   it('shows shell-only foreground state separately from tmux attachment', () => {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeSocket } from '../test/fakeWebSocket'
 import { createTerminalSession, type TerminalConnectionState } from './terminalSession'
+import { DEFAULT_THEME, TERMINAL_FONT_FAMILY } from '../theme/theme'
 
 // jsdom cannot measure a font, so the real fit addon has nothing to work from.
 // The grid it would compute is stubbed; everything else is the real xterm.
@@ -30,6 +31,8 @@ function start(overrides: Partial<Parameters<typeof createTerminalSession>[0]> =
     url: URL,
     fontSize: 14,
     hideScrollbar: false,
+    terminalTheme: DEFAULT_THEME.terminal,
+    fontFamily: TERMINAL_FONT_FAMILY,
     onStateChange: state => states.push(state),
     ...overrides,
   })
@@ -131,6 +134,30 @@ describe('terminal session', () => {
     session.setFontSize(20)
 
     expect(socket.sentText).toContain('1{"columns":60,"rows":30}')
+    session.dispose()
+  })
+
+  // The palette and the font stack come from the host, and they arrive after the
+  // terminal does. Taking them must not cost the connection or the frame.
+  it('repaints in a theme that arrives later, keeping the connection and refitting', async () => {
+    const { session, host } = start()
+    session.attach(host)
+    const socket = FakeSocket.latest()
+    socket.accept()
+    socket.deliver('0', 'still here')
+    await vi.waitFor(() => expect(host.textContent).toContain('still here'))
+    socket.sent.length = 0
+    fittedGrid.cols = 72
+
+    session.applyAppearance(
+      { ...DEFAULT_THEME.terminal, background: '#123456', foreground: '#fedcba' },
+      '"Other Mono", monospace',
+    )
+
+    expect(FakeSocket.instances).toHaveLength(1)
+    expect(socket.readyState).toBe(FakeSocket.OPEN)
+    expect(host.textContent).toContain('still here')
+    expect(socket.sentText).toContain('1{"columns":72,"rows":30}')
     session.dispose()
   })
 

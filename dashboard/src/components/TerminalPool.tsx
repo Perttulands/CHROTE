@@ -4,6 +4,8 @@ import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../
 import type { LaunchUser } from '../types'
 import { createTerminalSession, type TerminalConnectionState, type TerminalSession } from '../terminal/terminalSession'
 import { terminalSocketUrl } from '../terminal/ttydProtocol'
+import { useTheme } from '../theme/ThemeContext'
+import { TERMINAL_FONT_FAMILY } from '../theme/theme'
 
 interface TerminalPoolContextType {
   /** One terminal per bound session, outliving the tile that shows it. */
@@ -21,6 +23,7 @@ export function useTerminalPool(): TerminalPoolContextType {
 
 export function TerminalPoolProvider({ children }: { children: ReactNode }) {
   const { workspaces, settings, sessions } = useSession()
+  const theme = useTheme()
 
   const sessionUsers = useMemo(() => {
     const users = new Map<string, LaunchUser>()
@@ -50,6 +53,11 @@ export function TerminalPoolProvider({ children }: { children: ReactNode }) {
 
   const settingsRef = useRef(settings)
   settingsRef.current = settings
+  // Read at creation only. The reconcile effect below is keyed on the bindings
+  // alone, so a theme that lands later reaches live terminals through
+  // applyAppearance rather than by rebuilding the pool.
+  const themeRef = useRef(theme)
+  themeRef.current = theme
   const terminalsRef = useRef<Map<string, TerminalSession>>(new Map())
   const [terminals, setTerminals] = useState<ReadonlyMap<string, TerminalSession>>(terminalsRef.current)
   const [connectionStates, setConnectionStates] = useState<ReadonlyMap<string, TerminalConnectionState>>(new Map())
@@ -71,6 +79,8 @@ export function TerminalPoolProvider({ children }: { children: ReactNode }) {
         url: terminalSocketUrl(getSessionNameFromKey(sessionKey), unixUser, 'tile'),
         fontSize: settingsRef.current.fontSize,
         hideScrollbar: settingsRef.current.hideScrollbar,
+        terminalTheme: themeRef.current.terminal,
+        fontFamily: TERMINAL_FONT_FAMILY,
         onStateChange: state => setConnectionStates(prev => new Map(prev).set(sessionKey, state)),
       }))
       changed = true
@@ -96,6 +106,10 @@ export function TerminalPoolProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     terminals.forEach(terminal => terminal.setScrollbarHidden(settings.hideScrollbar))
   }, [settings.hideScrollbar, terminals])
+
+  useEffect(() => {
+    terminals.forEach(terminal => terminal.applyAppearance(theme.terminal, TERMINAL_FONT_FAMILY))
+  }, [theme, terminals])
 
   // A tab hidden while its grid changed comes back with stale cell metrics, and
   // one hidden across a chrote-srv restart comes back with no connections at

@@ -1,25 +1,10 @@
 /* Chrote Dashboard - Beads View Styles */
 /* Issue tracking and project management views */
 
-/* Beads color variables */
-:root,
-[data-theme="matrix"] {
-  --beads-status-open: #00ff41;
-  --beads-status-progress: #ffcc00;
-  --beads-status-blocked: #ff4141;
-  --beads-status-closed: #666666;
-  --beads-status-ready: #00ccff;
-  --beads-status-deferred: #9966ff;
-  --beads-impact-high: #ff4141;
-  --beads-impact-medium: #ffcc00;
-  --beads-impact-low: #00ff41;
-  --beads-health-good: #00ff41;
-  --beads-health-warning: #ffcc00;
-  --beads-health-critical: #ff4141;
-  --bg-tertiary: #1a1a1a;
-}
-
-[data-theme="dark"] {
+/* Beads status colours. These carry meaning — a status, an impact, a health
+   verdict — which is the only reason colour survives here. There is one theme,
+   so there is one block. */
+:root {
   --beads-status-open: #4ade80;
   --beads-status-progress: #fbbf24;
   --beads-status-blocked: #f87171;
@@ -33,22 +18,6 @@
   --beads-health-warning: #fbbf24;
   --beads-health-critical: #f87171;
   --bg-tertiary: #2a2a2a;
-}
-
-[data-theme="gastown"] {
-  --beads-status-open: #f6cd54;
-  --beads-status-progress: #fbdb7d;
-  --beads-status-blocked: #e07856;
-  --beads-status-closed: #6b5b4a;
-  --beads-status-ready: #f6cd54;
-  --beads-status-deferred: #81411a;
-  --beads-impact-high: #e07856;
-  --beads-impact-medium: #fbdb7d;
-  --beads-impact-low: #f6cd54;
-  --beads-health-good: #f6cd54;
-  --beads-health-warning: #fbdb7d;
-  --beads-health-critical: #e07856;
-  --bg-tertiary: #2d1810;
 }
 
 /* Main container */
@@ -327,7 +296,6 @@
 
 .issue-card.highlighted {
   border-color: var(--accent);
-  box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.3);
 }
 
 .issue-card.compact {
@@ -357,7 +325,7 @@
 }
 
 .issue-id {
-  font-family: 'Courier Prime', monospace;
+  font-family: inherit;
   font-size: 12px;
   color: var(--text-dim);
   background: var(--surface-primary);
@@ -425,7 +393,7 @@
 }
 
 .dep-id {
-  font-family: 'Courier Prime', monospace;
+  font-family: inherit;
   color: var(--text-secondary);
 }
 

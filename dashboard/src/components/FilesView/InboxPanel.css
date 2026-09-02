@@ -45,8 +45,7 @@
   border-color: var(--accent);
   border-style: solid;
   background: rgba(var(--accent-rgb), 0.1);
-  box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.2);
-  transform: scale(1.01);
+  box-shadow: 0 0 0 4px var(--accent-light);
 }
 
 .inbox-panel.has-files .inbox-dropzone {
@@ -237,7 +236,7 @@
 .inbox-send:hover:not(:disabled) {
   filter: brightness(1.1);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
 .inbox-send:active:not(:disabled) {

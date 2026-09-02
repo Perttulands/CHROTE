@@ -806,7 +806,7 @@
   padding: 12px;
   background: var(--background);
   color: var(--text-primary);
-  font-family: 'Courier Prime', 'Courier New', monospace;
+  font-family: inherit;
   font-size: 13px;
   line-height: 1.5;
   tab-size: 2;
@@ -830,7 +830,7 @@
   padding: 12px;
   background: var(--background);
   color: var(--text-primary);
-  font-family: 'Courier Prime', 'Courier New', monospace;
+  font-family: inherit;
   font-size: 13px;
   line-height: 1.5;
   tab-size: 2;
@@ -902,7 +902,7 @@
 }
 
 .fb-markdown-code code {
-  font-family: 'Courier Prime', 'Courier New', monospace;
+  font-family: inherit;
   font-size: 12px;
   white-space: pre;
 }

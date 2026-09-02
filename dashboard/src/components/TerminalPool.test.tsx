@@ -2,12 +2,16 @@ import { act, render } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TerminalPoolProvider, useTerminalPool } from './TerminalPool'
 import { DEFAULT_SETTINGS } from '../types'
+import { DEFAULT_THEME, TERMINAL_FONT_FAMILY } from '../theme/theme'
+import { ThemeContext } from '../theme/ThemeContext'
 import type { TerminalConnectionState } from '../terminal/terminalSession'
 
 interface CreatedSession {
   url: string
   fontSize: number
   hideScrollbar: boolean
+  terminalBackground: string
+  fontFamily: string
   disposed: boolean
   report: (state: TerminalConnectionState) => void
 }
@@ -19,12 +23,16 @@ vi.mock('../terminal/terminalSession', () => ({
     url: string
     fontSize: number
     hideScrollbar: boolean
+    terminalTheme: { background: string }
+    fontFamily: string
     onStateChange?: (state: TerminalConnectionState) => void
   }) => {
     const record: CreatedSession = {
       url: options.url,
       fontSize: options.fontSize,
       hideScrollbar: options.hideScrollbar,
+      terminalBackground: options.terminalTheme.background,
+      fontFamily: options.fontFamily,
       disposed: false,
       report: state => options.onStateChange?.(state),
     }
@@ -37,6 +45,10 @@ vi.mock('../terminal/terminalSession', () => ({
       setFontSize: (size: number) => { record.fontSize = size },
       setScrollbarHidden: (hidden: boolean) => { record.hideScrollbar = hidden },
       reconnect: vi.fn(),
+      applyAppearance: (theme: { background: string }, fontFamily: string) => {
+        record.terminalBackground = theme.background
+        record.fontFamily = fontFamily
+      },
       dispose: () => { record.disposed = true },
     }
   },
@@ -46,6 +58,10 @@ const sessionState = vi.hoisted(() => ({
   settings: { fontSize: 14, hideScrollbar: false },
   workspaces: {} as Record<string, { windows: { boundSessions: string[] }[] }>,
 }))
+
+// The host's theme lands after startup, so the pool is always rendered under a
+// provider whose value can change without the tree around it changing.
+let currentTheme = DEFAULT_THEME
 
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
@@ -62,13 +78,22 @@ function Probe() {
   return null
 }
 
+function poolTree() {
+  return (
+    <ThemeContext.Provider value={currentTheme}>
+      <TerminalPoolProvider><Probe /></TerminalPoolProvider>
+    </ThemeContext.Provider>
+  )
+}
+
 function renderPool() {
-  return render(<TerminalPoolProvider><Probe /></TerminalPoolProvider>)
+  return render(poolTree())
 }
 
 describe('terminal pool', () => {
   beforeEach(() => {
     created.length = 0
+    currentTheme = DEFAULT_THEME
     sessionState.settings = { fontSize: 14, hideScrollbar: false }
     sessionState.workspaces = {
       terminal1: { windows: [{ boundSessions: ['alice:alpha'] }, { boundSessions: [] }] },
@@ -103,10 +128,39 @@ describe('terminal pool', () => {
     expect(created.map(session => session.fontSize)).toEqual([14, 14])
 
     sessionState.settings = { fontSize: 18, hideScrollbar: true }
-    rerender(<TerminalPoolProvider><Probe /></TerminalPoolProvider>)
+    rerender(poolTree())
 
     expect(created.map(session => session.fontSize)).toEqual([18, 18])
     expect(created.map(session => session.hideScrollbar)).toEqual([true, true])
+  })
+
+  // The theme arrives from the host after the pool has already built its
+  // terminals from stored bindings, so every live one has to take it.
+  it('paints every pooled terminal in the host theme and the one font stack', () => {
+    renderPool()
+
+    expect(created.map(session => session.terminalBackground)).toEqual([
+      DEFAULT_THEME.terminal.background,
+      DEFAULT_THEME.terminal.background,
+    ])
+    expect(created.map(session => session.fontFamily)).toEqual([
+      TERMINAL_FONT_FAMILY,
+      TERMINAL_FONT_FAMILY,
+    ])
+    expect(TERMINAL_FONT_FAMILY).toBe('"JetBrains Mono", "CHROTE Term Symbols", monospace')
+  })
+
+  it('hands a theme that lands after startup to terminals that already exist', () => {
+    const { rerender } = renderPool()
+    expect(created.map(session => session.terminalBackground)).toEqual(['#0a0a0a', '#0a0a0a'])
+
+    currentTheme = { ...DEFAULT_THEME, terminal: { ...DEFAULT_THEME.terminal, background: '#123456' } }
+    rerender(poolTree())
+
+    expect(created.map(session => session.terminalBackground)).toEqual(['#123456', '#123456'])
+    // Repainting is not rebuilding: a live connection must survive it.
+    expect(created).toHaveLength(2)
+    expect(created.every(session => !session.disposed)).toBe(true)
   })
 
   it('publishes each terminal connection state, including the close a tile must show', () => {

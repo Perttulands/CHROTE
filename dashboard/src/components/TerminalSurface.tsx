@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createTerminalSession, type TerminalConnectionState, type TerminalSession } from '../terminal/terminalSession'
+import { useTheme } from '../theme/ThemeContext'
+import { TERMINAL_FONT_FAMILY } from '../theme/theme'
 
 interface TerminalSurfaceProps {
   /** The terminal to show here. Pooled for tiles, owned for peek. */
@@ -60,8 +62,9 @@ function TerminalSurface({ session, hidden = false, connect = true }: TerminalSu
 export function useTerminalSession(url: string | null, fontSize: number, hideScrollbar: boolean) {
   const [session, setSession] = useState<TerminalSession | null>(null)
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>('idle')
-  const initialAppearance = useRef({ fontSize, hideScrollbar })
-  initialAppearance.current = { fontSize, hideScrollbar }
+  const theme = useTheme()
+  const initialAppearance = useRef({ fontSize, hideScrollbar, theme })
+  initialAppearance.current = { fontSize, hideScrollbar, theme }
 
   useEffect(() => {
     if (!url) {
@@ -73,6 +76,8 @@ export function useTerminalSession(url: string | null, fontSize: number, hideScr
       url,
       fontSize: initialAppearance.current.fontSize,
       hideScrollbar: initialAppearance.current.hideScrollbar,
+      terminalTheme: initialAppearance.current.theme.terminal,
+      fontFamily: TERMINAL_FONT_FAMILY,
       onStateChange: setConnectionState,
     })
     setSession(created)
@@ -82,6 +87,7 @@ export function useTerminalSession(url: string | null, fontSize: number, hideScr
     }
   }, [url])
 
+  useEffect(() => { session?.applyAppearance(theme.terminal, TERMINAL_FONT_FAMILY) }, [session, theme])
   useEffect(() => { session?.setFontSize(fontSize) }, [session, fontSize])
   useEffect(() => { session?.setScrollbarHidden(hideScrollbar) }, [session, hideScrollbar])
 

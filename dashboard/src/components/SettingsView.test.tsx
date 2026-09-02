@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import SettingsView from './SettingsView'
 import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from '../types'
+import { DEFAULT_THEME } from '../theme/theme'
 
 const mockUseSession = vi.fn()
 const refreshSessions = vi.fn()
@@ -26,7 +27,6 @@ const settings = {
   ...DEFAULT_SETTINGS,
   terminalLaunchUsers: {},
   terminalSessionPrefixes: {},
-  terminalUserColors: {},
 }
 
 const terminalUsers = ['alice', 'bob']
@@ -66,22 +66,17 @@ describe('SettingsView terminal launch users', () => {
     expect(updateSettings).toHaveBeenCalledWith({ terminalTabCount: 5 })
   })
 
-  it('renders and updates theme, font-size, and refresh-interval values', () => {
+  it('renders and updates font-size and refresh-interval values', () => {
     const updateSettings = vi.fn()
     mockUseSession.mockReturnValue(sessionReturn(updateSettings, {
       settings: {
         ...settings,
-        theme: 'gastown',
         fontSize: 16,
         autoRefreshInterval: 10000,
       },
     }))
 
-    const { container } = render(<SettingsView />)
-    const themeOptions = container.querySelector('.settings-theme-options') as HTMLElement
-    expect(within(themeOptions).getByRole('button', { name: 'Gastown' })).toHaveClass('selected')
-    fireEvent.click(within(themeOptions).getByRole('button', { name: 'Matrix' }))
-    expect(updateSettings).toHaveBeenCalledWith({ theme: 'matrix' })
+    render(<SettingsView />)
 
     const fontSize = screen.getByRole('slider')
     expect(fontSize).toHaveValue('16')
@@ -94,12 +89,24 @@ describe('SettingsView terminal launch users', () => {
     expect(updateSettings).toHaveBeenCalledWith({ autoRefreshInterval: 30000 })
   })
 
-  it('defines distinct Matrix, Dark, and Gastown theme values', () => {
-    const css = readFileSync(resolve(testDir, '../styles/theme-colors.css'), 'utf8')
+  // One theme, served by the host, chosen nowhere in the browser. The stylesheet
+  // holds it only so first paint matches what /api/theme is about to deliver.
+  it('offers no theme picker and holds one :root block matching the built-in theme', () => {
+    mockUseSession.mockReturnValue(sessionReturn(vi.fn()))
+    render(<SettingsView />)
 
-    expect(css).toMatch(/\[data-theme="matrix"\][\s\S]*?--accent:\s*#00ff41;/)
-    expect(css).toMatch(/\[data-theme="dark"\][\s\S]*?--accent:\s*#6b9fff;/)
-    expect(css).toMatch(/\[data-theme="gastown"\][\s\S]*?--background:\s*#32160f;/)
+    expect(screen.queryByText('Theme')).toBeNull()
+    expect(screen.queryByText('tmux Appearance')).toBeNull()
+    expect(screen.queryByText('Session User Indicators')).toBeNull()
+
+    const css = readFileSync(resolve(testDir, '../styles/theme-colors.css'), 'utf8')
+    expect(css).not.toContain('data-theme')
+    expect(css.match(/^:root \{/gm)).toHaveLength(1)
+    expect(css).toContain(`--accent: ${DEFAULT_THEME.ui.accent};`)
+    expect(css).toContain(`--background: ${DEFAULT_THEME.ui.background};`)
+    expect(css).toContain(`--terminal-background: ${DEFAULT_THEME.terminal.background};`)
+    expect(css).toContain(`--ansi-15: ${DEFAULT_THEME.terminal.ansi[15]};`)
+    expect(css).toContain(`--identity-0: ${DEFAULT_THEME.identity[0]};`)
   })
 
   it('lets each terminal tab choose the Unix user used for new shells from configured users', () => {
@@ -137,28 +144,6 @@ describe('SettingsView terminal launch users', () => {
     expect(updateSettings).toHaveBeenCalledWith({
       terminalSessionPrefixes: {
         bob: 'forge',
-      },
-    })
-  })
-
-  it('lets each configured Unix user have an independent session indicator color', () => {
-    const updateSettings = vi.fn()
-    mockUseSession.mockReturnValue(sessionReturn(updateSettings, {
-      settings: {
-        ...settings,
-        terminalUserColors: { alice: '#123456' },
-      },
-    }))
-
-    render(<SettingsView />)
-
-    const bobColor = screen.getByLabelText('bob badge color value')
-    fireEvent.change(bobColor, { target: { value: '#abcdef' } })
-
-    expect(updateSettings).toHaveBeenCalledWith({
-      terminalUserColors: {
-        alice: '#123456',
-        bob: '#abcdef',
       },
     })
   })

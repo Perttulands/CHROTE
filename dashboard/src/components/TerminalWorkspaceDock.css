@@ -148,27 +148,21 @@
 .terminal-window {
   display: flex;
   flex-direction: column;
-  background-color: var(--window-bg, var(--surface-primary));
-  border: 1px solid var(--window-border, var(--divider));
+  background-color: var(--surface-primary);
+  border: 1px solid var(--divider);
   overflow: hidden;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease;
   min-height: 0;
 }
 
-.terminal-window:hover {
-  border-color: var(--window-accent, var(--accent));
-  box-shadow: 0 0 10px color-mix(in srgb, var(--window-accent, var(--accent)) 20%, transparent);
-}
-
+/* Focus is the border colour and nothing else: no glow, and no width change,
+   because a tile that grows its border reflows the terminal inside it. */
 .terminal-window.focused {
-  border-color: var(--window-accent, var(--accent));
-  border-width: 2px;
-  box-shadow: 0 0 15px color-mix(in srgb, var(--window-accent, var(--accent)) 40%, transparent);
+  border-color: var(--accent);
 }
 
 .terminal-window.drop-target {
   border-color: var(--accent);
-  box-shadow: 0 0 15px rgba(var(--accent-rgb), 0.25);
 }
 
 .terminal-window-header {
@@ -191,12 +185,6 @@
   overflow: hidden;
 }
 
-.no-sessions {
-  font-size: 11px;
-  color: var(--text-dim);
-  font-style: italic;
-}
-
 /* Session Tag - browser tab style */
 .session-tag {
   display: flex;
@@ -216,14 +204,14 @@
 }
 
 .session-tag:hover {
-  border-color: var(--window-accent, var(--accent));
+  border-color: var(--accent);
   background-color: var(--surface-secondary);
 }
 
 .session-tag.active {
   background-color: var(--accent-light);
-  border-color: var(--window-accent, var(--accent));
-  color: var(--window-accent, var(--text-primary));
+  border-color: var(--accent);
+  color: var(--text-primary);
   border-bottom-color: transparent;
 }
 
@@ -247,7 +235,7 @@
   flex: 1;
   min-width: 0;
   padding: 2px 5px;
-  border: 1px solid var(--window-accent, var(--accent));
+  border: 1px solid var(--accent);
   border-radius: 3px;
   background: var(--surface-secondary);
   color: var(--text-primary);
@@ -306,7 +294,7 @@
 .cycle-btn:hover,
 .window-send-btn:hover {
   color: var(--text-primary);
-  border-color: var(--window-accent, var(--accent));
+  border-color: var(--accent);
 }
 
 .window-send-btn {
@@ -378,7 +366,7 @@
   flex: 1;
   overflow: hidden;
   min-height: 0;
-  background-color: var(--window-bg, rgba(0, 0, 0, 0.5));
+  background-color: rgba(0, 0, 0, 0.5);
   position: relative;
   scrollbar-width: none;
 }
@@ -405,20 +393,15 @@
   align-items: center;
   justify-content: center;
   background: transparent;
-  border: 2px dashed var(--btn-accent, var(--window-accent, var(--accent)));
+  border: 2px dashed var(--accent);
   cursor: pointer;
   transition: all 0.2s ease;
-  color: var(--btn-accent, var(--window-accent, var(--accent)));
+  color: var(--accent);
 }
 
 .tile-action-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--btn-accent, var(--window-accent, var(--accent))) 15%, transparent);
+  background: var(--accent-light);
   border-style: solid;
-  transform: scale(1.05);
-}
-
-.tile-action-btn:active:not(:disabled) {
-  transform: scale(0.98);
 }
 
 .tile-action-btn:disabled {
