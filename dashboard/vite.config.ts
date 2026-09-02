@@ -20,11 +20,15 @@ export default defineConfig({
   server: {
     forwardConsole: false,
     proxy: mockedPlaywright ? undefined : {
+      // One Go server serves /api and /terminal on one port (ADR-0018), and it
+      // registers the route as /terminal/, so the prefix must survive.
+      // changeOrigin stays off deliberately: the terminal upgrade compares the
+      // browser's Origin against the Host it was addressed by, so forwarding the
+      // dev server's own Host keeps the dev socket same-origin by construction
+      // and needs no CORS_ORIGINS entry.
       '/terminal': {
-        target: 'http://localhost:7691',
-        changeOrigin: true,
+        target: 'http://localhost:8090',
         ws: true,
-        rewrite: (path) => path.replace(/^\/terminal/, ''),
       },
       '/bv-terminal': {
         target: 'http://localhost:8090',
