@@ -355,53 +355,41 @@
   pointer-events: none;
 }
 
+/* A tile with no live terminal says so in the middle of the frame, where an
+   empty window says the same kind of thing. The panel is sized by its content
+   and stays compact on purpose: the last rendered frame behind it is what
+   these two states exist to preserve, so it must not be covered. Peek renders
+   this same element with the note alone. */
 .terminal-tile-detached {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100% - 24px);
   z-index: 2;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  padding: 8px 12px;
+  padding: 14px 18px;
   background-color: var(--surface-primary);
-  border-top: 1px solid var(--divider);
+  border: 1px solid var(--divider);
+  border-radius: 4px;
 }
 
 .terminal-tile-detached-note {
   color: var(--text-secondary);
   font-size: 12px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 40ch;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .terminal-tile-detached-actions {
   display: flex;
-  gap: 6px;
-  flex: 0 0 auto;
-}
-
-.terminal-tile-action {
-  background: transparent;
-  border: 1px solid var(--divider);
-  border-radius: 3px;
-  color: var(--text-primary);
-  cursor: pointer;
-  padding: 4px 10px;
-  font-size: 12px;
-}
-
-.terminal-tile-action:hover:not(:disabled) {
-  border-color: var(--window-accent, var(--accent));
-}
-
-.terminal-tile-action:disabled {
-  color: var(--text-dim);
-  cursor: wait;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
 }
 
 .tag-state {
@@ -435,34 +423,51 @@
   gap: 16px;
 }
 
-.create-session-btn {
+/* The one button shape a tile with no live terminal offers. An empty window
+   states it at full size; a detached tile states it compact, because there the
+   last rendered frame has to stay readable behind it. One shape, two sizes. */
+.tile-action-btn {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 24px 32px;
   background: transparent;
-  border: 2px dashed var(--btn-accent, var(--accent));
-  border-radius: 16px;
+  border: 2px dashed var(--btn-accent, var(--window-accent, var(--accent)));
   cursor: pointer;
   transition: all 0.2s ease;
-  color: var(--btn-accent, var(--accent));
+  color: var(--btn-accent, var(--window-accent, var(--accent)));
 }
 
-.create-session-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--btn-accent, var(--accent)) 15%, transparent);
+.tile-action-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--btn-accent, var(--window-accent, var(--accent))) 15%, transparent);
   border-style: solid;
   transform: scale(1.05);
 }
 
-.create-session-btn:active:not(:disabled) {
+.tile-action-btn:active:not(:disabled) {
   transform: scale(0.98);
 }
 
-.create-session-btn:disabled {
+.tile-action-btn:disabled {
   opacity: 0.5;
   cursor: wait;
+}
+
+.create-session-btn {
+  flex-direction: column;
+  gap: 8px;
+  padding: 24px 32px;
+  border-radius: 16px;
+}
+
+.tile-action-btn-compact {
+  gap: 6px;
+  padding: 7px 14px;
+  border-width: 1px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1px;
 }
 
 .create-session-icon {

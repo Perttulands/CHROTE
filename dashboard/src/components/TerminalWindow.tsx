@@ -35,7 +35,7 @@ function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessi
 
   return (
     <button
-      className="create-session-btn"
+      className="tile-action-btn create-session-btn"
       onClick={handleCreate}
       disabled={creating}
       style={{ '--btn-accent': accentColor } as React.CSSProperties}
@@ -321,15 +321,17 @@ function DetachedTile({ state, sessionName, restarting, onReclaim, onRestart, on
           ? `${sessionName} is attached elsewhere. This frame shows its last output.`
           : `${sessionName} ended. This frame shows its last output.`}
       </span>
+      {/* The same button shape the empty window offers, one size down: a tile
+          with no live terminal is the same situation and reads as one. */}
       <div className="terminal-tile-detached-actions">
         {takenOver ? (
-          <button className="terminal-tile-action" type="button" onClick={onReclaim}>Reclaim</button>
+          <button className="tile-action-btn tile-action-btn-compact" type="button" onClick={onReclaim}>Reclaim</button>
         ) : (
           <>
-            <button className="terminal-tile-action" type="button" disabled={restarting} onClick={onRestart}>
+            <button className="tile-action-btn tile-action-btn-compact" type="button" disabled={restarting} onClick={onRestart}>
               {restarting ? 'Restarting…' : 'Restart'}
             </button>
-            <button className="terminal-tile-action" type="button" onClick={onRemove}>Remove</button>
+            <button className="tile-action-btn tile-action-btn-compact" type="button" onClick={onRemove}>Remove</button>
           </>
         )}
       </div>

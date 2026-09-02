@@ -185,6 +185,33 @@ test.describe('Tile states', () => {
     await expect(tile(page).getByRole('button', { name: 'Reclaim' })).toHaveCount(0)
   })
 
+  test('a detached tile states itself in the middle of the frame it is preserving, in the empty-window button shape', async ({ page }) => {
+    const harness = await open(page, ['doomed'], 'doomed')
+    await expect(shownFrame(page)).toContainText('doomed output 1')
+
+    harness.live.current = []
+    await harness.sockets.get('doomed')!.close()
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
+
+    const panel = tile(page).locator('.terminal-tile-detached')
+    await expect(panel).toBeVisible()
+    const panelBox = (await panel.boundingBox())!
+    const bodyBox = (await windowBody(page).boundingBox())!
+
+    // Centred on both axes rather than pinned along the bottom edge.
+    expect(Math.abs((panelBox.y + panelBox.height / 2) - (bodyBox.y + bodyBox.height / 2))).toBeLessThan(4)
+    expect(Math.abs((panelBox.x + panelBox.width / 2) - (bodyBox.x + bodyBox.width / 2))).toBeLessThan(4)
+    // Compact: the last rendered frame is the thing this state exists to keep,
+    // so the panel may not be what the tile mostly shows.
+    expect(panelBox.height).toBeLessThan(bodyBox.height / 2)
+    expect(panelBox.width).toBeLessThan(bodyBox.width)
+
+    // The same button shape an empty window offers, and no other.
+    await expect(tile(page).getByRole('button', { name: 'Restart' })).toHaveClass(/\btile-action-btn\b/)
+    await expect(tile(page).getByRole('button', { name: 'Remove' })).toHaveClass(/\btile-action-btn\b/)
+    await expect(tile(page).locator('.terminal-tile-action')).toHaveCount(0)
+  })
+
   test('an ended binding survives a reload, and Restart brings the session back into the same tile', async ({ page }) => {
     const harness = await open(page, ['doomed'], 'doomed')
     await expect(shownFrame(page)).toContainText('doomed output 1')

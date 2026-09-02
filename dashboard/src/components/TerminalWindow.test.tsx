@@ -152,6 +152,8 @@ describe('TerminalWindow launch user', () => {
     )
 
     const createButton = screen.getByRole('button', { name: /New Session/i })
+    // The shape a detached tile borrows for its own actions.
+    expect(createButton).toHaveClass('tile-action-btn')
     fireEvent.click(createButton)
 
     await waitFor(() => expect(createSession).toHaveBeenCalled())
@@ -740,6 +742,45 @@ describe('TerminalWindow launch user', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     expect(removeSessionFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'alice:departed')
+  })
+
+  it('states a detached tile in the middle of the frame, in the button shape an empty window already uses', () => {
+    poolState.connectionStates = new Map([['alice:departed', 'closed']])
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['alice:departed'], activeSession: 'alice:departed', colorIndex: 0 }}
+      />
+    )
+
+    // Both actions carry the shape the New Session button carries; the bespoke
+    // third shape the tile used to draw is gone from markup and stylesheet.
+    const actions = [...container.querySelectorAll('.terminal-tile-detached-actions button')]
+    expect(actions.map(button => button.textContent)).toEqual(['Restart', 'Remove'])
+    actions.forEach(button => expect(button).toHaveClass('tile-action-btn'))
+    expect(container.querySelector('.terminal-tile-action')).toBeNull()
+
+    const css = terminalCss()
+    expect(css).not.toContain('.terminal-tile-action')
+    const rule = (selector: string) => {
+      const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))
+      expect(match, `missing CSS rule ${selector}`).not.toBeNull()
+      return match![1]
+    }
+
+    // Centred in the frame, not pinned along its bottom edge, and sized by its
+    // own content so the last rendered frame stays readable behind it.
+    const panel = rule('.terminal-tile-detached')
+    expect(panel).toMatch(/\btop:\s*50%;/)
+    expect(panel).toMatch(/\btransform:\s*translate\(-50%, -50%\);/)
+    expect(panel).not.toMatch(/\bbottom:\s*0;/)
+    expect(panel).not.toMatch(/\bright:\s*0;/)
+    expect(panel).toMatch(/\bmax-width:\s*calc\(100% - 24px\);/)
+
+    // The New Session button is the same shape, one size up.
+    expect(rule('.create-session-btn')).toMatch(/\bpadding:\s*24px 32px;/)
+    expect(rule('.tile-action-btn-compact')).toMatch(/\bpadding:\s*7px 14px;/)
   })
 
   it('recreates an ended session in the same tile and dials the pooled terminal again', async () => {
