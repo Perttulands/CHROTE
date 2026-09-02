@@ -53,13 +53,30 @@ reduce owner access. Missing access is reported instead of repaired by
 reshaping the permission topology. Configured roots, path containment, and the
 Unix permissions the process already has remain enforced.
 
-## CORS is not authentication
+## Browser origins are not authentication
 
-`CORS_ORIGINS` controls which browser origins receive cross-origin API headers.
-If unset, CHROTE emits no CORS headers.
+`CORS_ORIGINS` names the browser origins CHROTE accepts. It is one setting with
+two enforcement points, because they work differently:
 
-That protects browser API use across origins. It does not identify a user, stop
-direct network clients, or replace the private-network trust boundary.
+- **HTTP APIs.** Listed origins receive cross-origin CORS headers. If unset,
+  CHROTE emits none, and the browser withholds the response from the calling
+  page.
+- **The terminal WebSocket.** A WebSocket handshake is not subject to the
+  same-origin policy, so response headers cannot refuse it. The upgrade checks
+  the `Origin` header itself and answers `403` before any tmux socket is
+  touched. Listed origins are accepted; if unset, only the origin the request
+  was addressed to is — the dashboard is served by the same server, so it is
+  the only page that legitimately opens this socket. Host and port must match;
+  the scheme is not compared, because a private access layer commonly
+  terminates TLS in front of a plain-HTTP loopback bind.
+
+A request carrying no `Origin` at all is served. Browsers always send one on a
+WebSocket handshake; non-browser clients do not, and those are governed by what
+CHROTE is bound to.
+
+This stops a page the operator did not open from driving a CHROTE that page can
+route to. It identifies no user, stops no direct network client, and does not
+replace the private-network trust boundary.
 
 ## Terminal boundary
 

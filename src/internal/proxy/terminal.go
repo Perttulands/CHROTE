@@ -63,12 +63,23 @@ type ResolveTarget func(unixUser string) (Target, error)
 
 // TerminalProxy serves the terminal WebSocket.
 type TerminalProxy struct {
-	resolve ResolveTarget
+	resolve  ResolveTarget
+	upgrader websocket.Upgrader
 }
 
-// NewTerminalProxy creates the TerminalProxy served at /terminal/.
-func NewTerminalProxy(resolve ResolveTarget) *TerminalProxy {
-	return &TerminalProxy{resolve: resolve}
+// NewTerminalProxy creates the TerminalProxy served at /terminal/. It takes the
+// same configured browser origins the CORS middleware takes, because the CORS
+// headers that middleware writes do not constrain a WebSocket handshake; see
+// originPolicy for what the check is and is not.
+func NewTerminalProxy(resolve ResolveTarget, allowedOrigins []string) *TerminalProxy {
+	policy := newOriginPolicy(allowedOrigins)
+	return &TerminalProxy{
+		resolve: resolve,
+		upgrader: websocket.Upgrader{
+			CheckOrigin:  policy.allows,
+			Subprotocols: []string{"tty"},
+		},
+	}
 }
 
 // viewingMode is how a connection views a session, and it decides the attach
@@ -124,8 +135,8 @@ func parseAttachRequest(args []string) (attachRequest, error) {
 }
 
 // clientHandshake is the client's opening JSON frame. AuthToken is accepted and
-// ignored: CHROTE's trust boundary is the network perimeter, and the terminal
-// socket's Origin policy is owned separately.
+// ignored: CHROTE's trust boundary is the network perimeter, and the browser
+// origins allowed onto this socket are settled at the upgrade by originPolicy.
 type clientHandshake struct {
 	Columns int `json:"columns"`
 	Rows    int `json:"rows"`
@@ -135,13 +146,6 @@ type clientHandshake struct {
 type clientResizeFrame struct {
 	Columns int `json:"columns"`
 	Rows    int `json:"rows"`
-}
-
-var terminalUpgrader = websocket.Upgrader{
-	// The Origin policy for this socket is owned by chrote-zca. CHROTE's trust
-	// boundary is the network perimeter it is bound to.
-	CheckOrigin:  func(*http.Request) bool { return true },
-	Subprotocols: []string{"tty"},
 }
 
 // Handler returns an http.Handler serving the terminal WebSocket. Only the
@@ -165,9 +169,10 @@ func (tp *TerminalProxy) RegisterRoutes(mux *http.ServeMux) {
 func (tp *TerminalProxy) serve(w http.ResponseWriter, r *http.Request) {
 	request, requestErr := parseAttachRequest(r.URL.Query()["arg"])
 
-	conn, err := terminalUpgrader.Upgrade(w, r, nil)
+	conn, err := tp.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		// Upgrade has already written its own response.
+		// Upgrade has already written its own response. A refused Origin lands
+		// here too, before any tmux socket is touched.
 		log.Printf("terminal WebSocket upgrade failed: %v", err)
 		return
 	}

@@ -162,8 +162,10 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 
 	// CHROTE owns the terminal transport itself (ADR-0018): the attach runs on
 	// a pty this process allocates, resolved by the one implementation of the
-	// socket rules that also serves session listing.
-	terminalProxy := proxy.NewTerminalProxy(resolveTerminalTarget)
+	// socket rules that also serves session listing. It gets the same
+	// CORS_ORIGINS list as the middleware below, because CORS response headers
+	// do not constrain a WebSocket handshake and this socket is shell-grade.
+	terminalProxy := proxy.NewTerminalProxy(resolveTerminalTarget, config.CORSOrigins)
 	terminalProxy.RegisterRoutes(mux)
 	var stopOnce sync.Once
 	stopRuntimeMaintenance := func() {

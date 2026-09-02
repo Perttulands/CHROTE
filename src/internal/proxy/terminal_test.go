@@ -29,6 +29,11 @@ type terminalHarness struct {
 
 func newTerminalHarness(t *testing.T, resolve ResolveTarget) *terminalHarness {
 	t.Helper()
+	return newTerminalHarnessWithOrigins(t, resolve, nil)
+}
+
+func newTerminalHarnessWithOrigins(t *testing.T, resolve ResolveTarget, allowedOrigins []string) *terminalHarness {
+	t.Helper()
 	dir := t.TempDir()
 	harness := &terminalHarness{t: t, argsPath: filepath.Join(dir, "tmux.args")}
 
@@ -49,7 +54,7 @@ exec bash "$FAKE_TMUX_ATTACH"
 	t.Setenv("FAKE_TMUX_ARGS", harness.argsPath)
 	t.Setenv("FAKE_TMUX_ATTACH", harness.attachScript("exit 0"))
 
-	proxy := NewTerminalProxy(resolve)
+	proxy := NewTerminalProxy(resolve, allowedOrigins)
 	harness.server = httptest.NewServer(proxy.Handler())
 	t.Cleanup(harness.server.Close)
 	return harness
@@ -189,9 +194,99 @@ func (c *terminalClient) waitForClose() {
 	}
 }
 
+// handshakeFrom performs only the WebSocket handshake, the way a page does when
+// it opens the socket, and reports the status CHROTE answered with. An empty
+// origin sends no Origin header at all, which is what a non-browser client does.
+func (h *terminalHarness) handshakeFrom(origin string) (int, error) {
+	h.t.Helper()
+	header := http.Header{}
+	if origin != "" {
+		header.Set("Origin", origin)
+	}
+	url := "ws" + strings.TrimPrefix(h.server.URL, "http") + "/terminal/ws?arg=tile&arg=work"
+	conn, response, err := (&websocket.Dialer{
+		HandshakeTimeout: 5 * time.Second,
+		Subprotocols:     []string{"tty"},
+	}).Dial(url, header)
+	if conn != nil {
+		conn.Close()
+	}
+	if response == nil {
+		h.t.Fatalf("no handshake response for origin %q: %v", origin, err)
+	}
+	return response.StatusCode, err
+}
+
 func defaultTarget(socket string) ResolveTarget {
 	return func(string) (Target, error) {
 		return Target{Socket: socket, UnixUser: "bob"}, nil
+	}
+}
+
+// The four Origin cases below run through the real handler, because the check
+// lives in the upgrade and a unit test of the policy alone would not prove the
+// handler consults it.
+
+func TestTerminal_SameOriginIsServedWithNoConfiguredOrigins(t *testing.T) {
+	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-origin"))
+
+	status, err := harness.handshakeFrom(harness.server.URL)
+	if err != nil {
+		t.Fatalf("the dashboard's own origin was refused: %v (status %d)", err, status)
+	}
+	if status != http.StatusSwitchingProtocols {
+		t.Fatalf("same-origin handshake status = %d, want %d", status, http.StatusSwitchingProtocols)
+	}
+}
+
+func TestTerminal_ForeignOriginIsRefusedBeforeTmux(t *testing.T) {
+	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-origin"))
+
+	status, err := harness.handshakeFrom("https://evil.example")
+	if err == nil {
+		t.Fatal("a foreign browser origin opened a terminal socket")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("foreign-origin handshake status = %d, want %d", status, http.StatusForbidden)
+	}
+	if args := harness.tmuxArgs(); args != "" {
+		t.Fatalf("a refused origin still reached tmux: %q", args)
+	}
+}
+
+func TestTerminal_ConfiguredOriginIsServed(t *testing.T) {
+	harness := newTerminalHarnessWithOrigins(t, defaultTarget("/tmp/tmux-origin"),
+		[]string{"https://chrote.example", " https://second.example "})
+
+	for _, origin := range []string{"https://chrote.example", "https://second.example"} {
+		status, err := harness.handshakeFrom(origin)
+		if err != nil {
+			t.Fatalf("configured origin %q was refused: %v (status %d)", origin, err, status)
+		}
+		if status != http.StatusSwitchingProtocols {
+			t.Fatalf("configured origin %q handshake status = %d, want %d", origin, status, http.StatusSwitchingProtocols)
+		}
+	}
+
+	status, err := harness.handshakeFrom("https://evil.example")
+	if err == nil {
+		t.Fatal("configuring origins let an unconfigured one through")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("unconfigured-origin handshake status = %d, want %d", status, http.StatusForbidden)
+	}
+}
+
+func TestTerminal_AbsentOriginIsServed(t *testing.T) {
+	harness := newTerminalHarnessWithOrigins(t, defaultTarget("/tmp/tmux-origin"),
+		[]string{"https://chrote.example"})
+
+	status, err := harness.handshakeFrom("")
+	if err != nil {
+		t.Fatalf("a client sending no Origin was refused: %v (status %d)", err, status)
+	}
+	if status != http.StatusSwitchingProtocols {
+		t.Fatalf("no-Origin handshake status = %d, want %d", status, http.StatusSwitchingProtocols)
 	}
 }
 
