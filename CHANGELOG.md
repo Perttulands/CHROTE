@@ -16,6 +16,16 @@ release.
 - Files workbench and terminal-companion file sidecar.
 - Scheduled tasks and Server health/history cockpit views.
 - Documentation source-truth index and contract lint.
+- One host-authored interface theme, served by the server at `GET /api/theme`
+  with its art at `GET /api/theme/art/{name}`, driving the chrome, the terminal
+  palette, the per-user identity colours, and the empty-window art.
+- A session launcher in every empty window and behind the Sessions plus: pick a
+  harness, a folder, a Unix user and a name, from the harnesses and folders host
+  configuration names at `GET /api/launch`. The new session starts in that
+  directory with its harness running and binds to the window it was launched
+  from.
+- JetBrains Mono and a symbol fallback face bundled for chrome and terminal
+  alike, so no request for a font leaves the host.
 
 ### Changed
 
@@ -28,6 +38,14 @@ release.
 - Bulk session destruction moved to advanced Settings.
 - Optional services and workspaces degrade explicitly instead of silently
   fabricating data.
+- The interface is monochrome except where colour carries meaning: errors and
+  danger, focus and the primary action, the Claude Code mark, and Unix-user
+  identity taken from the theme.
+- Tiles and session rows show the running agent as its product mark instead of a
+  `foreground:` box, and a session name that must shrink keeps the tail after
+  its last hyphen rather than the head.
+- A focused tile changes border colour only. The border no longer changes width,
+  so focusing a tile moves nothing.
 
 ### Removed
 
@@ -39,6 +57,12 @@ release.
   including CHROTE-owned agent units and reboot-recovery claims. CHROTE preserves
   external tmux work across its own lifecycle but does not supervise ordinary
   sessions.
+- Removed the tmux appearance API and the Settings theme, tmux-colour and
+  per-user colour pickers. A device-local choice no longer rewrites host-global
+  tmux state; the host applies the theme and CHROTE serves it.
+- Removed the scanline overlay, the tile and tab glows, and decorative motion.
+- Removed the background art from the server binary. Art belongs to the host
+  theme and is served from the theme directory.
 
 ### Fixed
 

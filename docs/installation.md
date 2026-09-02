@@ -97,7 +97,13 @@ The dashboard port remains loopback-only.
 ```bash
 systemctl --user status chrote.service
 curl http://127.0.0.1:8094/api/health
+curl http://127.0.0.1:8094/api/theme
+curl http://127.0.0.1:8094/api/launch
 ```
+
+`GET /api/theme` returns the active theme, `GET /api/launch` the harnesses and
+folders the launcher offers. On a fresh install both answer with built-in
+defaults; see [Environment](#environment).
 
 Open `http://127.0.0.1:8094` and create or select a tmux session. CHROTE runs as
 the same Unix user and sees that user's normal tmux server by default.
@@ -135,6 +141,74 @@ Common advanced settings are documented in [`.env.example`](../.env.example).
 Cross-user terminal sockets require deliberate host setup and are not enabled by
 the generic installer. CHROTE may apply explicitly configured additive tmux
 access grants, but must not remove or narrow the session owner's access.
+
+## Environment
+
+Two optional variables move presentation and launch choices out of the binary
+and into operator configuration. Set them in `chrote.env` and restart the
+service. Both are unset on a fresh install, and CHROTE runs without either.
+
+### `CHROTE_THEME_DIR`
+
+The directory holding the one active theme: a `theme.json` with an `art/`
+directory beside it, written by whatever host tooling authors themes.
+
+```json
+{
+  "schema": 1,
+  "name": "example-dark",
+  "ui": {
+    "background": "#0f0f0f", "surface": "#1a1a1a", "surfaceRaised": "#252525",
+    "divider": "#3a3a3a", "text": "#e5e5e5", "textSecondary": "#a3a3a3",
+    "textDim": "#737373", "accent": "#6b9fff", "error": "#f87171"
+  },
+  "terminal": {
+    "background": "#0a0a0a", "foreground": "#e5e5e5", "cursor": "#e5e5e5",
+    "selectionBackground": "#6b9fff40",
+    "ansi": [
+      "#0f0f0f", "#f87171", "#8bd450", "#e5c07b", "#6b9fff", "#c084fc", "#45d6d6", "#a3a3a3",
+      "#737373", "#ff8a8a", "#a6e37a", "#f0d48a", "#8fb5ff", "#d3a4ff", "#7ae2e2", "#ffffff"
+    ]
+  },
+  "identity": ["#4f6d8f", "#8f6f3a"],
+  "art": ["example.webp"]
+}
+```
+
+Every colour is `#rrggbb` or `#rrggbbaa`. `terminal.ansi` has exactly sixteen
+entries, `identity` at least one, and identity colours are assigned to the
+configured terminal users in order. Art names match `[A-Za-z0-9._-]+`, hold no
+path separator, and are served from `art/` under the same directory by
+`GET /api/theme/art/{name}`.
+
+Unset, or naming a directory with no `theme.json`: the server serves its
+embedded default, the same document with no art. A `theme.json` that exists but
+does not validate is an error rather than a fallback, so a broken edit is
+visible instead of looking deliberate.
+
+### `CHROTE_LAUNCH_CONFIG`
+
+A JSON file naming what a new session may start and where.
+
+```json
+{
+  "harnesses": [
+    {"id": "example-agent", "label": "Example Agent", "command": "example-agent --flag"},
+    {"id": "shell", "label": "Shell", "command": ""}
+  ],
+  "folders": ["/absolute/path/to/project", "~"]
+}
+```
+
+Ids match `[a-z0-9-]+` and are unique. `shell` is the bare login shell and must
+have an empty command; it is offered whether or not the file lists it. A folder
+is absolute, or starts with `~` and resolves against the target Unix user's
+home. Commands never reach the browser: `GET /api/launch` returns ids, labels
+and folders, and a session is created by naming a harness id.
+
+Unset: the launcher offers `Shell` in `~`. Set but unreadable or invalid: the
+server refuses to start and logs the reason, instead of running a launcher that
+cannot launch.
 
 ## Upgrade
 

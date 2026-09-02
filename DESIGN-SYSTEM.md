@@ -10,64 +10,127 @@ enforced_by: scripts/doc-lint.py
 
 Status: **Active core source of truth**.
 
-CHROTE is a dense private cockpit, not a marketing page and not a sterile SaaS
-admin panel. It should feel like an instrument panel for real work: legible,
-fast, slightly theatrical, and hard to mistake for a toy.
+CHROTE is a dense private cockpit: an instrument panel for real work, legible
+and honest about state. Nothing decorative competes with the terminal.
 
 ## Design principles
 
-1. **Cockpit density.** Show useful state without hiding it behind decorative
-   cards or long instructional copy.
-2. **Host-state first.** UI elements should make clear what is durable host state
-   versus browser preference.
+1. **Cockpit density.** Show useful state; do not bury it in cards or copy.
+2. **Host-state first.** Make clear what is durable host state and what is
+   browser preference.
 3. **Local directness.** Context menus, drag/drop, inline popovers, and visible
    state beat modal-heavy workflows.
-4. **Failure visibility.** Empty, degraded, blocked, and errored states should be
+4. **Failure visibility.** Empty, degraded, blocked, and errored states are
    explicit and actionable.
-5. **No fake calm.** Agentic work is messy. The UI can have character without
-   obscuring operational truth.
-6. **Accessible contrast.** Themes may differ, but state and text must remain
-   readable.
+5. **Colour is information.** It marks meaning, never mood.
+6. **Recognition over labels.** A known agent shows its mark; anything else is
+   shown in its own words, untranslated.
+7. **Accessible contrast.** Themes may differ; state and text stay readable.
 
-## Theme ids
+## The colour rule
 
-Current dashboard themes:
+The interface is monochrome except where colour carries meaning. Four uses live:
 
-| Theme id | Use |
-| --- | --- |
-| `matrix` | High-contrast green-on-dark terminal energy |
-| `dark` | Neutral default cockpit |
-| `gastown` | Warm amber/russet cockpit palette |
+| Use | Token | What the colour means |
+| --- | --- | --- |
+| Error and danger | `--color-error` | Something failed, or this action destroys |
+| Focus and the primary action | `--accent` | Where input goes; the one button that acts |
+| The Claude Code mark | `#D97757` | The product's own mark, kept recognisable |
+| Unix-user identity | `--identity-0` … | Which account owns this session |
 
-Theme ids are persisted settings. Rename them deliberately and test migration or
-fallback behavior.
+Everything else is gone: per-window accent colours, hashed per-user hues, the
+tmux status bar hue, theme-button glows, and per-severity toast colours. A toast
+reporting a failure uses the error token; every other toast is plain.
 
-## Color token model
+Identity colours come from the theme, assigned to the server's `terminalUsers`
+in order so a user is the same colour on every device. A user the server does
+not list gets `--text-dim` rather than an invented colour.
 
-Themes provide CSS custom properties:
+## Typeface
+
+One family for chrome and terminal alike: JetBrains Mono, with CHROTE Term
+Symbols behind it — a subset of Iosevka Term, renamed because Iosevka is a
+reserved font name — covering the box drawing, braille and frame glyphs agent
+TUIs paint with. Both are `woff2` files served from CHROTE's own origin, so no
+request for a font leaves the host. There is no font picker; font size stays a
+device-local setting.
+
+## Theme
+
+One active theme at a time, and no picker. The host authors it, the server
+serves it, the dashboard applies it. Changing the look is an apply on the host
+plus a browser reload; the browser holds no theme state.
+
+- **Source.** A theme directory in operator configuration. A host apply script
+  validates it and copies it to the directory named by `CHROTE_THEME_DIR`.
+- **Route.** `GET /api/theme` serves that document verbatim, the embedded
+  default when the host authored none, and a 500 naming the offending field when
+  a theme exists but does not validate. `GET /api/theme/art/{name}` serves art.
+- **Consumers.** The dashboard's CSS custom properties, the terminal palette,
+  the empty-window art, and the identity colours. The tmux status bar and each
+  agent's own theme are written once by the host apply script in ANSI colour
+  names, so an SSH client renders them in its own palette. CHROTE never writes
+  host-global tmux state to style anything.
+
+The served document is schema 1: `ui`, `terminal` with exactly sixteen ANSI
+colours, `identity`, and `art`. Every colour is `#rrggbb` or `#rrggbbaa`.
+[`src/internal/api/theme_default.json`](src/internal/api/theme_default.json) is
+the reference document and the served fallback;
+[`docs/installation.md`](docs/installation.md) documents the environment.
+
+### Colour token model
+
+The theme writes these custom properties on `:root`:
 
 ```css
---background
---surface-primary
---surface-secondary
---divider
---text-primary
---text-secondary
---text-dim
---accent
---accent-light
---accent-glow
---color-error
---color-error-light
---color-error-glow
---accent-rgb
---window-blue
---window-purple
---window-green
---window-orange
+--background  --surface-primary  --surface-secondary  --divider
+--text-primary  --text-secondary  --text-dim
+--accent  --accent-light  --accent-rgb
+--color-error  --color-error-light
+--terminal-background  --terminal-foreground  --ansi-0 … --ansi-15
+--identity-0 … --identity-n
 ```
 
-Components should use tokens rather than hard-coded theme-specific colors.
+Components use tokens rather than hard-coded colours. There are no per-window
+colour tokens and no glow tokens.
+
+## Tiles
+
+- **Focus.** A focused tile changes its border colour to `--accent` and nothing
+  else. The border does not change width, so nothing moves when focus lands. No
+  hover effect, no glow, no transform.
+- **Header versus status line.** The header carries identity: session name,
+  harness mark, Unix user, tile state. What the agent is doing is the agent's
+  own to report, through its status line and its pane title. CHROTE knows only
+  the pane command and never dresses that up as an internal state.
+- **Tag label.** Truncation preserves the tail: the head shortens with an
+  ellipsis, the last segment after the final hyphen stays whole, and the full
+  name is in the title attribute. A window with one bound session keeps the
+  full-width label.
+- **Harness mark.** `claude` shows the Claude Code mark and `codex` the Codex
+  mark. A shell shows nothing, because a shell is the resting state. Any other
+  command shows its own name as dim text, no prefix and no border.
+
+## Launcher
+
+An empty window is the launcher, drawn over the theme's art for that slot. It
+offers the four choices a launch needs: harness, folder, Unix user, and name.
+The Sessions panel's plus opens the same launcher.
+
+- Harnesses and their flags are operator configuration read through
+  `GET /api/launch`. The commands stay on the server; there is no free-text
+  command field.
+- Folders are the configured pinned list, the working directories of live
+  sessions as recents, and a browse control.
+- The name is derived from folder and harness, suffixed on collision, and
+  editable before launching.
+- One quiet button states what will happen, and the new session binds to the
+  window it was launched from.
+
+## Effects
+
+No scanlines, no glow, no decorative motion. Modals keep a plain shadow. Motion
+survives only where it confirms an action.
 
 ## Layout rules
 
@@ -80,6 +143,7 @@ Components should use tokens rather than hard-coded theme-specific colors.
 
 ## Copy tone
 
-CHROTE can be blunt and characterful, but operational surfaces should stay short.
-Use humor around empty states and docs; use clarity around errors, secrets,
-unsafe actions, and recovery.
+CHROTE can be blunt and characterful, but operational surfaces stay short.
+Personality lives in empty windows and documentation. Errors, secrets, unsafe
+actions, and recovery stay literal, and nothing CHROTE writes is mixed into live
+terminal text.

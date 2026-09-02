@@ -31,6 +31,8 @@ CHROTE reads and controls existing resources instead of copying them into a cent
 | Project work | Each project's Beads store | Present and mutate work through `bd` |
 | Schedules and service configuration | Host configuration and state directories | Provide an interface and run the configured behavior |
 | Layouts and presentation | Browser storage | Render device-local workspaces |
+| The interface theme | Host theme directory | Serve the active theme and the art it names |
+| Launchable harnesses and folders | Host launch configuration | Offer the choices and start the chosen one in a new session |
 | Runtime observations | CHROTE process memory and bounded history | Report health and recent events |
 
 If CHROTE stops, tmux sessions, files, and Beads remain where they were.
@@ -45,11 +47,17 @@ CHROTE owns the pseudo-terminal and the attach client on it, and nothing else. I
 
 A displayed terminal is the session's one sizing client, so opening a session takes it over from whatever was attached, CHROTE's own client or an external one. Peek attaches as an observer and sizes nothing. A new session is sized once, at creation; no server-side loop revisits a window's size afterwards. Window bindings are operator intent held in browser storage, not a cache of live sessions, and the server holds no binding or tile state. [ADR-0017](docs/adr/0017-terminal-viewing-model.md) owns this model and [ADR-0018](docs/adr/0018-terminal-transport-ownership.md) owns the transport.
 
+## Theme and launch configuration
+
+Three parties share the interface's look, and each does one thing. A host apply script writes the active theme into the directory CHROTE reads; the server serves that document, unmodified, and refuses to guess when it is malformed; the dashboard applies it to its custom properties and to the terminal. CHROTE never writes a theme, and it no longer pushes appearance into tmux: the same apply script sets the tmux status bar and the agents' own settings once, in ANSI colour names, so a session looks the same to an SSH client in its own palette.
+
+The launch configuration names what may be started and where. It is read once at startup; the browser learns only harness ids, labels and folders, and the commands stay on the server. An unreadable or invalid launch configuration stops startup rather than presenting a launcher that cannot launch.
+
 ## Server composition
 
 `src/cmd/server/` assembles the process and registers the runtime routes.
 
-- `src/internal/api/` contains tmux, files, Beads, scheduled tasks, services, health, and system handlers.
+- `src/internal/api/` contains tmux, files, Beads, scheduled tasks, services, theme, launch, health, and system handlers.
 - `src/internal/proxy/` owns the terminal transport and the pseudo-terminals it attaches on.
 - `src/internal/dashboard/` embeds the built dashboard into the Go binary.
 - `src/internal/scheduled/` contains scheduled-task persistence and execution support.

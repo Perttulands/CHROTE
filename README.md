@@ -98,8 +98,10 @@ CHROTE reads and controls the real thing instead of keeping its own copy.
 - `bd` owns issues.
 - Host configuration owns scheduled tasks and service adapters, under your XDG
   config and state directories.
+- Host configuration owns the interface theme and the harnesses the launcher
+  offers. The server serves them; the browser stores neither.
 - The browser owns the parts nobody else needs. Window layout, tab labels,
-  presets, theme, and feature flags live in `localStorage`.
+  presets, and feature flags live in `localStorage`.
 
 Clear your browser storage and you lose an arrangement, not any work.
 

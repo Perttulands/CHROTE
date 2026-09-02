@@ -32,7 +32,7 @@ When it conflicts with the PRD or an active source-truth spec, fix the README.
 | [`VISION.md`](../VISION.md) | Product purpose, intended experience, and enduring direction |
 | [`PRD.md`](../PRD.md) | Durable product requirements, operator outcomes, and non-goals |
 | [`ARCHITECTURE.md`](../ARCHITECTURE.md) | Runtime structure, state ownership, component boundaries, and failure behavior |
-| [`DESIGN-SYSTEM.md`](../DESIGN-SYSTEM.md) | Dashboard visual and interaction principles and theme ids |
+| [`DESIGN-SYSTEM.md`](../DESIGN-SYSTEM.md) | Dashboard visual and interaction principles, the colour rule, and the theme contract |
 | [`SECURITY.md`](../SECURITY.md) | Public network, identity, filesystem, terminal, and secret-handling boundary |
 
 `DESIGN-SYSTEM.md` is the machine-frontmattered spec. It carries
