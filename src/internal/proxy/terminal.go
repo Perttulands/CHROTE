@@ -40,6 +40,10 @@ const (
 // renders xterm.js, so this describes what is actually on the other end.
 const terminalTermType = "xterm-256color"
 
+// fallbackAttachLang is the locale the attach client runs under when the
+// service inherited no UTF-8 locale of its own.
+const fallbackAttachLang = "en_US.UTF-8"
+
 // hasSessionTimeout bounds the pre-attach probe. A tmux server that does not
 // answer is a failure to report, not something to wait on forever.
 const hasSessionTimeout = 5 * time.Second
@@ -425,8 +429,8 @@ func hasSession(socket, session string) error {
 }
 
 // attachEnv is the environment every tmux invocation on the terminal path runs
-// under: the server's own, with the two values the retired ttyd and launch
-// script pinned. Nothing else is added or removed.
+// under: the server's own, with TERM pinned and LANG held to a UTF-8 locale.
+// Nothing else is added or removed.
 func attachEnv() []string {
 	env := make([]string, 0, len(os.Environ())+2)
 	for _, entry := range os.Environ() {
@@ -435,7 +439,20 @@ func attachEnv() []string {
 		}
 		env = append(env, entry)
 	}
-	return append(env, "TERM="+terminalTermType, "LANG=en_US.UTF-8")
+	return append(env, "TERM="+terminalTermType, "LANG="+attachLang(os.Getenv("LANG")))
+}
+
+// attachLang keeps an inherited LANG that already names a UTF-8 locale and
+// falls back to the pinned default otherwise. The terminal has to be UTF-8 or
+// box drawing and agent TUI output break, but tmux exits rather than degrades
+// when LANG names a locale the host has not generated, so naming one specific
+// locale would kill the terminal on every host that generated a different one.
+func attachLang(inherited string) string {
+	lowered := strings.ToLower(inherited)
+	if strings.HasSuffix(lowered, ".utf-8") || strings.HasSuffix(lowered, ".utf8") {
+		return inherited
+	}
+	return fallbackAttachLang
 }
 
 // startDir is the directory the attach client runs in, falling back the way the

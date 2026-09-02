@@ -438,8 +438,9 @@ func TestPTY_ResizeRefusesAnUnusableSize(t *testing.T) {
 	}
 }
 
-func TestAttachEnv_PinsTheTerminalTypeAndLocale(t *testing.T) {
+func TestAttachEnv_PinsTheTerminalTypeAndKeepsAUTF8Locale(t *testing.T) {
 	t.Setenv("TERM", "dumb")
+	t.Setenv("LANG", "fi_FI.UTF-8")
 
 	env := attachEnv()
 	for _, entry := range env {
@@ -450,8 +451,45 @@ func TestAttachEnv_PinsTheTerminalTypeAndLocale(t *testing.T) {
 	if !hasEntry(env, "TERM="+terminalTermType) {
 		t.Fatalf("attach environment does not pin TERM; env=%v", env)
 	}
-	if !hasEntry(env, "LANG=en_US.UTF-8") {
-		t.Fatalf("attach environment does not pin LANG; env=%v", env)
+	if !hasEntry(env, "LANG=fi_FI.UTF-8") {
+		t.Fatalf("attach environment did not keep the inherited UTF-8 LANG; env=%v", env)
+	}
+	if hasEntry(env, "LANG="+fallbackAttachLang) {
+		t.Fatalf("attach environment overrode an inherited UTF-8 LANG; env=%v", env)
+	}
+}
+
+func TestAttachEnv_FallsBackWhenTheInheritedLocaleIsNotUTF8(t *testing.T) {
+	t.Setenv("LANG", "de_DE@euro")
+
+	env := attachEnv()
+	if !hasEntry(env, "LANG="+fallbackAttachLang) {
+		t.Fatalf("attach environment did not fall back to the pinned LANG; env=%v", env)
+	}
+	if hasEntry(env, "LANG=de_DE@euro") {
+		t.Fatalf("attach environment kept a non-UTF-8 LANG; env=%v", env)
+	}
+}
+
+func TestAttachLang(t *testing.T) {
+	for _, testCase := range []struct {
+		inherited string
+		want      string
+	}{
+		{inherited: "en_US.UTF-8", want: "en_US.UTF-8"},
+		{inherited: "fi_FI.UTF-8", want: "fi_FI.UTF-8"},
+		{inherited: "en_GB.utf8", want: "en_GB.utf8"},
+		{inherited: "C.UTF-8", want: "C.UTF-8"},
+		{inherited: "de_DE.utf-8", want: "de_DE.utf-8"},
+		{inherited: "", want: fallbackAttachLang},
+		{inherited: "C", want: fallbackAttachLang},
+		{inherited: "POSIX", want: fallbackAttachLang},
+		{inherited: "de_DE@euro", want: fallbackAttachLang},
+		{inherited: "fi_FI.ISO-8859-1", want: fallbackAttachLang},
+	} {
+		if got := attachLang(testCase.inherited); got != testCase.want {
+			t.Errorf("attachLang(%q) = %q, want %q", testCase.inherited, got, testCase.want)
+		}
 	}
 }
 
