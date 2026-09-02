@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "name": "chrote-dark",
+  "ui": {
+    "background": "#0f0f0f",
+    "surface": "#1a1a1a",
+    "surfaceRaised": "#252525",
+    "divider": "#3a3a3a",
+    "text": "#e5e5e5",
+    "textSecondary": "#a3a3a3",
+    "textDim": "#737373",
+    "accent": "#6b9fff",
+    "error": "#f87171"
+  },
+  "terminal": {
+    "background": "#0a0a0a",
+    "foreground": "#e5e5e5",
+    "cursor": "#e5e5e5",
+    "selectionBackground": "#6b9fff40",
+    "ansi": [
+      "#0f0f0f",
+      "#f87171",
+      "#8bd450",
+      "#e5c07b",
+      "#6b9fff",
+      "#c084fc",
+      "#45d6d6",
+      "#a3a3a3",
+      "#737373",
+      "#ff8a8a",
+      "#a6e37a",
+      "#f0d48a",
+      "#8fb5ff",
+      "#d3a4ff",
+      "#7ae2e2",
+      "#ffffff"
+    ]
+  },
+  "identity": ["#4f6d8f", "#8f6f3a", "#5f7f5a", "#7a5f8f"],
+  "art": []
+}

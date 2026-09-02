@@ -148,14 +148,6 @@ func TestAPIEnvelopeContract_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.T)
 			wantKeys: []string{"content", "session"},
 		},
 		{
-			name:     "apply appearance",
-			method:   http.MethodPost,
-			path:     "/api/tmux/appearance",
-			body:     `{"statusBg":"black","statusFg":"white","paneBorderActive":"green"}`,
-			call:     handler.ApplyAppearance,
-			wantKeys: []string{"applied", "success", "timestamp", "total"},
-		},
-		{
 			name:     "set mouse mode",
 			method:   http.MethodPost,
 			path:     "/api/tmux/mouse",

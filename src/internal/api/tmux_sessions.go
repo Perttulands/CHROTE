@@ -24,7 +24,6 @@ import (
 
 // TmuxHandler handles tmux-related API endpoints
 type TmuxHandler struct {
-	colorRegex *regexp.Regexp
 	// proc locates the process filesystem used to recognise the ptys this
 	// server spawned. Its zero value owns no pty, so a handler built without
 	// it reports every attached client as foreign rather than as CHROTE's.
@@ -66,8 +65,7 @@ func isReservedInternalSessionName(name string) bool {
 // NewTmuxHandler creates the default tmux handler.
 func NewTmuxHandler() *TmuxHandler {
 	return &TmuxHandler{
-		colorRegex: regexp.MustCompile(`^#[0-9A-Fa-f]{3,6}$|^[a-zA-Z]+$|^default$`),
-		proc:       systemProcSource(os.Getpid()),
+		proc: systemProcSource(os.Getpid()),
 	}
 }
 
@@ -81,7 +79,6 @@ func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/tmux/sessions/{name}", h.DeleteSession)
 	mux.HandleFunc("PATCH /api/tmux/sessions/{name}", h.RenameSession)
 	mux.HandleFunc("GET /api/tmux/sessions/{name}/capture", h.CapturePane)
-	mux.HandleFunc("POST /api/tmux/appearance", h.ApplyAppearance)
 	mux.HandleFunc("POST /api/tmux/mouse", h.SetMouseMode)
 }
 

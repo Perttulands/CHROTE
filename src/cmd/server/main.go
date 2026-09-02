@@ -150,6 +150,9 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	healthHandler := api.NewHealthHandlerWithBuildInfo(Version, BuildCommit)
 	healthHandler.RegisterRoutes(mux)
 
+	themeHandler := api.NewThemeHandler()
+	themeHandler.RegisterRoutes(mux)
+
 	servicesHandler := api.NewServicesHandler(api.LoadServiceConfigFromEnv())
 	servicesHandler.RegisterRoutes(mux)
 

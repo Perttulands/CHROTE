@@ -27,9 +27,6 @@ func TestTmuxHandler_NewTmuxHandler(t *testing.T) {
 	if handler == nil {
 		t.Fatal("NewTmuxHandler() returned nil")
 	}
-	if handler.colorRegex == nil {
-		t.Error("Handler colorRegex is nil")
-	}
 }
 
 func TestTmuxHandler_RunTmuxBoundsAggregateOutput(t *testing.T) {
@@ -39,34 +36,6 @@ yes x | head -c 1049600
 	_, err := NewTmuxHandler().runTmuxOnSocket("/tmp/tmux-a", "list-sessions")
 	if !errors.Is(err, errTmuxCommandOutputLimit) {
 		t.Fatalf("error = %v, want bounded-output failure", err)
-	}
-}
-
-func TestTmuxHandler_ValidateColor(t *testing.T) {
-	handler := NewTmuxHandler()
-
-	tests := []struct {
-		name    string
-		color   string
-		isValid bool
-	}{
-		{"hex 3 digit", "#fff", true},
-		{"hex 6 digit", "#ff00ff", true},
-		{"named color", "red", true},
-		{"named color blue", "blue", true},
-		{"default", "default", true},
-		{"invalid hex", "#gggggg", false},
-		{"invalid chars", "red@blue", false},
-		{"empty is not matched by regex but handled separately", "", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := handler.colorRegex.MatchString(tt.color)
-			if result != tt.isValid {
-				t.Errorf("colorRegex.MatchString(%q) = %v, expected %v", tt.color, result, tt.isValid)
-			}
-		})
 	}
 }
 
@@ -290,26 +259,6 @@ esac
 	}
 }
 
-func TestTmuxHandler_ApplyAppearance_InvalidColor(t *testing.T) {
-	handler := NewTmuxHandler()
-
-	body := AppearanceRequest{
-		StatusBg: "invalidcolor@#$",
-		StatusFg: "red",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/appearance", bytes.NewBuffer(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	handler.ApplyAppearance(recorder, req)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Errorf("Status code = %d, expected %d", recorder.Code, http.StatusBadRequest)
-	}
-}
-
 func TestTmuxHandler_RegisterRoutes(t *testing.T) {
 	handler := NewTmuxHandler()
 	mux := http.NewServeMux()
@@ -526,45 +475,6 @@ func TestTmuxHandler_DeleteAllSessionsReportsListErrors(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "tmux source unavailable") || strings.Contains(recorder.Body.String(), "Permission denied") {
 		t.Fatalf("body = %q, want a fail-loud redacted source error", recorder.Body.String())
-	}
-}
-
-func TestTmuxHandler_ApplyAppearanceTargetsConfiguredTerminalUsers(t *testing.T) {
-	tmpDir := t.TempDir()
-	callsPath := filepath.Join(tmpDir, "tmux.calls")
-	fakeTmux := filepath.Join(tmpDir, "tmux")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + callsPath + "\nprintf '%s\\n' '---' >> " + callsPath + "\n"
-	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake tmux: %v", err)
-	}
-	t.Setenv("PATH", tmpDir)
-	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-p,build=/tmp/tmux-t")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/operator,build=/home/secondary")
-
-	handler := NewTmuxHandler()
-	bodyBytes := []byte(`{"statusBg":"default","statusFg":"#ffffff","paneBorderActive":"#ff00ff"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/appearance", bytes.NewBuffer(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	handler.ApplyAppearance(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	calls, err := os.ReadFile(callsPath)
-	if err != nil {
-		t.Fatalf("read fake tmux calls: %v", err)
-	}
-	got := string(calls)
-	if strings.Count(got, "-S\n/tmp/tmux-p\nset\n-g\n") != 2 {
-		t.Fatalf("alice appearance calls = %q, want two commands on /tmp/tmux-p", got)
-	}
-	if strings.Count(got, "-S\n/tmp/tmux-t\nset\n-g\n") != 2 {
-		t.Fatalf("build appearance calls = %q, want two commands on /tmp/tmux-t", got)
-	}
-	if strings.Contains(got, "statusBg") {
-		t.Fatalf("tmux calls leaked JSON keys instead of set args: %q", got)
 	}
 }
 

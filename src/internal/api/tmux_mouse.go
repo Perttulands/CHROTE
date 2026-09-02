@@ -15,17 +15,9 @@ type MouseModeRequest struct {
 	Enabled *bool `json:"enabled"`
 }
 
-// AppearanceRequest is the request body for tmux appearance settings
-type AppearanceRequest struct {
-	StatusBg           string `json:"statusBg"`
-	StatusFg           string `json:"statusFg"`
-	PaneBorderActive   string `json:"paneBorderActive"`
-	PaneBorderInactive string `json:"paneBorderInactive"`
-	ModeStyleBg        string `json:"modeStyleBg"`
-	ModeStyleFg        string `json:"modeStyleFg"`
-}
-
-func (h *TmuxHandler) appearanceTargets() []tmuxTarget {
+// configuredTmuxTargets returns one target per distinct tmux socket across the
+// configured terminal users, for the options CHROTE sets server-wide.
+func (h *TmuxHandler) configuredTmuxTargets() []tmuxTarget {
 	users := configuredTerminalUsers()
 	targets := make([]tmuxTarget, 0, len(users))
 	seenSockets := map[string]bool{}
@@ -100,7 +92,7 @@ func (h *TmuxHandler) SetMouseMode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	applied := 0
-	targets := h.appearanceTargets()
+	targets := h.configuredTmuxTargets()
 	for _, target := range targets {
 		if err := h.applyMouseMode(r.Context(), target.socket, value); err == nil {
 			applied++
@@ -113,66 +105,6 @@ func (h *TmuxHandler) SetMouseMode(w http.ResponseWriter, r *http.Request) {
 		"mouse":     value,
 		"applied":   applied,
 		"total":     len(targets),
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-	})
-}
-
-// ApplyAppearance handles POST /api/tmux/appearance
-func (h *TmuxHandler) ApplyAppearance(w http.ResponseWriter, r *http.Request) {
-	var req AppearanceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
-		return
-	}
-
-	// Validate colors
-	colors := map[string]string{
-		"statusBg":           req.StatusBg,
-		"statusFg":           req.StatusFg,
-		"paneBorderActive":   req.PaneBorderActive,
-		"paneBorderInactive": req.PaneBorderInactive,
-		"modeStyleBg":        req.ModeStyleBg,
-		"modeStyleFg":        req.ModeStyleFg,
-	}
-
-	for key, val := range colors {
-		if val != "" && !h.colorRegex.MatchString(val) {
-			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", fmt.Sprintf("Invalid color for %s: %s", key, val))
-			return
-		}
-	}
-
-	// Build tmux set commands
-	var commands [][]string
-	if req.StatusBg != "" && req.StatusFg != "" {
-		commands = append(commands, []string{"set", "-g", "status-style", fmt.Sprintf("bg=%s,fg=%s", req.StatusBg, req.StatusFg)})
-	}
-	if req.PaneBorderActive != "" {
-		commands = append(commands, []string{"set", "-g", "pane-active-border-style", fmt.Sprintf("fg=%s", req.PaneBorderActive)})
-	}
-	if req.PaneBorderInactive != "" {
-		commands = append(commands, []string{"set", "-g", "pane-border-style", fmt.Sprintf("fg=%s", req.PaneBorderInactive)})
-	}
-	if req.ModeStyleBg != "" && req.ModeStyleFg != "" {
-		commands = append(commands, []string{"set", "-g", "mode-style", fmt.Sprintf("bg=%s,fg=%s", req.ModeStyleBg, req.ModeStyleFg)})
-	}
-
-	applied := 0
-	targets := h.appearanceTargets()
-	for _, target := range targets {
-		for _, args := range commands {
-			_, err := h.runTmuxOnSocket(target.socket, args...)
-			if err == nil {
-				applied++
-			}
-			// Ignore errors for appearance - a tmux server/profile might not be running.
-		}
-	}
-
-	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"success":   true,
-		"applied":   applied,
-		"total":     len(commands) * len(targets),
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 }
