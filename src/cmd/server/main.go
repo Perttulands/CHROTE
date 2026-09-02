@@ -41,6 +41,9 @@ type Config struct {
 	Port               int
 	CORSOrigins        []string
 	StartSystemHistory bool
+	// Launch is what the launcher may start and where. Its zero value offers
+	// the shell in the target user's home.
+	Launch api.LaunchConfig
 }
 
 func main() {
@@ -62,6 +65,13 @@ func main() {
 	if err := api.ValidateTerminalUserEnv(); err != nil {
 		log.Fatalf("invalid terminal user configuration: %v", err)
 	}
+	// A launcher nobody can use is an operator mistake worth surfacing now
+	// rather than at the first launch attempt.
+	launchConfig, err := api.LoadLaunchConfig(os.Getenv("CHROTE_LAUNCH_CONFIG"))
+	if err != nil {
+		log.Fatalf("invalid launch configuration: %v", err)
+	}
+	config.Launch = launchConfig
 	if origins := os.Getenv("CORS_ORIGINS"); origins != "" {
 		config.CORSOrigins = strings.Split(origins, ",")
 		for i := range config.CORSOrigins {
@@ -135,7 +145,7 @@ func main() {
 }
 
 func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Context) (*api.ScheduledHandler, context.CancelFunc) {
-	tmuxHandler := api.NewTmuxHandler()
+	tmuxHandler := api.NewTmuxHandlerWithLaunchConfig(config.Launch)
 	tmuxHandler.RegisterRoutes(mux)
 
 	scheduledHandler := api.NewScheduledHandler(tmuxHandler)
@@ -159,6 +169,9 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 		stopSystemHistory = startDefaultSystemHistorySampler(systemHandler, ctx)
 	}
 	systemHandler.RegisterRoutes(mux)
+
+	launchHandler := api.NewLaunchHandler(config.Launch)
+	launchHandler.RegisterRoutes(mux)
 
 	// CHROTE owns the terminal transport itself (ADR-0018): the attach runs on
 	// a pty this process allocates, resolved by the one implementation of the

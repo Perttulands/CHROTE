@@ -29,6 +29,9 @@ type TmuxHandler struct {
 	// server spawned. Its zero value owns no pty, so a handler built without
 	// it reports every attached client as foreign rather than as CHROTE's.
 	proc procSource
+	// launch is the only place the harness ids accepted on session creation
+	// are defined, and the only place their commands live.
+	launch LaunchConfig
 }
 
 // SessionsResponse is the response for listing sessions
@@ -50,6 +53,12 @@ type CreateSessionRequest struct {
 	Name        string `json:"name"`
 	UnixUser    string `json:"unixUser,omitempty"`
 	MouseScroll *bool  `json:"mouseScroll,omitempty"`
+	// Cwd is where the session starts: absolute, or the home token for the
+	// target Unix user's home. Empty keeps that user's configured workdir.
+	Cwd string `json:"cwd,omitempty"`
+	// Harness names a command from the launch configuration to start in the
+	// new session. Empty and "shell" start nothing.
+	Harness string `json:"harness,omitempty"`
 }
 
 // RenameSessionRequest is the request body for renaming a session
@@ -63,11 +72,19 @@ func isReservedInternalSessionName(name string) bool {
 	return strings.HasPrefix(strings.TrimSpace(name), reservedInternalSessionPrefix)
 }
 
-// NewTmuxHandler creates the default tmux handler.
+// NewTmuxHandler creates the default tmux handler, which offers only the
+// shell harness.
 func NewTmuxHandler() *TmuxHandler {
+	return NewTmuxHandlerWithLaunchConfig(LaunchConfig{})
+}
+
+// NewTmuxHandlerWithLaunchConfig creates a tmux handler that can start the
+// harnesses the operator configured.
+func NewTmuxHandlerWithLaunchConfig(launch LaunchConfig) *TmuxHandler {
 	return &TmuxHandler{
 		colorRegex: regexp.MustCompile(`^#[0-9A-Fa-f]{3,6}$|^[a-zA-Z]+$|^default$`),
 		proc:       systemProcSource(os.Getpid()),
+		launch:     withLaunchDefaults(launch),
 	}
 }
 
@@ -721,6 +738,18 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	if workDir == "" {
 		workDir = core.GetWorkDir()
 	}
+	// Both the folder and the harness are settled before anything is created,
+	// so a request CHROTE cannot honour leaves no session behind.
+	workDir, cwdErr := resolveLaunchCwd(req.Cwd, target.unixUser, workDir)
+	if cwdErr != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", cwdErr.Error())
+		return
+	}
+	harnessID, harnessCommand, harnessErr := h.launch.resolveHarness(req.Harness)
+	if harnessErr != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", harnessErr.Error())
+		return
+	}
 
 	// Create the session (detached) with an ownership marker and immutable ID.
 	session, err := h.createOwnedTmuxSession(r.Context(), target.socket, name, workDir)
@@ -745,11 +774,34 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return
 	}
-	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+	// The harness is started last, after every step that would clean the
+	// session up on failure. A session that already has an agent in it is
+	// never a session CHROTE kills.
+	response := map[string]interface{}{
 		"success":   true,
 		"session":   name,
+		"cwd":       workDir,
+		"harness":   harnessID,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
-	})
+	}
+	if harnessCommand != "" {
+		if err := h.sendLaunchCommand(r.Context(), target.socket, session.ID, harnessCommand); err != nil {
+			// The session is a working login shell in the requested folder,
+			// so it stays and the operator is told what did not start.
+			response["warning"] = fmt.Sprintf("session created, but the %q command could not be started: %s", harnessID, tmuxErrorDiagnostic(err))
+		}
+	}
+	core.WriteJSON(w, http.StatusOK, response)
+}
+
+// sendLaunchCommand types a harness command into a session and submits it, so
+// the harness runs under the login shell rather than replacing it.
+func (h *TmuxHandler) sendLaunchCommand(ctx context.Context, socket, target, command string) error {
+	if _, err := h.runTmuxOnSocketContext(ctx, socket, "send-keys", "-t", target, "-l", command); err != nil {
+		return err
+	}
+	_, err := h.runTmuxOnSocketContext(ctx, socket, "send-keys", "-t", target, "Enter")
+	return err
 }
 
 // DeleteSession handles DELETE /api/tmux/sessions/{name}
