@@ -62,6 +62,7 @@ vi.mock('../context/SessionContext', () => ({
       { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/live-shell', currentCommand: 'bash' },
       { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', currentCommand: 'codex' },
       { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'build', currentCommand: 'bash' },
+      { name: 'pinned-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/pinned', currentCommand: 'bash', sizePinned: true, width: 100, height: 30 },
     ],
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout', createdAt: 1, workspaces: {} }],
     refreshSessions,
@@ -256,6 +257,36 @@ describe('TerminalWindow launch user', () => {
     expect(deleteSession).toHaveBeenCalledWith('shell-existing', 'alice')
 
     expect(setActiveSession).not.toHaveBeenCalled()
+  })
+
+  it('offers the sizing action as disabled with its reason on a session tmux has pinned', () => {
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{
+          id: 'terminal3-window-0',
+          boundSessions: ['alice:pinned-existing', 'alice:shell-existing'],
+          activeSession: 'alice:pinned-existing',
+          colorIndex: 0,
+        }}
+      />
+    )
+
+    dispatchContextMenu(screen.getByText('pinned-existing'))
+    const pinnedRefit = screen.getByRole('menuitem', { name: /^Refit frame/ })
+    expect(pinnedRefit).toBeDisabled()
+    expect(pinnedRefit).toHaveTextContent('Pinned at 100x30. tmux window-size is manual on this window, so CHROTE cannot resize it.')
+    expect(pinnedRefit).toHaveAttribute('title', 'Pinned at 100x30. tmux window-size is manual on this window, so CHROTE cannot resize it.')
+    fireEvent.click(pinnedRefit)
+    expect(fit).not.toHaveBeenCalled()
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    dispatchContextMenu(screen.getByText('shell-existing'))
+    const ordinaryRefit = screen.getByRole('menuitem', { name: 'Refit frame' })
+    expect(ordinaryRefit).toBeEnabled()
+    expect(ordinaryRefit).not.toHaveAttribute('title')
+    fireEvent.click(ordinaryRefit)
+    expect(fit).toHaveBeenCalledWith('alice:shell-existing')
   })
 
   it('renames the exact qualified session from its attached tag menu and cancels with Escape', async () => {

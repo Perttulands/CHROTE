@@ -5,7 +5,7 @@ import { useSession } from '../context/SessionContext'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { useTerminalPool } from './TerminalPool'
 import TerminalSurface from './TerminalSurface'
-import { WINDOW_COLORS, getForegroundCommandLabel, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
+import { WINDOW_COLORS, getForegroundCommandLabel, getSessionBadges, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
 import { isDetached, liveSessionKeys, tileStateFor, type TileState } from '../terminal/tileState'
 import DismissiblePanel from './DismissiblePanel'
@@ -80,6 +80,11 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   const resolvedUser = session?.unixUser || unixUser
   const sessionKey = getSessionKey(actualName, resolvedUser)
   const workingDirectory = session?.cwd || null
+  // tmux owns the size of a manual window, so refitting the frame cannot move
+  // it. The control says so instead of doing nothing, in the badge's words.
+  const pinnedSize = session
+    ? getSessionBadges(session).find(badge => badge.id === 'pinned-size')
+    : undefined
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `tag-${workspaceId}-${windowId}-${sessionKey}`,
     data: { type: 'tag', sessionName: actualName, sessionKey, unixUser: resolvedUser, sourceWindowId: windowId, sourceWorkspaceId: workspaceId },
@@ -253,9 +258,18 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
               <span className="session-context-icon" aria-hidden="true">↻</span>
               Reconnect frame
             </button>
-            <button role="menuitem" className="session-context-item" onClick={() => runContextAction(() => pool.terminals.get(sessionName)?.fit())}>
+            <button
+              role="menuitem"
+              className="session-context-item"
+              disabled={!!pinnedSize}
+              title={pinnedSize?.detail}
+              onClick={() => runContextAction(() => pool.terminals.get(sessionName)?.fit())}
+            >
               <span className="session-context-icon" aria-hidden="true">↔</span>
-              Refit frame
+              <span className="session-context-stack">
+                Refit frame
+                {pinnedSize && <span className="session-context-reason">{pinnedSize.detail}</span>}
+              </span>
             </button>
             <button
               className="session-context-item"

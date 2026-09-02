@@ -379,6 +379,32 @@
   background-color: var(--accent-light);
 }
 
+/* An action the host cannot perform reads as unavailable and carries its
+   reason as text. No colour: this is a fact about the session, not an error. */
+.session-context-item:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.session-context-item:disabled:hover {
+  background-color: transparent;
+}
+
+.session-context-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.session-context-reason {
+  max-width: 220px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-dim);
+  white-space: normal;
+}
+
 .session-context-item.session-context-danger {
   color: var(--color-error);
 }
