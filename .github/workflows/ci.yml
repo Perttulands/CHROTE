@@ -15,7 +15,9 @@ env:
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # The job measured 4m22s against the previous 5m cap, so a new step would
+    # have started failing on time rather than on truth.
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
 
@@ -70,6 +72,21 @@ jobs:
           CHROTE_CONTRACT_ARTIFACT_DIR: ${{ runner.temp }}/chrote-contract
           CHROTE_SERVER_BINARY: ${{ github.workspace }}/chrote-server-ci
         run: ./scripts/test-built-server-contract.sh
+
+      # Runs on every push, not only on installer changes. What this smoke
+      # covers is the installed product -- its routes, its environment contract
+      # and its unit -- so a server change that touches no installer file can
+      # break it, and one did: 932b7831 left it red for two commits and nothing
+      # said so. It reuses the binary built above, so it costs seconds.
+      - name: Public installer smoke on the built binary
+        run: |
+          # The runner image ships no tmux; the smoke creates and removes its
+          # own session on a disposable socket.
+          if ! command -v tmux >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq tmux
+          fi
+          ./scripts/test-public-install.sh "$GITHUB_WORKSPACE/chrote-server-ci"
 
       - name: Weekly dependency scans
         if: github.event_name == 'schedule'

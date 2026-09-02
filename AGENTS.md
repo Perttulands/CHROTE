@@ -66,4 +66,4 @@ python3 scripts/host-neutrality.py
 git diff --check
 ```
 
-Installer changes also run both modes of `scripts/test-public-install.sh`. Runtime deployment is separate from repository verification and requires the operator-approved local target.
+CI runs `scripts/test-public-install.sh` against the binary it built on every push. That gate covers the installed product — its routes, its environment contract, and its unit — so any server change can break it, which is why it is no longer conditional. Locally, run both modes when you change the installer. Runtime deployment is separate from repository verification and requires the operator-approved local target.
