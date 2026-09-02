@@ -117,6 +117,40 @@ describe('retainSessionEvidence', () => {
     })).toBe('ended')
   })
 
+  it('holds an Ended verdict through a response that cannot speak for that user', () => {
+    const partial = sessionEvidenceFrom({
+      sessions,
+      loading: false,
+      error: "tmux failed for user 'alice'",
+      partialAnsweringUsers: ['forge'],
+    })
+    const retained = retainSessionEvidence(heard, partial)
+    // 'alice' did not answer this poll, so it overturns nothing the last whole
+    // one said: the session is still gone and the tile still offers Restart.
+    expect(tileStateFor({ sessionKey: 'alice:gone', onScreen: true, evidence: retained, connection: 'closed' }))
+      .toBe('ended')
+    // The user that did answer is still joined against the fresh response.
+    expect(tileStateFor({ sessionKey: 'forge:gone', onScreen: true, evidence: retained, connection: 'closed' }))
+      .toBe('ended')
+    expect(tileStateFor({ sessionKey: 'forge:build', onScreen: true, evidence: retained, connection: 'closed' }))
+      .toBe('takenOver')
+  })
+
+  it('holds nothing about a user no whole response has ever spoken for', () => {
+    const partial = sessionEvidenceFrom({
+      sessions,
+      loading: false,
+      error: "tmux failed for user 'alice'",
+      partialAnsweringUsers: ['forge'],
+    })
+    expect(tileStateFor({
+      sessionKey: 'alice:gone',
+      onScreen: true,
+      evidence: retainSessionEvidence(NO_SESSION_EVIDENCE, partial),
+      connection: 'closed',
+    })).toBe('takenOver')
+  })
+
   it('never holds a verdict against the tile own open connection', () => {
     expect(tileStateFor({
       sessionKey: 'gone',

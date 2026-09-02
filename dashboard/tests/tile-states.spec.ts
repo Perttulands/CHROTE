@@ -225,6 +225,33 @@ test.describe('Tile states', () => {
     await expect(tile(page).getByText('doomed ended. This frame shows its last output.')).toHaveCount(0)
   })
 
+  test('a partial outage does not take back an Ended verdict under the user that failed', async ({ page }) => {
+    const harness = await open(page, ['build:doomed'], 'build:doomed')
+    await expect(shownFrame(page)).toContainText('build:doomed output 1')
+
+    harness.live.current = []
+    await harness.sockets.get('build:doomed')!.close()
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
+
+    // 'build' now stops answering while 'alice' still does. The response says
+    // nothing about this binding, so it is in no position to overturn what the
+    // last response that could speak for it already settled.
+    harness.partial.current = { successfulUsers: ['alice'], failedUsers: ['build'] }
+    await page.waitForTimeout(1600)
+
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
+    await expect(tile(page).getByText('doomed ended. This frame shows its last output.')).toBeVisible()
+    await expect(tile(page).getByRole('button', { name: 'Restart' })).toBeVisible()
+    // Reclaim would dial a session tmux does not have and close at once.
+    await expect(tile(page).getByRole('button', { name: 'Reclaim' })).toHaveCount(0)
+
+    // Still only held: the socket recovering, with the session back under the
+    // same name, is news the verdict gives way to.
+    harness.partial.current = null
+    harness.live.current = ['build:doomed']
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
+  })
+
   test('a detached tile states itself in the middle of the frame it is preserving, in the empty-window button shape', async ({ page }) => {
     const harness = await open(page, ['doomed'], 'doomed')
     await expect(shownFrame(page)).toContainText('doomed output 1')

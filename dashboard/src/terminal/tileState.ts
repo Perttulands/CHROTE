@@ -33,6 +33,12 @@ export interface SessionEvidence {
    * user to check. Null when the response was whole and every binding joins.
    */
   answering: ReadonlySet<LaunchUser> | null
+  /**
+   * The live set of the last response that spoke for every user, kept while a
+   * partial one cannot. It decides the bindings `answering` excludes, and only
+   * those; the users that did answer are always read from `live`.
+   */
+  held?: Set<string> | null
 }
 
 /** Nothing has been heard, so nothing is claimed about any binding. */
@@ -70,20 +76,30 @@ export function sessionEvidenceFrom(
 
 /**
  * What the tile layer holds after a poll: the last evidence that actually said
- * something, kept when the next poll says nothing at all.
+ * something, kept wherever the next poll says nothing.
  *
- * A failed poll is the absence of news, not news that a session came back, and
- * a dead session does not come back — so re-deciding an Ended verdict on a
- * failure can only produce a wrong answer and a Reclaim button that dials a
- * session tmux does not have. The verdict stands until a poll that answered
+ * A poll that says nothing is the absence of news, not news that a session came
+ * back, and a dead session does not come back — so re-deciding an Ended verdict
+ * on it can only produce a wrong answer and a Reclaim button that dials a
+ * session tmux does not have. The verdict stands until a poll that can speak
  * replaces it, which is also what lets a restarted session read Live again. An
  * open connection is first-hand proof and overrides all of this anyway.
  *
- * This is a cache, deliberately: one poll deep, replaced whole by the next
- * response, and never consulted while the tile has its own connection.
+ * A poll says nothing in two shapes, and the rule is the same for both. One
+ * that failed outright says nothing about anybody, so the last answer is kept
+ * whole. A *partial* one says nothing about the users whose socket failed, so
+ * the last whole answer is kept for exactly those bindings, while the users
+ * that did answer are read from the fresh response as usual.
+ *
+ * This is a cache, deliberately: never more than one held set, dropped the
+ * moment a whole response lands, and never consulted while the tile has its own
+ * connection.
  */
 export function retainSessionEvidence(previous: SessionEvidence, fresh: SessionEvidence): SessionEvidence {
-  return fresh.live === null ? previous : fresh
+  if (fresh.live === null) return previous
+  if (fresh.answering === null) return fresh
+  const held = previous.answering === null ? previous.live : previous.held
+  return held == null ? fresh : { ...fresh, held }
 }
 
 /**
@@ -95,7 +111,12 @@ export function isSessionEnded(sessionKey: string, evidence: SessionEvidence): b
   if (evidence.live === null) return false
   if (evidence.answering !== null) {
     const unixUser = getSessionUserFromKey(sessionKey)
-    if (!unixUser || !evidence.answering.has(unixUser)) return false
+    if (!unixUser || !evidence.answering.has(unixUser)) {
+      // This response cannot speak for the binding, so it overturns nothing:
+      // the last one that could still decides, and nothing is claimed when
+      // there has not been one.
+      return evidence.held != null && !evidence.held.has(sessionKey)
+    }
   }
   return !evidence.live.has(sessionKey)
 }
