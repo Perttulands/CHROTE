@@ -40,7 +40,12 @@ mkdir -p \
   "$artifact_root/state" \
   "$artifact_root/tmux" \
   "$artifact_root/tmp"
+# The root too, not just what is under it: mktemp -d makes 0700 and an explicit
+# CHROTE_CONTRACT_ARTIFACT_DIR took whatever the caller's umask gave it, so the
+# same run cleaned up after itself or could not depending on how the shell that
+# started it was configured.
 chmod 700 \
+  "$artifact_root" \
   "$artifact_root/home" \
   "$artifact_root/runtime" \
   "$artifact_root/session-drops" \
