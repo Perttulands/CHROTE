@@ -87,6 +87,10 @@ through deliberate socket grants, so the reachable surface is the union of every
 configured user's sessions, not the service account's alone.
 
 - A terminal is arbitrary command execution as that Unix user.
+- The launcher starts a command the operator wrote in `CHROTE_LAUNCH_CONFIG`, as
+  the selected Unix user, in the selected directory. The browser sends a harness
+  id, never a command, and this adds no capability a terminal did not already
+  grant.
 - Cross-user socket access requires deliberate filesystem and tmux ACL setup.
 - CHROTE must not guess socket ownership or silently widen access.
 - Browser/device disconnects and CHROTE restarts must not cause CHROTE to kill

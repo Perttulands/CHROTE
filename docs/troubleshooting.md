@@ -141,7 +141,30 @@ Only then consider clearing CHROTE local storage. Local storage owns presentatio
 preferences and workspace assignments; clearing it should not kill tmux sessions
 or delete host files, but it will reset layout state.
 
-## 9. Reinstall without losing work
+## 9. The theme looks wrong, or the launcher offers only Shell
+
+Both come from host configuration described under
+[Environment](installation.md#environment).
+
+```bash
+grep -E '^CHROTE_(THEME_DIR|LAUNCH_CONFIG)=' ~/.config/chrote/chrote.env
+curl -i http://127.0.0.1:8094/api/theme
+curl http://127.0.0.1:8094/api/launch
+```
+
+- `/api/theme` answers `500` with the offending field named: a `theme.json`
+  exists but is not schema 1. Fix the field the response names. CHROTE does not
+  fall back to the default here, because a silent fallback would hide a broken
+  edit behind a palette that looks deliberate.
+- `/api/theme` answers with `chrote-dark` and an empty `art` list: that is the
+  embedded default, so `CHROTE_THEME_DIR` is unset or holds no `theme.json`.
+- The launcher offers only `Shell`: `CHROTE_LAUNCH_CONFIG` is unset. If it is
+  set and the service will not start at all, the startup log names the parse or
+  validation error in that file.
+- The look did not change after an apply: the dashboard reads the theme once, at
+  load. Reload the page.
+
+## 10. Reinstall without losing work
 
 ```bash
 cd CHROTE

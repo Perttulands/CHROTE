@@ -13,6 +13,7 @@ The host runs tmux, the CHROTE server, and the resources exposed through CHROTE.
 - CHROTE discovers sessions from configured tmux sockets and can create, attach, display, and explicitly delete sessions.
 - Terminal tabs provide independent layouts. A layout can show one to four terminal windows.
 - The Sessions sidecar supports discovery, Peek, navigation, attachment, and creation without silently changing a window's assigned session.
+- Creating a session offers the harnesses and folders named in host configuration, so a session starts in the intended directory as the intended Unix user with its harness already running.
 - Browser disconnects, tab closure, and CHROTE restarts leave existing tmux sessions running.
 - Cleanup may remove only the exact session the operator authorized or the exact test-owned or failed-creation-owned session being cleaned up.
 - Any command-line program can run in a CHROTE terminal. Core terminal behavior does not depend on a particular agent harness.
@@ -30,7 +31,8 @@ The host runs tmux, the CHROTE server, and the resources exposed through CHROTE.
 
 - Server shows health, resource readings, runtime events, and bounded operational history.
 - Settings owns presentation and explicit operator controls for terminal behavior.
-- Layouts, labels, presets, themes, and other device-specific presentation live in browser storage.
+- Layouts, labels, presets, and other device-specific presentation live in browser storage.
+- The interface has one active theme. It is host state, authored on the host and served by the server; the browser stores no theme and offers no picker.
 - Opening or reloading CHROTE must not replay stale browser settings into live tmux servers. Host-wide tmux changes require an explicit operator action.
 
 ## Components
@@ -58,7 +60,7 @@ Agent formations may integrate as a component. Mission design, chains, gates, an
 - tmux owns live sessions and the processes inside them.
 - The filesystem owns files.
 - Each project's Beads store owns its work state.
-- Host configuration owns schedules, service adapters, executable paths, and tmux socket mappings.
+- Host configuration owns schedules, service adapters, executable paths, tmux socket mappings, the active theme, and the harnesses and folders the launcher offers.
 - The browser owns device-local presentation.
 - CHROTE stores only state required for behavior it uniquely owns.
 
