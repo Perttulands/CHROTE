@@ -36,8 +36,13 @@ type Session struct {
 	// MouseEnabled is the session's tmux mouse option. Nil when unknown.
 	MouseEnabled *bool `json:"mouseEnabled,omitempty"`
 	// ForeignClients lists the ttys of attached clients CHROTE did not
-	// create, such as an SSH login. Opening the session displaces them.
+	// create, such as an SSH login. Opening the session watches alongside
+	// them; it no longer displaces them.
 	ForeignClients []string `json:"foreignClients,omitempty"`
+	// Viewers counts every client attached to the session, CHROTE's own and
+	// foreign alike. More than one means the window is drawn once for all of
+	// them, at the size the claiming viewer set.
+	Viewers int `json:"viewers,omitempty"`
 }
 
 // GroupPriority defines the sort order for session groups

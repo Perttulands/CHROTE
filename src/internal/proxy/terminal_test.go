@@ -41,9 +41,11 @@ func newTerminalHarnessWithOrigins(t *testing.T, resolve ResolveTarget, allowedO
 	script := `#!/bin/bash
 printf '%s\n' "$*" >> "$FAKE_TMUX_ARGS"
 for arg in "$@"; do
-  if [ "$arg" = "has-session" ]; then
-    exit "${FAKE_TMUX_HAS_SESSION_STATUS:-0}"
-  fi
+  case "$arg" in
+    has-session) exit "${FAKE_TMUX_HAS_SESSION_STATUS:-0}" ;;
+    list-clients) printf '%s' "${FAKE_TMUX_CLIENTS:-}"; exit 0 ;;
+    refresh-client) exit "${FAKE_TMUX_REFRESH_STATUS:-0}" ;;
+  esac
 done
 exec bash "$FAKE_TMUX_ATTACH"
 `
@@ -328,25 +330,58 @@ func TestTerminal_PlainHTTPIsNotServed(t *testing.T) {
 	}
 }
 
-// One sizing client per window is what the flags buy: a tile takes the session
-// over with -d, and a peek attaches without ever sizing the window.
+// One *sizing* client per window is what the flags buy, and no more than that:
+// nothing here ever attaches with -d, so a second viewer watches a session
+// instead of evicting whoever is already in it.
 func TestTerminal_ViewingModeSelectsTheAttachFlags(t *testing.T) {
 	for _, tt := range []struct {
-		mode string
-		want string
+		name    string
+		mode    string
+		clients string
+		want    string
 	}{
-		{mode: "tile", want: "-S /tmp/tmux-b attach-session -d -t shell-one"},
-		{mode: "peek", want: "-S /tmp/tmux-b attach-session -f ignore-size -t shell-one"},
+		{
+			name: "a tile takes a sizing seat nobody holds",
+			mode: "tile",
+			want: "-S /tmp/tmux-b attach-session -t shell-one",
+		},
+		{
+			name:    "a tile observes a session another client already sizes",
+			mode:    "tile",
+			clients: "/dev/pts/7\tattached,focused,UTF-8\n",
+			want:    "-S /tmp/tmux-b attach-session -f ignore-size -t shell-one",
+		},
+		{
+			name:    "a tile takes the seat back from clients that all ignore size",
+			mode:    "tile",
+			clients: "/dev/pts/7\tattached,ignore-size,UTF-8\n",
+			want:    "-S /tmp/tmux-b attach-session -t shell-one",
+		},
+		{
+			name: "a peek never takes the seat",
+			mode: "peek",
+			want: "-S /tmp/tmux-b attach-session -f ignore-size -t shell-one",
+		},
+		{
+			name:    "a peek never takes the seat from a sizing client either",
+			mode:    "peek",
+			clients: "/dev/pts/7\tattached,focused,UTF-8\n",
+			want:    "-S /tmp/tmux-b attach-session -f ignore-size -t shell-one",
+		},
 	} {
-		t.Run(tt.mode, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
 			t.Setenv("FAKE_TMUX_ATTACH", harness.attachScript(`printf 'attached\n'; sleep 10`))
+			t.Setenv("FAKE_TMUX_CLIENTS", tt.clients)
 
 			harness.dial("arg="+tt.mode+"&arg=shell-one&arg=bob", 80, 24).readUntil("attached")
 
 			args := harness.tmuxArgs()
 			if !strings.Contains(args, tt.want) {
 				t.Fatalf("%s attach args %q do not contain %q", tt.mode, args, tt.want)
+			}
+			if strings.Contains(args, "attach-session -d") {
+				t.Fatalf("attach displaced the clients already watching; args=%q", args)
 			}
 			if !strings.Contains(args, "-S /tmp/tmux-b has-session -t shell-one") {
 				t.Fatalf("%s did not probe the configured socket first; args=%q", tt.mode, args)
@@ -355,6 +390,54 @@ func TestTerminal_ViewingModeSelectsTheAttachFlags(t *testing.T) {
 				t.Fatalf("attach used resize-window, which pins window-size manual; args=%q", args)
 			}
 		})
+	}
+}
+
+// Claiming has to move the sizing seat, not merely take it: clearing this
+// client's flag while another client still lacks it leaves two sizing clients
+// and brings back the `window-size latest` flapping this model exists to stop.
+func TestTerminal_ClaimFlagsTheOtherSizingClientsBeforeClearingItsOwn(t *testing.T) {
+	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
+	t.Setenv("FAKE_TMUX_ATTACH", harness.attachScript(`printf 'attached\n'; cat`))
+	t.Setenv("FAKE_TMUX_CLIENTS", "/dev/pts/7\tattached,focused,UTF-8\n/dev/pts/9\tattached,ignore-size,UTF-8\n")
+
+	client := harness.dial("arg=tile&arg=shell-one&arg=bob", 80, 24)
+	client.readUntil("attached")
+	client.send([]byte("4"))
+	// Frames are dispatched one at a time on one goroutine, so an echo of the
+	// next frame is proof the claim before it has already been handled.
+	client.send([]byte("0claimed\n"))
+	client.readUntil("claimed")
+
+	args := harness.tmuxArgs()
+	handOver := strings.Index(args, "refresh-client -t /dev/pts/7 -f ignore-size")
+	takeOver := strings.Index(args, "-f !ignore-size")
+	if handOver < 0 {
+		t.Fatalf("claim did not hand the size over from the other sizing client; args=%q", args)
+	}
+	if takeOver < 0 || takeOver < handOver {
+		t.Fatalf("claim cleared its own flag before flagging the other sizer; args=%q", args)
+	}
+	if strings.Contains(args, "refresh-client -t /dev/pts/9") {
+		t.Fatalf("claim flagged a client that was already ignoring size; args=%q", args)
+	}
+}
+
+// A peek is an observer by construction. A claim frame on one is a client bug,
+// and it must not move the sizing seat.
+func TestTerminal_PeekCannotClaimTheSize(t *testing.T) {
+	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
+	t.Setenv("FAKE_TMUX_ATTACH", harness.attachScript(`printf 'attached\n'; cat`))
+	t.Setenv("FAKE_TMUX_CLIENTS", "/dev/pts/7\tattached,focused,UTF-8\n")
+
+	client := harness.dial("arg=peek&arg=shell-one&arg=bob", 80, 24)
+	client.readUntil("attached")
+	client.send([]byte("4"))
+	client.send([]byte("0ignored\n"))
+	client.readUntil("ignored")
+
+	if args := harness.tmuxArgs(); strings.Contains(args, "refresh-client") {
+		t.Fatalf("a peek moved the sizing seat; args=%q", args)
 	}
 }
 

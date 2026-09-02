@@ -16,6 +16,7 @@ const removeSessionFromWindow = vi.fn()
 const renameSession = vi.fn()
 const deleteSession = vi.fn()
 const reconnect = vi.fn()
+const claim = vi.fn()
 const redialIfDropped = vi.fn()
 const fit = vi.fn()
 const setFocusedWindowKey = vi.fn()
@@ -41,7 +42,7 @@ const mockSessions = vi.hoisted(() => ([
   { name: 'pinned-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/pinned', currentCommand: 'bash', sizePinned: true, width: 100, height: 30 },
   { name: 'ssh-held', windows: 1, attached: true, group: 'shell', unixUser: 'alice', currentCommand: 'bash', foreignClients: ['/dev/pts/12'] },
 ]))
-const pooledTerminals = new Map<string, { reconnect: () => void; redialIfDropped: () => void; fit: () => void; focus: () => void }>()
+const pooledTerminals = new Map<string, { reconnect: () => void; claim: () => void; redialIfDropped: () => void; fit: () => void; focus: () => void }>()
 
 vi.mock('@dnd-kit/core', () => ({
   useDraggable: () => ({
@@ -108,6 +109,7 @@ vi.mock('./TerminalPool', () => ({
         if (!pooledTerminals.has(sessionKey)) {
           pooledTerminals.set(sessionKey, {
             reconnect: () => reconnect(sessionKey),
+            claim: () => claim(sessionKey),
             redialIfDropped: () => redialIfDropped(sessionKey),
             fit: () => fit(sessionKey),
             focus: vi.fn(),
@@ -241,10 +243,11 @@ describe('TerminalWindow launch user', () => {
     const sendEvent = openInactiveMenu()
     expect(sendEvent.defaultPrevented).toBe(true)
     const menuButtons = screen.getAllByRole('menuitem')
-    expect(menuButtons).toHaveLength(6)
+    expect(menuButtons).toHaveLength(7)
     for (const label of [
       'Send to session',
       'Reconnect frame',
+      /Claim session/,
       'Refit frame',
       'Open files in working directory',
       'Rename session',
@@ -748,7 +751,7 @@ describe('TerminalWindow launch user', () => {
     expect(screen.getByText(/departed ended/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Restart' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Reclaim' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Claim' })).not.toBeInTheDocument()
     expect(container.querySelector('.session-tag[data-tile-state="ended"] .tag-state')).toHaveTextContent('ended')
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
@@ -832,7 +835,10 @@ describe('TerminalWindow launch user', () => {
     expect(reconnect).toHaveBeenCalledWith('shell-existing')
   })
 
-  it('leaves a session another client is attached to alone, because dialling it would evict them', () => {
+  // This used to be held back: dialling attached with -d and would have thrown
+  // the SSH client out. Nothing attaches with -d now, so the dial joins them
+  // and costs them neither their client nor their size.
+  it('dials again for a session another client is attached to, because that no longer evicts them', () => {
     poolState.connectionStates = new Map([['alice:ssh-held', 'dropped']])
     const { container } = render(
       <TerminalWindow
@@ -841,12 +847,8 @@ describe('TerminalWindow launch user', () => {
       />
     )
 
-    expect(container.querySelector('.terminal-window-body')).toHaveAttribute('data-tile-state', 'takenOver')
-    expect(screen.getByText(/ssh-held is attached elsewhere/)).toBeInTheDocument()
-    expect(redialIfDropped).not.toHaveBeenCalled()
-    // Taking it back stays the operator's decision, and stays one click.
-    fireEvent.click(screen.getByRole('button', { name: 'Reclaim' }))
-    expect(reconnect).toHaveBeenCalledWith('alice:ssh-held')
+    expect(container.querySelector('.terminal-window-body')).toHaveAttribute('data-tile-state', 'lost')
+    expect(redialIfDropped).toHaveBeenCalledWith('alice:ssh-held')
   })
 
   it('does not dial again for a lost tile that is not on screen', () => {
@@ -862,7 +864,7 @@ describe('TerminalWindow launch user', () => {
     expect(redialIfDropped).not.toHaveBeenCalled()
   })
 
-  it('offers Reclaim, not Restart, when the session is alive but the connection was taken', () => {
+  it('offers Claim, not Restart, when the session is alive but another client detached this terminal', () => {
     poolState.connectionStates = new Map([['shell-existing', 'closed']])
     const { container } = render(
       <TerminalWindow
@@ -872,11 +874,14 @@ describe('TerminalWindow launch user', () => {
     )
 
     expect(container.querySelector('.terminal-window-body')).toHaveAttribute('data-tile-state', 'takenOver')
-    expect(screen.getByText(/shell-existing is attached elsewhere/)).toBeInTheDocument()
+    expect(screen.getByText(/shell-existing was detached by another client/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Restart' })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Reclaim' }))
-    expect(reconnect).toHaveBeenCalledWith('shell-existing')
+    // Claim dials again and takes the sizing seat, so the session comes back at
+    // this device's size without detaching anyone watching it.
+    fireEvent.click(screen.getByRole('button', { name: 'Claim' }))
+    expect(claim).toHaveBeenCalledWith('shell-existing')
+    expect(reconnect).not.toHaveBeenCalled()
   })
 
   it('leaves a bound session that is not on screen idle, with no detached affordance', () => {

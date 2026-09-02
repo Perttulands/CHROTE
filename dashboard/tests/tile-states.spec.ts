@@ -51,6 +51,8 @@ interface Harness {
   sockets: Map<string, WebSocketRoute>
   /** How many times each session has been dialled. */
   dials: Map<string, number>
+  /** How many times each session's connection asked for the sizing seat. */
+  claims: Map<string, number>
   created: string[]
 }
 
@@ -72,6 +74,7 @@ async function open(
     heldElsewhere: { current: [...(options.heldElsewhere ?? [])] },
     sockets: new Map(),
     dials: new Map(),
+    claims: new Map(),
     created: [],
   }
   const windows: WindowSpec[] = [{ boundSessions, activeSession }, ...(options.extraWindows ?? [])]
@@ -94,6 +97,12 @@ async function open(
     }
     ws.onMessage(message => {
       const text = typeof message === 'string' ? message : message.toString('utf8')
+      // `4` is the claim frame: this connection asking to become the session's
+      // one sizing client.
+      if (text === '4') {
+        harness.claims.set(name, (harness.claims.get(name) ?? 0) + 1)
+        return
+      }
       if (!text.startsWith('{')) return
       ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(`${name} output ${dial}`)]))
     })
@@ -217,10 +226,10 @@ test.describe('Tile states', () => {
     await expect(shownFrame(page)).toContainText('doomed output 1')
     await expect(tile(page).getByRole('button', { name: 'Restart' })).toBeVisible()
     await expect(tile(page).getByRole('button', { name: 'Remove' })).toBeVisible()
-    await expect(tile(page).getByRole('button', { name: 'Reclaim' })).toHaveCount(0)
+    await expect(tile(page).getByRole('button', { name: 'Claim', exact: true })).toHaveCount(0)
   })
 
-  test('a poll that fails does not take back an Ended verdict or offer Reclaim on a session that is gone', async ({ page }) => {
+  test('a poll that fails does not take back an Ended verdict or offer Claim on a session that is gone', async ({ page }) => {
     allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 500')
     const harness = await open(page, ['doomed'], 'doomed')
     await expect(shownFrame(page)).toContainText('doomed output 1')
@@ -238,8 +247,8 @@ test.describe('Tile states', () => {
     await expect(tile(page).getByText('doomed ended. This frame shows its last output.')).toBeVisible()
     await expect(tile(page).getByRole('button', { name: 'Restart' })).toBeVisible()
     await expect(tile(page).getByRole('button', { name: 'Remove' })).toBeVisible()
-    // Reclaim would dial a session tmux does not have and close at once.
-    await expect(tile(page).getByRole('button', { name: 'Reclaim' })).toHaveCount(0)
+    // Claim would dial a session tmux does not have and close at once.
+    await expect(tile(page).getByRole('button', { name: 'Claim', exact: true })).toHaveCount(0)
 
     // Held one poll deep, not forever: a poll that answers again replaces the
     // verdict, so a session back under the same name is not stuck as Ended.
@@ -266,8 +275,8 @@ test.describe('Tile states', () => {
     await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
     await expect(tile(page).getByText('doomed ended. This frame shows its last output.')).toBeVisible()
     await expect(tile(page).getByRole('button', { name: 'Restart' })).toBeVisible()
-    // Reclaim would dial a session tmux does not have and close at once.
-    await expect(tile(page).getByRole('button', { name: 'Reclaim' })).toHaveCount(0)
+    // Claim would dial a session tmux does not have and close at once.
+    await expect(tile(page).getByRole('button', { name: 'Claim', exact: true })).toHaveCount(0)
 
     // Still only held: the socket recovering, with the session back under the
     // same name, is news the verdict gives way to.
@@ -378,7 +387,7 @@ test.describe('Tile states', () => {
 
     await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'lost')
     await expect(tile(page).getByText(/attached elsewhere/)).toHaveCount(0)
-    await expect(tile(page).getByRole('button', { name: 'Reclaim' })).toHaveCount(0)
+    await expect(tile(page).getByRole('button', { name: 'Claim', exact: true })).toHaveCount(0)
 
     await returnToTab(page)
 
@@ -388,44 +397,58 @@ test.describe('Tile states', () => {
     expect(harness.created).toEqual([])
   })
 
-  test('a tile does not take a session back from a client that really holds it', async ({ page }) => {
+  // This used to be held back, because dialling attached with -d and would have
+  // thrown the SSH client out. Nothing attaches with -d now (ADR-0017 decision
+  // 1), so the dial joins them without taking their client or their size.
+  test('a tile whose connection went dials again even when another client is attached', async ({ page }) => {
     const harness = await open(page, ['ssh-held'], 'ssh-held', { heldElsewhere: ['ssh-held'] })
     await expect(shownFrame(page)).toContainText('ssh-held output 1')
 
-    // Same lost connection, but tmux reports a client CHROTE did not create.
-    // Dialling would evict them, so the tile waits to be told to.
     await harness.sockets.get('ssh-held')!.close({ code: 1006 })
 
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'takenOver')
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'lost')
     await returnToTab(page)
-    await page.waitForTimeout(600)
 
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'takenOver')
-    expect(harness.dials.get('ssh-held')).toBe(1)
-
-    await tile(page).getByRole('button', { name: 'Reclaim' }).click()
     await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
+    await expect(shownFrame(page)).toContainText('ssh-held output 2')
     expect(harness.dials.get('ssh-held')).toBe(2)
+    // Watching alongside them is not claiming the size from them.
+    expect(harness.claims.get('ssh-held')).toBeUndefined()
   })
 
-  test('a tile whose session was claimed elsewhere offers Reclaim, and takes it back', async ({ page }) => {
+  test('a tile another client detached offers Claim, which dials again and takes the size', async ({ page }) => {
     const harness = await open(page, ['claimed'], 'claimed')
     await expect(shownFrame(page)).toContainText('claimed output 1')
 
-    // Another client attached with -d: our client is gone, the session is not.
-    // The pty hangs up, so the server closes the way it does for any terminal
-    // that ended — which is what tells this apart from a connection we lost.
+    // A client outside CHROTE attached with -d: our client is gone, the session
+    // is not. The pty hangs up, so the server closes the way it does for any
+    // terminal that ended — which is what tells this apart from a lost one.
     await harness.sockets.get('claimed')!.close({ code: 1000, reason: 'terminal ended' })
 
     await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'takenOver')
-    await expect(tile(page).getByText('claimed is attached elsewhere. This frame shows its last output.')).toBeVisible()
+    await expect(tile(page).getByText('claimed was detached by another client. This frame shows its last output.')).toBeVisible()
     await expect(shownFrame(page)).toContainText('claimed output 1')
     await expect(tile(page).getByRole('button', { name: 'Restart' })).toHaveCount(0)
 
-    await tile(page).getByRole('button', { name: 'Reclaim' }).click()
+    await tile(page).getByRole('button', { name: 'Claim', exact: true }).click()
 
     await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
     await expect(shownFrame(page)).toContainText('claimed output 2')
+    // The dial alone would leave the session at whatever size the other client
+    // set; the claim is what brings it back to this device.
+    await expect.poll(() => harness.claims.get('claimed')).toBe(1)
     expect(harness.created).toEqual([])
+  })
+
+  test('claiming a session that is already on screen takes the size without redialling', async ({ page }) => {
+    const harness = await open(page, ['shared'], 'shared')
+    await expect(shownFrame(page)).toContainText('shared output 1')
+
+    await tile(page).getByRole('button', { name: 'Session shared', exact: true }).click({ button: 'right' })
+    await page.getByRole('menuitem', { name: /Claim session/ }).click()
+
+    await expect.poll(() => harness.claims.get('shared')).toBe(1)
+    expect(harness.dials.get('shared')).toBe(1)
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
   })
 })

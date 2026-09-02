@@ -43,6 +43,32 @@ func TestParseSessionsOutputReportsFactsThatContradictAppearances(t *testing.T) 
 	if got := strings.Join(session.ForeignClients, ","); got != "/dev/pts/12" {
 		t.Fatalf("ForeignClients = %q, want only the client CHROTE did not create", got)
 	}
+	// Viewers counts everyone watching, whoever created them: tmux draws the
+	// window once, so a second viewer means this pane is somebody else's size.
+	if session.Viewers != 2 {
+		t.Fatalf("Viewers = %d, want both attached clients counted", session.Viewers)
+	}
+}
+
+func TestParseSessionsOutputCountsEveryViewerIncludingCHROTEsOwn(t *testing.T) {
+	for name, tt := range map[string]struct {
+		attachedList string
+		want         int
+	}{
+		"nobody watching":        {attachedList: "", want: 0},
+		"one viewer":             {attachedList: "/dev/pts/9", want: 1},
+		"a viewer and a watcher": {attachedList: "/dev/pts/9,/dev/pts/12", want: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			output := inventoryLine("$1", "shared", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", tt.attachedList)
+
+			sessions := parseSessionsOutput(output, "operator", map[string]bool{"/dev/pts/9": true})
+
+			if sessions[0].Viewers != tt.want {
+				t.Fatalf("Viewers = %d, want %d", sessions[0].Viewers, tt.want)
+			}
+		})
+	}
 }
 
 func TestParseSessionsOutputRaisesNoClaimForAnOrdinarySession(t *testing.T) {

@@ -24,25 +24,6 @@ export function liveSessionKeys(sessions: readonly TmuxSession[]): Set<string> {
   return live
 }
 
-/**
- * The bindings whose session tmux reports a client CHROTE did not create, such
- * as an SSH login. Indexed in both key forms, like the live set.
- *
- * A tile attaches with `-d`, so dialling one of these takes the session away
- * from someone who is using it. That is a fine thing for the operator to ask
- * for and a bad thing to do behind his back, which is the whole reason this
- * set exists.
- */
-export function heldElsewhereSessionKeys(sessions: readonly TmuxSession[]): Set<string> {
-  const held = new Set<string>()
-  sessions.forEach(session => {
-    if ((session.foreignClients ?? []).length === 0) return
-    held.add(getSessionKey(session.name, session.unixUser))
-    held.add(session.name)
-  })
-  return held
-}
-
 /** What the last session poll can be held to have said about a binding. */
 export interface SessionEvidence {
   /** The live set, or null while no trustworthy session list has arrived. */
@@ -149,25 +130,24 @@ export interface TileStateInput {
   /** What the last session poll can say about this binding. */
   evidence: SessionEvidence
   connection: TerminalConnectionState
-  /** The last poll saw a client CHROTE did not create attached to this session. */
-  heldElsewhere: boolean
 }
 
-export function tileStateFor({ sessionKey, onScreen, evidence, connection, heldElsewhere }: TileStateInput): TileState {
+export function tileStateFor({ sessionKey, onScreen, evidence, connection }: TileStateInput): TileState {
   // An open connection is first-hand proof the session is alive, and it beats a
   // poll that has not caught up with a session the operator just restarted.
   if (connection === 'open') return onScreen ? 'live' : 'idle'
   if (isSessionEnded(sessionKey, evidence)) return 'ended'
   if (!onScreen) return 'idle'
-  // The host ends a terminal when the pty hangs up, and on a live session that
-  // means another client attached with -d and won it.
+  // The host ends a terminal when the pty hangs up. CHROTE no longer attaches
+  // with `-d`, so on a live session that is somebody else's client detaching
+  // this one — an SSH login attaching with `-d`, and nothing CHROTE did.
   if (connection === 'closed') return 'takenOver'
-  // A connection that was lost says nothing about who holds the session, so ask
-  // tmux. Nobody else attached means the tile simply fell off — every
-  // chrote-srv restart does this to every open tile — and it dials again. A
-  // client that is really there is a takeover the operator has to choose,
-  // because taking it back would evict them.
-  if (connection === 'dropped') return heldElsewhere ? 'takenOver' : 'lost'
+  // The connection was lost with the session still there — every chrote-srv
+  // restart does this to every open tile — so it dials again. Another client
+  // being attached is no longer a reason to hold back: dialling attaches
+  // alongside them without taking the size, so nobody is evicted and nothing
+  // resizes behind the operator's back.
+  if (connection === 'dropped') return 'lost'
   // 'idle' and 'connecting' are a tile on its way up, not one that lost its
   // session.
   return 'live'

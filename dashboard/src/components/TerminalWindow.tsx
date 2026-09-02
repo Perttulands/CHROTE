@@ -7,7 +7,7 @@ import { useTerminalPool } from './TerminalPool'
 import TerminalSurface from './TerminalSurface'
 import { WINDOW_COLORS, getForegroundCommandLabel, getSessionBadges, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
-import { heldElsewhereSessionKeys, isDetached, tileStateFor, type TileState } from '../terminal/tileState'
+import { isDetached, tileStateFor, type TileState } from '../terminal/tileState'
 import { useSessionEvidence } from '../context/useSessionEvidence'
 import DismissiblePanel from './DismissiblePanel'
 
@@ -66,7 +66,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
   const contextMenuPosition = useViewportMenuPosition<HTMLDivElement>(contextMenu, {
-    estimatedSize: { width: 240, height: 270 },
+    estimatedSize: { width: 240, height: 320 },
   })
   const tagRef = useRef<HTMLDivElement | null>(null)
   const firstActionRef = useRef<HTMLButtonElement | null>(null)
@@ -262,6 +262,19 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
               role="menuitem"
               className="session-context-item"
               disabled={!!pinnedSize}
+              title={pinnedSize?.detail ?? CLAIM_EXPLANATION}
+              onClick={() => runContextAction(() => pool.terminals.get(sessionName)?.claim())}
+            >
+              <span className="session-context-icon" aria-hidden="true">◎</span>
+              <span className="session-context-stack">
+                Claim session
+                <span className="session-context-reason">{pinnedSize?.detail ?? CLAIM_EXPLANATION}</span>
+              </span>
+            </button>
+            <button
+              role="menuitem"
+              className="session-context-item"
+              disabled={!!pinnedSize}
               title={pinnedSize?.detail}
               onClick={() => runContextAction(() => pool.terminals.get(sessionName)?.fit())}
             >
@@ -302,12 +315,21 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   )
 }
 
+/**
+ * What claiming does, in the operator's terms, wherever it is offered. tmux
+ * draws a window once for every client watching it, so this is also the honest
+ * limit of shared viewing: claiming on a phone makes the desktop watching the
+ * same session narrow, and no interface can make one grid two sizes.
+ */
+export const CLAIM_EXPLANATION =
+  'Set the tmux window to this device\'s size. Other devices keep watching, at that size.'
+
 interface DetachedTileProps {
   /** Taken over, Lost and Ended are the same shape: no connection, last frame, an action. */
   state: 'takenOver' | 'lost' | 'ended'
   sessionName: string
   restarting: boolean
-  onReclaim: () => void
+  onRestore: () => void
   onRestart: () => void
   onRemove: () => void
 }
@@ -315,12 +337,12 @@ interface DetachedTileProps {
 // Each note says only what CHROTE actually knows. "Attached elsewhere" is a
 // claim about another client, so it is reserved for a session that has one.
 const DETACHED_NOTE: Record<DetachedTileProps['state'], (sessionName: string) => string> = {
-  takenOver: name => `${name} is attached elsewhere. This frame shows its last output.`,
+  takenOver: name => `${name} was detached by another client. This frame shows its last output.`,
   lost: name => `${name} lost its connection. This frame shows its last output.`,
   ended: name => `${name} ended. This frame shows its last output.`,
 }
 
-function DetachedTile({ state, sessionName, restarting, onReclaim, onRestart, onRemove }: DetachedTileProps) {
+function DetachedTile({ state, sessionName, restarting, onRestore, onRestart, onRemove }: DetachedTileProps) {
   return (
     <div className="terminal-tile-detached" data-tile-state={state} role="status">
       <span className="terminal-tile-detached-note">{DETACHED_NOTE[state](sessionName)}</span>
@@ -335,11 +357,17 @@ function DetachedTile({ state, sessionName, restarting, onReclaim, onRestart, on
             <button className="tile-action-btn tile-action-btn-compact" type="button" onClick={onRemove}>Remove</button>
           </>
         ) : (
-          // Both dial the same session again. Reclaim takes it from whoever
-          // holds it; Reconnect takes it from nobody, which is why the tile
-          // does that one for the operator when it can.
-          <button className="tile-action-btn tile-action-btn-compact" type="button" onClick={onReclaim}>
-            {state === 'takenOver' ? 'Reclaim' : 'Reconnect'}
+          // Both dial the same session again, and neither displaces anybody.
+          // Claim also takes the tmux sizing seat, so the session comes back at
+          // this device's size; Reconnect leaves the size where it is, which is
+          // why the tile does that one for the operator when it can.
+          <button
+            className="tile-action-btn tile-action-btn-compact"
+            type="button"
+            title={state === 'takenOver' ? CLAIM_EXPLANATION : undefined}
+            onClick={onRestore}
+          >
+            {state === 'takenOver' ? 'Claim' : 'Reconnect'}
           </button>
         )}
       </div>
@@ -396,9 +424,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
   // actually heard from. A list that has not arrived, or one whose poll failed
   // outright, proves nothing about any binding.
   const evidence = useSessionEvidence()
-  // The second host fact: a session someone else is attached to cannot be
-  // dialled again without evicting them, so a tile never does it unasked.
-  const heldElsewhere = useMemo(() => heldElsewhereSessionKeys(sessions), [sessions])
   // A window hidden by the mobile carousel or by an inactive workspace tab is
   // not on screen, whatever its bindings say.
   const windowOnScreen = workspaceActive && style?.display !== 'none'
@@ -409,24 +434,16 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
       onScreen: windowOnScreen && sessionKey === windowConfig.activeSession,
       evidence,
       connection: pool.connectionStates.get(sessionKey) ?? 'idle',
-      heldElsewhere: heldElsewhere.has(sessionKey),
     }),
-  ])), [windowConfig.boundSessions, windowConfig.activeSession, windowOnScreen, evidence, heldElsewhere, pool.connectionStates])
+  ])), [windowConfig.boundSessions, windowConfig.activeSession, windowOnScreen, evidence, pool.connectionStates])
   const activeTileState = activeSession ? tileStates.get(activeSession) ?? 'idle' : 'idle'
 
   // A tile put on screen dials again if its connection was lost rather than
   // ended — the case a chrote-srv restart creates for every open tile at once.
   // One attempt per such moment, no retry and no recurring check; a dial that
   // does not land leaves the tile's own Reconnect control.
-  //
-  // The held set is read through a ref because it is rebuilt by every session
-  // poll, and a poll is not a moment worth an attempt. Only the discrete
-  // events in the dependency list may spend one.
-  const heldElsewhereRef = useRef(heldElsewhere)
-  heldElsewhereRef.current = heldElsewhere
   useEffect(() => {
     if (!windowOnScreen || !activeSession) return
-    if (heldElsewhereRef.current.has(activeSession)) return
     activeTerminal?.redialIfDropped()
   }, [windowOnScreen, activeSession, activeTerminal])
 
@@ -458,9 +475,11 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     setActiveSession(workspaceId, windowConfig.id, sessionName)
   }
 
-  // Reclaim and Reconnect both attach again; the tile attaches with -d, so it
-  // takes the session back from whichever client displaced it.
-  const handleReclaim = (sessionKey: string) => pool.terminals.get(sessionKey)?.reconnect()
+  // Claim attaches again if it has to and takes the sizing seat, so the session
+  // comes back at this device's size without detaching whoever else is
+  // watching. Reconnect only dials.
+  const handleClaim = (sessionKey: string) => pool.terminals.get(sessionKey)?.claim()
+  const handleReconnect = (sessionKey: string) => pool.terminals.get(sessionKey)?.reconnect()
 
   // The pooled terminal is keyed by the binding, which Restart does not change,
   // so the recreated session needs an explicit dial on the existing terminal.
@@ -587,7 +606,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
             state={activeTileState}
             sessionName={getSessionNameFromKey(activeSession)}
             restarting={restarting}
-            onReclaim={() => handleReclaim(activeSession)}
+            onRestore={() => (activeTileState === 'takenOver' ? handleClaim(activeSession) : handleReconnect(activeSession))}
             onRestart={() => { void handleRestart(activeSession) }}
             onRemove={() => handleRemoveSession(activeSession)}
           />

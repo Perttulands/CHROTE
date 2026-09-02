@@ -4,7 +4,9 @@
 
 Accepted 2026-09-01; amended 2026-09-02 by decision 8 and the `Lost` tile state
 in decision 5, after a deploy showed twenty tiles claiming a takeover that had
-not happened.
+not happened; amended again 2026-09-02 by decision 1, which now holds one
+*sizing* client rather than one client, and by the parts of decisions 2, 5, 6
+and 8 that only existed to work around `-d`.
 
 Scope note: this settles who owns the size of a tmux window, what a window
 binding means, and how a quick look differs from a viewing session. The
@@ -82,6 +84,17 @@ Probed on scratch sockets, created and destroyed for the probe:
   another client is already sizing, and the window holds that size even after
   the sizing client leaves. Attaching to a window with *no* clients still sizes
   it to the arriving client regardless of the flag.
+- Measured again 2026-09-02, on tmux 3.6a, for the observer model in decision
+  1. `ignore-size` is per client and can be moved after the fact:
+  `refresh-client -t <tty> -f ignore-size` sets it and `-f '!ignore-size'`
+  clears it, each toggling only the flag named and leaving a client's other
+  flags alone. A client that is the *only* candidate sizes the window whether
+  it carries the flag or not, and keeps tracking its own resizes. When every
+  attached client carries the flag, tmux falls back to sizing by the most
+  recent one — the `window-size latest` flapping this ADR exists to stop, which
+  is why exactly one client is left unflagged rather than none. Addressing a
+  client that has already detached fails with `can't find client` and changes
+  nothing.
 - `resize-window -x -y` sets `window-size` to `manual` as a side effect. This is
   how the size guard manufactured pinned windows.
 - A control-mode client (`-C attach` plus `refresh-client -C`) sizes a window
@@ -90,13 +103,36 @@ Probed on scratch sockets, created and destroyed for the probe:
 
 ## Decision
 
-1. **One sizing client at a time.** A terminal tile attaches with
-   `attach-session -d`. Takeover is uniform: it displaces CHROTE's own clients
-   and foreign clients such as an SSH session alike.
+1. **One sizing client at a time — not one client.** Amended 2026-09-02. Many
+   clients may watch one tmux window; only one may set its size. A tile attaches
+   with `-f ignore-size` when another client is already sizing the window and
+   with no flags when none is, so it takes the sizing seat when the seat is free
+   and watches at the current size when it is not. Nothing CHROTE does attaches
+   with `-d`, so no client of any origin is ever displaced.
 
-2. **Takeover is reversible from the losing side.** A displaced tile keeps its
-   last rendered frame and offers `Reclaim`, which attaches again and takes the
-   session back. No mode, no dialog, one click.
+   The first revision made takeover uniform, because the measured harm was three
+   clients fighting over one window's width. That conflated two things tmux keeps
+   separate — how many clients may attach, and how many may size — and eviction
+   answered the second by forbidding the first. It cost a capability worth having:
+   a second device could not watch a session at all, and neither could a second
+   person. The seat is read back from `list-clients` at attach, so a window whose
+   clients all carry the flag is repaired by the next tile to arrive.
+
+2. **The sizing seat moves by `Claim`, and moving it detaches nobody.**
+   Amended 2026-09-02. A tile offers `Claim`: the host flags every other sizing
+   client and only then clears its own, so the window is never momentarily
+   sized by two clients. The other viewers keep watching, at the claiming
+   device's size. It is one frame on the connection the tile already has — no
+   redial, no mode, no dialog — and a tile with no connection dials first and
+   claims on arrival. No mode, no dialog, one click.
+
+   The honest limit is that a tmux window is drawn once, at one size, for every
+   client watching it. An observer therefore sees the sizing client's
+   dimensions, and a phone watching a 200-column desktop pane is unreadable
+   until it claims. No interface can make one grid two sizes, so CHROTE says so
+   instead: the `Claim` control states what claiming does to the other viewers,
+   and a session with more than one viewer carries a badge saying it is drawn
+   once at the claiming viewer's size.
 
 3. **A new session is sized once, at creation, and never again.** The
    create-session path attaches a transient control-mode client, sets the
@@ -112,8 +148,9 @@ Probed on scratch sockets, created and destroyed for the probe:
 5. **A binding is the operator's stated intent, not a cache of live sessions.**
    A tile has five states: `Idle` (bound, not on screen; it keeps its
    connection and its last rendered frame once it has been shown), `Live`
-   (attached and sizing), `Taken over` (alive elsewhere; last frame plus
-   `Reclaim`), `Lost` (the connection went, the session did not; last frame plus
+   (attached, sizing the window or watching at somebody else's size),
+   `Taken over` (another client detached this terminal; last frame plus
+   `Claim`), `Lost` (the connection went, the session did not; last frame plus
    `Reconnect`), and
    `Ended` (session gone; last frame plus `Restart` and `Remove`). Bindings,
    including ended ones, survive a reload. Nothing is ever removed from a window
@@ -127,9 +164,15 @@ Probed on scratch sockets, created and destroyed for the probe:
    attached elsewhere while the socket carried one client, and twenty `Reclaim`
    clicks to recover.
 
+   `Taken over` narrowed 2026-09-02 with decision 1. CHROTE no longer attaches
+   with `-d`, so it can no longer detach its own terminals; the state now means
+   a client from outside CHROTE attached with `-d` and took this pty away.
+
 6. **Peek is an observer.** It attaches with `-f ignore-size`, never displaces
-   another client, and never resizes a session that has a viewer. Input is not
-   suppressed.
+   another client, never resizes a session that has a viewer, and cannot claim
+   the sizing seat. Input is not suppressed. Since decision 1 a tile no longer
+   displaces anyone either, so the two modes now differ in one thing only:
+   whether they take a free sizing seat.
 
 7. **A badge means this session is not what you would assume from looking at
    it.** Pinned size, a foreign client attached, more than one tmux window or
@@ -143,10 +186,13 @@ Probed on scratch sockets, created and destroyed for the probe:
    network goes, so the two causes are separable in the browser before tmux is
    asked anything. A tile whose connection was *lost* dials again when it is put
    on screen — one attempt per such moment, no retry, no timer, no recurring
-   check of any kind — unless the session inventory reports a client CHROTE did
-   not create. That one is left alone, because a tile attaches with `-d` and
-   would evict them: taking a session back from someone using it stays the
-   operator's decision, and stays `Reclaim`.
+   check of any kind.
+
+   The carve-out this decision arrived with is gone as of decision 1: a tile
+   whose session had a foreign client was left alone, because dialling again
+   attached with `-d` and would have evicted them. Dialling now attaches
+   alongside them without the sizing seat, so it costs them neither their client
+   nor their size, and the tile dials for the operator like any other.
 
 ## Consequences
 
@@ -156,9 +202,16 @@ Probed on scratch sockets, created and destroyed for the probe:
 - The prune layer is deleted in full: stale-candidate tracking, protection
   counters, workspace pruning, and the operator-facing "clear stale sessions"
   action.
-- Opening a session in CHROTE disconnects an SSH client attached to it. This is
-  intended, and the foreign-client badge exists so it is informed rather than
-  surprising.
+- Opening a session in CHROTE no longer disconnects an SSH client attached to
+  it. Both watch it live; the SSH client keeps the size until the operator
+  claims it, and claiming leaves them attached at the new size. The
+  foreign-client badge stays, because who else is watching is still not
+  something a glance can tell.
+- A retained off-screen tile keeps its tmux client, so a session can accumulate
+  one client per tile that has ever shown it. Exactly one of them is unflagged,
+  and it is whichever attached to a free seat — which may be an off-screen tile,
+  in which case the on-screen one watches at its size until it is claimed. The
+  operator has `Claim` for that, and no recurring check looks for it.
 - A session created outside CHROTE without an explicit size starts at tmux's
   80x24 and stays there until something views it. CHROTE does not rescue it,
   because rescuing requires noticing, and noticing requires the recurring checks

@@ -23,6 +23,7 @@ function stubSession() {
     setFontSize: vi.fn(),
     setScrollbarHidden: vi.fn(),
     reconnect: vi.fn(),
+    claim: vi.fn(),
     redialIfDropped: vi.fn(),
     dispose: vi.fn(),
   }

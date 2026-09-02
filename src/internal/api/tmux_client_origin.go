@@ -130,6 +130,20 @@ func (s procSource) children(pid int) []int {
 	return children
 }
 
+// countAttachedClients counts the clients in a tmux session_attached_list,
+// whoever created them. tmux draws one grid per window however many are
+// watching, so this is what tells the operator his pane is showing somebody
+// else's dimensions.
+func countAttachedClients(attachedList string) int {
+	count := 0
+	for _, tty := range strings.Split(attachedList, ",") {
+		if strings.TrimSpace(tty) != "" {
+			count++
+		}
+	}
+	return count
+}
+
 // foreignClientTTYs splits a tmux session_attached_list into the client ttys
 // CHROTE did not create. Clients with no tty, such as a transient control-mode
 // client, cannot be attributed and are not reported.

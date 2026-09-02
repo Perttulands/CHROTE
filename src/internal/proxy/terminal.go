@@ -32,6 +32,10 @@ const (
 	clientResize = '1'
 	clientPause  = '2'
 	clientResume = '3'
+	// clientClaim asks for this connection to become the session's one sizing
+	// client. It is CHROTE's own addition to the wire protocol; ttyd never
+	// defined a `4` frame, and nothing else in the dashboard sends one.
+	clientClaim = '4'
 
 	serverOutput = '0'
 )
@@ -43,10 +47,6 @@ const terminalTermType = "xterm-256color"
 // fallbackAttachLang is the locale the attach client runs under when the
 // service inherited no UTF-8 locale of its own.
 const fallbackAttachLang = "en_US.UTF-8"
-
-// hasSessionTimeout bounds the pre-attach probe. A tmux server that does not
-// answer is a failure to report, not something to wait on forever.
-const hasSessionTimeout = 5 * time.Second
 
 // Target is where one terminal attach runs: the tmux socket to attach on, the
 // directory the attach client starts in, and the Unix user both belong to.
@@ -83,10 +83,12 @@ func NewTerminalProxy(resolve ResolveTarget, allowedOrigins []string) *TerminalP
 }
 
 // viewingMode is how a connection views a session, and it decides the attach
-// flags. A tile is the session's one sizing client: -d displaces every other
-// client, CHROTE's own and foreign alike. A peek only observes: ignore-size
-// stops it sizing a window somebody else is already sizing, and it never
-// displaces the tile. Input is not suppressed in either mode.
+// flags. Neither mode displaces anyone: CHROTE does not attach with -d, so a
+// second device watches a session live rather than evicting the first
+// (ADR-0017 decision 1). A tile takes the sizing seat when it is free and
+// watches at the current size when it is not, and `Claim` is how the operator
+// takes that seat afterwards. A peek never takes it. Input is not suppressed in
+// either mode.
 type viewingMode string
 
 const (
@@ -94,15 +96,20 @@ const (
 	modePeek viewingMode = "peek"
 )
 
-func (m viewingMode) attachFlags() ([]string, error) {
-	switch m {
-	case modeTile:
-		return []string{"-d"}, nil
-	case modePeek:
-		return []string{"-f", "ignore-size"}, nil
-	default:
-		return nil, fmt.Errorf("CHROTE terminal requires a viewing mode of 'tile' or 'peek', got %q", string(m))
+func (m viewingMode) valid() bool {
+	return m == modeTile || m == modePeek
+}
+
+// attachFlags decides how this connection attaches, from what was already
+// sizing the window when it arrived. A window nobody sizes is sized by whoever
+// attaches to it whatever the flag says, so the flagless attach is not what
+// makes a first viewer the sizer — it is what stops a *later* viewer taking the
+// window from it.
+func (m viewingMode) attachFlags(sizedByAnother bool) []string {
+	if m == modeTile && !sizedByAnother {
+		return nil
 	}
+	return []string{"-f", ignoreSizeFlag}
 }
 
 // attachRequest is what the browser asked for, before any of it is resolved.
@@ -125,8 +132,8 @@ func parseAttachRequest(args []string) (attachRequest, error) {
 	if len(args) > 2 {
 		request.unixUser = strings.TrimSpace(args[2])
 	}
-	if _, err := request.mode.attachFlags(); err != nil {
-		return attachRequest{}, err
+	if !request.mode.valid() {
+		return attachRequest{}, fmt.Errorf("CHROTE terminal requires a viewing mode of 'tile' or 'peek', got %q", string(request.mode))
 	}
 	if request.session == "" {
 		return attachRequest{}, errors.New("CHROTE terminal requires a tmux session name")
@@ -259,10 +266,15 @@ func (c *terminalConn) readHandshake() (clientHandshake, error) {
 // It returns an error only when the attach could not be started; once bytes are
 // flowing, the end of the session is not a failure.
 func (c *terminalConn) attach(request attachRequest, target Target, size clientHandshake) error {
-	flags, err := request.mode.attachFlags()
+	// Read who is sizing the window before attaching, because the answer is
+	// about the clients that were already there. Two connections opening the
+	// same session in the same instant can both read an empty seat and both
+	// take it; that is one `Claim` away from settled and is not worth a lock.
+	sizing, err := sizingClientTTYs(target.Socket, request.session)
 	if err != nil {
 		return err
 	}
+	flags := request.mode.attachFlags(len(sizing) > 0)
 
 	pty, err := openPTY()
 	if err != nil {
@@ -304,7 +316,17 @@ func (c *terminalConn) attach(request attachRequest, target Target, size clientH
 		_ = c.conn.Close()
 	}()
 
-	c.relayInput(pty, flow)
+	c.relayInput(pty, flow, func() {
+		if request.mode != modeTile {
+			log.Printf("terminal claim ignored: a %s connection observes and never takes the size of session %q", request.mode, request.session)
+			return
+		}
+		// A failed claim needs no reply frame: a claim that lands is visible in
+		// the pane, because tmux redraws the window at this client's size.
+		if err := claimSizing(target.Socket, request.session, pty.name); err != nil {
+			log.Printf("terminal claim failed for session %q: %v", request.session, err)
+		}
+	})
 
 	// Closing the master hangs up the attach client's controlling terminal, so
 	// a browser that went away does not leave a tmux client behind. The same
@@ -338,7 +360,9 @@ func (c *terminalConn) relayOutput(pty *pty, flow *flowGate) {
 }
 
 // relayInput dispatches client frames onto the pty until the browser goes away.
-func (c *terminalConn) relayInput(pty *pty, flow *flowGate) {
+// `claim` runs on the reading goroutine, so a claim cannot overlap another one
+// on the same connection.
+func (c *terminalConn) relayInput(pty *pty, flow *flowGate, claim func()) {
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
@@ -365,6 +389,8 @@ func (c *terminalConn) relayInput(pty *pty, flow *flowGate) {
 			flow.pause()
 		case clientResume:
 			flow.resume()
+		case clientClaim:
+			claim()
 		}
 	}
 }
@@ -429,7 +455,7 @@ func hasSession(socket, session string) error {
 	if strings.TrimSpace(socket) == "" {
 		return errors.New("no tmux socket is configured for this terminal")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), hasSessionTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxProbeTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, core.TmuxBin(), "-S", socket, "has-session", "-t", session)

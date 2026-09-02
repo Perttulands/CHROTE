@@ -38,11 +38,19 @@ export interface TerminalSession {
   /** Drop the connection and open a new one, without reloading anything. */
   reconnect(): void
   /**
+   * Become this session's one sizing client, so the tmux window takes this
+   * terminal's dimensions. Every other viewer keeps watching, at the new size.
+   * A terminal with no connection dials first and claims on arrival, which is
+   * what the operator asks for when he claims a tile whose connection went.
+   */
+  claim(): void
+  /**
    * Dial again if the last connection was lost rather than ended, and the
    * terminal is on screen. Called when the operator puts the terminal in front
    * of himself; each such moment is worth one attempt and no more. Nothing here
    * retries on its own, and a dial that fails leaves the tile's own Reconnect
-   * control as the way back.
+   * control as the way back. The dial takes nothing from anyone: it attaches
+   * alongside whoever else is watching, without the sizing seat.
    */
   redialIfDropped(): void
   dispose(): void
@@ -80,6 +88,9 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   // The last connection was lost rather than ended, so dialling again reaches
   // the same terminal instead of taking a session from whoever holds it.
   let dropped = false
+  // The operator claimed a terminal that had no connection, so the claim is
+  // owed to the connection now on its way up.
+  let claimOnOpen = false
 
   const setState = (state: TerminalConnectionState) => {
     if (!disposed) options.onStateChange?.(state)
@@ -100,9 +111,19 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
     dropped = false
     setState('connecting')
     connection = connectTtyd(options.url, { cols: terminal.cols, rows: terminal.rows }, terminal, {
-      onOpen: () => setState('open'),
+      onOpen: () => {
+        if (claimOnOpen) {
+          claimOnOpen = false
+          connection?.claimSizing()
+        }
+        setState('open')
+      },
       onClose: ({ terminalEnded }) => {
         connection = null
+        // A claim the connection never got to make is not owed to the next one:
+        // the operator asked this terminal to take the size, and by the time it
+        // dials again the answer may well be different.
+        claimOnOpen = false
         dropped = !terminalEnded
         setState(terminalEnded ? 'closed' : 'dropped')
       },
@@ -145,10 +166,18 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
       terminal.reset()
       connect()
     },
+    claim() {
+      if (disposed) return
+      if (connection) {
+        connection.claimSizing()
+        return
+      }
+      claimOnOpen = true
+      connect()
+    },
     redialIfDropped() {
-      // Off screen is not a moment worth an attempt, and it is where a wrong
-      // dial would do the damage: a tile attaches with -d, so it would take a
-      // session back from a client the operator can see and this one cannot.
+      // Off screen is not a moment worth an attempt: a terminal nobody is
+      // looking at has nothing to show for the connection it would open.
       if (disposed || connection || !dropped || !isMeasurable()) return
       connect()
     },

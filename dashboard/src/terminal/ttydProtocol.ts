@@ -10,6 +10,10 @@ const CLIENT_INPUT = 0x30 // '0'
 const CLIENT_RESIZE = '1'
 const CLIENT_PAUSE = '2'
 const CLIENT_RESUME = '3'
+// CHROTE's own addition to the protocol: take the tmux sizing seat for this
+// session. ttyd never defined a `4` frame and CHROTE now serves this socket
+// itself (ADR-0018), so there is nothing to collide with.
+const CLIENT_CLAIM = '4'
 
 const SERVER_OUTPUT = 0x30 // '0'
 
@@ -29,6 +33,13 @@ export interface TtydConnection {
   /** Strings are sent as UTF-8; byte arrays (xterm's `onBinary`) are sent raw. */
   sendInput(data: string | Uint8Array): void
   sendResize(cols: number, rows: number): void
+  /**
+   * Ask to become this session's one sizing client. Every other viewer keeps
+   * watching, at this connection's size. The host answers by moving the tmux
+   * flags, and the answer is the window redrawing at this grid's size — there
+   * is no reply frame to wait for.
+   */
+  claimSizing(): void
   /** Close without reporting `onClose`; the caller already knows. */
   close(): void
 }
@@ -109,6 +120,7 @@ export function connectTtyd(
       socket.send(frame)
     },
     sendResize: (cols, rows) => send(CLIENT_RESIZE + JSON.stringify({ columns: cols, rows })),
+    claimSizing: () => send(CLIENT_CLAIM),
     close: () => {
       socket.onclose = null
       socket.close()
@@ -117,9 +129,10 @@ export function connectTtyd(
 }
 
 /**
- * How this connection views the session. A `tile` is the operator's viewing
- * seat and takes the session over, so it is the window's one sizing client; a
- * `peek` observes without displacing the tile or resizing the window.
+ * How this connection views the session. Neither displaces anybody: several
+ * clients may watch one tmux window, and only one of them may size it. A `tile`
+ * takes that sizing seat when it is free and watches at the current size when
+ * it is not, until the operator claims it. A `peek` never takes the seat.
  */
 export type TerminalViewingMode = 'tile' | 'peek'
 

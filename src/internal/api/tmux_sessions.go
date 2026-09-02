@@ -465,6 +465,7 @@ func parseSessionsOutput(output string, unixUser string, ownedPTYs map[string]bo
 				session.MouseEnabled = &enabled
 			}
 			session.ForeignClients = foreignClientTTYs(field(11), ownedPTYs)
+			session.Viewers = countAttachedClients(field(11))
 		}
 		sessions = append(sessions, session)
 	}

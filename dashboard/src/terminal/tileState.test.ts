@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  heldElsewhereSessionKeys,
   isDetached,
   isSessionEnded,
   liveSessionKeys,
@@ -21,10 +20,7 @@ const sessions: TmuxSession[] = [
 const live = liveSessionKeys(sessions)
 const heard: SessionEvidence = { live, answering: null }
 
-// Most cases are about a session nobody else is attached to; the ones that turn
-// on another client say so.
-const tileState = (input: Omit<TileStateInput, 'heldElsewhere'> & { heldElsewhere?: boolean }) =>
-  tileStateFor({ heldElsewhere: false, ...input })
+const tileState = (input: TileStateInput) => tileStateFor(input)
 
 describe('liveSessionKeys', () => {
   it('matches a binding written either qualified or bare', () => {
@@ -32,26 +28,6 @@ describe('liveSessionKeys', () => {
     expect(live.has('build')).toBe(true)
     expect(live.has('main')).toBe(true)
     expect(live.has('gone')).toBe(false)
-  })
-})
-
-describe('heldElsewhereSessionKeys', () => {
-  it('names only the sessions tmux reports a client CHROTE did not create', () => {
-    const held = heldElsewhereSessionKeys([
-      ...sessions,
-      { name: 'ssh-held', windows: 1, attached: true, group: 'shell', unixUser: 'forge', foreignClients: ['/dev/pts/12'] },
-    ])
-    expect(held.has('forge:ssh-held')).toBe(true)
-    expect(held.has('ssh-held')).toBe(true)
-    expect(held.has('forge:build')).toBe(false)
-    expect(held.has('main')).toBe(false)
-  })
-
-  it('does not count a client CHROTE created, which is never reported as foreign', () => {
-    const held = heldElsewhereSessionKeys([
-      { name: 'main', windows: 1, attached: true, group: 'main', foreignClients: [] },
-    ])
-    expect(held.has('main')).toBe(false)
   })
 })
 
@@ -220,14 +196,16 @@ describe('tileStateFor', () => {
       .toBe('lost')
   })
 
-  it('is Taken over when the connection was lost and another client really does hold the session', () => {
+  // Another client being attached used to make this Taken over, because
+  // dialling again attached with -d and would have evicted them. Nothing
+  // attaches with -d now, so a dial costs them nothing and the tile takes it.
+  it('is Lost even when another client is attached, because dialling no longer evicts anyone', () => {
     expect(tileState({
       sessionKey: 'forge:build',
       onScreen: true,
       evidence: heard,
       connection: 'dropped',
-      heldElsewhere: true,
-    })).toBe('takenOver')
+    })).toBe('lost')
   })
 
   it('is Ended, not Lost, when the connection was lost and the session is gone with it', () => {

@@ -223,7 +223,7 @@ describe('terminal session', () => {
     session.dispose()
   })
 
-  it('never dials again while off screen, where a -d attach would evict a client nobody can see', () => {
+  it('never dials again while off screen, where nobody is looking at the result', () => {
     const { session, host } = start()
     session.attach(host)
     FakeSocket.latest().accept()
@@ -233,6 +233,56 @@ describe('terminal session', () => {
     session.redialIfDropped()
 
     expect(FakeSocket.instances).toHaveLength(1)
+    session.dispose()
+  })
+
+  // The window belongs to whichever client is not ignoring size, so claiming
+  // is a frame on the live connection and nothing else: no redial, no reset,
+  // and no interruption to what the operator is reading.
+  it('claims the sizing seat on the connection it already has', () => {
+    const { session, host } = start()
+    session.attach(host)
+    const socket = FakeSocket.latest()
+    socket.accept()
+    socket.sent.length = 0
+
+    session.claim()
+
+    expect(socket.sentText).toEqual(['4'])
+    expect(FakeSocket.instances).toHaveLength(1)
+    session.dispose()
+  })
+
+  it('dials first and claims on arrival when the terminal has no connection', () => {
+    const { session, host } = start()
+    session.attach(host)
+    FakeSocket.latest().close()
+
+    session.claim()
+
+    expect(FakeSocket.instances).toHaveLength(2)
+    const dialled = FakeSocket.latest()
+    expect(dialled.sentText).toEqual([])
+    dialled.accept()
+    // The handshake carries the grid; the claim is what makes tmux adopt it.
+    expect(dialled.sentText[dialled.sentText.length - 1]).toBe('4')
+    session.dispose()
+  })
+
+  // A claim is about the session as it is now. One that never reached the host
+  // is not owed to some later connection, which may find a different answer.
+  it('does not carry an unsent claim over to a connection that dials later', () => {
+    const { session, host } = start()
+    session.attach(host)
+    FakeSocket.latest().close()
+
+    session.claim()
+    FakeSocket.latest().close()
+    session.reconnect()
+    const dialled = FakeSocket.latest()
+    dialled.accept()
+
+    expect(dialled.sentText).not.toContain('4')
     session.dispose()
   })
 

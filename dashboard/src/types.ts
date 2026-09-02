@@ -232,9 +232,11 @@ export interface TmuxSession {
   mouseEnabled?: boolean
   /** ttys of attached clients CHROTE did not create, such as an SSH login. */
   foreignClients?: string[]
+  /** Clients attached to this session, CHROTE's own and foreign alike. */
+  viewers?: number
 }
 
-export type SessionBadgeId = 'pinned-size' | 'foreign-client' | 'structure' | 'mouse-off'
+export type SessionBadgeId = 'pinned-size' | 'foreign-client' | 'shared-view' | 'structure' | 'mouse-off'
 
 export interface SessionBadge {
   id: SessionBadgeId
@@ -271,7 +273,20 @@ export function getSessionBadges(session: TmuxSession): SessionBadge[] {
       id: 'foreign-client',
       marker: '◈',
       label: 'Foreign client attached',
-      detail: `Attached by ${foreign.length} ${plural} CHROTE did not create (${foreign.join(', ')}). Opening this session takes it over and disconnects them.`,
+      detail: `Attached by ${foreign.length} ${plural} CHROTE did not create (${foreign.join(', ')}). Opening this session watches alongside them; Claim takes its size without disconnecting them.`,
+    })
+  }
+
+  // tmux draws a window once, at one size, however many clients are watching.
+  // So a second viewer means this pane is showing somebody else's dimensions,
+  // which is exactly the kind of thing a glance cannot tell the operator.
+  if ((session.viewers ?? 0) > 1) {
+    const size = session.width && session.height ? ` at ${session.width}x${session.height}` : ''
+    badges.push({
+      id: 'shared-view',
+      marker: '◎',
+      label: `Watched by ${session.viewers}`,
+      detail: `${session.viewers} clients are watching this session. tmux draws it once${size}, so every viewer sees the size the claiming one set. Claim to make it fit this device.`,
     })
   }
 

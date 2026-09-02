@@ -92,10 +92,11 @@ configured user's sessions, not the service account's alone.
 - Browser/device disconnects and CHROTE restarts must not cause CHROTE to kill
   external tmux work. CHROTE does not promise to recreate that work after it or
   the host exits.
-- Displaying a session detaches other clients attached to it, including an SSH
-  session belonging to someone else. That is a deliberate takeover of the
-  client, never of the session or its processes, and it is surfaced rather than
-  silent.
+- Displaying a session attaches alongside other clients, including an SSH
+  session belonging to someone else, and shows whatever they are doing in real
+  time. It detaches nobody. Claiming the size changes what every client watching
+  sees, never the session or its processes, and who else is attached is
+  surfaced rather than silent.
 
 Treat exposing CHROTE as exposing a shell.
 

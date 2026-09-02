@@ -13,6 +13,11 @@ import (
 type pty struct {
 	master *os.File
 	slave  *os.File
+	// name is the slave device path. tmux records no origin for a client, so
+	// the device the attach client runs on is how this connection addresses
+	// its own tmux client — for `Claim`, and for telling itself apart from the
+	// other clients watching the same session.
+	name string
 }
 
 // openPTY allocates a pseudo-terminal pair. CHROTE only ever runs on Linux, so
@@ -40,7 +45,7 @@ func openPTY() (*pty, error) {
 		master.Close()
 		return nil, fmt.Errorf("open %s: %w", name, err)
 	}
-	return &pty{master: master, slave: slave}, nil
+	return &pty{master: master, slave: slave, name: name}, nil
 }
 
 // winsize is the kernel's struct winsize.

@@ -142,11 +142,28 @@ describe('getSessionBadges', () => {
     expect(badge.detail).toContain('window-size is manual')
   })
 
-  it('names the foreign clients a takeover would disconnect', () => {
+  it('names the foreign clients now watching alongside CHROTE', () => {
     const [badge] = getSessionBadges({ ...plain, foreignClients: ['/dev/pts/12'] })
     expect(badge.id).toBe('foreign-client')
     expect(badge.detail).toContain('/dev/pts/12')
-    expect(badge.detail).toContain('disconnects them')
+    expect(badge.detail).toContain('without disconnecting them')
+  })
+
+  // tmux draws one grid per window however many are watching, so a second
+  // viewer means this pane is showing somebody else's dimensions. A glance
+  // cannot tell the operator that, which is the whole membership test.
+  it('says when a session is watched by more than one client, and at what size', () => {
+    const badge = getSessionBadges({ ...plain, viewers: 2, width: 200, height: 50 })
+      .find(candidate => candidate.id === 'shared-view')
+    expect(badge?.label).toBe('Watched by 2')
+    expect(badge?.detail).toContain('200x50')
+    expect(badge?.detail).toContain('the size the claiming one set')
+  })
+
+  it('raises no shared-view claim for a session with one viewer or none', () => {
+    for (const viewers of [undefined, 0, 1]) {
+      expect(getSessionBadges({ ...plain, viewers }).map(badge => badge.id)).not.toContain('shared-view')
+    }
   })
 
   it('reports structure the session list cannot show', () => {
