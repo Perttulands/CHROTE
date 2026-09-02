@@ -9,6 +9,7 @@
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import { connectTtyd, type TtydConnection } from './ttydProtocol'
 import { copyTextToClipboard } from '../utils/clipboard'
 import '@xterm/xterm/css/xterm.css'
@@ -97,6 +98,12 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   // is why this only started drifting when ttyd left.
   terminal.loadAddon(new Unicode11Addon())
   terminal.unicode.activeVersion = '11'
+
+  // Agent output is full of URLs the operator has to open. ttyd's client
+  // loaded this addon, so they were clickable until the transport changed.
+  // Activation is a plain click, as it was under ttyd: under tmux mouse mode
+  // that click also reaches tmux, where CHROTE's settings make it harmless.
+  terminal.loadAddon(new WebLinksAddon())
 
   let connection: TtydConnection | null = null
   let opened = false
