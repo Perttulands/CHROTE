@@ -103,9 +103,9 @@ export async function setWorkspaceState(
 // ---------------------------------------------------------------------------
 
 /**
- * Click the "New Session" button inside a specific terminal window and wait
- * for the session tag to appear.  Returns the session name captured from the
- * POST request so the caller can clean it up later.
+ * Launch a session from the launcher inside a specific terminal window and
+ * wait for the session tag to appear.  Returns the session name captured from
+ * the POST request so the caller can clean it up later.
  *
  * @param windowId  CSS selector or Locator for the target .terminal-window.
  *                  Defaults to the first visible terminal window.
@@ -119,7 +119,7 @@ export async function createAndBindSession(
       ? page.locator(windowId)
       : windowId ?? page.locator('.terminal-window').first();
 
-  const createBtn = win.locator('.create-session-btn');
+  const createBtn = win.locator('.launcher-launch');
 
   // Intercept POST to capture name
   let sessionName = '';

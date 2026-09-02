@@ -38,6 +38,20 @@ function nextSessionNameForPrefix(sessions: TmuxSession[], prefix: string): stri
 }
 
 /**
+ * What the server said went wrong inside a session it did create, or null. A
+ * body that cannot be read is not a warning: the session was created, and the
+ * dashboard has nothing to add to that.
+ */
+async function readCreateSessionWarning(response: Response): Promise<string | null> {
+  try {
+    const body = await response.json() as { warning?: unknown }
+    return typeof body?.warning === 'string' && body.warning.trim() !== '' ? body.warning : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * The dashboard state plus the one join the tile layer makes on it. The join is
  * held here rather than in each reader so a tile, its peek and the Send dialog
  * cannot reach different verdicts about the same session.
@@ -117,7 +131,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const response = await fetch('/api/tmux/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: sessionName, unixUser, mouseScroll: options.mouseScroll ?? layouts.settings.mouseScroll }),
+        body: JSON.stringify({
+          name: sessionName,
+          unixUser,
+          mouseScroll: options.mouseScroll ?? layouts.settings.mouseScroll,
+          ...(options.cwd ? { cwd: options.cwd } : {}),
+          ...(options.harness ? { harness: options.harness } : {}),
+        }),
         signal: AbortSignal.timeout(10000),
       })
       if (!response.ok) {
@@ -125,6 +145,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return null
       }
       addToast(`Session '${sessionName}' created`, 'success')
+      // The session exists either way; a warning means the harness inside it
+      // did not start, which is the operator's to see and act on.
+      const warning = await readCreateSessionWarning(response)
+      if (warning) addToast(warning, 'warning')
       if (options.attachTo) {
         addSessionToWindow(options.attachTo.workspaceId, options.attachTo.windowId, sessionName, unixUser)
       }

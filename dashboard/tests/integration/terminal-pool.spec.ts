@@ -17,7 +17,10 @@ test.describe.serial('terminal pool: a bound session renders in its window', () 
     const responsePromise = page.waitForResponse(response =>
       response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/tmux/sessions'
     );
-    await terminalWindow.locator('.create-session-btn').click();
+    // A shell, not an agent: these journeys assert plain terminal output, and
+    // the launcher's first harness is whatever the host configured.
+    await terminalWindow.locator('.launcher-row', { hasText: 'Shell' }).click();
+    await terminalWindow.locator('.launcher-launch').click();
     const response = await responsePromise;
     expect(response.ok(), await response.text()).toBe(true);
     const payload = await response.json() as { session?: string };
@@ -71,11 +74,11 @@ test.describe.serial('terminal pool: a bound session renders in its window', () 
     expect(failures, 'final terminal-pool reconciliation left unresolved unixUser/session tuples').toEqual([]);
   });
 
-  test('a session created from the window button attaches and renders', async ({ page }) => {
+  test('a session launched from the window launcher attaches and renders', async ({ page }) => {
     await freshDashboard(page);
 
     const firstWindow = page.locator('.terminal-window').first();
-    await expect(firstWindow.locator('.create-session-btn')).toBeVisible({ timeout: 5000 });
+    await expect(firstWindow.locator('.launcher-launch')).toBeVisible({ timeout: 5000 });
 
     await createTrackedSession(page, firstWindow);
 

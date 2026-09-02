@@ -1,5 +1,5 @@
 import { test, expect, allowBrowserConsoleMessage, Page } from './fixtures'
-import { mockThemeApiRoute } from './mock-api'
+import { mockLaunchApiRoute, mockThemeApiRoute } from './mock-api'
 
 const fileResourcesPattern = /.*\/api\/files\/resources(?:\/.*)?$/
 
@@ -37,6 +37,7 @@ async function mockFilebrowserApi(page: Page, options?: {
   })
 
   await mockThemeApiRoute(page)
+  await mockLaunchApiRoute(page)
 
   await page.route('**/api/files/raw/**', async route => {
     await route.fulfill({

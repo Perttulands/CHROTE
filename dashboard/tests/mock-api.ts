@@ -4,6 +4,7 @@ import { DEFAULT_THEME } from '../src/theme/theme'
 
 const fileResourcesPattern = /.*\/api\/files\/resources(?:\/.*)?$/
 const themePattern = /.*\/api\/theme\/?$/
+const launchPattern = /.*\/api\/launch\/?$/
 const tmuxMousePattern = /.*\/api\/tmux\/mouse\/?$/
 const tmuxSessionsPattern = /.*\/api\/tmux\/sessions\/?$/
 
@@ -230,9 +231,29 @@ export async function mockThemeApiRoute(page: Page) {
   })
 }
 
+/** What the launcher may offer in a mocked journey: two harnesses and two folders. */
+export const mockLaunchOptions = {
+  harnesses: [
+    { id: 'claude-code', label: 'Claude Code' },
+    { id: 'shell', label: 'Shell' },
+  ],
+  folders: ['/srv/chrote', '~'],
+}
+
+export async function mockLaunchApiRoute(page: Page) {
+  await page.route(launchPattern, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(mockLaunchOptions),
+    })
+  })
+}
+
 export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: SessionsResponse }) {
   await mockTerminalSocket(page)
   await mockThemeApiRoute(page)
+  await mockLaunchApiRoute(page)
 
   await page.route(tmuxMousePattern, async route => {
     const body = route.request().postDataJSON() as { enabled?: boolean } | null
@@ -248,11 +269,17 @@ export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: S
 
   await page.route(tmuxSessionsPattern, async route => {
     if (route.request().method() === 'POST') {
-      const body = route.request().postDataJSON() as { name?: string } | null
+      const body = route.request().postDataJSON() as { name?: string; cwd?: string; harness?: string } | null
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ name: body?.name ?? 'shell-test' }),
+        body: JSON.stringify({
+          success: true,
+          name: body?.name ?? 'shell-test',
+          session: body?.name ?? 'shell-test',
+          cwd: body?.cwd ?? '~',
+          harness: body?.harness ?? 'shell',
+        }),
       })
       return
     }

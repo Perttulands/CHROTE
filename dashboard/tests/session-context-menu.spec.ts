@@ -1,5 +1,5 @@
 import { test, expect, Page } from './fixtures'
-import { mockFileApiRoutes, mockSessions, mockTerminalSocket, mockThemeApiRoute } from './mock-api'
+import { mockFileApiRoutes, mockLaunchApiRoute, mockSessions, mockTerminalSocket, mockThemeApiRoute } from './mock-api'
 import { openSessionsSidecar } from './helpers'
 
 /**
@@ -11,6 +11,7 @@ async function mockApiRoutesWithMutations(page: Page) {
   await mockTerminalSocket(page)
 
   await mockThemeApiRoute(page)
+  await mockLaunchApiRoute(page)
 
   await mockFileApiRoutes(page)
 

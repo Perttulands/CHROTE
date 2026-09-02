@@ -33,8 +33,8 @@ test.describe('Error States', () => {
       await openSessionsSidecar(page)
       await page.waitForSelector('.session-panel')
 
-      // Find the "New Session" button in an empty window
-      const createBtn = page.locator('.create-session-btn').first()
+      // The launcher in an empty window is the only way to start a session
+      const createBtn = page.locator('.launcher-launch').first()
       await expect(createBtn).toBeVisible()
 
       // Click it

@@ -375,19 +375,8 @@
   display: none;
 }
 
-/* Empty Window State */
-.empty-window-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  gap: 16px;
-}
-
-/* The one button shape a tile with no live terminal offers. An empty window
-   states it at full size; a detached tile states it compact, because there the
-   last rendered frame has to stay readable behind it. One shape, two sizes. */
+/* The button shape a detached tile offers, compact enough that the last
+   rendered frame stays readable behind it. */
 .tile-action-btn {
   display: flex;
   align-items: center;
@@ -409,13 +398,6 @@
   cursor: wait;
 }
 
-.create-session-btn {
-  flex-direction: column;
-  gap: 8px;
-  padding: 24px 32px;
-  border-radius: 16px;
-}
-
 .tile-action-btn-compact {
   gap: 6px;
   padding: 7px 14px;
@@ -425,26 +407,6 @@
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 1px;
-}
-
-.create-session-icon {
-  font-size: 48px;
-  font-weight: 300;
-  line-height: 1;
-}
-
-.create-session-label {
-  font-size: 14px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-.empty-window-hint {
-  font-size: 16px;
-  color: var(--text-dim);
-  font-style: italic;
-  margin-top: 8px;
 }
 
 @media (max-width: 768px) {

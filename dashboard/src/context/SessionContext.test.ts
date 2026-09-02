@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import { DEFAULT_SETTINGS, resolveLaunchUser } from '../types'
-import { renderSession } from './SessionContext.test.support'
+import { renderSession, renderSessionWithToast } from './SessionContext.test.support'
 
 describe('resolveLaunchUser', () => {
   it('keeps default/no configured-users mode as bare tmux sessions even with stale stored launch user settings', () => {
@@ -122,6 +122,66 @@ describe('createSession', () => {
 
     const [, init] = fetchMock.mock.calls[0]
     expect(JSON.parse(String(init?.body))).toEqual({ name: 'shell2', unixUser: 'alice', mouseScroll: false })
+  })
+
+  it('sends the launcher\'s folder and harness with the session it creates', async () => {
+    const fetchMock = stubSessionFetch()
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['alice', 'build']))
+    fetchMock.mockClear()
+
+    await act(async () => {
+      await result.current.createSession({
+        workspaceId: 'terminal1',
+        unixUser: 'alice',
+        name: 'claude-chrote',
+        cwd: '/srv/chrote',
+        harness: 'claude-code',
+      })
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(String(init?.body))).toEqual({
+      name: 'claude-chrote',
+      unixUser: 'alice',
+      mouseScroll: true,
+      cwd: '/srv/chrote',
+      harness: 'claude-code',
+    })
+  })
+
+  it('shows the server\'s warning when the session was created but its harness was not', async () => {
+    const fetchMock = stubSessionFetch()
+    const { result } = renderSessionWithToast()
+
+    await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice', 'build']))
+    fetchMock.mockClear()
+    fetchMock.mockImplementationOnce(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        success: true,
+        session: 'claude-chrote',
+        warning: 'session created, but the "claude-code" command could not be started: no server',
+      }),
+      text: () => Promise.resolve(''),
+    }))
+
+    let created: string | null = null
+    await act(async () => {
+      created = await result.current.session.createSession({
+        workspaceId: 'terminal1',
+        unixUser: 'alice',
+        name: 'claude-chrote',
+        harness: 'claude-code',
+      })
+    })
+
+    // The session exists, so it is still a success; the warning says what did
+    // not start inside it.
+    expect(created).toBe('claude-chrote')
+    const warning = result.current.toast.toasts.find(toast => toast.type === 'warning')
+    expect(warning?.message).toContain('could not be started')
   })
 
   it('handles expected create-session API failures with a toast and no console error', async () => {
