@@ -16,10 +16,15 @@ const mockState = vi.hoisted(() => ({
     { name: 'codex-agent', windows: 1, attached: true, group: 'codex', unixUser: 'alice' },
     { name: 'hq-mayor', windows: 1, attached: true, group: 'hq', unixUser: 'alice' },
   ] as TmuxSession[],
+  loading: false,
+  error: null as string | null,
+  partialAnsweringUsers: null as string[] | null,
   closeSendToSession: vi.fn(),
   listSessionPanes: vi.fn(),
   sendToSession: vi.fn(),
 }))
+
+const ALL_SESSIONS = [...mockState.sessions]
 
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
@@ -27,6 +32,9 @@ vi.mock('../context/SessionContext', () => ({
     sendToSessionPrefill: mockState.sendToSessionPrefill,
     sendToSessionRequestId: mockState.sendToSessionRequestId,
     sessions: mockState.sessions,
+    loading: mockState.loading,
+    error: mockState.error,
+    partialAnsweringUsers: mockState.partialAnsweringUsers,
     closeSendToSession: mockState.closeSendToSession,
     listSessionPanes: mockState.listSessionPanes,
     sendToSession: mockState.sendToSession,
@@ -68,10 +76,58 @@ describe('SendToSessionModal', () => {
     mockState.sendToSessionTarget = 'alice:alice-shell'
     mockState.sendToSessionPrefill = ''
     mockState.sendToSessionRequestId = 0
+    mockState.sessions = [...ALL_SESSIONS]
+    mockState.loading = false
+    mockState.error = null
+    mockState.partialAnsweringUsers = null
     mockState.listSessionPanes.mockResolvedValue([{
       sessionId: '$1', pane: '%1', panePid: '101', serverPid: '9001', windowName: 'main', currentCommand: 'bash', currentPath: '/home/alice', active: true,
     }])
     mockState.sendToSession.mockResolvedValue('sent')
+  })
+
+  it('names an ended target and refuses to send to it, without asking the host first', async () => {
+    // tmux no longer lists it: the round trip cannot succeed, so it is not made.
+    mockState.sessions = ALL_SESSIONS.filter(item => item.name !== 'alice-shell')
+    render(<SendToSessionModal />)
+
+    expect(await screen.findByRole('alert'))
+      .toHaveTextContent('alice-shell ended. There is no session left to send to; restart it from its tile first.')
+    expect(mockState.listSessionPanes).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText(/Message to send/i), { target: { value: 'ping' } })
+    const send = screen.getByRole('button', { name: 'Send' })
+    expect(send).toBeDisabled()
+    fireEvent.click(send)
+    expect(mockState.sendToSession).not.toHaveBeenCalled()
+  })
+
+  it('keeps the typed draft and disables Send when the target dies mid-compose', async () => {
+    const { rerender } = render(<SendToSessionModal />)
+    await waitForResolvedPane()
+    fireEvent.change(screen.getByLabelText(/Message to send/i), { target: { value: 'half a thought' } })
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled()
+
+    mockState.sessions = ALL_SESSIONS.filter(item => item.name !== 'alice-shell')
+    rerender(<SendToSessionModal />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('alice-shell ended.')
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    // Closing the dialog would have lost this; naming the failure does not.
+    expect(screen.getByLabelText(/Message to send/i)).toHaveValue('half a thought')
+    expect(mockState.closeSendToSession).not.toHaveBeenCalled()
+  })
+
+  it('holds its verdict on a target whose Unix user did not answer the poll', async () => {
+    // A partial outage: 'bob' answered, 'alice' did not, so nothing is claimed
+    // about an alice binding even though it is absent from the list.
+    mockState.sessions = ALL_SESSIONS.filter(item => item.unixUser !== 'alice')
+    mockState.error = "alice: tmux socket unreachable"
+    mockState.partialAnsweringUsers = ['bob']
+    render(<SendToSessionModal />)
+
+    await waitForResolvedPane()
+    expect(screen.queryByText(/ended\. There is no session left to send to/)).toBeNull()
   })
 
   it('starts with a caller-provided path draft without submitting it', async () => {

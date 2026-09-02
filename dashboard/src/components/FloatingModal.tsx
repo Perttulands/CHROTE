@@ -3,6 +3,8 @@ import { useSession } from '../context/SessionContext'
 import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
 import TerminalSurface, { useTerminalSession } from './TerminalSurface'
 import { terminalSocketUrl } from '../terminal/ttydProtocol'
+import { isSessionEnded } from '../terminal/tileState'
+import { useSessionEvidence } from '../context/useSessionEvidence'
 
 const VIEWPORT_MARGIN = 16
 
@@ -37,6 +39,12 @@ function FloatingModal() {
   const unixUser = session?.unixUser ?? keyUser
   const canOpenSession = Boolean(floatingSession && (session || unixUser.trim()))
 
+  // The same join the tile makes, asked of the same answer. A glance at a
+  // session tmux no longer lists is entitled to the same explanation the tile
+  // gives, rather than a dead terminal and no reason for it.
+  const evidence = useSessionEvidence()
+  const ended = floatingSession !== null && isSessionEnded(floatingSession, evidence)
+
   // Peek owns its terminal for the life of the modal: it is a second observer
   // of the session, not the tile's terminal moved onto the overlay. It attaches
   // as an observer, so it never displaces the tile or resizes the window.
@@ -44,6 +52,8 @@ function FloatingModal() {
     () => (canOpenSession ? terminalSocketUrl(displayName, unixUser, 'peek') : null),
     [canOpenSession, displayName, unixUser],
   )
+  // The URL is kept even once the session has ended, so the terminal holding
+  // the last frame is not disposed; `connect` is what stops it dialling again.
   const { session: terminal, connectionState } = useTerminalSession(socketUrl, settings.fontSize, settings.hideScrollbar)
 
   useEffect(() => {
@@ -108,7 +118,7 @@ function FloatingModal() {
         <div className="floating-modal-header" onMouseDown={handleMouseDown}>
           <span className="modal-title">{displayName}</span>
           <div className="modal-controls">
-            {canOpenSession && connectionState !== 'open' && (
+            {canOpenSession && !ended && connectionState !== 'open' && (
               <span className="terminal-loading-state">
                 {connectionState === 'closed' ? 'Terminal disconnected' : 'Loading terminal…'}
               </span>
@@ -117,9 +127,18 @@ function FloatingModal() {
             <button className="modal-close" onClick={closeFloatingModal}>×</button>
           </div>
         </div>
-        <div className="floating-modal-body">
+        <div className={ended ? 'floating-modal-body detached' : 'floating-modal-body'}>
           {canOpenSession ? (
-            <TerminalSurface session={terminal} />
+            <>
+              <TerminalSurface session={terminal} connect={!ended} />
+              {ended && (
+                <div className="terminal-tile-detached" data-tile-state="ended" role="status">
+                  <span className="terminal-tile-detached-note">
+                    {displayName} ended. This frame shows its last output.
+                  </span>
+                </div>
+              )}
+            </>
           ) : (
             <div className="empty-window-content">Ambiguous legacy session name; attach the user-qualified session from the session list.</div>
           )}

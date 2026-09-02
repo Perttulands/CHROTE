@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from '../context/SessionContext'
 import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey, type SendSessionPane, type TmuxSession } from '../types'
+import { isSessionEnded } from '../terminal/tileState'
+import { useSessionEvidence } from '../context/useSessionEvidence'
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -47,6 +49,11 @@ function SendToSessionModal() {
   const defaultSubmitRef = useRef(false)
   const submitTouchedRef = useRef(false)
 
+  // The same join the tile makes, asked of the same answer. Sending into a
+  // session tmux no longer lists cannot succeed, so the dialog says so up front
+  // instead of failing at send time with a toast that reads like a CHROTE bug.
+  const evidence = useSessionEvidence()
+
   const target = useMemo(() => {
     if (!sendToSessionTarget) return null
     const displayName = getSessionNameFromKey(sendToSessionTarget)
@@ -57,8 +64,9 @@ function SendToSessionModal() {
     const session = matching.length === 1 ? matching[0] : undefined
     const unresolvedBare = !keyUser && matching.length !== 1
     const unixUser = session?.unixUser ?? keyUser
-    return { key: sendToSessionTarget, name: displayName, unixUser, session, unresolvedBare }
-  }, [sendToSessionTarget, sessions])
+    const ended = isSessionEnded(sendToSessionTarget, evidence)
+    return { key: sendToSessionTarget, name: displayName, unixUser, session, unresolvedBare, ended }
+  }, [sendToSessionTarget, sessions, evidence])
 
   activeTargetKeyRef.current = target?.key ?? null
   defaultSubmitRef.current = defaultSubmitForSession(target?.session)
@@ -72,7 +80,7 @@ function SendToSessionModal() {
     setSending(false)
     setPanes([])
     setSelectedPane('')
-    setPanesLoading(Boolean(target && !target.unresolvedBare))
+    setPanesLoading(Boolean(target && !target.unresolvedBare && !target.ended))
     setPanesFailed(Boolean(target?.unresolvedBare))
     setDeliveryUnknown(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -84,6 +92,15 @@ function SendToSessionModal() {
 
   useEffect(() => {
     if (!target) return
+    // An ended session has no pane to resolve. Not asking is the point: the
+    // reason is named before the round trip rather than after it.
+    if (target.ended) {
+      setPanes([])
+      setSelectedPane('')
+      setPanesLoading(false)
+      setPanesFailed(false)
+      return
+    }
     if (target.unresolvedBare) {
       setPanes([])
       setSelectedPane('')
@@ -105,7 +122,7 @@ function SendToSessionModal() {
       setSelectedPane(result.length === 1 ? result[0].pane : '')
     })
     return () => { current = false }
-  }, [listSessionPanes, sendToSessionRequestId, target?.key, target?.name, target?.unixUser, target?.unresolvedBare])
+  }, [listSessionPanes, sendToSessionRequestId, target?.key, target?.name, target?.unixUser, target?.unresolvedBare, target?.ended])
 
   const addFiles = useCallback((incoming: File[]) => {
     if (incoming.length === 0) return
@@ -135,7 +152,7 @@ function SendToSessionModal() {
   )
 
   const handleSend = useCallback(async () => {
-    if (!target || target.unresolvedBare || sending || deliveryUnknown || !selectedPaneTarget) return
+    if (!target || target.unresolvedBare || target.ended || sending || deliveryUnknown || !selectedPaneTarget) return
     if (!text.trim() && files.length === 0) return
     const sendToken = Symbol(target.key)
     activeSendRef.current = sendToken
@@ -189,7 +206,7 @@ function SendToSessionModal() {
 
   if (!target) return null
 
-  const canSend = Boolean(text.trim() || files.length > 0) && Boolean(selectedPaneTarget) && !target.unresolvedBare && !panesLoading && !sending && !deliveryUnknown
+  const canSend = Boolean(text.trim() || files.length > 0) && Boolean(selectedPaneTarget) && !target.unresolvedBare && !target.ended && !panesLoading && !sending && !deliveryUnknown
 
   return (
     <div className="send-session-overlay" onClick={closeSendToSession}>
@@ -213,6 +230,11 @@ function SendToSessionModal() {
           Sent text and files are retained for seven days by default and cleaned automatically in the background.
         </p>
 
+        {target.ended && (
+          <p className="send-session-pane-status send-session-pane-error" role="alert">
+            {target.name} ended. There is no session left to send to; restart it from its tile first.
+          </p>
+        )}
         {panesLoading && <p className="send-session-pane-status" role="status">Resolving target panes…</p>}
         {panesFailed && (
           <p className="send-session-pane-status send-session-pane-error" role="alert">

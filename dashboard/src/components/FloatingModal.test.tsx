@@ -3,9 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FloatingModal from './FloatingModal'
 import { FakeSocket } from '../test/fakeWebSocket'
 
+const ALICE_SHELL = { name: 'alice-shell', windows: 1, attached: true, group: 'main', unixUser: 'alice' }
+
 const mockState = vi.hoisted(() => ({
   closeFloatingModal: vi.fn(),
   openSendToSession: vi.fn(),
+  sessions: [] as { name: string; windows: number; attached: boolean; group: string; unixUser: string }[],
+  loading: false,
+  error: null as string | null,
+  partialAnsweringUsers: null as string[] | null,
 }))
 
 vi.mock('../context/SessionContext', () => ({
@@ -14,13 +20,20 @@ vi.mock('../context/SessionContext', () => ({
     closeFloatingModal: mockState.closeFloatingModal,
     openSendToSession: mockState.openSendToSession,
     settings: { fontSize: 14, hideScrollbar: false },
-    sessions: [{ name: 'alice-shell', windows: 1, attached: true, group: 'main', unixUser: 'alice' }],
+    sessions: mockState.sessions,
+    loading: mockState.loading,
+    error: mockState.error,
+    partialAnsweringUsers: mockState.partialAnsweringUsers,
   }),
 }))
 
 describe('FloatingModal Send to Session action', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockState.sessions = [ALICE_SHELL]
+    mockState.loading = false
+    mockState.error = null
+    mockState.partialAnsweringUsers = null
     FakeSocket.instances = []
     vi.stubGlobal('WebSocket', FakeSocket)
     vi.stubGlobal('ResizeObserver', class {
@@ -52,6 +65,29 @@ describe('FloatingModal Send to Session action', () => {
     fireEvent.mouseDown(screen.getByRole('button', { name: /Send to Session/i }), { clientX: 20, clientY: 20 })
     fireEvent.mouseMove(document, { clientX: 300, clientY: 300 })
     expect(modal.style.left).toBe(initialLeft)
+  })
+
+  it('gives a peek at an ended session the tile\'s note instead of a silent dead terminal', () => {
+    mockState.sessions = []
+    const { container } = render(<FloatingModal />)
+
+    // The same wording the tile uses, over the same last frame.
+    expect(screen.getByText('alice-shell ended. This frame shows its last output.')).toBeInTheDocument()
+    expect(container.querySelector('.floating-modal-body.detached')).not.toBeNull()
+    expect(container.querySelector('.terminal-surface-host')).not.toBeNull()
+    // Naming the failure is the point: no socket is opened to rediscover it.
+    expect(FakeSocket.instances).toHaveLength(0)
+    expect(screen.queryByText('Loading terminal…')).toBeNull()
+  })
+
+  it('says nothing about a session whose Unix user did not answer the poll', () => {
+    mockState.sessions = []
+    mockState.error = 'alice: tmux socket unreachable'
+    mockState.partialAnsweringUsers = ['bob']
+    render(<FloatingModal />)
+
+    expect(screen.queryByText(/ended\. This frame shows its last output\./)).toBeNull()
+    expect(screen.getByText('Loading terminal…')).toBeInTheDocument()
   })
 
   it('peeks through the same in-page terminal as a tile, on its own observer connection', () => {

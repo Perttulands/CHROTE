@@ -87,6 +87,14 @@
   display: none;
 }
 
+/* Peek on an ended session, treated exactly as the tile treats one: the last
+   frame stays readable but recedes, and it stops taking input that would go
+   nowhere. The note itself is the tile's, class and wording alike. */
+.floating-modal-body.detached .terminal-surface-host {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .send-session-overlay {
   position: fixed;
   inset: 0;
