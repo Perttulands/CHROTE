@@ -298,6 +298,25 @@ describe('terminal session', () => {
     session.dispose()
   })
 
+  // tmux lays the pane out with its own width table and the browser has to
+  // agree, or every character after an emoji sits a cell left of where tmux
+  // put it. The terminal's own cursor report is the measurement: measured on a
+  // scratch tmux 3.6a socket, printing U+1F680 at column 0 leaves tmux's
+  // cursor_x at 2, and the reply to DSR 6 says where this terminal left it.
+  it('measures an emoji the two columns tmux lays out for it', async () => {
+    const { session, host } = start()
+    session.attach(host)
+    const socket = FakeSocket.latest()
+    socket.accept()
+    socket.sent.length = 0
+
+    socket.deliver('0', '\u001b[H\u{1F680}\u001b[6n')
+
+    await vi.waitFor(() => expect(socket.sentText.join('')).toContain('R'))
+    expect(socket.sentText).toContain('0\u001b[1;3R')
+    session.dispose()
+  })
+
   it('closes the connection and takes the terminal off screen when disposed', () => {
     const { session, host } = start()
     session.attach(host)

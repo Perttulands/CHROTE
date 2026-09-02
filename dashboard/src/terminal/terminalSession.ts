@@ -8,6 +8,7 @@
 
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { connectTtyd, type TtydConnection } from './ttydProtocol'
 import { copyTextToClipboard } from '../utils/clipboard'
 import '@xterm/xterm/css/xterm.css'
@@ -79,9 +80,23 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
     fontSize: options.fontSize,
     fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
     theme: { background: TERMINAL_BACKGROUND },
+    // xterm files its Unicode version handling as proposed API, so the width
+    // table below cannot be swapped without this. ttyd's client set it too.
+    allowProposedApi: true,
   })
   const fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
+
+  // tmux lays the pane out with its own width table, so the browser has to
+  // measure characters the same way or every character after an emoji sits a
+  // cell left of where tmux put it — closing box-drawing that does not close,
+  // and status lines that overlap, on the agent sessions the operator watches
+  // most. Measured on a scratch tmux 3.6a socket: printing U+1F680 at column 0
+  // leaves tmux's cursor at column 2. xterm defaults to a Unicode 6 provider,
+  // under which every emoji is one column. ttyd's client ran Unicode 11, which
+  // is why this only started drifting when ttyd left.
+  terminal.loadAddon(new Unicode11Addon())
+  terminal.unicode.activeVersion = '11'
 
   let connection: TtydConnection | null = null
   let opened = false
