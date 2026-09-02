@@ -110,8 +110,8 @@ Probed on scratch sockets, created and destroyed for the probe:
 5. **A binding is the operator's stated intent, not a cache of live sessions.**
    A tile has four states: `Idle` (bound, not on screen; it keeps its
    connection and its last rendered frame once it has been shown), `Live`
-   (attached and
-   sizing), `Taken over` (alive elsewhere; last frame plus `Reclaim`), and
+   (attached and sizing), `Taken over` (alive elsewhere; last frame plus
+   `Reclaim`), and
    `Ended` (session gone; last frame plus `Restart` and `Remove`). Bindings,
    including ended ones, survive a reload. Nothing is ever removed from a window
    except by the operator.
