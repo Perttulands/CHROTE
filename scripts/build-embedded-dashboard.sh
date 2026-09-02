@@ -5,6 +5,23 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dashboard_dir="$repo_root/dashboard"
 embed_dir="$repo_root/src/internal/dashboard/dist"
 
+# Vite copies everything under dashboard/public into dist verbatim, so whatever
+# sits there ends up inside the server binary. The build stamp fingerprints
+# TRACKED dashboard files only (scripts/check-embedded-dashboard.py), so an
+# untracked file here changes the served artifact without changing the recorded
+# source fingerprint: the bundle and the stamp both look right while the binary
+# ships something no one declared. That is how ~40MB of host media once rode
+# along in a 74MB binary. Refuse to build instead of copying an input nothing
+# records; git's index is the declaration, so staging a new asset is enough.
+undeclared="$(git -C "$repo_root" ls-files --others -- dashboard/public)"
+if [ -n "$undeclared" ]; then
+  echo 'Refusing to build: dashboard/public holds files git does not track,' >&2
+  echo 'and Vite would copy them into the embedded bundle unrecorded:' >&2
+  printf '%s\n' "$undeclared" | sed 's/^/  /' >&2
+  echo 'Stage them to make them part of the product, or move them out of the repository.' >&2
+  exit 1
+fi
+
 cd "$dashboard_dir"
 if [ ! -d node_modules ]; then
   npm ci
