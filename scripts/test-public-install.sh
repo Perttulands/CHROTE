@@ -40,13 +40,11 @@ if [ -n "$binary" ]; then
   [ -x "$binary" ] || { echo "test binary is not executable: $binary" >&2; exit 1; }
 fi
 
+# shellcheck source=scripts/lib/server-teardown.sh
+. "$repo_root/scripts/lib/server-teardown.sh"
+
 tmp="$(mktemp -d)"
 server_pid=""
-# The pid the run last started, kept after server_pid is cleared so the closing
-# assertion can name what it found.
-server_pid_last=""
-server_stop_grace=100
-server_kill_grace=50
 runtime_dir="$(mktemp -d /tmp/chrote-tmux.XXXXXX)"
 tmux_socket="$runtime_dir/tmux-$(id -u)/default"
 tmux_timeout="${CHROTE_TEST_TMUX_TIMEOUT:-5s}"
@@ -56,10 +54,7 @@ if ! timeout --version 2>&1 | grep -q 'GNU coreutils'; then
   echo 'GNU timeout is required for bounded private tmux cleanup' >&2
   exit 1
 fi
-if ! command -v pgrep >/dev/null 2>&1; then
-  echo 'pgrep is required to assert the run left no server behind' >&2
-  exit 1
-fi
+require_server_teardown_tools
 tmux_cmd() {
   local tmux_capture status
   tmux_capture="$(mktemp "$tmp/tmux-command.XXXXXX")"
@@ -104,81 +99,6 @@ tmux_session_absent_output() {
     *"can't find session: public-smoke"*) return 0 ;;
     *) return 1 ;;
   esac
-}
-# server_has_exited reports whether the pid is gone or is a zombie waiting to be
-# reaped. kill -0 alone cannot tell the two apart, and a zombie has exited.
-server_has_exited() {
-  local pid="$1" state
-  kill -0 "$pid" 2>/dev/null || return 0
-  state="$(sed -e 's/.*) //' -e 's/ .*//' "/proc/$pid/stat" 2>/dev/null || true)"
-  [ "$state" = "Z" ]
-}
-# stop_server ends the server this run started and reaps it. The wait is bounded
-# on purpose: a server that ignores TERM must fail the run rather than hang it,
-# because a hung run is what gets killed from outside, and an outside kill is
-# what leaves the server behind.
-stop_server() {
-  local pid="$server_pid" _attempt
-  [ -n "$pid" ] || return 0
-  server_pid=""
-  server_pid_last="$pid"
-  kill -TERM "$pid" 2>/dev/null || true
-  for _attempt in $(seq 1 "$server_stop_grace"); do
-    if server_has_exited "$pid"; then
-      break
-    fi
-    sleep 0.1
-  done
-  if ! server_has_exited "$pid"; then
-    printf 'installed chrote-server PID %s ignored TERM; killing it\n' "$pid" >&2
-    kill -KILL "$pid" 2>/dev/null || true
-    for _attempt in $(seq 1 "$server_kill_grace"); do
-      if server_has_exited "$pid"; then
-        break
-      fi
-      sleep 0.1
-    done
-  fi
-  wait "$pid" 2>/dev/null || true
-}
-port_is_free() {
-  python3 - "$1" <<'PORT_PROBE'
-import socket
-import sys
-
-probe = socket.socket()
-probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-try:
-    probe.bind(('127.0.0.1', int(sys.argv[1])))
-    probe.listen(1)
-except OSError:
-    raise SystemExit(1)
-finally:
-    probe.close()
-PORT_PROBE
-}
-# assert_server_released is what keeps a PASS honest. A leaked server is silent:
-# the exit status, the output and the PASS line all say the run cleaned up, so
-# anything reading them as evidence reads a false receipt. Fail the run instead.
-assert_server_released() {
-  local status=0 survivors=""
-  if [ -n "$server_pid_last" ] && kill -0 "$server_pid_last" 2>/dev/null; then
-    printf 'chrote-server PID %s started by this run is still alive\n' "$server_pid_last" >&2
-    status=1
-  fi
-  if [ -n "${installed_binary:-}" ]; then
-    survivors="$(pgrep -f "^$installed_binary" 2>/dev/null | tr '\n' ' ' || true)"
-    survivors="${survivors% }"
-    if [ -n "$survivors" ]; then
-      printf 'processes started from %s survived the run: %s\n' "$installed_binary" "$survivors" >&2
-      status=1
-    fi
-  fi
-  if [ -n "${port:-}" ] && ! port_is_free "$port"; then
-    printf 'port %s is still held after the run\n' "$port" >&2
-    status=1
-  fi
-  return "$status"
 }
 cleanup_tmux() {
   local probe_output="" probe_status=0 kill_output="" sessions="" list_status=0
@@ -251,7 +171,7 @@ cleanup() {
   else
     rm -rf "$runtime_dir"
   fi
-  if ! assert_server_released; then
+  if ! assert_server_released "^${installed_binary:-}" "${port:-}"; then
     status=1
   fi
   rm -rf "$tmp"

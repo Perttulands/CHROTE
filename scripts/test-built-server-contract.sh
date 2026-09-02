@@ -4,6 +4,10 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 server_binary="${CHROTE_SERVER_BINARY:-$repo_root/chrote-server-ci}"
 
+# shellcheck source=scripts/lib/server-teardown.sh
+. "$repo_root/scripts/lib/server-teardown.sh"
+require_server_teardown_tools
+
 if [ ! -x "$server_binary" ]; then
   echo "Built CHROTE server is not executable: $server_binary" >&2
   exit 1
@@ -82,8 +86,10 @@ tmux_kill_exact_session() {
 
 cleanup() {
   local exit_status=$?
-  local probe_status
-  trap - EXIT INT TERM
+  local probe_status survivor_pattern
+  exit_status="${1:-$exit_status}"
+  trap - EXIT INT TERM HUP
+  stop_server
   if tmux_probe_session; then
     if tmux_kill_exact_session; then
       if tmux_probe_session; then
@@ -106,13 +112,25 @@ cleanup() {
       exit_status=1
     fi
   fi
-  if [ -n "$server_pid" ]; then
-    kill "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
+  # The survivor scan is scoped to this run's port, not to the binary path
+  # alone: the same built binary is what a concurrent run of this script would
+  # start too, and its server is not this run's leak.
+  survivor_pattern=""
+  if [ -n "${port:-}" ]; then
+    survivor_pattern="^$server_binary .*-port $port( |$)"
+  fi
+  if ! assert_server_released "$survivor_pattern" "${port:-}"; then
+    exit_status=1
   fi
   exit "$exit_status"
 }
-trap cleanup EXIT INT TERM
+# Every exit path runs the teardown, not only a clean return: an interrupted run
+# is the one most likely to leave a server behind, and the longest command here
+# is the contract run at the end.
+trap 'cleanup' EXIT
+trap 'cleanup 130' INT
+trap 'cleanup 143' TERM
+trap 'cleanup 129' HUP
 
 port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 
