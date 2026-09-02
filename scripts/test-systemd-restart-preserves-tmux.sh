@@ -13,6 +13,10 @@ command -v tmux >/dev/null
 command -v curl >/dev/null
 systemctl --user show-environment >/dev/null
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/server-teardown.sh
+. "$repo_root/scripts/lib/server-teardown.sh"
+
 tmp="$(mktemp -d /tmp/chrote-restart-test.XXXXXX)"
 runtime_dir="$(mktemp -d /tmp/chrote-restart-tmux.XXXXXX)"
 socket="$runtime_dir/tmux-$(id -u)/default"
@@ -34,6 +38,27 @@ tmux_cmd() {
   TMUX_TMPDIR="$runtime_dir" tmux -S "$socket" "$@"
 }
 
+# assert_unit_released is what keeps the PASS line honest. Both systemctl calls
+# in the teardown discard their status, so without this the script can report
+# success over a unit that is still running and a port it never gave back. The
+# wait is bounded because systemctl stop returns before the unit has settled.
+assert_unit_released() {
+  local status=0 _attempt
+  for _attempt in $(seq 1 100); do
+    systemctl --user is-active --quiet "$unit.service" || break
+    sleep 0.1
+  done
+  if systemctl --user is-active --quiet "$unit.service"; then
+    printf 'transient unit %s.service is still active after the run\n' "$unit" >&2
+    status=1
+  fi
+  if ! port_is_free "$port"; then
+    printf 'port %s is still held after the run\n' "$port" >&2
+    status=1
+  fi
+  return "$status"
+}
+
 cleanup() {
   status=$?
   curl -fsS -X DELETE "http://127.0.0.1:$port/api/tmux/sessions/$session" >/dev/null 2>&1 || true
@@ -42,6 +67,9 @@ cleanup() {
   fi
   systemctl --user stop "$unit.service" >/dev/null 2>&1 || true
   systemctl --user reset-failed "$unit.service" >/dev/null 2>&1 || true
+  if ! assert_unit_released; then
+    status=1
+  fi
   rm -rf "$tmp" "$runtime_dir"
   exit "$status"
 }
