@@ -141,8 +141,17 @@ Probed on scratch sockets, created and destroyed for the probe:
   because rescuing requires noticing, and noticing requires the recurring checks
   this ADR removes. Session-spawning tooling is expected to set an initial size
   the same one-shot way.
-- Agent-driving tooling must stop passing `-x`/`-y` to `new-session`, which
-  pins the window at creation.
+- Agent-driving tooling should stop passing `-x`/`-y` to `new-session` and size
+  the session the same one-shot way instead. Corrected 2026-09-02: an earlier
+  revision of this ADR claimed `-x`/`-y` pins the window at creation. It does
+  not. On tmux 3.6a it sets the session's `default-size` option and leaves
+  `window-size` on `latest`, and a later client resizes the window freely —
+  measured on a scratch socket, where a session created at 160x48 was resized to
+  96x27 by a 96x28 client. The reason to drop it is that it leaves a stale
+  `default-size` and duplicates a mechanism CHROTE already owns, not that it
+  pins. What actually pins is `resize-window`, and the origin of the pinned
+  windows observed on the operator's sockets is therefore still unidentified;
+  `ctx-1tf7` tracks finding it.
 
 ## Reversal criteria
 
