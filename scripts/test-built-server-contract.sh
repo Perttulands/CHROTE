@@ -12,6 +12,10 @@ if [ ! -x "$server_binary" ]; then
   echo "Built CHROTE server is not executable: $server_binary" >&2
   exit 1
 fi
+# Only a directory this run created is this run's to remove. An explicit
+# CHROTE_CONTRACT_ARTIFACT_DIR belongs to the caller that named it: CI uploads
+# that directory after a failure.
+artifact_root_owned=false
 if [ -n "${CHROTE_CONTRACT_ARTIFACT_DIR:-}" ]; then
   artifact_root="$CHROTE_CONTRACT_ARTIFACT_DIR"
   if [ -e "$artifact_root" ]; then
@@ -21,6 +25,7 @@ if [ -n "${CHROTE_CONTRACT_ARTIFACT_DIR:-}" ]; then
   mkdir -p "$artifact_root"
 else
   artifact_root="$(mktemp -d "${TMPDIR:-/tmp}/chrote-tmux.XXXXXX")"
+  artifact_root_owned=true
 fi
 
 workspace="$artifact_root/workspace"
@@ -122,6 +127,14 @@ cleanup() {
   if ! assert_server_released "$survivor_pattern" "${port:-}"; then
     exit_status=1
   fi
+  # A passing run owns its leftovers, including the dead tmux socket file the
+  # private server leaves behind, and takes them with it. A failing run keeps
+  # them: the server log and the guard log are where a failure is diagnosed.
+  if [ "$exit_status" -eq 0 ] && [ "$artifact_root_owned" = true ]; then
+    rm -rf "$artifact_root"
+  else
+    printf 'Contract artifacts retained: %s\n' "$artifact_root" >&2
+  fi
   exit "$exit_status"
 }
 # Every exit path runs the teardown, not only a clean return: an interrupted run
@@ -175,7 +188,7 @@ env -u TMUX -u TMUX_PANE \
   tmux -S "$tmux_socket" \
   new-session -d -s "$contract_session" -c "$workspace" sleep 600
 
-echo "Contract artifacts: $artifact_root"
+echo "Contract artifacts (kept only if this run fails): $artifact_root"
 cd "$repo_root/dashboard"
 CHROTE_CONTRACT_WORKSPACE="$workspace" \
 CHROTE_TEST_URL="http://127.0.0.1:$port" \
