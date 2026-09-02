@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import TerminalWindow from './TerminalWindow'
 import { DEFAULT_SETTINGS } from '../types'
+import { sessionEvidenceFrom } from '../terminal/tileState'
 import { loadStoredState } from '../context/workspaceLayouts'
 
 const refreshSessions = vi.fn()
@@ -31,6 +32,13 @@ const droppableState = vi.hoisted(() => ({
   active: null as { data: { current: Record<string, unknown> } } | null,
 }))
 const poolState = vi.hoisted(() => ({ connectionStates: new Map<string, string>() }))
+const mockSessions = vi.hoisted(() => ([
+  { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build', cwd: '/srv/forge', currentCommand: 'codex' },
+  { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/live-shell', currentCommand: 'bash' },
+  { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', currentCommand: 'codex' },
+  { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'build', currentCommand: 'bash' },
+  { name: 'pinned-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/pinned', currentCommand: 'bash', sizePinned: true, width: 100, height: 30 },
+]))
 const pooledTerminals = new Map<string, { reconnect: () => void; fit: () => void; focus: () => void }>()
 
 vi.mock('@dnd-kit/core', () => ({
@@ -58,13 +66,13 @@ vi.mock('../context/SessionContext', () => ({
       },
     },
     terminalUsers: ['alice', 'build'],
-    sessions: [
-      { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build', cwd: '/srv/forge', currentCommand: 'codex' },
-      { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/live-shell', currentCommand: 'bash' },
-      { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', currentCommand: 'codex' },
-      { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'build', currentCommand: 'bash' },
-      { name: 'pinned-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/pinned', currentCommand: 'bash', sizePinned: true, width: 100, height: 30 },
-    ],
+    sessions: mockSessions,
+    sessionEvidence: sessionEvidenceFrom({
+      sessions: mockSessions,
+      loading: false,
+      error: null,
+      partialAnsweringUsers: null,
+    }),
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout', createdAt: 1, workspaces: {} }],
     refreshSessions,
     createSession,

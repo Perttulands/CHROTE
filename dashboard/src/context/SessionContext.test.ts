@@ -342,3 +342,40 @@ describe('renameSession', () => {
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('wont-rename')
   })
 })
+
+describe('sessionEvidence', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('holds what the last poll that answered said through a poll that failed', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }],
+        grouped: {},
+        terminalUsers: ['alice'],
+        timestamp: new Date().toISOString(),
+      }),
+      text: () => Promise.resolve(''),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderSession()
+    await waitFor(() => expect(result.current.sessionEvidence.live?.has('alice:shell1')).toBe(true))
+
+    // The next poll fails outright. That is the absence of news, not news that
+    // a dead session came back, so what the last answer said still stands and
+    // a tile that reached Ended on it is not talked out of the verdict.
+    vi.mocked(fetch as any).mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'tmux socket unreachable' }),
+      text: () => Promise.resolve(''),
+    })
+    await act(async () => { await result.current.refreshSessions() })
+
+    expect(result.current.error).toBe('tmux socket unreachable')
+    expect(result.current.sessionEvidence.live?.has('alice:shell1')).toBe(true)
+    expect(result.current.sessionEvidence.live?.has('alice:departed')).toBe(false)
+  })
+})

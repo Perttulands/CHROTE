@@ -3,6 +3,7 @@ import {
   isDetached,
   isSessionEnded,
   liveSessionKeys,
+  retainSessionEvidence,
   sessionEvidenceFrom,
   tileStateFor,
   NO_SESSION_EVIDENCE,
@@ -84,6 +85,45 @@ describe('isSessionEnded during a partial outage', () => {
 
   it('declares nothing at all without evidence', () => {
     expect(isSessionEnded('gone', NO_SESSION_EVIDENCE)).toBe(false)
+  })
+})
+
+describe('retainSessionEvidence', () => {
+  const failed = sessionEvidenceFrom({ sessions, loading: false, error: 'Failed to fetch sessions', partialAnsweringUsers: null })
+
+  it('holds the last answer through a poll that reports nothing', () => {
+    expect(retainSessionEvidence(heard, failed)).toBe(heard)
+  })
+
+  it('lets a poll that answered replace what is held', () => {
+    const fresh = sessionEvidenceFrom({ sessions, loading: false, error: null, partialAnsweringUsers: null })
+    expect(retainSessionEvidence(heard, fresh)).toBe(fresh)
+  })
+
+  it('still claims nothing when nothing has ever been heard', () => {
+    expect(retainSessionEvidence(NO_SESSION_EVIDENCE, failed)).toEqual(NO_SESSION_EVIDENCE)
+  })
+
+  it('keeps an Ended verdict Ended instead of offering Reclaim on a session that is gone', () => {
+    const beforeFailure = tileStateFor({ sessionKey: 'gone', onScreen: true, evidence: heard, connection: 'closed' })
+    expect(beforeFailure).toBe('ended')
+    // The poll then fails. Without the hold this reads 'takenOver', and the
+    // tile offers Reclaim on a session tmux does not have.
+    expect(tileStateFor({
+      sessionKey: 'gone',
+      onScreen: true,
+      evidence: retainSessionEvidence(heard, failed),
+      connection: 'closed',
+    })).toBe('ended')
+  })
+
+  it('never holds a verdict against the tile own open connection', () => {
+    expect(tileStateFor({
+      sessionKey: 'gone',
+      onScreen: true,
+      evidence: retainSessionEvidence(heard, failed),
+      connection: 'open',
+    })).toBe('live')
   })
 })
 

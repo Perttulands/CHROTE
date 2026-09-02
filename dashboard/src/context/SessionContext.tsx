@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type {
   CreateSessionOptions,
@@ -9,6 +9,12 @@ import type {
   WorkspaceId,
 } from '../types'
 import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getSessionPrefixForUser, resolveLaunchUser } from '../types'
+import {
+  NO_SESSION_EVIDENCE,
+  retainSessionEvidence,
+  sessionEvidenceFrom,
+  type SessionEvidence,
+} from '../terminal/tileState'
 import { useToast } from './ToastContext'
 import { useSendToSession } from './useSendToSession'
 import { useSessionsPoll } from './useSessionsPoll'
@@ -31,7 +37,14 @@ function nextSessionNameForPrefix(sessions: TmuxSession[], prefix: string): stri
   return `${prefix}${existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1}`
 }
 
-const SessionContext = createContext<DashboardContextType | null>(null)
+/**
+ * The dashboard state plus the one join the tile layer makes on it. The join is
+ * held here rather than in each reader so a tile, its peek and the Send dialog
+ * cannot reach different verdicts about the same session.
+ */
+export type SessionContextValue = DashboardContextType & { sessionEvidence: SessionEvidence }
+
+const SessionContext = createContext<SessionContextValue | null>(null)
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const { addToast } = useToast()
@@ -39,6 +52,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const send = useSendToSession()
   const [floatingSession, setFloatingSession] = useState<string | null>(null)
   const poll = useSessionsPoll({ autoRefreshInterval: layouts.settings.autoRefreshInterval })
+
+  // What the last poll that answered is entitled to say about a binding, kept
+  // through one that did not. Computed once, for every reader.
+  const heardEvidence = useRef<SessionEvidence>(NO_SESSION_EVIDENCE)
+  heardEvidence.current = retainSessionEvidence(
+    heardEvidence.current,
+    sessionEvidenceFrom({
+      sessions: poll.sessions,
+      loading: poll.loading,
+      error: poll.error,
+      partialAnsweringUsers: poll.partialAnsweringUsers,
+    }),
+  )
+  const sessionEvidence = heardEvidence.current
 
   const addSessionToWindow = useCallback((
     workspaceId: WorkspaceId,
@@ -229,8 +256,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [addToast, layouts.setWorkspaces, layouts.workspaces, poll.refreshSessions])
 
-  const contextValue: DashboardContextType = useMemo(() => ({
+  const contextValue: SessionContextValue = useMemo(() => ({
     sessions: poll.sessions,
+    sessionEvidence,
     groupedSessions: poll.groupedSessions,
     terminalUsers: poll.terminalUsers,
     loading: poll.loading,
@@ -277,7 +305,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     renamePreset: layouts.renamePreset,
   }), [
     poll.sessions, poll.groupedSessions, poll.terminalUsers, poll.loading, poll.error,
-    poll.partialAnsweringUsers, poll.refreshSessions,
+    poll.partialAnsweringUsers, poll.refreshSessions, sessionEvidence,
     layouts.workspaces, layouts.workspaceIds, layouts.sidebarCollapsed, layouts.assignedSessions,
     layouts.settings, layouts.focusedWindowKey, layouts.windowRevealRequest, layouts.layoutPresets,
     layouts.setWindowCount, layouts.clearWorkspaceAssignments, layouts.removeSessionFromWindow,
@@ -293,12 +321,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   return <SessionContext.Provider value={contextValue}>{children}</SessionContext.Provider>
 }
 
-export function useSession(): DashboardContextType {
+export function useSession(): SessionContextValue {
   const context = useContext(SessionContext)
   if (!context) throw new Error('useSession must be used within a SessionProvider')
   return context
 }
 
-export function useSessionOptional(): DashboardContextType | null {
+export function useSessionOptional(): SessionContextValue | null {
   return useContext(SessionContext)
 }

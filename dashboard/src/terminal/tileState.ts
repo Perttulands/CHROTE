@@ -69,6 +69,24 @@ export function sessionEvidenceFrom(
 }
 
 /**
+ * What the tile layer holds after a poll: the last evidence that actually said
+ * something, kept when the next poll says nothing at all.
+ *
+ * A failed poll is the absence of news, not news that a session came back, and
+ * a dead session does not come back — so re-deciding an Ended verdict on a
+ * failure can only produce a wrong answer and a Reclaim button that dials a
+ * session tmux does not have. The verdict stands until a poll that answered
+ * replaces it, which is also what lets a restarted session read Live again. An
+ * open connection is first-hand proof and overrides all of this anyway.
+ *
+ * This is a cache, deliberately: one poll deep, replaced whole by the next
+ * response, and never consulted while the tile has its own connection.
+ */
+export function retainSessionEvidence(previous: SessionEvidence, fresh: SessionEvidence): SessionEvidence {
+  return fresh.live === null ? previous : fresh
+}
+
+/**
  * Whether the last poll positively says this binding's session is gone. False
  * both for a session tmux still lists and for one the poll cannot speak about:
  * no binding is ever declared ended on absent evidence.

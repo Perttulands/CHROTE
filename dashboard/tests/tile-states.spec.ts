@@ -1,4 +1,4 @@
-import { test, expect, type Page } from './fixtures'
+import { test, expect, allowBrowserConsoleMessage, type Page } from './fixtures'
 import type { WebSocketRoute } from '@playwright/test'
 import { mockApiRoutes } from './mock-api'
 
@@ -34,6 +34,8 @@ interface Harness {
   live: { current: string[] }
   /** Set to make the poll answer partially, listing only the answering users. */
   partial: { current: PartialOutage | null }
+  /** Set to make the poll fail outright, the way an unreachable host does. */
+  failing: { current: boolean }
   /** Live sockets by session key, so a test can end one the way tmux would. */
   sockets: Map<string, WebSocketRoute>
   /** How many times each session has been dialled. */
@@ -55,6 +57,7 @@ async function open(
   const harness: Harness = {
     live: { current: [...(options.live ?? boundSessions)] },
     partial: { current: options.partial ?? null },
+    failing: { current: false },
     sockets: new Map(),
     dials: new Map(),
     created: [],
@@ -94,6 +97,14 @@ async function open(
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({ success: true, session: sessionName(key) }),
+      })
+      return
+    }
+    if (harness.failing.current) {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'tmux socket unreachable' }),
       })
       return
     }
@@ -183,6 +194,35 @@ test.describe('Tile states', () => {
     await expect(tile(page).getByRole('button', { name: 'Restart' })).toBeVisible()
     await expect(tile(page).getByRole('button', { name: 'Remove' })).toBeVisible()
     await expect(tile(page).getByRole('button', { name: 'Reclaim' })).toHaveCount(0)
+  })
+
+  test('a poll that fails does not take back an Ended verdict or offer Reclaim on a session that is gone', async ({ page }) => {
+    allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 500')
+    const harness = await open(page, ['doomed'], 'doomed')
+    await expect(shownFrame(page)).toContainText('doomed output 1')
+
+    harness.live.current = []
+    await harness.sockets.get('doomed')!.close()
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
+
+    // The poll now fails outright. That is the absence of news, not news that
+    // a dead session came back, so the verdict CHROTE already reached stands.
+    harness.failing.current = true
+    await page.waitForTimeout(1600)
+
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
+    await expect(tile(page).getByText('doomed ended. This frame shows its last output.')).toBeVisible()
+    await expect(tile(page).getByRole('button', { name: 'Restart' })).toBeVisible()
+    await expect(tile(page).getByRole('button', { name: 'Remove' })).toBeVisible()
+    // Reclaim would dial a session tmux does not have and close at once.
+    await expect(tile(page).getByRole('button', { name: 'Reclaim' })).toHaveCount(0)
+
+    // Held one poll deep, not forever: a poll that answers again replaces the
+    // verdict, so a session back under the same name is not stuck as Ended.
+    harness.failing.current = false
+    harness.live.current = ['doomed']
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
+    await expect(tile(page).getByText('doomed ended. This frame shows its last output.')).toHaveCount(0)
   })
 
   test('a detached tile states itself in the middle of the frame it is preserving, in the empty-window button shape', async ({ page }) => {

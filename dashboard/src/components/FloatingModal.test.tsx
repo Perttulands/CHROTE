@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FloatingModal from './FloatingModal'
+import { sessionEvidenceFrom } from '../terminal/tileState'
 import { FakeSocket } from '../test/fakeWebSocket'
 
 const ALICE_SHELL = { name: 'alice-shell', windows: 1, attached: true, group: 'main', unixUser: 'alice' }
@@ -24,6 +25,12 @@ vi.mock('../context/SessionContext', () => ({
     loading: mockState.loading,
     error: mockState.error,
     partialAnsweringUsers: mockState.partialAnsweringUsers,
+    sessionEvidence: sessionEvidenceFrom({
+      sessions: mockState.sessions,
+      loading: mockState.loading,
+      error: mockState.error,
+      partialAnsweringUsers: mockState.partialAnsweringUsers as string[] | null,
+    }),
   }),
 }))
 

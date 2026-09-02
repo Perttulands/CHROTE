@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SendToSessionOutcome, TmuxSession } from '../types'
+import { sessionEvidenceFrom } from '../terminal/tileState'
 import SendToSessionModal from './SendToSessionModal'
 
 const mockState = vi.hoisted(() => ({
@@ -35,6 +36,12 @@ vi.mock('../context/SessionContext', () => ({
     loading: mockState.loading,
     error: mockState.error,
     partialAnsweringUsers: mockState.partialAnsweringUsers,
+    sessionEvidence: sessionEvidenceFrom({
+      sessions: mockState.sessions,
+      loading: mockState.loading,
+      error: mockState.error,
+      partialAnsweringUsers: mockState.partialAnsweringUsers as string[] | null,
+    }),
     closeSendToSession: mockState.closeSendToSession,
     listSessionPanes: mockState.listSessionPanes,
     sendToSession: mockState.sendToSession,
