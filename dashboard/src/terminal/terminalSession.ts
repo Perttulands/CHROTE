@@ -9,6 +9,7 @@
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { connectTtyd, type TtydConnection } from './ttydProtocol'
+import { copyTextToClipboard } from '../utils/clipboard'
 import '@xterm/xterm/css/xterm.css'
 import './terminal.css'
 
@@ -100,6 +101,33 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   terminal.onBinary(data => connection?.sendInput(Uint8Array.from(data, char => char.charCodeAt(0) & 0xff)))
   terminal.onResize(({ cols, rows }) => connection?.sendResize(cols, rows))
 
+  // Painting a selection puts it on the clipboard. This was ttyd's client
+  // doing `document.execCommand('copy')` on every selection change, not
+  // anything xterm does, so it left with the iframe; the operator asked for it
+  // back, including the part where painting overwrites the system clipboard
+  // without asking. Under tmux mouse mode the gesture that paints is Shift and
+  // left-drag, which is what xterm's force-selection escape hatch listens for.
+  //
+  // The copy waits for the drag to settle rather than following
+  // onSelectionChange, which fires once per mousemove. The mouseup that ends a
+  // drag can land anywhere, so it is watched on the document, and only while a
+  // press that began in this terminal is in flight. The press-time selection is
+  // remembered so that a plain click on a terminal that still holds an older
+  // selection does not silently put it back over whatever the operator copied
+  // since. Reading it needs the capture phase: xterm stops propagation of the
+  // very mousedown that forces a selection under mouse mode.
+  let selectionAtPress = ''
+  const copySettledSelection = () => {
+    document.removeEventListener('mouseup', copySettledSelection)
+    const painted = terminal.getSelection()
+    if (painted && painted !== selectionAtPress) void copyTextToClipboard(painted)
+  }
+  const watchSelectionDrag = () => {
+    selectionAtPress = terminal.getSelection()
+    document.addEventListener('mouseup', copySettledSelection)
+  }
+  element.addEventListener('mousedown', watchSelectionDrag, true)
+
   const isMeasurable = () => element.offsetWidth >= MIN_VISIBLE_PX && element.offsetHeight >= MIN_VISIBLE_PX
 
   const fit = () => {
@@ -183,6 +211,8 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
     },
     dispose() {
       disposed = true
+      element.removeEventListener('mousedown', watchSelectionDrag, true)
+      document.removeEventListener('mouseup', copySettledSelection)
       connection?.close()
       connection = null
       terminal.dispose()
