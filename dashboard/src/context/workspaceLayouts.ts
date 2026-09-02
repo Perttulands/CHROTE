@@ -227,6 +227,11 @@ function createDefaultWorkspace(workspaceId: WorkspaceId, count: number): Termin
   return { windows: createDefaultWindows(workspaceId), windowCount: clampWindowCount(count) }
 }
 
+// CHROTE once parked a window on this placeholder while a session was being
+// created. Nothing has written it for a long time, so sanitisation drops a
+// stored one rather than restoring a binding no terminal can render.
+const LEGACY_PENDING_BINDING = 'INIT-PENDING'
+
 function sanitizeWorkspaceSlots(workspaceId: WorkspaceId, wsRaw: unknown): TerminalWorkspace {
   const ws = isRecord(wsRaw) ? wsRaw : {}
   const windowCount = clampWindowCount(typeof ws.windowCount === 'number' ? ws.windowCount : 2)
@@ -234,13 +239,15 @@ function sanitizeWorkspaceSlots(workspaceId: WorkspaceId, wsRaw: unknown): Termi
   const windows: TerminalWindow[] = Array.from({ length: CANONICAL_WINDOW_COUNT }, (_, i) => {
     const existing = isRecord(windowsRaw[i]) ? windowsRaw[i] : {}
     const boundSessions = Array.isArray(existing.boundSessions)
-      ? existing.boundSessions.filter((session): session is string => typeof session === 'string' && session.length > 0)
+      ? existing.boundSessions.filter((session): session is string =>
+          typeof session === 'string' && session.length > 0 && session !== LEGACY_PENDING_BINDING)
       : []
-    const activeSession = existing.activeSession === 'INIT-PENDING'
+    const stored = typeof existing.activeSession === 'string' && existing.activeSession !== LEGACY_PENDING_BINDING
       ? existing.activeSession
-      : (typeof existing.activeSession === 'string'
-          ? (boundSessions.includes(existing.activeSession) ? existing.activeSession : (boundSessions[0] ?? null))
-          : null)
+      : null
+    const activeSession = stored === null
+      ? null
+      : (boundSessions.includes(stored) ? stored : (boundSessions[0] ?? null))
     return {
       id: `${workspaceId}-window-${i}`,
       boundSessions,
@@ -308,8 +315,7 @@ export function deduplicateWorkspaceBindings(
           seen.add(identity)
           return true
         })
-        const activeWasRemoved = window.activeSession !== null &&
-          window.activeSession !== 'INIT-PENDING' && !boundSessions.includes(window.activeSession)
+        const activeWasRemoved = window.activeSession !== null && !boundSessions.includes(window.activeSession)
         return {
           ...window,
           boundSessions,

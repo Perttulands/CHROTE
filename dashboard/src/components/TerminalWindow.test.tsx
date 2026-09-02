@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import TerminalWindow from './TerminalWindow'
 import { DEFAULT_SETTINGS } from '../types'
+import { loadStoredState } from '../context/workspaceLayouts'
 
 const refreshSessions = vi.fn()
 const createSession = vi.fn()
@@ -372,20 +373,6 @@ describe('TerminalWindow launch user', () => {
     expect(tag).toHaveFocus()
   })
 
-  it('does not expose session actions for the INIT-PENDING placeholder', () => {
-    render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['INIT-PENDING'], activeSession: 'INIT-PENDING', colorIndex: 0 }}
-      />,
-    )
-
-    const event = dispatchContextMenu(screen.getByText('INIT-PENDING'))
-
-    expect(event.defaultPrevented).toBe(false)
-    expect(document.querySelector('.session-context-menu')).toBeNull()
-  })
-
   it('does not open tag actions from Shift+F10 on the nested remove control', () => {
     const { container } = render(
       <TerminalWindow
@@ -669,19 +656,41 @@ describe('TerminalWindow launch user', () => {
     expect(screen.queryByTitle(/Foreground process reported by tmux:/)).not.toBeInTheDocument()
   })
 
-  it('offers no Send action for empty or still-initializing windows', () => {
-    const { rerender } = render(
+  it('renders a window restored from a layout stored with the retired pending placeholder', () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {
+        desktop: {
+          workspaces: {
+            terminal3: {
+              windows: [
+                { id: 'terminal3-window-0', boundSessions: ['INIT-PENDING'], activeSession: 'INIT-PENDING', colorIndex: 0 },
+              ],
+              windowCount: 1,
+            },
+          },
+        },
+      },
+      sidebarCollapsed: false,
+      settings: DEFAULT_SETTINGS,
+    }))
+
+    const restored = loadStoredState('desktop')!.workspaces.terminal3.windows[0]
+    expect(restored).toEqual({ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 })
+
+    render(<TerminalWindow workspaceId="terminal3" window={restored} />)
+
+    expect(screen.getByText('or drag a session here')).toBeInTheDocument()
+    expect(screen.queryByText(/INIT-PENDING/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Initializing Session/)).not.toBeInTheDocument()
+  })
+
+  it('offers no Send action for an empty window', () => {
+    render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
-      />
-    )
-    expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()
-
-    rerender(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['INIT-PENDING'], activeSession: 'INIT-PENDING', colorIndex: 0 }}
       />
     )
     expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()

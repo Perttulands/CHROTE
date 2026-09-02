@@ -71,13 +71,13 @@ describe('terminal pool', () => {
     created.length = 0
     sessionState.settings = { fontSize: 14, hideScrollbar: false }
     sessionState.workspaces = {
-      terminal1: { windows: [{ boundSessions: ['alice:alpha', 'INIT-PENDING'] }, { boundSessions: [] }] },
+      terminal1: { windows: [{ boundSessions: ['alice:alpha'] }, { boundSessions: [] }] },
       // A workspace whose tab is not on screen still owns its bindings.
       terminal2: { windows: [{ boundSessions: ['bob:beta'] }] },
     }
   })
 
-  it('holds one terminal per bound session in every workspace, ignoring pending slots', () => {
+  it('holds one terminal per bound session in every workspace', () => {
     renderPool()
 
     expect(Array.from(pool.terminals.keys()).sort()).toEqual(['alice:alpha', 'bob:beta'])

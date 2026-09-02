@@ -219,7 +219,7 @@ describe('dashboard persisted storage contract', () => {
     expect(result.current.settings.terminalSessionPrefixes).toEqual({})
   })
 
-  it('filters INIT-PENDING active sessions before persisting state', async () => {
+  it('migrates a stored INIT-PENDING binding to no active session', async () => {
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
       version: 3,
       settingsSchemaVersion: 2,
@@ -228,7 +228,7 @@ describe('dashboard persisted storage contract', () => {
           workspaces: {
             terminal1: {
               windows: [
-                { id: 'terminal1-window-0', boundSessions: ['pending'], activeSession: 'INIT-PENDING', colorIndex: 0 },
+                { id: 'terminal1-window-0', boundSessions: ['pending', 'INIT-PENDING'], activeSession: 'INIT-PENDING', colorIndex: 0 },
               ],
               windowCount: 1,
             },
@@ -250,6 +250,7 @@ describe('dashboard persisted storage contract', () => {
     await waitFor(() => {
       expect(result.current.workspaces.terminal1.windows[0].activeSession).toBeNull()
     })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['pending'])
 
     const persisted = storedDashboardState()
     expect(persisted.layoutsByViewport.desktop.workspaces.terminal1.windows[0]).toEqual({

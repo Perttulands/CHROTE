@@ -56,11 +56,10 @@ interface SessionTagProps {
   onClick: () => void
   onOpenFilesAtPath?: (path: string) => void
   workspaceActive: boolean
-  contextActionsEnabled: boolean
   tileState: TileState
 }
 
-function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive, contextActionsEnabled, tileState }: SessionTagProps) {
+function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive, tileState }: SessionTagProps) {
   const { sessions, settings, deleteSession, renameSession, openSendToSession } = useSession()
   const pool = useTerminalPool()
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
@@ -110,7 +109,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
 
   const handleTagKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest('.tag-remove')) return
-    if (contextActionsEnabled && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) {
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
       event.preventDefault()
       event.stopPropagation()
       const rect = event.currentTarget.getBoundingClientRect()
@@ -147,8 +146,8 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   }
 
   useEffect(() => {
-    if (!workspaceActive || !contextActionsEnabled) closeContextMenu(false)
-  }, [closeContextMenu, contextActionsEnabled, workspaceActive])
+    if (!workspaceActive) closeContextMenu(false)
+  }, [closeContextMenu, workspaceActive])
 
   useEffect(() => {
     if (contextMenu) firstActionRef.current?.focus()
@@ -174,7 +173,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
         onClick={handleClick}
         onKeyDown={handleTagKeyDown}
         onContextMenu={(event) => {
-          if (!contextActionsEnabled || (event.target as HTMLElement).closest('.tag-remove')) return
+          if ((event.target as HTMLElement).closest('.tag-remove')) return
           event.preventDefault()
           event.stopPropagation()
           openContextMenu(event.clientX, event.clientY)
@@ -448,12 +447,11 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
 
 
   const hasSessions = windowConfig.boundSessions.length > 0
-  const sendableSession = activeSession && activeSession !== 'INIT-PENDING' ? activeSession : null
-  const activeSessionName = sendableSession ? getSessionNameFromKey(sendableSession) : ''
-  const activeSessionUser = sendableSession ? getSessionUserFromKey(sendableSession) : ''
-  const activeSessionMatches = sendableSession
+  const activeSessionName = activeSession ? getSessionNameFromKey(activeSession) : ''
+  const activeSessionUser = activeSession ? getSessionUserFromKey(activeSession) : ''
+  const activeSessionMatches = activeSession
     ? sessions.filter(session => activeSessionUser
-      ? getSessionKey(session.name, session.unixUser) === sendableSession
+      ? getSessionKey(session.name, session.unixUser) === activeSession
       : session.name === activeSessionName)
     : []
   const currentCommand = activeSessionMatches.length === 1 ? activeSessionMatches[0].currentCommand?.trim() : undefined
@@ -484,7 +482,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               onClick={() => handleTagClick(sessionName)}
               onOpenFilesAtPath={onOpenFilesAtPath}
               workspaceActive={workspaceActive}
-              contextActionsEnabled={sessionName !== 'INIT-PENDING'}
               tileState={tileStates.get(sessionName) ?? 'idle'}
             />
           ))}
@@ -517,19 +514,19 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               </button>
             </>
           )}
-          {sendableSession && (
+          {activeSession && (
             <button
               className="window-send-btn"
-              onClick={() => openSendToSession(sendableSession)}
-              title={`Send to ${getSessionNameFromKey(sendableSession)}`}
-              aria-label={`Send to session ${getSessionNameFromKey(sendableSession)}`}
+              onClick={() => openSendToSession(activeSession)}
+              title={`Send to ${getSessionNameFromKey(activeSession)}`}
+              aria-label={`Send to session ${getSessionNameFromKey(activeSession)}`}
             >
               <Send size={12} aria-hidden="true" />
             </button>
           )}
           {/* The two detached states say so in the tile itself; only a tile on
               its way up has nothing else to show for it. */}
-          {sendableSession && activeTileState === 'live' && pool.connectionStates.get(sendableSession) !== 'open' && (
+          {activeSession && activeTileState === 'live' && pool.connectionStates.get(activeSession) !== 'open' && (
             <span className="terminal-loading-state">Connecting…</span>
           )}
         </div>
@@ -541,40 +538,28 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
         data-tile-state={activeTileState}
         onClick={handleWindowClick}
       >
-        {activeSession === 'INIT-PENDING' ? (
-          <div style={{
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            height: '100%',
-            color: colorTheme.accent
-          }}>
-            <span>Initializing Session...</span>
-          </div>
-        ) : !hasSessions ? (
+        {!hasSessions && (
           <div className="empty-window-state">
             <CreateSessionButton workspaceId={workspaceId} windowId={windowConfig.id} accentColor={colorTheme.accent} />
             <span className="empty-window-hint">or drag a session here</span>
           </div>
-        ) : null}
+        )}
         {windowConfig.boundSessions.map(sessionName => (
-          sessionName === 'INIT-PENDING' ? null : (
-            <TerminalSurface
-              key={sessionName}
-              session={pool.terminals.get(sessionName) ?? null}
-              hidden={sessionName !== activeSession}
-              connect={tileStates.get(sessionName) !== 'ended'}
-            />
-          )
+          <TerminalSurface
+            key={sessionName}
+            session={pool.terminals.get(sessionName) ?? null}
+            hidden={sessionName !== activeSession}
+            connect={tileStates.get(sessionName) !== 'ended'}
+          />
         ))}
-        {sendableSession && isDetached(activeTileState) && (
+        {activeSession && isDetached(activeTileState) && (
           <DetachedTile
             state={activeTileState}
-            sessionName={getSessionNameFromKey(sendableSession)}
+            sessionName={getSessionNameFromKey(activeSession)}
             restarting={restarting}
-            onReclaim={() => handleReclaim(sendableSession)}
-            onRestart={() => { void handleRestart(sendableSession) }}
-            onRemove={() => handleRemoveSession(sendableSession)}
+            onReclaim={() => handleReclaim(activeSession)}
+            onRestart={() => { void handleRestart(activeSession) }}
+            onRemove={() => handleRemoveSession(activeSession)}
           />
         )}
         {isDropTarget && (

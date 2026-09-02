@@ -35,7 +35,7 @@ export function TerminalPoolProvider({ children }: { children: ReactNode }) {
     Object.values(workspaces).forEach(workspace => {
       workspace.windows.forEach(w => {
         w.boundSessions.forEach(sessionKey => {
-          if (!sessionKey || sessionKey === 'INIT-PENDING' || users.has(sessionKey)) return
+          if (!sessionKey || users.has(sessionKey)) return
           const exactSession = sessionsByKey.get(sessionKey)
           const legacyMatches = sessionsByName.get(sessionKey) ?? []
           const unixUser = exactSession?.unixUser

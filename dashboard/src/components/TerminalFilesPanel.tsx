@@ -289,9 +289,7 @@ function TerminalFilesPanel({
     const focused = workspace.windows.find(window => focusedWindowKey === `${workspaceId}-${window.id}`)
     return focused || workspace.windows.slice(0, workspace.windowCount).find(window => window.activeSession)
   }, [focusedWindowKey, workspace, workspaceId])
-  const sendTarget = focusedWindow?.activeSession && focusedWindow.activeSession !== 'INIT-PENDING'
-    ? focusedWindow.activeSession
-    : null
+  const sendTarget = focusedWindow?.activeSession ?? null
   const sendTargetLabel = sendTarget ? getSessionNameFromKey(sendTarget) : null
   const sessionCwd = useMemo(() => {
     if (!sendTarget) return null

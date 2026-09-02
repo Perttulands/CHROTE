@@ -167,7 +167,7 @@ function DashboardContent() {
     if (!focusedWindowKey) return null
     for (const [workspaceId, workspace] of Object.entries(workspaces)) {
       const terminalWindow = workspace.windows.find(window => `${workspaceId}-${window.id}` === focusedWindowKey)
-      if (terminalWindow?.activeSession && terminalWindow.activeSession !== 'INIT-PENDING') return terminalWindow.activeSession
+      if (terminalWindow?.activeSession) return terminalWindow.activeSession
     }
     return null
   }, [focusedWindowKey, workspaces])

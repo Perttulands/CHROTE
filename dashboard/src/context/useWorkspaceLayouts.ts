@@ -108,36 +108,7 @@ export function useWorkspaceLayouts() {
   }, [workspaces])
 
   useEffect(() => {
-    setWorkspaces(previous => {
-      let changed = false
-      const next: Record<WorkspaceId, TerminalWorkspace> = { ...previous }
-      idsInWorkspaces(previous).forEach(workspaceId => {
-        const workspace = previous[workspaceId]
-        if (!workspace.windows.some(window => window.activeSession === 'INIT-PENDING')) return
-        changed = true
-        next[workspaceId] = {
-          ...workspace,
-          windows: workspace.windows.map(window =>
-            window.activeSession === 'INIT-PENDING' ? { ...window, activeSession: null } : window,
-          ),
-        }
-      })
-      return changed ? next : previous
-    })
-  }, [])
-
-  useEffect(() => {
-    const cleanWorkspaces: Record<WorkspaceId, TerminalWorkspace> = { ...workspaces }
-    idsInWorkspaces(workspaces).forEach(workspaceId => {
-      const workspace = workspaces[workspaceId]
-      cleanWorkspaces[workspaceId] = {
-        ...workspace,
-        windows: workspace.windows.map(window =>
-          window.activeSession === 'INIT-PENDING' ? { ...window, activeSession: null } : window,
-        ),
-      }
-    })
-    saveState({ workspaces: cleanWorkspaces, sidebarCollapsed, settings }, viewportBucket)
+    saveState({ workspaces, sidebarCollapsed, settings }, viewportBucket)
   }, [workspaces, sidebarCollapsed, settings, viewportBucket])
 
   useEffect(() => savePresets(layoutPresets), [layoutPresets])
