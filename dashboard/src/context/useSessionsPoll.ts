@@ -41,6 +41,12 @@ export function useSessionsPoll({ autoRefreshInterval }: SessionsPollOptions) {
   const [terminalUsers, setTerminalUsers] = useState<LaunchUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Non-null exactly when the last response was partial: these are the users
+  // whose tmux answered it. A caller may join their sessions against the list
+  // as usual and must hold everything else, because the response says nothing
+  // about the users that failed. Null means the last response is trusted whole,
+  // failed outright, or has not landed yet — `loading` and `error` say which.
+  const [partialAnsweringUsers, setPartialAnsweringUsers] = useState<LaunchUser[] | null>(null)
   const sessionsRef = useRef<TmuxSession[]>([])
   const refreshMountedRef = useRef(false)
   const refreshGenerationRef = useRef(0)
@@ -88,8 +94,15 @@ export function useSessionsPoll({ autoRefreshInterval }: SessionsPollOptions) {
       ),
       cancellation.then(reason => ({ kind: 'cancelled' as const, reason })),
     ])
+    // A failed poll carries no per-user verdict, so the previous one's must not
+    // outlive it: a stale answering-user list would let a caller keep joining
+    // against a session list nothing has confirmed since.
+    const failPoll = (message: string) => {
+      setError(message)
+      setPartialAnsweringUsers(null)
+    }
     const reportCancellation = (reason: CancellationReason) => {
-      if (reason === 'timeout' && hasCurrentCleanupAuthority()) setError('Failed to fetch sessions (request timed out)')
+      if (reason === 'timeout' && hasCurrentCleanupAuthority()) failPoll('Failed to fetch sessions (request timed out)')
     }
 
     active.promise = (async () => {
@@ -102,7 +115,7 @@ export function useSessionsPoll({ autoRefreshInterval }: SessionsPollOptions) {
         if (responseOutcome.kind === 'failure') {
           if (cancellationReason) reportCancellation(cancellationReason)
           else if (isAuthoritative()) {
-            setError('Failed to fetch sessions')
+            failPoll('Failed to fetch sessions')
             console.error('Failed to fetch sessions:', responseOutcome.failure)
           }
           return
@@ -117,7 +130,7 @@ export function useSessionsPoll({ autoRefreshInterval }: SessionsPollOptions) {
         }
         if (dataOutcome.kind === 'failure') {
           if (cancellationReason) reportCancellation(cancellationReason)
-          else if (isAuthoritative()) setError('Failed to fetch sessions')
+          else if (isAuthoritative()) failPoll('Failed to fetch sessions')
           return
         }
         if (!isAuthoritative()) return
@@ -125,17 +138,19 @@ export function useSessionsPoll({ autoRefreshInterval }: SessionsPollOptions) {
         const data = dataOutcome.value
         const isPartial = response.ok && data.partial === true
         if (!response.ok || (data.error && !isPartial)) {
-          setError(typeof data.error === 'string' ? data.error : 'Failed to fetch sessions')
+          failPoll(typeof data.error === 'string' ? data.error : 'Failed to fetch sessions')
           return
         }
         const receivedSessions = Array.isArray(data.sessions) ? data.sessions : []
-        const partialFailedUsers = isPartial && Array.isArray(data.successfulUsers) && Array.isArray(data.failedUsers)
-          ? data.failedUsers
+        const partialUsers = isPartial && Array.isArray(data.successfulUsers) && Array.isArray(data.failedUsers)
+          ? { successful: data.successfulUsers, failed: data.failedUsers }
           : null
+        const partialFailedUsers = partialUsers?.failed ?? null
         const nextSessions = partialFailedUsers
           ? mergeFailedUserSessions(sessionsRef.current, receivedSessions, partialFailedUsers)
           : receivedSessions
         setError(typeof data.error === 'string' ? data.error : null)
+        setPartialAnsweringUsers(partialUsers?.successful ?? null)
         sessionsRef.current = nextSessions
         setSessions(nextSessions)
         setGroupedSessions(partialFailedUsers
@@ -144,7 +159,7 @@ export function useSessionsPoll({ autoRefreshInterval }: SessionsPollOptions) {
         if (Array.isArray(data.terminalUsers)) setTerminalUsers(normalizeTerminalUsers(data.terminalUsers))
       } catch (e) {
         if (isAuthoritative()) {
-          setError('Failed to fetch sessions')
+          failPoll('Failed to fetch sessions')
           console.error('Failed to fetch sessions:', e)
         }
       } finally {
@@ -192,6 +207,7 @@ export function useSessionsPoll({ autoRefreshInterval }: SessionsPollOptions) {
     terminalUsers,
     loading,
     error,
+    partialAnsweringUsers,
     refreshSessions,
   }
 }

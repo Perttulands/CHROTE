@@ -235,6 +235,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     terminalUsers: poll.terminalUsers,
     loading: poll.loading,
     error: poll.error,
+    partialAnsweringUsers: poll.partialAnsweringUsers,
     workspaces: layouts.workspaces,
     workspaceIds: layouts.workspaceIds,
     sidebarCollapsed: layouts.sidebarCollapsed,
@@ -275,7 +276,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     deletePreset: layouts.deletePreset,
     renamePreset: layouts.renamePreset,
   }), [
-    poll.sessions, poll.groupedSessions, poll.terminalUsers, poll.loading, poll.error, poll.refreshSessions,
+    poll.sessions, poll.groupedSessions, poll.terminalUsers, poll.loading, poll.error,
+    poll.partialAnsweringUsers, poll.refreshSessions,
     layouts.workspaces, layouts.workspaceIds, layouts.sidebarCollapsed, layouts.assignedSessions,
     layouts.settings, layouts.focusedWindowKey, layouts.windowRevealRequest, layouts.layoutPresets,
     layouts.setWindowCount, layouts.clearWorkspaceAssignments, layouts.removeSessionFromWindow,

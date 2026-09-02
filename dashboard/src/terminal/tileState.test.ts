@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { isDetached, liveSessionKeys, tileStateFor } from './tileState'
+import {
+  isDetached,
+  isSessionEnded,
+  liveSessionKeys,
+  sessionEvidenceFrom,
+  tileStateFor,
+  NO_SESSION_EVIDENCE,
+  type SessionEvidence,
+} from './tileState'
+import type { TmuxSession } from '../types'
 
-const live = liveSessionKeys([
+const sessions: TmuxSession[] = [
   { name: 'main', windows: 1, attached: false, group: 'main' },
   { name: 'build', windows: 1, attached: false, group: 'build', unixUser: 'forge' },
-])
+]
+
+const live = liveSessionKeys(sessions)
+const heard: SessionEvidence = { live, answering: null }
 
 describe('liveSessionKeys', () => {
   it('matches a binding written either qualified or bare', () => {
@@ -15,47 +27,115 @@ describe('liveSessionKeys', () => {
   })
 })
 
+describe('sessionEvidenceFrom', () => {
+  it('claims nothing until the first response lands', () => {
+    expect(sessionEvidenceFrom({ sessions, loading: true, error: null, partialAnsweringUsers: null }))
+      .toEqual(NO_SESSION_EVIDENCE)
+  })
+
+  it('claims nothing when the poll failed outright', () => {
+    expect(sessionEvidenceFrom({ sessions, loading: false, error: 'Failed to fetch sessions', partialAnsweringUsers: null }))
+      .toEqual(NO_SESSION_EVIDENCE)
+  })
+
+  it('joins every binding against a whole response', () => {
+    const evidence = sessionEvidenceFrom({ sessions, loading: false, error: null, partialAnsweringUsers: null })
+    expect(evidence.live?.has('forge:build')).toBe(true)
+    expect(evidence.answering).toBeNull()
+  })
+
+  it('keeps the answering users of a partial response, error and all', () => {
+    const evidence = sessionEvidenceFrom({
+      sessions,
+      loading: false,
+      error: "tmux failed for user 'alice'",
+      partialAnsweringUsers: ['forge'],
+    })
+    expect(evidence.live?.has('forge:build')).toBe(true)
+    expect([...(evidence.answering ?? [])]).toEqual(['forge'])
+  })
+})
+
+describe('isSessionEnded during a partial outage', () => {
+  // 'forge' answered and no longer lists 'forge:gone'; 'alice' never answered,
+  // so its list is whatever the previous poll left behind.
+  const partial: SessionEvidence = { live, answering: new Set(['forge']) }
+
+  it('declares a dead binding under an answering user ended', () => {
+    expect(isSessionEnded('forge:gone', partial)).toBe(true)
+  })
+
+  it('leaves a live binding under an answering user alone', () => {
+    expect(isSessionEnded('forge:build', partial)).toBe(false)
+  })
+
+  it('holds a binding under the user whose socket failed', () => {
+    expect(isSessionEnded('alice:gone', partial)).toBe(false)
+  })
+
+  it('holds a bare binding, which names no user to scope by', () => {
+    expect(isSessionEnded('gone', partial)).toBe(false)
+  })
+
+  it('joins every binding once the response is whole again', () => {
+    expect(isSessionEnded('alice:gone', heard)).toBe(true)
+    expect(isSessionEnded('gone', heard)).toBe(true)
+  })
+
+  it('declares nothing at all without evidence', () => {
+    expect(isSessionEnded('gone', NO_SESSION_EVIDENCE)).toBe(false)
+  })
+})
+
 describe('tileStateFor', () => {
   it('is Live while the shown binding holds an open connection', () => {
-    expect(tileStateFor({ sessionKey: 'main', onScreen: true, liveSessions: live, connection: 'open' }))
+    expect(tileStateFor({ sessionKey: 'main', onScreen: true, evidence: heard, connection: 'open' }))
       .toBe('live')
   })
 
   it('is Live, not lost, while a shown binding is still dialling', () => {
-    expect(tileStateFor({ sessionKey: 'main', onScreen: true, liveSessions: live, connection: 'connecting' }))
+    expect(tileStateFor({ sessionKey: 'main', onScreen: true, evidence: heard, connection: 'connecting' }))
       .toBe('live')
-    expect(tileStateFor({ sessionKey: 'main', onScreen: true, liveSessions: live, connection: 'idle' }))
+    expect(tileStateFor({ sessionKey: 'main', onScreen: true, evidence: heard, connection: 'idle' }))
       .toBe('live')
   })
 
   it('is Idle for a binding that is not the one on screen', () => {
-    expect(tileStateFor({ sessionKey: 'main', onScreen: false, liveSessions: live, connection: 'idle' }))
+    expect(tileStateFor({ sessionKey: 'main', onScreen: false, evidence: heard, connection: 'idle' }))
       .toBe('idle')
-    expect(tileStateFor({ sessionKey: 'main', onScreen: false, liveSessions: live, connection: 'open' }))
+    expect(tileStateFor({ sessionKey: 'main', onScreen: false, evidence: heard, connection: 'open' }))
       .toBe('idle')
   })
 
   it('is Taken over when the connection dropped but tmux still lists the session', () => {
-    expect(tileStateFor({ sessionKey: 'forge:build', onScreen: true, liveSessions: live, connection: 'closed' }))
+    expect(tileStateFor({ sessionKey: 'forge:build', onScreen: true, evidence: heard, connection: 'closed' }))
       .toBe('takenOver')
   })
 
   it('is Ended when tmux no longer lists the session, on screen or not', () => {
-    expect(tileStateFor({ sessionKey: 'gone', onScreen: true, liveSessions: live, connection: 'closed' }))
+    expect(tileStateFor({ sessionKey: 'gone', onScreen: true, evidence: heard, connection: 'closed' }))
       .toBe('ended')
-    expect(tileStateFor({ sessionKey: 'gone', onScreen: false, liveSessions: live, connection: 'idle' }))
+    expect(tileStateFor({ sessionKey: 'gone', onScreen: false, evidence: heard, connection: 'idle' }))
       .toBe('ended')
   })
 
   it('never calls a binding ended before a trustworthy session list has arrived', () => {
-    expect(tileStateFor({ sessionKey: 'gone', onScreen: true, liveSessions: null, connection: 'closed' }))
+    expect(tileStateFor({ sessionKey: 'gone', onScreen: true, evidence: NO_SESSION_EVIDENCE, connection: 'closed' }))
       .toBe('takenOver')
-    expect(tileStateFor({ sessionKey: 'gone', onScreen: false, liveSessions: null, connection: 'idle' }))
+    expect(tileStateFor({ sessionKey: 'gone', onScreen: false, evidence: NO_SESSION_EVIDENCE, connection: 'idle' }))
       .toBe('idle')
   })
 
+  it('holds only the bindings a partial outage cannot speak for', () => {
+    const partial: SessionEvidence = { live, answering: new Set(['forge']) }
+    expect(tileStateFor({ sessionKey: 'forge:gone', onScreen: true, evidence: partial, connection: 'closed' }))
+      .toBe('ended')
+    expect(tileStateFor({ sessionKey: 'alice:gone', onScreen: true, evidence: partial, connection: 'closed' }))
+      .toBe('takenOver')
+  })
+
   it('trusts its own open connection over a poll that has not caught up with a restart', () => {
-    expect(tileStateFor({ sessionKey: 'gone', onScreen: true, liveSessions: live, connection: 'open' }))
+    expect(tileStateFor({ sessionKey: 'gone', onScreen: true, evidence: heard, connection: 'open' }))
       .toBe('live')
   })
 

@@ -75,6 +75,7 @@ vi.mock('../context/SessionContext', () => ({
     restartSession,
     loading: false,
     error: null,
+    partialAnsweringUsers: null,
     focusedWindowKey: null,
     setFocusedWindowKey,
     openSendToSession,

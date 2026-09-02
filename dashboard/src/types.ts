@@ -428,6 +428,11 @@ export interface DashboardState {
   loading: boolean
   error: string | null
 
+  // Unix users whose tmux answered, when the last response was partial. Null
+  // when it was whole, failed outright, or has not landed yet. Consumers scope
+  // their trust in `sessions` by it rather than discarding the whole list.
+  partialAnsweringUsers: LaunchUser[] | null
+
   // Window configuration
   workspaces: Record<WorkspaceId, TerminalWorkspace>
 

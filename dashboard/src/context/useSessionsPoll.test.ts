@@ -516,12 +516,27 @@ describe('refreshSessions', () => {
     expect(result.current.groupedSessions).toEqual({ shell: [newHealthySession], agents: [failedUserSession] })
     expect(result.current.terminalUsers).toEqual(['alice', 'build'])
     expect(result.current.error).toBe('build: tmux source permission denied')
+    // The half of the response that is trustworthy is named, so a consumer can
+    // still join 'alice' bindings instead of discarding the whole list.
+    expect(result.current.partialAnsweringUsers).toEqual(['alice'])
     expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
       boundSessions: ['alice:old', 'build:worker'],
       activeSession: 'build:worker',
     })
     expect(result.current.floatingSession).toBe('build:worker')
     expect(result.current.sendToSessionTarget).toBe('build:worker')
+
+    // A poll that fails outright says nothing about any user, so the partial
+    // verdict must not outlive it and be joined against again.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const failed = result.current.refreshSessions()
+    await act(async () => {
+      requests[3].response.reject(new Error('network down'))
+      await failed
+    })
+    expect(result.current.partialAnsweringUsers).toBeNull()
+    expect(result.current.sessions).toEqual([newHealthySession, failedUserSession])
+    consoleError.mockRestore()
 
     unmount()
     expect(vi.getTimerCount()).toBe(0)

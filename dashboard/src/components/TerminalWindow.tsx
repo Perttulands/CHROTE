@@ -7,7 +7,8 @@ import { useTerminalPool } from './TerminalPool'
 import TerminalSurface from './TerminalSurface'
 import { WINDOW_COLORS, getForegroundCommandLabel, getSessionBadges, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
-import { isDetached, liveSessionKeys, tileStateFor, type TileState } from '../terminal/tileState'
+import { isDetached, tileStateFor, type TileState } from '../terminal/tileState'
+import { useSessionEvidence } from '../context/useSessionEvidence'
 import DismissiblePanel from './DismissiblePanel'
 
 interface CreateSessionButtonProps {
@@ -371,8 +372,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     openSendToSession,
     restartSession,
     sessions,
-    loading,
-    error,
   } = useSession()
   const [restarting, setRestarting] = useState(false)
 
@@ -384,13 +383,10 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
 
   const activeTerminal = activeSession ? pool.terminals.get(activeSession) ?? null : null
 
-  // The one fact joined in from the host. A list that has not arrived, or one
-  // that arrived alongside an error, proves nothing about a binding, so no tile
-  // is called ended on it.
-  const liveSessions = useMemo(
-    () => (loading || error ? null : liveSessionKeys(sessions)),
-    [loading, error, sessions],
-  )
+  // The one fact joined in from the host, scoped to the users the last poll
+  // actually heard from. A list that has not arrived, or one whose poll failed
+  // outright, proves nothing about any binding.
+  const evidence = useSessionEvidence()
   // A window hidden by the mobile carousel or by an inactive workspace tab is
   // not on screen, whatever its bindings say.
   const windowOnScreen = workspaceActive && style?.display !== 'none'
@@ -399,10 +395,10 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     tileStateFor({
       sessionKey,
       onScreen: windowOnScreen && sessionKey === windowConfig.activeSession,
-      liveSessions,
+      evidence,
       connection: pool.connectionStates.get(sessionKey) ?? 'idle',
     }),
-  ])), [windowConfig.boundSessions, windowConfig.activeSession, windowOnScreen, liveSessions, pool.connectionStates])
+  ])), [windowConfig.boundSessions, windowConfig.activeSession, windowOnScreen, evidence, pool.connectionStates])
   const activeTileState = activeSession ? tileStates.get(activeSession) ?? 'idle' : 'idle'
 
   // The Refit control and the workspace-level refit both land here. Each
