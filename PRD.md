@@ -16,6 +16,7 @@ The host runs tmux, the CHROTE server, and the resources exposed through CHROTE.
 - Browser disconnects, tab closure, and CHROTE restarts leave existing tmux sessions running.
 - Cleanup may remove only the exact session the operator authorized or the exact test-owned or failed-creation-owned session being cleaned up.
 - Any command-line program can run in a CHROTE terminal. Core terminal behavior does not depend on a particular agent harness.
+- Painting a selection in a terminal copies it to the system clipboard. Under tmux mouse mode that is the browser's own selection gesture; tmux's copy-mode selection from a plain drag is separate and never reaches the system clipboard.
 - Send to Session reports delivery to tmux. It does not claim that the process consumed or understood the message.
 
 ## Files
