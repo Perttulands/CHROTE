@@ -287,6 +287,12 @@ test.describe('Tile states', () => {
     await harness.sockets.get('doomed')!.close()
     await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
 
+    // Reloading aborts whatever the page had in flight, and this tile polls
+    // sessions twice a second, so the reload lands mid-poll often enough to
+    // matter (3 failures in 120 runs at main 2c316e6e, always here, never on an
+    // assertion). The rejected fetch is the reload, not a poll regression: the
+    // page logs it on its way out, where no operator can see it.
+    allowBrowserConsoleMessage('Failed to fetch sessions: TypeError: Failed to fetch')
     await page.reload()
     await expect(activeTag(page)).toHaveText('doomed')
     await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
