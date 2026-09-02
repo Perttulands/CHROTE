@@ -43,6 +43,8 @@ The Go server runs the tmux attach on a pseudo-terminal it allocates and relays 
 
 CHROTE owns the pseudo-terminal and the attach client on it, and nothing else. It does not own the tmux server or the long-lived processes inside it. Shutdown and cleanup code must distinguish CHROTE-owned transport from operator-owned tmux work.
 
+A displayed terminal is the session's one sizing client, so opening a session takes it over from whatever was attached, CHROTE's own client or an external one. Peek attaches as an observer and sizes nothing. A new session is sized once, at creation; no server-side loop revisits a window's size afterwards. Window bindings are operator intent held in browser storage, not a cache of live sessions, and the server holds no binding or tile state. [ADR-0017](docs/adr/0017-terminal-viewing-model.md) owns this model and [ADR-0018](docs/adr/0018-terminal-transport-ownership.md) owns the transport.
+
 ## Server composition
 
 `src/cmd/server/` assembles the process and registers the runtime routes.

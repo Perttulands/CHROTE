@@ -46,6 +46,10 @@ to the terminal.
   reassigns your window. Losing a layout to a stray click is worse than one
   extra click.
 - A location chip on an attached session jumps to the window already showing it.
+- Showing a session takes it over: any other client attached to it, including an
+  SSH session at a desk, is detached. Peek only watches and displaces nobody.
+- A binding is yours until you remove it. If the session ends, or another client
+  takes it, the tile keeps its last output and offers the next move.
 - The Files sidecar opens beside the terminal. Its state belongs to that tab.
 - Both sidecars start closed and reserve no width while closed.
 - You can save ten layout presets and load one back later.

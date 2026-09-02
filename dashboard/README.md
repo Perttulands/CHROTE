@@ -52,7 +52,9 @@ src/
 │   ├── TerminalArea.tsx            1-4 terminal-window workspace
 │   ├── TerminalWorkspaceDock.tsx   unified Sessions/Files sidecar owner
 │   ├── SessionPanel.tsx            grouped sessions and Peek
-│   ├── TerminalWindow.tsx          assignment, location, and iframe surface
+│   ├── TerminalWindow.tsx          assignment, location, and tile states
+│   ├── TerminalPool.tsx            one terminal per bound session
+│   ├── TerminalSurface.tsx         the only place a terminal goes on screen
 │   ├── FilesView/                  full Files workspace
 │   ├── TerminalFilesPanel.tsx      terminal-companion Files sidecar
 │   ├── BeadsView/                  Beads workspace and issue surfaces
@@ -60,6 +62,7 @@ src/
 │   ├── ScheduledTasksView.tsx      schedules and run history
 │   ├── SystemStatusView/           health, resources, and system history
 │   └── SettingsView.tsx            appearance, flags, and session cleanup
+├── terminal/                       xterm session, tile state, and wire protocol
 ├── hooks/                          keyboard, drag, polling, and layout behavior
 ├── utils/                          shared parsing and UI utilities
 └── types.ts                        dashboard contracts and persisted settings
@@ -90,7 +93,11 @@ sidebar. `TerminalWorkspaceDock` is the layout owner.
 
 ## State and lifecycle rules
 
-- Terminal iframe identity must survive tab switches and unrelated React renders.
+- A terminal must survive tab switches and unrelated React renders. Its element
+  and WebSocket are owned outside React, and a tile that has been shown keeps
+  both while it is off screen.
+- A window binding is operator intent. Nothing but the operator removes one, and
+  a tile whose session ended keeps its last frame.
 - Browser state stores presentation and assignment metadata, not durable process
   state.
 - tmux sessions and host files remain authoritative.
@@ -98,8 +105,10 @@ sidebar. `TerminalWorkspaceDock` is the layout owner.
 - Async views need explicit loading, empty, degraded, error, and stale states.
 - Destructive operations require visible operator intent and fail-loud feedback.
 
-See [`../docs/PRD-terminal-lifecycle.md`](../docs/PRD-terminal-lifecycle.md),
-and [`../DESIGN-SYSTEM.md`](../DESIGN-SYSTEM.md).
+See [`../docs/adr/0017-terminal-viewing-model.md`](../docs/adr/0017-terminal-viewing-model.md)
+for the viewing model,
+[`../docs/adr/0018-terminal-transport-ownership.md`](../docs/adr/0018-terminal-transport-ownership.md)
+for the transport, and [`../DESIGN-SYSTEM.md`](../DESIGN-SYSTEM.md).
 
 ## Files
 

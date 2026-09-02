@@ -21,7 +21,7 @@ release.
 
 - Files now exposes everything under `CHROTE_ROOTS` that the service identity's
   Unix permissions allow, while canonical paths remain inside configured roots.
-- Terminal drag/drop, assignment, iframe lifecycle, and layout persistence were
+- Terminal drag/drop, assignment, terminal lifetime, and layout persistence were
   hardened for dense multi-window use.
 - Session rows now Peek without changing assignment metadata; location chips
   perform explicit attached-window navigation.

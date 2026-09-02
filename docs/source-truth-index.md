@@ -49,8 +49,7 @@ rather than relying on prose discipline.
 | [`COMPONENTS.md`](../COMPONENTS.md) | Public component and optional-integration map |
 | [`docs/TEST_STRATEGY.md`](TEST_STRATEGY.md) | Test layers, commands, and CI policy |
 | [`docs/private-beads-sidecar.md`](private-beads-sidecar.md) | Host-neutral contract for private Beads transport, revision pairing, and restore |
-| [`docs/PRD-terminal-lifecycle.md`](PRD-terminal-lifecycle.md) | Terminal iframe and tmux lifecycle constraints |
-| [`docs/adr/`](adr/) | Accepted decisions; [`ADR-0016`](adr/0016-core-boundary-and-formations-extraction.md) records the core boundary and extraction |
+| [`docs/adr/`](adr/) | Accepted decisions; [`ADR-0016`](adr/0016-core-boundary-and-formations-extraction.md) records the core boundary and extraction, [`ADR-0017`](adr/0017-terminal-viewing-model.md) the terminal viewing model, and [`ADR-0018`](adr/0018-terminal-transport-ownership.md) the terminal transport |
 | [`dashboard/README.md`](../dashboard/README.md) | Dashboard contributor map and local commands |
 
 Supporting docs explain or operationalize the source-truth specs. They do not

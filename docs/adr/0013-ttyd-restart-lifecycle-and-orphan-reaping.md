@@ -9,7 +9,9 @@ ttyd.
 
 **What still holds:** the decision. Browser terminal attaches are not required
 to survive a `chrote-srv` restart, and they do not. **What is now history:** the
-ttyd process, its `fuser -k` port reaper and `terminal-launch.sh`. CHROTE runs
+ttyd process, its `fuser -k` port reaper, `terminal-launch.sh`, and the terminal
+size guard this ADR relied on to restore pane widths, deleted by
+[ADR-0017](0017-terminal-viewing-model.md). CHROTE runs
 each attach on a pseudo-terminal it owns, so the kernel hangs that attach up
 when the server process exits by any means. The measurements below were taken
 under ttyd and are kept because they are what the decision rests on.
@@ -65,10 +67,10 @@ looks healthy is worse than a terminal that visibly reconnects.
 The real cost of re-attaching was not the blink. Browser clients reconnect at
 ttyd's default 80x24 before the page reports its viewport, and under
 `window-size latest` they clamped live agent windows to 80 columns — truncating
-TUI output that the Telegram bridge relays. That is fixed at the tmux layer by
-the terminal size guard (`chrote-5mj.6.7`), which refuses sizing input from an
-idle, still-un-negotiated client and widens a session left without a sizing
-client.
+TUI output that the Telegram bridge relays. That was fixed at the tmux layer by
+the terminal size guard (`chrote-5mj.6.7`), which refused sizing input from an
+idle, still-un-negotiated client and widened a session left without a sizing
+client. The guard is gone; see the Status note above.
 
 Verified on the same restart as the pid table above: the three agent windows
 stayed at 200x50 across the restart instead of collapsing to 80x23, while their
@@ -118,9 +120,11 @@ reaper it described, closing `chrote-bgp`.
   reopen this ADR rather than adopting silently.
 - Anything asserting terminal survival across restarts must compare pids, not
   counts. Counts are preserved by the reconnect and will report false success.
-- Agent panes keep their width across restarts only because the size guard runs.
-  If that guard is disabled (`CHROTE_TERMINAL_SIZE_GUARD=off`), restart-induced
-  clamping returns.
+- Agent panes kept their width across restarts only because the terminal size
+  guard ran. That guard is gone, deleted by
+  [ADR-0017](0017-terminal-viewing-model.md); width after a restart is whatever
+  the reattaching tile sizes the window to, and a session nobody views keeps the
+  size it was left at.
 
 ## Reversal criteria
 
