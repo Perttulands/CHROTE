@@ -108,36 +108,10 @@
   border-color: var(--accent);
 }
 
-.terminal-refit-btn {
-  width: auto;
-  padding: 0 8px;
-}
-
 .layout-btn.active {
   color: var(--text-primary);
   border-color: var(--accent);
   background-color: var(--accent-light);
-}
-
-.terminal-refit-btn,
-.terminal-clean-stale-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.terminal-clean-stale-btn {
-  width: auto;
-  min-width: 0;
-  padding: 0 10px;
-  color: var(--color-warning);
-  border-color: color-mix(in srgb, var(--color-warning) 65%, var(--divider));
-}
-
-.terminal-clean-stale-btn:hover {
-  color: var(--text-primary);
-  border-color: var(--color-warning);
-  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 }
 
 /* Terminal Grid Layouts */

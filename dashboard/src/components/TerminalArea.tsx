@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { useSession } from '../context/SessionContext'
-import TerminalWindow from './TerminalWindow'
+import TerminalWindow, { CLAIM_EXPLANATION } from './TerminalWindow'
 import DismissiblePanel from './DismissiblePanel'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
@@ -62,6 +62,25 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
       if (sessionName) sessionNames.add(sessionName)
     }))
     sessionNames.forEach(sessionName => pool.terminals.get(sessionName)?.reconnect())
+    closeControlsMenu()
+  }
+
+  // The sessions this device is actually showing: the active binding of each
+  // window on screen. Claiming resizes a tmux window for everyone watching it,
+  // so it is offered only for the frames in front of the operator — a bound
+  // session behind a tab, or on a mobile carousel slide he is not on, would be
+  // resized by a device that cannot show him the result.
+  const sessionsInView = () => {
+    const inView = new Set<string>()
+    visibleWindows.forEach((window, index) => {
+      if (isMobile && index !== mobileActiveIndex) return
+      if (window.activeSession) inView.add(window.activeSession)
+    })
+    return inView
+  }
+
+  const claimSessionsInView = () => {
+    sessionsInView().forEach(sessionName => pool.terminals.get(sessionName)?.claim())
     closeControlsMenu()
   }
 
@@ -139,15 +158,6 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
           </>
         )}
         <button
-          className="layout-btn terminal-refit-btn"
-          type="button"
-          aria-label="Refit terminal layout"
-          title="Refit terminal layout"
-          onClick={refitTerminalLayout}
-        >
-          Refit
-        </button>
-        <button
           className="layout-btn terminal-maintenance-btn"
           aria-label="Terminal maintenance actions"
           title="Terminal maintenance actions"
@@ -170,6 +180,27 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
             <button className="session-context-item" onClick={reconnectFrames} disabled={visibleWindows.every(window => window.boundSessions.length === 0)}>
               <span className="session-context-icon">↻</span>
               Reconnect frames
+            </button>
+            <button
+              className="session-context-item"
+              onClick={claimSessionsInView}
+              disabled={sessionsInView().size === 0}
+              title={CLAIM_EXPLANATION}
+            >
+              <span className="session-context-icon" aria-hidden="true">◎</span>
+              <span className="session-context-stack">
+                Claim all sessions in view
+                <span className="session-context-reason">{CLAIM_EXPLANATION}</span>
+              </span>
+            </button>
+            <button
+              className="session-context-item"
+              onClick={refitTerminalLayout}
+              aria-label="Refit terminal layout"
+              title="Refit terminal layout"
+            >
+              <span className="session-context-icon" aria-hidden="true">↔</span>
+              Refit
             </button>
           </div>
         </DismissiblePanel>
