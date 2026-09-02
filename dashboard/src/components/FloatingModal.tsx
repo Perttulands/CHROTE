@@ -27,6 +27,7 @@ function FloatingModal() {
   const [size, setSize] = useState(initialRect.current.size)
   const [isDragging, setIsDragging] = useState(false)
   const dragOffset = useRef({ x: 0, y: 0 })
+  const overlayPressed = useRef(false)
 
   const displayName = floatingSession ? getSessionNameFromKey(floatingSession) : ''
   const keyUser = floatingSession ? getSessionUserFromKey(floatingSession) : ''
@@ -109,7 +110,20 @@ function FloatingModal() {
   if (!floatingSession) return null
 
   return (
-    <div className="floating-modal-overlay" onClick={closeFloatingModal}>
+    <div
+      className="floating-modal-overlay"
+      // A click's target is the nearest common ancestor of its press and its
+      // release, so a selection drag that starts in the terminal and ends past
+      // the modal edge delivers a click here and used to dismiss Peek along
+      // with the selection just painted. Dismiss only when the press landed on
+      // the overlay too: clicking outside should mean the operator clicked
+      // outside. The press is read as a pointerdown because xterm stops
+      // propagation of the mousedown that starts a selection under tmux mouse
+      // mode. Escape and the header's close button remain, so a Peek that is
+      // hard to dismiss by click is not a trap.
+      onPointerDown={event => { overlayPressed.current = event.target === event.currentTarget }}
+      onClick={event => { if (overlayPressed.current && event.target === event.currentTarget) closeFloatingModal() }}
+    >
       <div
         className="floating-modal"
         style={{ left: position.x, top: position.y, width: size.width, height: size.height }}
