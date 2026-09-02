@@ -12,6 +12,7 @@ import { ToastContainer } from './components/ToastNotification'
 import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
 import LayoutPresetsPanel from './components/LayoutPresetsPanel'
 import { TerminalPoolProvider } from './components/TerminalPool'
+import { SessionCommandMark, SessionLabel } from './components/sessionLabel'
 import {
   readSessionsDockState,
   writeSessionsDockState,
@@ -125,13 +126,16 @@ function readWindowDropData(value: unknown): WindowDropData | null {
   return { type: 'window', workspaceId: data.workspaceId, windowId: data.windowId }
 }
 
-// Dragged item overlay component
+// Dragged item overlay component. It is drawn from the same pieces as the tag
+// and the row it was picked up from, so the ghost is the thing itself.
 function DraggedSessionOverlay({ drag }: { drag: ActiveDrag }) {
-  const { terminalUsers } = useSession()
+  const { sessions, terminalUsers } = useSession()
   const theme = useTheme()
   const { name, type, unixUser } = drag
   const displayName = getSessionNameFromKey(name)
   const badgeClassName = type === 'tag' ? 'session-user-badge' : 'unix-user-badge'
+  const dragged = sessions.find(session => session.name === displayName
+    && (!unixUser || session.unixUser === unixUser))
   return (
     <div className={`${type === 'tag' ? 'session-tag' : 'session-item'} dragging-overlay`}>
       {unixUser && (
@@ -144,7 +148,8 @@ function DraggedSessionOverlay({ drag }: { drag: ActiveDrag }) {
           {getTerminalUserInitial(unixUser)}
         </span>
       )}
-      <span className={type === 'tag' ? 'tag-name' : 'session-agent-name'}>{displayName}</span>
+      <SessionCommandMark command={dragged?.currentCommand} />
+      <SessionLabel name={displayName} className={type === 'tag' ? 'tag-name' : 'session-name'} />
     </div>
   )
 }

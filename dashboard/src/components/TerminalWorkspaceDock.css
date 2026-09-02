@@ -161,8 +161,11 @@
   border-color: var(--accent);
 }
 
+/* A drop target says so in the same colour, dashed: the tile is not focused,
+   it is being offered something. Border colour and style, no shadow. */
 .terminal-window.drop-target {
   border-color: var(--accent);
+  border-style: dashed;
 }
 
 .terminal-window-header {
@@ -185,34 +188,27 @@
   overflow: hidden;
 }
 
-/* Session Tag - browser tab style */
+/* Session Tag - browser tab style. The tags share the header width equally, so
+   a window with one session gets one wide label. */
 .session-tag {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
-  background-color: var(--surface-primary);
-  border: 1px solid var(--divider);
+  padding: 6px 8px;
   border-radius: 6px 6px 0 0;
+  color: var(--text-secondary);
   font-size: 13px;
-  font-weight: 500;
   cursor: grab;
   touch-action: pan-y;
-  transition: all 0.15s ease;
   min-width: 0;
   flex: 1 1 0;
 }
 
-.session-tag:hover {
-  border-color: var(--accent);
-  background-color: var(--surface-secondary);
-}
-
+/* The active tag is the one whose terminal is below it, and it says so by
+   sitting on the terminal's own surface. No accent, no hover effect. */
 .session-tag.active {
-  background-color: var(--accent-light);
-  border-color: var(--accent);
+  background-color: var(--surface-primary);
   color: var(--text-primary);
-  border-bottom-color: transparent;
 }
 
 .session-tag.dragging {
@@ -222,13 +218,9 @@
   box-shadow: none;
 }
 
+/* The label itself is .session-label in base.css: head clipped, tail kept. */
 .tag-name {
   cursor: inherit;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
 }
 
 .session-tag-rename-input {
@@ -244,12 +236,13 @@
 }
 
 .tag-remove {
+  margin-left: auto;
   background: transparent;
   border: none;
   color: var(--text-dim);
   cursor: pointer;
   padding: 2px;
-  font-size: 16px;
+  font-size: 12px;
   line-height: 1;
   transition: color 0.15s ease;
   flex-shrink: 0;
@@ -266,18 +259,6 @@
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
-}
-
-.terminal-foreground-command {
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-dim);
-  border: 1px solid var(--divider);
-  border-radius: 3px;
-  padding: 2px 5px;
-  font-size: 10px;
 }
 
 .cycle-btn,
@@ -354,6 +335,30 @@
   gap: 8px;
 }
 
+/* Plain outline controls. Reclaiming a tile is ordinary work, so it is drawn
+   like ordinary work: an outline, the secondary text colour, no shouting. */
+.terminal-tile-detached-action {
+  padding: 5px 12px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.terminal-tile-detached-action:hover:not(:disabled),
+.terminal-tile-detached-action:focus-visible {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+.terminal-tile-detached-action:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
 .tag-state {
   color: var(--text-dim);
   font-size: 10px;
@@ -414,17 +419,6 @@
   gap: 8px;
   padding: 24px 32px;
   border-radius: 16px;
-}
-
-.tile-action-btn-compact {
-  gap: 6px;
-  padding: 7px 14px;
-  border-width: 1px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 1px;
 }
 
 .create-session-icon {

@@ -285,7 +285,7 @@ test.describe('Tile states', () => {
     await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
   })
 
-  test('a detached tile states itself in the middle of the frame it is preserving, in the empty-window button shape', async ({ page }) => {
+  test('a detached tile states itself in the middle of the frame it is preserving, with plain outline controls', async ({ page }) => {
     const harness = await open(page, ['doomed'], 'doomed')
     await expect(shownFrame(page)).toContainText('doomed output 1')
 
@@ -306,9 +306,9 @@ test.describe('Tile states', () => {
     expect(panelBox.height).toBeLessThan(bodyBox.height / 2)
     expect(panelBox.width).toBeLessThan(bodyBox.width)
 
-    // The same button shape an empty window offers, and no other.
-    await expect(tile(page).getByRole('button', { name: 'Restart' })).toHaveClass(/\btile-action-btn\b/)
-    await expect(tile(page).getByRole('button', { name: 'Remove' })).toHaveClass(/\btile-action-btn\b/)
+    // Plain outline controls: reclaiming a tile is ordinary work.
+    await expect(tile(page).getByRole('button', { name: 'Restart' })).toHaveClass(/\bterminal-tile-detached-action\b/)
+    await expect(tile(page).getByRole('button', { name: 'Remove' })).toHaveClass(/\bterminal-tile-detached-action\b/)
     await expect(tile(page).locator('.terminal-tile-action')).toHaveCount(0)
   })
 

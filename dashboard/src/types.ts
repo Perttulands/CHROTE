@@ -239,14 +239,6 @@ export function getSessionBadges(session: TmuxSession): SessionBadge[] {
   return badges
 }
 
-const SHELL_COMMANDS = new Set(['sh', 'bash', 'dash', 'fish', 'ksh', 'zsh'])
-
-export function getForegroundCommandLabel(command?: string): string | null {
-  const trimmed = command?.trim()
-  if (!trimmed) return null
-  return SHELL_COMMANDS.has(trimmed) ? 'shell' : trimmed
-}
-
 export type SendToSessionPayload = {
   text: string
   files: File[]

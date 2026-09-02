@@ -5,7 +5,8 @@ import { useSession } from '../context/SessionContext'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { useTerminalPool } from './TerminalPool'
 import TerminalSurface from './TerminalSurface'
-import { getForegroundCommandLabel, getSessionBadges, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserInitial } from '../types'
+import { getSessionBadges, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserInitial } from '../types'
+import { SessionCommandMark, SessionLabel } from './sessionLabel'
 import { identityColorFor } from '../theme/theme'
 import { useTheme } from '../theme/ThemeContext'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
@@ -212,7 +213,8 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
           />
         ) : (
           <>
-            <span className="tag-name">{displayName}</span>
+            <SessionCommandMark command={session?.currentCommand} />
+            <SessionLabel name={displayName} className="tag-name" />
             {tileState === 'ended' && <span className="tag-state">ended</span>}
           </>
         )}
@@ -347,15 +349,15 @@ function DetachedTile({ state, sessionName, restarting, onRestore, onRestart, on
   return (
     <div className="terminal-tile-detached" data-tile-state={state} role="status">
       <span className="terminal-tile-detached-note">{DETACHED_NOTE[state](sessionName)}</span>
-      {/* The same button shape the empty window offers, one size down: a tile
-          with no live terminal is the same situation and reads as one. */}
+      {/* Plain outline buttons: the way back is an ordinary control, not an
+          invitation drawn in the accent colour. */}
       <div className="terminal-tile-detached-actions">
         {state === 'ended' ? (
           <>
-            <button className="tile-action-btn tile-action-btn-compact" type="button" disabled={restarting} onClick={onRestart}>
+            <button className="terminal-tile-detached-action" type="button" disabled={restarting} onClick={onRestart}>
               {restarting ? 'Restarting…' : 'Restart'}
             </button>
-            <button className="tile-action-btn tile-action-btn-compact" type="button" onClick={onRemove}>Remove</button>
+            <button className="terminal-tile-detached-action" type="button" onClick={onRemove}>Remove</button>
           </>
         ) : (
           // Both dial the same session again, and neither displaces anybody.
@@ -363,7 +365,7 @@ function DetachedTile({ state, sessionName, restarting, onRestore, onRestart, on
           // this device's size; Reconnect leaves the size where it is, which is
           // why the tile does that one for the operator when it can.
           <button
-            className="tile-action-btn tile-action-btn-compact"
+            className="terminal-tile-detached-action"
             type="button"
             title={state === 'takenOver' ? CLAIM_EXPLANATION : undefined}
             onClick={onRestore}
@@ -409,7 +411,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     setFocusedWindowKey,
     openSendToSession,
     restartSession,
-    sessions,
   } = useSession()
   const [restarting, setRestarting] = useState(false)
 
@@ -495,15 +496,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
 
 
   const hasSessions = windowConfig.boundSessions.length > 0
-  const activeSessionName = activeSession ? getSessionNameFromKey(activeSession) : ''
-  const activeSessionUser = activeSession ? getSessionUserFromKey(activeSession) : ''
-  const activeSessionMatches = activeSession
-    ? sessions.filter(session => activeSessionUser
-      ? getSessionKey(session.name, session.unixUser) === activeSession
-      : session.name === activeSessionName)
-    : []
-  const currentCommand = activeSessionMatches.length === 1 ? activeSessionMatches[0].currentCommand?.trim() : undefined
-  const foregroundCommandLabel = getForegroundCommandLabel(currentCommand)
 
   return (
     <div
@@ -531,14 +523,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
         </div>
 
         <div className="window-controls">
-          {currentCommand && foregroundCommandLabel && (
-            <span
-              className="terminal-foreground-command"
-              title={`Foreground process reported by tmux: ${currentCommand}`}
-            >
-              foreground: {foregroundCommandLabel}
-            </span>
-          )}
           {hasSessions && windowConfig.boundSessions.length > 1 && (
             <>
               <button

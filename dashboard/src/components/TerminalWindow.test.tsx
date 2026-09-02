@@ -41,6 +41,7 @@ const mockSessions = vi.hoisted(() => ([
   { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'build', currentCommand: 'bash' },
   { name: 'pinned-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/pinned', currentCommand: 'bash', sizePinned: true, width: 100, height: 30 },
   { name: 'ssh-held', windows: 1, attached: true, group: 'shell', unixUser: 'alice', currentCommand: 'bash', foreignClients: ['/dev/pts/12'] },
+  { name: 'napping-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', currentCommand: 'sleep' },
 ]))
 const pooledTerminals = new Map<string, { reconnect: () => void; claim: () => void; redialIfDropped: () => void; fit: () => void; focus: () => void }>()
 
@@ -129,6 +130,10 @@ vi.mock('./TerminalSurface', () => ({
 const testDir = dirname(fileURLToPath(import.meta.url))
 const terminalCss = () => readFileSync(resolve(testDir, './TerminalWorkspaceDock.css'), 'utf8')
 
+// A tag draws its name as head and tail spans, so the label is found by the
+// full name it carries in its title rather than as one text node.
+const tagLabel = (name: string) => screen.getByTitle(name)
+
 function dispatchContextMenu(target: Element) {
   const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 350, clientY: 230 })
   act(() => target.dispatchEvent(event))
@@ -193,8 +198,8 @@ describe('TerminalWindow launch user', () => {
 
     expect(screen.getByTitle('Previous session')).toBeInTheDocument()
     expect(screen.getByTitle('Next session')).toBeInTheDocument()
-    expect(screen.getByText('shell-existing').closest('.session-tag')).toHaveClass('active')
-    expect(screen.getByText('forge-existing').closest('.session-tag')).not.toHaveClass('active')
+    expect(tagLabel('shell-existing').closest('.session-tag')).toHaveClass('active')
+    expect(tagLabel('forge-existing').closest('.session-tag')).not.toHaveClass('active')
     fireEvent.click(screen.getByTitle('Next session'))
     expect(cycleSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'next')
 
@@ -238,7 +243,7 @@ describe('TerminalWindow launch user', () => {
       />
     )
 
-    const openInactiveMenu = () => dispatchContextMenu(screen.getByText('shell-existing'))
+    const openInactiveMenu = () => dispatchContextMenu(tagLabel('shell-existing'))
 
     const sendEvent = openInactiveMenu()
     expect(sendEvent.defaultPrevented).toBe(true)
@@ -290,7 +295,7 @@ describe('TerminalWindow launch user', () => {
       />
     )
 
-    dispatchContextMenu(screen.getByText('pinned-existing'))
+    dispatchContextMenu(tagLabel('pinned-existing'))
     const pinnedRefit = screen.getByRole('menuitem', { name: /^Refit frame/ })
     expect(pinnedRefit).toBeDisabled()
     expect(pinnedRefit).toHaveTextContent('Pinned at 100x30. tmux window-size is manual on this window, so CHROTE cannot resize it.')
@@ -299,7 +304,7 @@ describe('TerminalWindow launch user', () => {
     expect(fit).not.toHaveBeenCalled()
     fireEvent.keyDown(document, { key: 'Escape' })
 
-    dispatchContextMenu(screen.getByText('shell-existing'))
+    dispatchContextMenu(tagLabel('shell-existing'))
     const ordinaryRefit = screen.getByRole('menuitem', { name: 'Refit frame' })
     expect(ordinaryRefit).toBeEnabled()
     expect(ordinaryRefit).not.toHaveAttribute('title')
@@ -320,7 +325,7 @@ describe('TerminalWindow launch user', () => {
       />
     )
 
-    const openMenu = () => dispatchContextMenu(screen.getByText('shell-existing'))
+    const openMenu = () => dispatchContextMenu(tagLabel('shell-existing'))
 
     openMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Rename session' }))
@@ -343,7 +348,7 @@ describe('TerminalWindow launch user', () => {
 
     expect(renameSession).not.toHaveBeenCalled()
     expect(screen.queryByRole('textbox', { name: 'Rename session shell-existing' })).not.toBeInTheDocument()
-    expect(screen.getByText('shell-existing')).toBeInTheDocument()
+    expect(tagLabel('shell-existing')).toBeInTheDocument()
   })
 
   it('uses the original bound key for terminal actions on supported bare legacy tags', () => {
@@ -359,11 +364,11 @@ describe('TerminalWindow launch user', () => {
       />,
     )
 
-    dispatchContextMenu(screen.getByText('shell-existing'))
+    dispatchContextMenu(tagLabel('shell-existing'))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect frame' }))
     expect(reconnect).toHaveBeenCalledWith('shell-existing')
 
-    dispatchContextMenu(screen.getByText('shell-existing'))
+    dispatchContextMenu(tagLabel('shell-existing'))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Refit frame' }))
     expect(fit).toHaveBeenCalledWith('shell-existing')
   })
@@ -416,7 +421,7 @@ describe('TerminalWindow launch user', () => {
       window: { id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 },
     }
     const { rerender } = render(<TerminalWindow {...props} {...({ workspaceActive: true } as any)} />)
-    dispatchContextMenu(screen.getByText('forge-existing'))
+    dispatchContextMenu(tagLabel('forge-existing'))
     expect(document.querySelector('.session-context-menu')).toBeInTheDocument()
 
     rerender(<TerminalWindow {...props} {...({ workspaceActive: false } as any)} />)
@@ -433,7 +438,7 @@ describe('TerminalWindow launch user', () => {
       />
     )
 
-    dispatchContextMenu(screen.getByText('forge-existing'))
+    dispatchContextMenu(tagLabel('forge-existing'))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Open files in working directory' }))
 
     expect(openFilesAtPath).toHaveBeenCalledWith('/srv/forge')
@@ -448,7 +453,7 @@ describe('TerminalWindow launch user', () => {
       />
     )
 
-    dispatchContextMenu(screen.getByText('missing-session'))
+    dispatchContextMenu(tagLabel('missing-session'))
 
     expect(screen.getByRole('menuitem', { name: 'Open files in working directory' })).toBeDisabled()
   })
@@ -461,7 +466,7 @@ describe('TerminalWindow launch user', () => {
       />
     )
 
-    fireEvent.click(screen.getByText('forge-existing'), { ctrlKey: true })
+    fireEvent.click(tagLabel('forge-existing'), { ctrlKey: true })
 
     expect(openSendToSession).not.toHaveBeenCalled()
     expect(setActiveSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'build:forge-existing')
@@ -499,7 +504,7 @@ describe('TerminalWindow launch user', () => {
     expect(tag.style.transition).toBe('none')
     expect(tag.style.opacity).toBe('0')
 
-    fireEvent.pointerDown(screen.getByText('forge-existing'), { pointerType: 'touch' })
+    fireEvent.pointerDown(tagLabel('forge-existing'), { pointerType: 'touch' })
     expect(draggableState.listeners.onPointerDown).toHaveBeenCalled()
   })
 
@@ -516,7 +521,7 @@ describe('TerminalWindow launch user', () => {
     expect(draggableState.listeners.onPointerDown).not.toHaveBeenCalled()
     expect(container.querySelector('.session-tag-drag-handle')).toBeNull()
 
-    fireEvent.click(screen.getByText('forge-existing'))
+    fireEvent.click(tagLabel('forge-existing'))
     expect(setActiveSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'forge-existing')
   })
 
@@ -555,10 +560,19 @@ describe('TerminalWindow launch user', () => {
     expect(tagRule).not.toMatch(/\bmax-width:/)
     expect(rule('.session-tag.active')).not.toMatch(/\b(?:flex(?:-(?:basis|grow|shrink))?|min-width|max-width|width)\s*:/)
 
-    const tagNameRule = rule('.tag-name')
-    expect(tagNameRule).toMatch(/\boverflow:\s*hidden;/)
-    expect(tagNameRule).toMatch(/\btext-overflow:\s*ellipsis;/)
-    expect(tagNameRule).toMatch(/\bwhite-space:\s*nowrap;/)
+    // The name truncates from the head, so the tail of a prefixed name always
+    // reads. Those rules are shared with the session list, in base.css.
+    const shared = readFileSync(resolve(testDir, '../styles/base.css'), 'utf8')
+    const sharedRule = (selector: string) => {
+      const match = shared.match(new RegExp(`${selector.replace('.', '\\.')}\\s*\\{([^}]*)\\}`))
+      expect(match, `missing CSS rule ${selector}`).not.toBeNull()
+      return match![1]
+    }
+    const headRule = sharedRule('.session-label-head')
+    expect(headRule).toMatch(/\boverflow:\s*hidden;/)
+    expect(headRule).toMatch(/\btext-overflow:\s*ellipsis;/)
+    expect(sharedRule('.session-label')).toMatch(/\bwhite-space:\s*nowrap;/)
+    expect(sharedRule('.session-label-tail')).toMatch(/\bflex:\s*0 0 auto;/)
     expect(rule('.tag-remove')).toMatch(/\bflex-shrink:\s*0;/)
     expect(rule('.window-controls')).toMatch(/\bflex:\s*0 0 auto;/)
   })
@@ -635,15 +649,20 @@ describe('TerminalWindow launch user', () => {
     expect(openSendToSession).toHaveBeenCalledWith('build:forge-existing')
   })
 
-  it('shows the mounted session foreground command without treating attachment as agent liveness', () => {
-    const { rerender } = render(
+  // What runs in a session is a mark in its own tag, not a line of prose in the
+  // window controls: an agent gets its product mark, a shell gets nothing, and
+  // anything else is named in its own words.
+  it('marks the harness in each tag and says nothing at all for a shell', () => {
+    const { container, rerender } = render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
       />
     )
 
-    expect(screen.getByTitle('Foreground process reported by tmux: codex')).toHaveTextContent('foreground: codex')
+    expect(container.querySelector('.session-tag [data-harness="codex"]')).not.toBeNull()
+    expect(screen.getByTitle('tmux reports codex')).toBeInTheDocument()
+    expect(container.textContent).not.toContain('foreground')
 
     rerender(
       <TerminalWindow
@@ -651,17 +670,27 @@ describe('TerminalWindow launch user', () => {
         window={{ id: 'terminal3-window-0', boundSessions: ['alice:shell-existing'], activeSession: 'alice:shell-existing', colorIndex: 0 }}
       />
     )
-    expect(screen.getByTitle('Foreground process reported by tmux: bash')).toHaveTextContent('foreground: shell')
+    expect(container.querySelector('.session-tag [data-harness]')).toBeNull()
+    expect(container.querySelector('.harness-command')).toBeNull()
+    expect(container.textContent).not.toContain('bash')
+
+    rerender(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['alice:napping-existing'], activeSession: 'alice:napping-existing', colorIndex: 0 }}
+      />
+    )
+    expect(container.querySelector('.harness-command')).toHaveTextContent('sleep')
   })
 
-  it('does not invent foreground evidence for unknown or user-ambiguous session bindings', () => {
-    const { rerender } = render(
+  it('marks nothing for unknown or user-ambiguous session bindings', () => {
+    const { container, rerender } = render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: ['missing'], activeSession: 'missing', colorIndex: 0 }}
       />
     )
-    expect(screen.queryByTitle(/Foreground process reported by tmux:/)).not.toBeInTheDocument()
+    expect(container.querySelector('.harness-mark, .harness-command')).toBeNull()
 
     rerender(
       <TerminalWindow
@@ -669,7 +698,23 @@ describe('TerminalWindow launch user', () => {
         window={{ id: 'terminal3-window-0', boundSessions: ['shared-existing'], activeSession: 'shared-existing', colorIndex: 0 }}
       />
     )
-    expect(screen.queryByTitle(/Foreground process reported by tmux:/)).not.toBeInTheDocument()
+    expect(container.querySelector('.harness-mark, .harness-command')).toBeNull()
+  })
+
+  // Prefixes are what these names share; the tail is what tells them apart, so
+  // the tail is what survives a narrow tile.
+  it('keeps the tail of a hyphenated tag name and clips only its head', () => {
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
+      />
+    )
+
+    const label = container.querySelector('.session-tag .session-label') as HTMLElement
+    expect(label).toHaveAttribute('title', 'forge-existing')
+    expect(label.querySelector('.session-label-head')).toHaveTextContent('forge-')
+    expect(label.querySelector('.session-label-tail')).toHaveTextContent('existing')
   })
 
   it('renders a window restored from a layout stored with the retired pending placeholder', () => {
@@ -765,7 +810,7 @@ describe('TerminalWindow launch user', () => {
     expect(removeSessionFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'alice:departed')
   })
 
-  it('states a detached tile in the middle of the frame, in the button shape an empty window already uses', () => {
+  it('states a detached tile in the middle of the frame, with plain outline controls', () => {
     poolState.connectionStates = new Map([['alice:departed', 'closed']])
     const { container } = render(
       <TerminalWindow
@@ -774,15 +819,17 @@ describe('TerminalWindow launch user', () => {
       />
     )
 
-    // Both actions carry the shape the New Session button carries; the bespoke
-    // third shape the tile used to draw is gone from markup and stylesheet.
+    // Reclaiming a tile is ordinary work, so both actions are ordinary outline
+    // buttons rather than the dashed accent shape an empty window offers.
     const actions = [...container.querySelectorAll('.terminal-tile-detached-actions button')]
     expect(actions.map(button => button.textContent)).toEqual(['Restart', 'Remove'])
-    actions.forEach(button => expect(button).toHaveClass('tile-action-btn'))
+    actions.forEach(button => expect(button).toHaveClass('terminal-tile-detached-action'))
+    actions.forEach(button => expect(button).not.toHaveClass('tile-action-btn'))
     expect(container.querySelector('.terminal-tile-action')).toBeNull()
 
     const css = terminalCss()
     expect(css).not.toContain('.terminal-tile-action')
+    expect(css).not.toContain('tile-action-btn-compact')
     const rule = (selector: string) => {
       const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))
@@ -799,9 +846,13 @@ describe('TerminalWindow launch user', () => {
     expect(panel).not.toMatch(/\bright:\s*0;/)
     expect(panel).toMatch(/\bmax-width:\s*calc\(100% - 24px\);/)
 
-    // The New Session button is the same shape, one size up.
-    expect(rule('.create-session-btn')).toMatch(/\bpadding:\s*24px 32px;/)
-    expect(rule('.tile-action-btn-compact')).toMatch(/\bpadding:\s*7px 14px;/)
+    // A plain outline: divider border, secondary text, no dashes, no shouting.
+    const action = rule('.terminal-tile-detached-action')
+    expect(action).toMatch(/\bborder:\s*1px solid var\(--divider\);/)
+    expect(action).toMatch(/\bcolor:\s*var\(--text-secondary\);/)
+    expect(action).toMatch(/\bborder-radius:\s*4px;/)
+    expect(action).not.toMatch(/\btext-transform:/)
+    expect(action).not.toMatch(/\bletter-spacing:/)
   })
 
   it('recreates an ended session in the same tile and dials the pooled terminal again', async () => {

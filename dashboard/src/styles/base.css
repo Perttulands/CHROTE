@@ -93,6 +93,65 @@ body {
   border-radius: 4px;
 }
 
+/* ==================== SESSION IDENTITY ====================
+   A session is drawn the same way in a tile tag, a session row and the drag
+   ghost: who owns it, what runs in it, what it is called. These are the shared
+   pieces; the tag and the row style only their own surroundings. */
+
+/* The Unix user, as a filled square carrying the initial. The colour comes from
+   the theme's identity palette, set inline by the call site. */
+.unix-user-badge,
+.session-user-badge {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+/* The harness mark, and the fallback for a command that has no mark: the
+   command in its own words, dim and unadorned. */
+.harness-mark {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--text-primary);
+}
+
+.harness-command {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* The name, truncated from the head so the tail always reads. */
+.session-label {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.session-label-head {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-label-tail {
+  flex: 0 0 auto;
+}
+
 /* Pulse animation */
 @keyframes pulse {
   0%, 100% { opacity: 1; }
