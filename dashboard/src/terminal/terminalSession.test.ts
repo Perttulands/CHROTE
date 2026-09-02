@@ -177,8 +177,62 @@ describe('terminal session', () => {
     FakeSocket.latest().accept()
     expect(states).toEqual(['connecting', 'open'])
 
-    FakeSocket.latest().close()
+    FakeSocket.latest().endCleanly()
     expect(states).toEqual(['connecting', 'open', 'closed'])
+    session.dispose()
+  })
+
+  it('tells a lost connection apart from a terminal the host ended', () => {
+    const { session, host, states } = start()
+    session.attach(host)
+    FakeSocket.latest().accept()
+
+    FakeSocket.latest().close()
+
+    expect(states).toEqual(['connecting', 'open', 'dropped'])
+    session.dispose()
+  })
+
+  it('dials again once when a terminal whose connection was lost is put on screen', () => {
+    const { session, host } = start()
+    session.attach(host)
+    FakeSocket.latest().accept()
+    FakeSocket.latest().close()
+
+    session.redialIfDropped()
+
+    expect(FakeSocket.instances).toHaveLength(2)
+
+    // Asking again while that dial is in flight adds nothing. Nothing retries
+    // on its own; each attempt costs an on-screen moment the operator created.
+    session.redialIfDropped()
+    session.redialIfDropped()
+    expect(FakeSocket.instances).toHaveLength(2)
+    session.dispose()
+  })
+
+  it('never dials again after the host ended the terminal, because another client may hold it', () => {
+    const { session, host } = start()
+    session.attach(host)
+    FakeSocket.latest().accept()
+
+    FakeSocket.latest().endCleanly()
+    session.redialIfDropped()
+
+    expect(FakeSocket.instances).toHaveLength(1)
+    session.dispose()
+  })
+
+  it('never dials again while off screen, where a -d attach would evict a client nobody can see', () => {
+    const { session, host } = start()
+    session.attach(host)
+    FakeSocket.latest().accept()
+    FakeSocket.latest().close()
+
+    sizeElements(0, 0)
+    session.redialIfDropped()
+
+    expect(FakeSocket.instances).toHaveLength(1)
     session.dispose()
   })
 

@@ -115,6 +115,9 @@ reaper it described, closing `chrote-bgp`.
 ## Consequences
 
 - Every deploy shows a brief terminal reconnect in open browser tabs. Accepted.
+  What makes that a reconnect rather than a false "attached elsewhere" on every
+  tile is [ADR-0017](0017-terminal-viewing-model.md) decision 8: the close frame
+  tells a terminal that ended from a connection that was lost.
   If that is unacceptable to the operator, the alternative is ttyd adoption plus
   an explicit mechanism to force replacement whenever the environment changes —
   reopen this ADR rather than adopting silently.

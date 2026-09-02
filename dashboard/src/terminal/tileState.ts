@@ -1,13 +1,15 @@
-// Which of the four states a bound session's tile is in.
+// Which of the five states a bound session's tile is in.
 //
 // A binding is the operator's stated intent, so nothing here ever removes one.
-// The single fact joined in from the host is whether tmux still lists the
-// session; everything else the tile already knows from its own connection.
+// Two facts are joined in from the host — whether tmux still lists the session,
+// and whether another client holds it — and everything else the tile already
+// knows from its own connection, including whether that connection ended or
+// was lost.
 
 import { getSessionKey, getSessionUserFromKey, type LaunchUser, type TmuxSession } from '../types'
 import type { TerminalConnectionState } from './terminalSession'
 
-export type TileState = 'idle' | 'live' | 'takenOver' | 'ended'
+export type TileState = 'idle' | 'live' | 'takenOver' | 'lost' | 'ended'
 
 /**
  * The live set a binding is matched against. Bindings exist in both the
@@ -20,6 +22,25 @@ export function liveSessionKeys(sessions: readonly TmuxSession[]): Set<string> {
     live.add(session.name)
   })
   return live
+}
+
+/**
+ * The bindings whose session tmux reports a client CHROTE did not create, such
+ * as an SSH login. Indexed in both key forms, like the live set.
+ *
+ * A tile attaches with `-d`, so dialling one of these takes the session away
+ * from someone who is using it. That is a fine thing for the operator to ask
+ * for and a bad thing to do behind his back, which is the whole reason this
+ * set exists.
+ */
+export function heldElsewhereSessionKeys(sessions: readonly TmuxSession[]): Set<string> {
+  const held = new Set<string>()
+  sessions.forEach(session => {
+    if ((session.foreignClients ?? []).length === 0) return
+    held.add(getSessionKey(session.name, session.unixUser))
+    held.add(session.name)
+  })
+  return held
 }
 
 /** What the last session poll can be held to have said about a binding. */
@@ -128,20 +149,31 @@ export interface TileStateInput {
   /** What the last session poll can say about this binding. */
   evidence: SessionEvidence
   connection: TerminalConnectionState
+  /** The last poll saw a client CHROTE did not create attached to this session. */
+  heldElsewhere: boolean
 }
 
-export function tileStateFor({ sessionKey, onScreen, evidence, connection }: TileStateInput): TileState {
+export function tileStateFor({ sessionKey, onScreen, evidence, connection, heldElsewhere }: TileStateInput): TileState {
   // An open connection is first-hand proof the session is alive, and it beats a
   // poll that has not caught up with a session the operator just restarted.
   if (connection === 'open') return onScreen ? 'live' : 'idle'
   if (isSessionEnded(sessionKey, evidence)) return 'ended'
   if (!onScreen) return 'idle'
+  // The host ends a terminal when the pty hangs up, and on a live session that
+  // means another client attached with -d and won it.
+  if (connection === 'closed') return 'takenOver'
+  // A connection that was lost says nothing about who holds the session, so ask
+  // tmux. Nobody else attached means the tile simply fell off — every
+  // chrote-srv restart does this to every open tile — and it dials again. A
+  // client that is really there is a takeover the operator has to choose,
+  // because taking it back would evict them.
+  if (connection === 'dropped') return heldElsewhere ? 'takenOver' : 'lost'
   // 'idle' and 'connecting' are a tile on its way up, not one that lost its
-  // session; only a connection that actually dropped means another client won.
-  return connection === 'closed' ? 'takenOver' : 'live'
+  // session.
+  return 'live'
 }
 
-/** Taken over and Ended are the same shape: no connection, last frame, an action. */
-export function isDetached(state: TileState): state is 'takenOver' | 'ended' {
-  return state === 'takenOver' || state === 'ended'
+/** Taken over, Lost and Ended are the same shape: no connection, last frame, an action. */
+export function isDetached(state: TileState): state is 'takenOver' | 'lost' | 'ended' {
+  return state === 'takenOver' || state === 'lost' || state === 'ended'
 }

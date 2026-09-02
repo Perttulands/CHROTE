@@ -14,7 +14,7 @@ export class FakeSocket {
   binaryType = ''
   sent: Uint8Array[] = []
   onopen: (() => void) | null = null
-  onclose: (() => void) | null = null
+  onclose: ((event: { code: number }) => void) | null = null
   onerror: (() => void) | null = null
   onmessage: ((event: MessageEvent<ArrayBuffer>) => void) | null = null
 
@@ -24,10 +24,26 @@ export class FakeSocket {
 
   send(data: Uint8Array) { this.sent.push(data) }
 
+  /**
+   * The connection goes away with no close frame, which the browser reports as
+   * an abnormal 1006: the service restarted, or the network dropped.
+   */
   close() {
+    this.finish(1006)
+  }
+
+  /**
+   * The server closes with a close frame, which CHROTE sends only when the
+   * terminal ended on its side or the attach was refused.
+   */
+  endCleanly() {
+    this.finish(1000)
+  }
+
+  private finish(code: number) {
     if (this.readyState === FakeSocket.CLOSED) return
     this.readyState = FakeSocket.CLOSED
-    this.onclose?.()
+    this.onclose?.({ code })
   }
 
   /** Complete the handshake the way a live ttyd would. */

@@ -18,9 +18,18 @@ const sessionName = (key: string) => (key.includes(':') ? key.slice(key.indexOf(
 const sessionUser = (key: string) => (key.includes(':') ? decodeURIComponent(key.slice(0, key.indexOf(':'))) : '')
 const sessionKey = (name: string, unixUser: string) => (unixUser ? `${encodeURIComponent(unixUser)}:${name}` : name)
 
-const session = (key: string) => {
+const session = (key: string, heldElsewhere: readonly string[] = []) => {
   const unixUser = sessionUser(key)
-  return { name: sessionName(key), windows: 1, attached: false, group: 'shell', ...(unixUser ? { unixUser } : {}) }
+  const held = heldElsewhere.includes(key)
+  return {
+    name: sessionName(key),
+    windows: 1,
+    attached: held,
+    group: 'shell',
+    ...(unixUser ? { unixUser } : {}),
+    // What tmux reports for a client CHROTE did not create, such as an SSH login.
+    ...(held ? { foreignClients: ['/dev/pts/12'] } : {}),
+  }
 }
 
 /** One configured user's tmux failing while the rest answer. */
@@ -36,6 +45,8 @@ interface Harness {
   partial: { current: PartialOutage | null }
   /** Set to make the poll fail outright, the way an unreachable host does. */
   failing: { current: boolean }
+  /** Sessions the poll reports a client CHROTE did not create attached to. */
+  heldElsewhere: { current: string[] }
   /** Live sockets by session key, so a test can end one the way tmux would. */
   sockets: Map<string, WebSocketRoute>
   /** How many times each session has been dialled. */
@@ -52,12 +63,13 @@ async function open(
   page: Page,
   boundSessions: string[],
   activeSession: string,
-  options: { extraWindows?: WindowSpec[]; partial?: PartialOutage; live?: string[] } = {},
+  options: { extraWindows?: WindowSpec[]; partial?: PartialOutage; live?: string[]; heldElsewhere?: string[] } = {},
 ): Promise<Harness> {
   const harness: Harness = {
     live: { current: [...(options.live ?? boundSessions)] },
     partial: { current: options.partial ?? null },
     failing: { current: false },
+    heldElsewhere: { current: [...(options.heldElsewhere ?? [])] },
     sockets: new Map(),
     dials: new Map(),
     created: [],
@@ -114,7 +126,7 @@ async function open(
     const visible = outage
       ? harness.live.current.filter(key => outage.successfulUsers.includes(sessionUser(key)))
       : harness.live.current
-    const sessions = visible.map(session)
+    const sessions = visible.map(key => session(key, harness.heldElsewhere.current))
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -163,6 +175,18 @@ const tile = (page: Page) => page.locator('.terminal-grid[data-workspace="termin
 const shownFrame = (page: Page) => tile(page).locator('.terminal-surface-host:visible .xterm-rows')
 const activeTag = (page: Page) => tile(page).locator('.session-tag.active .tag-name')
 const windowBody = (page: Page) => tile(page).locator('.terminal-window-body')
+
+/** The operator leaves the dashboard and comes back to it. */
+async function returnToTab(page: Page) {
+  await page.evaluate(() => {
+    const setVisibility = (state: string) => {
+      Object.defineProperty(document, 'visibilityState', { value: state, configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+    }
+    setVisibility('hidden')
+    setVisibility('visible')
+  })
+}
 
 test.describe('Tile states', () => {
   test('a session that dies while viewed keeps its tile, its final output, and its place', async ({ page }) => {
@@ -341,12 +365,57 @@ test.describe('Tile states', () => {
     await expect(body(2)).not.toHaveAttribute('data-tile-state', 'ended')
   })
 
+  // The operator's report, 2026-09-02: twenty tiles saying the session was
+  // attached elsewhere minutes after a deploy, with one client on the whole
+  // socket, and twenty Reclaim clicks to recover. A restart kills every pty, so
+  // every tile's connection goes while every session lives (ADR-0013).
+  test('a tile whose connection went with a restart reconnects itself instead of claiming a takeover', async ({ page }) => {
+    const harness = await open(page, ['restarted'], 'restarted')
+    await expect(shownFrame(page)).toContainText('restarted output 1')
+
+    // The server process died: the socket goes with no close frame at all.
+    await harness.sockets.get('restarted')!.close({ code: 1006 })
+
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'lost')
+    await expect(tile(page).getByText(/attached elsewhere/)).toHaveCount(0)
+    await expect(tile(page).getByRole('button', { name: 'Reclaim' })).toHaveCount(0)
+
+    await returnToTab(page)
+
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
+    await expect(shownFrame(page)).toContainText('restarted output 2')
+    expect(harness.dials.get('restarted')).toBe(2)
+    expect(harness.created).toEqual([])
+  })
+
+  test('a tile does not take a session back from a client that really holds it', async ({ page }) => {
+    const harness = await open(page, ['ssh-held'], 'ssh-held', { heldElsewhere: ['ssh-held'] })
+    await expect(shownFrame(page)).toContainText('ssh-held output 1')
+
+    // Same lost connection, but tmux reports a client CHROTE did not create.
+    // Dialling would evict them, so the tile waits to be told to.
+    await harness.sockets.get('ssh-held')!.close({ code: 1006 })
+
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'takenOver')
+    await returnToTab(page)
+    await page.waitForTimeout(600)
+
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'takenOver')
+    expect(harness.dials.get('ssh-held')).toBe(1)
+
+    await tile(page).getByRole('button', { name: 'Reclaim' }).click()
+    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
+    expect(harness.dials.get('ssh-held')).toBe(2)
+  })
+
   test('a tile whose session was claimed elsewhere offers Reclaim, and takes it back', async ({ page }) => {
     const harness = await open(page, ['claimed'], 'claimed')
     await expect(shownFrame(page)).toContainText('claimed output 1')
 
     // Another client attached with -d: our client is gone, the session is not.
-    await harness.sockets.get('claimed')!.close()
+    // The pty hangs up, so the server closes the way it does for any terminal
+    // that ended — which is what tells this apart from a connection we lost.
+    await harness.sockets.get('claimed')!.close({ code: 1000, reason: 'terminal ended' })
 
     await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'takenOver')
     await expect(tile(page).getByText('claimed is attached elsewhere. This frame shows its last output.')).toBeVisible()

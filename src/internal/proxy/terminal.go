@@ -220,12 +220,19 @@ func (c *terminalConn) send(frame []byte) error {
 // refuse reports a refusal in the terminal itself and logs it. Failing loud in
 // the pane is what the retired launch script's stderr did, and it is the only
 // place an operator looking at a blank tile will see the reason.
+//
+// It closes with a close frame for the same reason the end of a terminal does:
+// the browser reads an abnormal close as the connection being lost and dials
+// again, and a refusal is an answer, not a lost connection.
 func (c *terminalConn) refuse(reason error) {
 	log.Printf("terminal attach refused: %v", reason)
 	message := append([]byte{serverOutput}, []byte("CHROTE: "+reason.Error()+"\r\n")...)
 	if err := c.send(message); err != nil {
 		log.Printf("failed to report terminal refusal to the client: %v", err)
 	}
+	_ = c.conn.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "attach refused"),
+		time.Now().Add(time.Second))
 }
 
 // readHandshake reads the client's opening frame, which carries the size the

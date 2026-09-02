@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted 2026-09-01.
+Accepted 2026-09-01; amended 2026-09-02 by decision 8 and the `Lost` tile state
+in decision 5, after a deploy showed twenty tiles claiming a takeover that had
+not happened.
 
 Scope note: this settles who owns the size of a tmux window, what a window
 binding means, and how a quick look differs from a viewing session. The
@@ -108,13 +110,22 @@ Probed on scratch sockets, created and destroyed for the probe:
    carry an explicit operator action to release them.
 
 5. **A binding is the operator's stated intent, not a cache of live sessions.**
-   A tile has four states: `Idle` (bound, not on screen; it keeps its
+   A tile has five states: `Idle` (bound, not on screen; it keeps its
    connection and its last rendered frame once it has been shown), `Live`
    (attached and sizing), `Taken over` (alive elsewhere; last frame plus
-   `Reclaim`), and
+   `Reclaim`), `Lost` (the connection went, the session did not; last frame plus
+   `Reconnect`), and
    `Ended` (session gone; last frame plus `Restart` and `Remove`). Bindings,
    including ended ones, survive a reload. Nothing is ever removed from a window
    except by the operator.
+
+   `Lost` was added 2026-09-02. A tile with no connection and a live session was
+   read as `Taken over` outright, which is false for the commonest cause of one:
+   restarting `chrote-srv` kills every pty, so every open tile loses its
+   connection while every session stays alive ([ADR-0013](0013-ttyd-restart-lifecycle-and-orphan-reaping.md)).
+   Measured minutes after a deploy — twenty tiles saying the session was
+   attached elsewhere while the socket carried one client, and twenty `Reclaim`
+   clicks to recover.
 
 6. **Peek is an observer.** It attaches with `-f ignore-size`, never displaces
    another client, and never resizes a session that has a viewer. Input is not
@@ -124,6 +135,18 @@ Probed on scratch sockets, created and destroyed for the probe:
    it.** Pinned size, a foreign client attached, more than one tmux window or
    pane, and mouse mode off all qualify. The rule exists to keep the set from
    growing into decoration.
+
+8. **A lost connection is told from an ended terminal by the close frame, and
+   dials again by itself; a session another client holds does not.** Added
+   2026-09-02. CHROTE closes with a close frame when the pty hangs up and when
+   an attach is refused, and sends nothing at all when the process dies or the
+   network goes, so the two causes are separable in the browser before tmux is
+   asked anything. A tile whose connection was *lost* dials again when it is put
+   on screen — one attempt per such moment, no retry, no timer, no recurring
+   check of any kind — unless the session inventory reports a client CHROTE did
+   not create. That one is left alone, because a tile attaches with `-d` and
+   would evict them: taking a session back from someone using it stays the
+   operator's decision, and stays `Reclaim`.
 
 ## Consequences
 

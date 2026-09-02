@@ -120,7 +120,7 @@ function FloatingModal() {
           <div className="modal-controls">
             {canOpenSession && !ended && connectionState !== 'open' && (
               <span className="terminal-loading-state">
-                {connectionState === 'closed' ? 'Terminal disconnected' : 'Loading terminal…'}
+                {connectionState === 'closed' || connectionState === 'dropped' ? 'Terminal disconnected' : 'Loading terminal…'}
               </span>
             )}
             <button className="modal-send" onClick={() => openSendToSession(floatingSession)}>Send to Session</button>

@@ -12,7 +12,14 @@ import { connectTtyd, type TtydConnection } from './ttydProtocol'
 import '@xterm/xterm/css/xterm.css'
 import './terminal.css'
 
-export type TerminalConnectionState = 'idle' | 'connecting' | 'open' | 'closed'
+/**
+ * `closed` and `dropped` are both "no connection", and the difference is the
+ * whole point: `closed` is the host ending this terminal, which is what a
+ * takeover and a killed session look like, while `dropped` is the connection
+ * being lost with the terminal still on the other end — which is what every
+ * `chrote-srv` restart does to every open tile (ADR-0013).
+ */
+export type TerminalConnectionState = 'idle' | 'connecting' | 'open' | 'closed' | 'dropped'
 
 export interface TerminalSession {
   /**
@@ -30,6 +37,14 @@ export interface TerminalSession {
   setScrollbarHidden(hidden: boolean): void
   /** Drop the connection and open a new one, without reloading anything. */
   reconnect(): void
+  /**
+   * Dial again if the last connection was lost rather than ended, and the
+   * terminal is on screen. Called when the operator puts the terminal in front
+   * of himself; each such moment is worth one attempt and no more. Nothing here
+   * retries on its own, and a dial that fails leaves the tile's own Reconnect
+   * control as the way back.
+   */
+  redialIfDropped(): void
   dispose(): void
 }
 
@@ -62,6 +77,9 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   let connection: TtydConnection | null = null
   let opened = false
   let disposed = false
+  // The last connection was lost rather than ended, so dialling again reaches
+  // the same terminal instead of taking a session from whoever holds it.
+  let dropped = false
 
   const setState = (state: TerminalConnectionState) => {
     if (!disposed) options.onStateChange?.(state)
@@ -79,12 +97,14 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   }
 
   const connect = () => {
+    dropped = false
     setState('connecting')
     connection = connectTtyd(options.url, { cols: terminal.cols, rows: terminal.rows }, terminal, {
       onOpen: () => setState('open'),
-      onClose: () => {
+      onClose: ({ terminalEnded }) => {
         connection = null
-        setState('closed')
+        dropped = !terminalEnded
+        setState(terminalEnded ? 'closed' : 'dropped')
       },
     })
   }
@@ -123,6 +143,13 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
       connection?.close()
       connection = null
       terminal.reset()
+      connect()
+    },
+    redialIfDropped() {
+      // Off screen is not a moment worth an attempt, and it is where a wrong
+      // dial would do the damage: a tile attaches with -d, so it would take a
+      // session back from a client the operator can see and this one cannot.
+      if (disposed || connection || !dropped || !isMeasurable()) return
       connect()
     },
     dispose() {

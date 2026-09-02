@@ -3,6 +3,7 @@ import { useSession } from '../context/SessionContext'
 import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
 import type { LaunchUser } from '../types'
 import { createTerminalSession, type TerminalConnectionState, type TerminalSession } from '../terminal/terminalSession'
+import { heldElsewhereSessionKeys } from '../terminal/tileState'
 import { terminalSocketUrl } from '../terminal/ttydProtocol'
 
 interface TerminalPoolContextType {
@@ -97,15 +98,28 @@ export function TerminalPoolProvider({ children }: { children: ReactNode }) {
     terminals.forEach(terminal => terminal.setScrollbarHidden(settings.hideScrollbar))
   }, [settings.hideScrollbar, terminals])
 
-  // A tab hidden while its grid changed comes back with stale cell metrics.
-  // fit() ignores terminals that are detached or not on screen.
+  // A tile attaches with -d, so a session some other client is attached to is
+  // never dialled unasked; taking that one back is what Reclaim is for. Read
+  // through a ref because every session poll rebuilds it, and a poll must not
+  // become a trigger.
+  const heldElsewhereRef = useRef<ReadonlySet<string>>(new Set())
+  heldElsewhereRef.current = useMemo(() => heldElsewhereSessionKeys(sessions), [sessions])
+
+  // A tab hidden while its grid changed comes back with stale cell metrics, and
+  // one hidden across a chrote-srv restart comes back with no connections at
+  // all. Both are answered when the operator returns, because that is when he
+  // is looking. fit() and redialIfDropped() ignore terminals that are detached
+  // or not on screen, and neither retries.
   useEffect(() => {
-    const refit = () => {
+    const wake = () => {
       if (document.visibilityState !== 'visible') return
-      terminals.forEach(terminal => terminal.fit())
+      terminals.forEach((terminal, sessionKey) => {
+        if (!heldElsewhereRef.current.has(sessionKey)) terminal.redialIfDropped()
+        terminal.fit()
+      })
     }
-    document.addEventListener('visibilitychange', refit)
-    return () => document.removeEventListener('visibilitychange', refit)
+    document.addEventListener('visibilitychange', wake)
+    return () => document.removeEventListener('visibilitychange', wake)
   }, [terminals])
 
   const contextValue = useMemo<TerminalPoolContextType>(

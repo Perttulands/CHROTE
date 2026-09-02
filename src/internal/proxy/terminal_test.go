@@ -91,6 +91,10 @@ type terminalClient struct {
 	t      *testing.T
 	conn   *websocket.Conn
 	frames chan stampedFrame
+	// closed carries the error that ended the read loop. The browser reads a
+	// close frame as the terminal ending and its absence as a lost connection,
+	// so which one arrived is part of the contract.
+	closed chan error
 }
 
 // dial opens a terminal connection and sends the opening handshake, the way the
@@ -115,12 +119,13 @@ func (h *terminalHarness) dial(query string, cols, rows int) *terminalClient {
 		h.t.Fatalf("send handshake: %v", err)
 	}
 
-	client := &terminalClient{t: h.t, conn: conn, frames: make(chan stampedFrame, 256)}
+	client := &terminalClient{t: h.t, conn: conn, frames: make(chan stampedFrame, 256), closed: make(chan error, 1)}
 	go func() {
 		defer close(client.frames)
 		for {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
+				client.closed <- err
 				return
 			}
 			if len(message) == 0 || message[0] != serverOutput {
@@ -176,6 +181,24 @@ func (c *terminalClient) drainFor(window time.Duration) string {
 		case <-deadline:
 			return collected.String()
 		}
+	}
+}
+
+// closeCode reports the WebSocket close code the server sent, or
+// websocket.CloseAbnormalClosure when it sent no close frame at all.
+func (c *terminalClient) closeCode() int {
+	c.t.Helper()
+	select {
+	case err := <-c.closed:
+		var closeErr *websocket.CloseError
+		if errors.As(err, &closeErr) {
+			return closeErr.Code
+		}
+		c.t.Fatalf("the terminal socket ended without a close frame: %v", err)
+		return 0
+	case <-time.After(15 * time.Second):
+		c.t.Fatal("the terminal socket stayed open")
+		return 0
 	}
 }
 
@@ -452,6 +475,37 @@ func TestTerminal_ClosesWhenTheAttachExits(t *testing.T) {
 	client := harness.dial("arg=tile&arg=shell-one&arg=bob", 80, 24)
 	client.readUntil("bye")
 	client.waitForClose()
+}
+
+// The browser tells "the terminal ended" from "the connection was lost" by the
+// close frame alone, and acts on the difference: a lost connection is dialled
+// again, an ended one is not. Both ends of that contract are asserted here,
+// because a restart or a network drop reaches the browser as an abnormal close
+// precisely by CHROTE sending nothing.
+func TestTerminal_EndOfTheAttachClosesWithACloseFrame(t *testing.T) {
+	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
+	t.Setenv("FAKE_TMUX_ATTACH", harness.attachScript(`printf 'bye\n'`))
+
+	client := harness.dial("arg=tile&arg=shell-one&arg=bob", 80, 24)
+	client.readUntil("bye")
+
+	if code := client.closeCode(); code != websocket.CloseNormalClosure {
+		t.Fatalf("close code = %d, want %d: a terminal that ended must not look like a lost connection", code, websocket.CloseNormalClosure)
+	}
+}
+
+// A refusal is an answer too. Left as an abnormal close it would read as a lost
+// connection, and the tile would dial the refusal again.
+func TestTerminal_RefusalClosesWithACloseFrame(t *testing.T) {
+	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
+	t.Setenv("FAKE_TMUX_HAS_SESSION_STATUS", "1")
+
+	client := harness.dial("arg=tile&arg=shell-one&arg=bob", 80, 24)
+	client.readUntil("not available")
+
+	if code := client.closeCode(); code != websocket.CloseNormalClosure {
+		t.Fatalf("close code = %d, want %d: a refused attach must not look like a lost connection", code, websocket.CloseNormalClosure)
+	}
 }
 
 // A browser that goes away must not leave a tmux client attached to a live

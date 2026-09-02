@@ -117,16 +117,30 @@ describe('ttyd transport', () => {
     expect(control()).toContain('3')
   })
 
-  it('reports a connection that ttyd or the network closed', () => {
+  it('reports a terminal the server ended, because it closed with a close frame', () => {
     const { sink } = recordingSink()
     const onClose = vi.fn()
     connect(sink, { onClose })
     const socket = FakeSocket.instances[0]
     socket.accept()
 
-    socket.close()
+    socket.endCleanly()
 
     expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalledWith({ terminalEnded: true })
+  })
+
+  it('reports a lost connection as a lost connection, not as a terminal that ended', () => {
+    const { sink } = recordingSink()
+    const onClose = vi.fn()
+    connect(sink, { onClose })
+    const socket = FakeSocket.instances[0]
+    socket.accept()
+
+    // No close frame: the service restarted, or the network went away.
+    socket.close()
+
+    expect(onClose).toHaveBeenCalledWith({ terminalEnded: false })
   })
 
   it('does not report a close the caller asked for', () => {

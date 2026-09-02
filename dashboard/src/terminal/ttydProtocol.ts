@@ -33,9 +33,25 @@ export interface TtydConnection {
   close(): void
 }
 
+// The close code CHROTE sends, and the only one it sends: the pty hung up, or
+// the attach was refused. Anything else reaching the browser is a connection
+// nobody closed on purpose.
+const NORMAL_CLOSURE = 1000
+
+export interface TtydClose {
+  /**
+   * The server said the terminal ended, by closing with its own close frame.
+   * Every other close is the connection being lost with the terminal still on
+   * the other end — the service restarting (1006, no frame at all), the network
+   * dropping, the device sleeping, an intermediary giving up. The session is
+   * untouched by those, so they are worth dialling again and this is not.
+   */
+  terminalEnded: boolean
+}
+
 export interface TtydConnectionEvents {
   onOpen?: () => void
-  onClose?: () => void
+  onClose?: (close: TtydClose) => void
 }
 
 export function connectTtyd(
@@ -61,7 +77,7 @@ export function connectTtyd(
     events.onOpen?.()
   }
   socket.onerror = () => socket.close()
-  socket.onclose = () => events.onClose?.()
+  socket.onclose = event => events.onClose?.({ terminalEnded: event.code === NORMAL_CLOSURE })
   socket.onmessage = (event: MessageEvent<ArrayBuffer>) => {
     const frame = new Uint8Array(event.data)
     // Window title and preferences are not consumed: CHROTE titles its own

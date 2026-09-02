@@ -16,6 +16,7 @@ const removeSessionFromWindow = vi.fn()
 const renameSession = vi.fn()
 const deleteSession = vi.fn()
 const reconnect = vi.fn()
+const redialIfDropped = vi.fn()
 const fit = vi.fn()
 const setFocusedWindowKey = vi.fn()
 const setActiveSession = vi.fn()
@@ -38,8 +39,9 @@ const mockSessions = vi.hoisted(() => ([
   { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', currentCommand: 'codex' },
   { name: 'shared-existing', windows: 1, attached: false, group: 'shell', unixUser: 'build', currentCommand: 'bash' },
   { name: 'pinned-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/pinned', currentCommand: 'bash', sizePinned: true, width: 100, height: 30 },
+  { name: 'ssh-held', windows: 1, attached: true, group: 'shell', unixUser: 'alice', currentCommand: 'bash', foreignClients: ['/dev/pts/12'] },
 ]))
-const pooledTerminals = new Map<string, { reconnect: () => void; fit: () => void; focus: () => void }>()
+const pooledTerminals = new Map<string, { reconnect: () => void; redialIfDropped: () => void; fit: () => void; focus: () => void }>()
 
 vi.mock('@dnd-kit/core', () => ({
   useDraggable: () => ({
@@ -106,6 +108,7 @@ vi.mock('./TerminalPool', () => ({
         if (!pooledTerminals.has(sessionKey)) {
           pooledTerminals.set(sessionKey, {
             reconnect: () => reconnect(sessionKey),
+            redialIfDropped: () => redialIfDropped(sessionKey),
             fit: () => fit(sessionKey),
             focus: vi.fn(),
           })
@@ -804,6 +807,59 @@ describe('TerminalWindow launch user', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Restart' }))
     await waitFor(() => expect(restartSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'alice:departed'))
     await waitFor(() => expect(reconnect).toHaveBeenCalledWith('alice:departed'))
+  })
+
+  // A chrote-srv restart kills every pty, so every open tile's connection is
+  // lost while every session stays alive (ADR-0013). Read as a takeover, that
+  // told the operator twenty sessions were attached elsewhere when the socket
+  // had one client, and made him click Reclaim once per tile.
+  it('dials again for a tile whose connection was lost, rather than claiming it was taken over', () => {
+    poolState.connectionStates = new Map([['shell-existing', 'dropped']])
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['shell-existing'], activeSession: 'shell-existing', colorIndex: 0 }}
+      />
+    )
+
+    expect(redialIfDropped).toHaveBeenCalledWith('shell-existing')
+    expect(screen.queryByText(/attached elsewhere/)).not.toBeInTheDocument()
+    expect(container.querySelector('.terminal-window-body')).toHaveAttribute('data-tile-state', 'lost')
+    // Until the dial lands the tile says what it knows, and offers the way back
+    // itself instead of retrying.
+    expect(screen.getByText(/shell-existing lost its connection/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
+    expect(reconnect).toHaveBeenCalledWith('shell-existing')
+  })
+
+  it('leaves a session another client is attached to alone, because dialling it would evict them', () => {
+    poolState.connectionStates = new Map([['alice:ssh-held', 'dropped']])
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['alice:ssh-held'], activeSession: 'alice:ssh-held', colorIndex: 0 }}
+      />
+    )
+
+    expect(container.querySelector('.terminal-window-body')).toHaveAttribute('data-tile-state', 'takenOver')
+    expect(screen.getByText(/ssh-held is attached elsewhere/)).toBeInTheDocument()
+    expect(redialIfDropped).not.toHaveBeenCalled()
+    // Taking it back stays the operator's decision, and stays one click.
+    fireEvent.click(screen.getByRole('button', { name: 'Reclaim' }))
+    expect(reconnect).toHaveBeenCalledWith('alice:ssh-held')
+  })
+
+  it('does not dial again for a lost tile that is not on screen', () => {
+    poolState.connectionStates = new Map([['shell-existing', 'dropped']])
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['shell-existing'], activeSession: 'shell-existing', colorIndex: 0 }}
+        workspaceActive={false}
+      />
+    )
+
+    expect(redialIfDropped).not.toHaveBeenCalled()
   })
 
   it('offers Reclaim, not Restart, when the session is alive but the connection was taken', () => {

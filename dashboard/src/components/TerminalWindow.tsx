@@ -7,7 +7,7 @@ import { useTerminalPool } from './TerminalPool'
 import TerminalSurface from './TerminalSurface'
 import { WINDOW_COLORS, getForegroundCommandLabel, getSessionBadges, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
-import { isDetached, tileStateFor, type TileState } from '../terminal/tileState'
+import { heldElsewhereSessionKeys, isDetached, tileStateFor, type TileState } from '../terminal/tileState'
 import { useSessionEvidence } from '../context/useSessionEvidence'
 import DismissiblePanel from './DismissiblePanel'
 
@@ -303,8 +303,8 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
 }
 
 interface DetachedTileProps {
-  /** Taken over and Ended are the same shape: no connection, last frame, an action. */
-  state: 'takenOver' | 'ended'
+  /** Taken over, Lost and Ended are the same shape: no connection, last frame, an action. */
+  state: 'takenOver' | 'lost' | 'ended'
   sessionName: string
   restarting: boolean
   onReclaim: () => void
@@ -312,27 +312,35 @@ interface DetachedTileProps {
   onRemove: () => void
 }
 
+// Each note says only what CHROTE actually knows. "Attached elsewhere" is a
+// claim about another client, so it is reserved for a session that has one.
+const DETACHED_NOTE: Record<DetachedTileProps['state'], (sessionName: string) => string> = {
+  takenOver: name => `${name} is attached elsewhere. This frame shows its last output.`,
+  lost: name => `${name} lost its connection. This frame shows its last output.`,
+  ended: name => `${name} ended. This frame shows its last output.`,
+}
+
 function DetachedTile({ state, sessionName, restarting, onReclaim, onRestart, onRemove }: DetachedTileProps) {
-  const takenOver = state === 'takenOver'
   return (
     <div className="terminal-tile-detached" data-tile-state={state} role="status">
-      <span className="terminal-tile-detached-note">
-        {takenOver
-          ? `${sessionName} is attached elsewhere. This frame shows its last output.`
-          : `${sessionName} ended. This frame shows its last output.`}
-      </span>
+      <span className="terminal-tile-detached-note">{DETACHED_NOTE[state](sessionName)}</span>
       {/* The same button shape the empty window offers, one size down: a tile
           with no live terminal is the same situation and reads as one. */}
       <div className="terminal-tile-detached-actions">
-        {takenOver ? (
-          <button className="tile-action-btn tile-action-btn-compact" type="button" onClick={onReclaim}>Reclaim</button>
-        ) : (
+        {state === 'ended' ? (
           <>
             <button className="tile-action-btn tile-action-btn-compact" type="button" disabled={restarting} onClick={onRestart}>
               {restarting ? 'Restarting…' : 'Restart'}
             </button>
             <button className="tile-action-btn tile-action-btn-compact" type="button" onClick={onRemove}>Remove</button>
           </>
+        ) : (
+          // Both dial the same session again. Reclaim takes it from whoever
+          // holds it; Reconnect takes it from nobody, which is why the tile
+          // does that one for the operator when it can.
+          <button className="tile-action-btn tile-action-btn-compact" type="button" onClick={onReclaim}>
+            {state === 'takenOver' ? 'Reclaim' : 'Reconnect'}
+          </button>
         )}
       </div>
     </div>
@@ -388,6 +396,9 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
   // actually heard from. A list that has not arrived, or one whose poll failed
   // outright, proves nothing about any binding.
   const evidence = useSessionEvidence()
+  // The second host fact: a session someone else is attached to cannot be
+  // dialled again without evicting them, so a tile never does it unasked.
+  const heldElsewhere = useMemo(() => heldElsewhereSessionKeys(sessions), [sessions])
   // A window hidden by the mobile carousel or by an inactive workspace tab is
   // not on screen, whatever its bindings say.
   const windowOnScreen = workspaceActive && style?.display !== 'none'
@@ -398,9 +409,26 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
       onScreen: windowOnScreen && sessionKey === windowConfig.activeSession,
       evidence,
       connection: pool.connectionStates.get(sessionKey) ?? 'idle',
+      heldElsewhere: heldElsewhere.has(sessionKey),
     }),
-  ])), [windowConfig.boundSessions, windowConfig.activeSession, windowOnScreen, evidence, pool.connectionStates])
+  ])), [windowConfig.boundSessions, windowConfig.activeSession, windowOnScreen, evidence, heldElsewhere, pool.connectionStates])
   const activeTileState = activeSession ? tileStates.get(activeSession) ?? 'idle' : 'idle'
+
+  // A tile put on screen dials again if its connection was lost rather than
+  // ended — the case a chrote-srv restart creates for every open tile at once.
+  // One attempt per such moment, no retry and no recurring check; a dial that
+  // does not land leaves the tile's own Reconnect control.
+  //
+  // The held set is read through a ref because it is rebuilt by every session
+  // poll, and a poll is not a moment worth an attempt. Only the discrete
+  // events in the dependency list may spend one.
+  const heldElsewhereRef = useRef(heldElsewhere)
+  heldElsewhereRef.current = heldElsewhere
+  useEffect(() => {
+    if (!windowOnScreen || !activeSession) return
+    if (heldElsewhereRef.current.has(activeSession)) return
+    activeTerminal?.redialIfDropped()
+  }, [windowOnScreen, activeSession, activeTerminal])
 
   // The Refit control and the workspace-level refit both land here. Each
   // surface already refits itself on container resize; this is the explicit
@@ -430,8 +458,8 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     setActiveSession(workspaceId, windowConfig.id, sessionName)
   }
 
-  // Reclaim attaches again; the tile attaches with -d, so it takes the session
-  // back from whichever client displaced it.
+  // Reclaim and Reconnect both attach again; the tile attaches with -d, so it
+  // takes the session back from whichever client displaced it.
   const handleReclaim = (sessionKey: string) => pool.terminals.get(sessionKey)?.reconnect()
 
   // The pooled terminal is keyed by the binding, which Restart does not change,
