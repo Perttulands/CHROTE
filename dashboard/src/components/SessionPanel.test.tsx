@@ -55,24 +55,49 @@ vi.mock('./NukeConfirmModal', () => ({
   default: () => null,
 }))
 
-describe('SessionPanel new-session context menu', () => {
+describe('SessionPanel session launcher', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockState.sessions.length = 0
     mockState.groupedSessions = {}
     createSession.mockResolvedValue('created')
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true, removed: true }) })
+    fetchMock.mockImplementation((input: unknown) => (
+      String(input).includes('/api/launch')
+        ? Promise.resolve({
+          ok: true,
+          json: async () => ({
+            harnesses: [{ id: 'codex', label: 'Codex' }, { id: 'shell', label: 'Shell' }],
+            folders: ['/srv/chrote', '~'],
+          }),
+        })
+        : Promise.resolve({ ok: true, json: async () => ({ success: true, removed: true }) })
+    ))
     vi.stubGlobal('fetch', fetchMock)
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
   })
 
-  it('creates a default side-panel session in the visible terminal workspace', async () => {
+  it('opens the launcher from the plus and launches into the visible terminal workspace', async () => {
     render(<SessionPanel activeWorkspaceId="terminal3" />)
 
     fireEvent.click(screen.getByTitle('New tmux session'))
 
+    const popup = screen.getByRole('dialog', { name: /Launch a tmux session/i })
+    expect(popup).toHaveClass('session-launcher-popup')
+    expect(document.querySelectorAll('.floating-panel-dismiss-layer')).toHaveLength(1)
+    const launchButton = await screen.findByRole('button', { name: 'Launch codex in chrote' })
+
+    fireEvent.click(launchButton)
+
     await waitFor(() => expect(createSession).toHaveBeenCalled())
-    expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal3' })
+    // No attachTo: the panel starts a session, it does not claim a tile for it.
+    expect(createSession).toHaveBeenCalledWith({
+      name: 'codex-chrote',
+      unixUser: 'bob',
+      cwd: '/srv/chrote',
+      harness: 'codex',
+      workspaceId: 'terminal3',
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Launch a tmux session/i })).not.toBeInTheDocument())
   })
 
   it('renders generic named groups before ungrouped sessions with counts and filtering', () => {
@@ -99,35 +124,40 @@ describe('SessionPanel new-session context menu', () => {
     expect(screen.getByTitle('worker-beta')).toBeInTheDocument()
   })
 
-  it('creates a new session as the selected configured Unix user from the New Session context menu', async () => {
+  it('launches as the Unix user the operator picks in the launcher', async () => {
     render(<SessionPanel activeWorkspaceId="terminal2" />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Session creation options' }))
-    fireEvent.click(screen.getByRole('button', { name: /New as B bob/i }))
-    expect(screen.queryByRole('button', { name: /New as B bob/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTitle('New tmux session'))
+    fireEvent.click(await screen.findByRole('button', { name: 'bob' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Launch codex in chrote' }))
 
     await waitFor(() => expect(createSession).toHaveBeenCalled())
-    expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal2', unixUser: 'bob' })
+    expect(createSession).toHaveBeenCalledWith({
+      name: 'codex-chrote',
+      unixUser: 'bob',
+      cwd: '/srv/chrote',
+      harness: 'codex',
+      workspaceId: 'terminal2',
+    })
   })
 
-  it('opens a named session field and creates the exact typed session name', async () => {
-    const { container } = render(<SessionPanel activeWorkspaceId="terminal3" />)
+  it('launches the exact name the operator types over the derived one', async () => {
+    render(<SessionPanel activeWorkspaceId="terminal3" />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Session creation options' }))
-    expect(document.querySelectorAll('.floating-panel-dismiss-layer')).toHaveLength(1)
-    fireEvent.click(screen.getByRole('button', { name: /New named session/i }))
-    const popup = screen.getByRole('dialog', { name: /Create named tmux session/i })
-    expect(popup).toHaveClass('session-named-popup')
-    const layers = document.querySelectorAll('.floating-panel-dismiss-layer')
-    expect(layers).toHaveLength(1)
-    expect(document.querySelectorAll('.session-context-menu')).toHaveLength(1)
-    expect(Number(popup.style.zIndex)).toBeGreaterThan(Number((layers[0] as HTMLElement).style.zIndex))
-    expect(container.querySelector('.session-panel-content .session-named-create')).not.toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('New session name'), { target: { value: 'research-agent' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Create named session' }))
+    fireEvent.click(screen.getByTitle('New tmux session'))
+    const nameField = await screen.findByLabelText('Session name')
+    expect(nameField).toHaveValue('codex-chrote')
+    fireEvent.change(nameField, { target: { value: 'research-agent' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Launch codex in chrote' }))
 
     await waitFor(() => expect(createSession).toHaveBeenCalled())
-    expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal3', unixUser: 'bob', name: 'research-agent' })
+    expect(createSession).toHaveBeenCalledWith({
+      name: 'research-agent',
+      unixUser: 'bob',
+      cwd: '/srv/chrote',
+      harness: 'codex',
+      workspaceId: 'terminal3',
+    })
     expect(screen.queryByText('Nuke All')).not.toBeInTheDocument()
   })
 

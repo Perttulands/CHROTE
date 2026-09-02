@@ -1,0 +1,338 @@
+/* The launcher: what a new session is, where it starts, and who owns it.
+   The operator picks a harness, a folder and a Unix user; the name follows
+   from those three until he types over it. The same panel serves an empty
+   window and the Sessions plus, because there is one way to start a session. */
+
+import { useCallback, useEffect, useId, useMemo, useState } from 'react'
+import { useSession } from '../context/SessionContext'
+import { useTheme } from '../theme/ThemeContext'
+import { identityColorFor } from '../theme/theme'
+import { HarnessMark, harnessShortName, type HarnessId } from './harnessMarks'
+import FolderPickerModal from './FolderPickerModal'
+import { getTerminalUserInitial, resolveLaunchUser } from '../types'
+import type { CreateSessionAttachTarget, LaunchUser, TmuxSession, WorkspaceId } from '../types'
+import './Launcher.css'
+
+/** One harness the server offers. The command itself never leaves the host. */
+export interface LaunchHarnessOption {
+  id: string
+  label: string
+}
+
+export interface LaunchOptions {
+  harnesses: LaunchHarnessOption[]
+  folders: string[]
+}
+
+/** What a browser that never heard from /api/launch may still offer: a shell at home. */
+export const FALLBACK_LAUNCH_OPTIONS: LaunchOptions = {
+  harnesses: [{ id: 'shell', label: 'Shell' }],
+  folders: ['~'],
+}
+
+const HOME_TOKEN = '~'
+const SHELL_HARNESS = 'shell'
+const KNOWN_HARNESSES: readonly string[] = ['claude-code', 'codex', 'shell']
+const RECENT_FOLDER_LIMIT = 5
+
+/** The word a derived session name starts with: the harness, said short. */
+export function launchShortName(id: string): string {
+  return KNOWN_HARNESSES.includes(id) ? harnessShortName(id as HarnessId) : id
+}
+
+/**
+ * The folder said in one word, for a session name. tmux takes
+ * `^[a-zA-Z0-9_-]+$`, so anything else in the last path segment becomes a
+ * hyphen.
+ */
+export function folderBasename(folder: string): string {
+  const trimmed = folder.trim().replace(/\/+$/, '')
+  if (trimmed === HOME_TOKEN) return 'home'
+  const last = trimmed.split('/').pop() ?? ''
+  const cleaned = last.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
+  return cleaned || 'root'
+}
+
+function sessionsOfUser(sessions: readonly TmuxSession[], unixUser: LaunchUser): TmuxSession[] {
+  const user = unixUser.trim()
+  return sessions.filter(session => (session.unixUser ?? '').trim() === user)
+}
+
+/**
+ * The name to offer, free of collision with a live session of the same user.
+ * tmux numbers a duplicate from 2, the way a second window of the same thing
+ * is the second one.
+ */
+export function derivedSessionName(
+  harnessId: string,
+  folder: string,
+  sessions: readonly TmuxSession[],
+  unixUser: LaunchUser,
+): string {
+  const base = `${launchShortName(harnessId)}-${folderBasename(folder)}`
+  const taken = new Set(sessionsOfUser(sessions, unixUser).map(session => session.name))
+  if (!taken.has(base)) return base
+  for (let suffix = 2; suffix <= taken.size + 2; suffix++) {
+    const candidate = `${base}-${suffix}`
+    if (!taken.has(candidate)) return candidate
+  }
+  return base
+}
+
+/**
+ * tmux hands out session ids in creation order, so the highest id is the
+ * newest session. That is the only recency the inventory reports, and it is
+ * enough to put the folder the operator was last in at the front.
+ */
+function sessionRecency(session: TmuxSession): number {
+  const parsed = Number.parseInt((session.id ?? '').replace(/^\$/, ''), 10)
+  return Number.isFinite(parsed) ? parsed : -1
+}
+
+/**
+ * The folders this user's live sessions are sitting in, newest first, minus
+ * the ones the configuration already pins as a chip.
+ */
+export function recentFolders(
+  sessions: readonly TmuxSession[],
+  unixUser: LaunchUser,
+  pinnedFolders: readonly string[],
+): string[] {
+  const pinned = new Set(pinnedFolders.map(folder => folder.trim()))
+  const ordered = [...sessionsOfUser(sessions, unixUser)].sort((a, b) => sessionRecency(b) - sessionRecency(a))
+  const folders: string[] = []
+  for (const session of ordered) {
+    const cwd = session.cwd?.trim()
+    if (!cwd || pinned.has(cwd) || folders.includes(cwd)) continue
+    folders.push(cwd)
+    if (folders.length === RECENT_FOLDER_LIMIT) break
+  }
+  return folders
+}
+
+function parseLaunchOptions(value: unknown): LaunchOptions | null {
+  if (typeof value !== 'object' || value === null) return null
+  const record = value as { harnesses?: unknown; folders?: unknown }
+  if (!Array.isArray(record.harnesses) || !Array.isArray(record.folders)) return null
+  const harnesses: LaunchHarnessOption[] = []
+  for (const entry of record.harnesses) {
+    if (typeof entry !== 'object' || entry === null) return null
+    const harness = entry as { id?: unknown; label?: unknown }
+    if (typeof harness.id !== 'string' || harness.id === '') return null
+    if (typeof harness.label !== 'string' || harness.label === '') return null
+    harnesses.push({ id: harness.id, label: harness.label })
+  }
+  if (harnesses.length === 0) return null
+  const folders = record.folders.filter((folder): folder is string => typeof folder === 'string' && folder.trim() !== '')
+  return { harnesses, folders: folders.length > 0 ? folders : [HOME_TOKEN] }
+}
+
+/**
+ * The launcher's choices, read once. They are a file on the host that changes
+ * when the operator edits it, so a dashboard that missed an edit is one reload
+ * away from having it; there is no poll and no retry.
+ */
+export function useLaunchOptions(): LaunchOptions {
+  const [options, setOptions] = useState<LaunchOptions>(FALLBACK_LAUNCH_OPTIONS)
+
+  useEffect(() => {
+    let current = true
+    const load = async () => {
+      try {
+        const response = await fetch('/api/launch', { signal: AbortSignal.timeout(10000) })
+        if (!response.ok) {
+          console.warn(`Launch options request failed (${response.status}); offering a shell`)
+          return
+        }
+        const parsed = parseLaunchOptions(await response.json())
+        if (!parsed) {
+          console.warn('Launch options did not match the contract; offering a shell')
+          return
+        }
+        if (current) setOptions(parsed)
+      } catch (error) {
+        console.warn('Launch options request failed; offering a shell', error)
+      }
+    }
+    void load()
+    return () => { current = false }
+  }, [])
+
+  return options
+}
+
+interface LauncherProps {
+  workspaceId: WorkspaceId
+  /** The window the new session binds to, when one is launching it. */
+  attachTo?: CreateSessionAttachTarget
+  /** Called once a session was created, so a popover can close itself. */
+  onLaunched?: () => void
+}
+
+export default function Launcher({ workspaceId, attachTo, onLaunched }: LauncherProps) {
+  const { sessions, settings, terminalUsers, createSession } = useSession()
+  const theme = useTheme()
+  const options = useLaunchOptions()
+  const nameFieldId = useId()
+
+  // Each choice is null until the operator makes it, so the defaults keep
+  // following the configuration, the session list and the name derivation
+  // instead of freezing whatever was true on first render.
+  const [chosenHarness, setChosenHarness] = useState<string | null>(null)
+  const [chosenFolder, setChosenFolder] = useState<string | null>(null)
+  const [chosenUser, setChosenUser] = useState<LaunchUser | null>(null)
+  const [typedName, setTypedName] = useState<string | null>(null)
+  const [browsing, setBrowsing] = useState(false)
+  const [launching, setLaunching] = useState(false)
+
+  const harness = options.harnesses.find(entry => entry.id === chosenHarness) ?? options.harnesses[0]
+  const folder = chosenFolder ?? options.folders[0] ?? HOME_TOKEN
+  const defaultUser = resolveLaunchUser(settings, workspaceId, terminalUsers)
+  const user = chosenUser ?? defaultUser
+
+  const recents = useMemo(
+    () => recentFolders(sessions, user, options.folders),
+    [sessions, user, options.folders],
+  )
+  const derivedName = useMemo(
+    () => derivedSessionName(harness.id, folder, sessions, user),
+    [harness.id, folder, sessions, user],
+  )
+  const name = typedName ?? derivedName
+
+  const short = launchShortName(harness.id)
+  const launchLabel = harness.id === SHELL_HARNESS
+    ? `Open shell in ${folderBasename(folder)}`
+    : `Launch ${short} in ${folderBasename(folder)}`
+
+  const launch = useCallback(async () => {
+    const sessionName = name.trim()
+    if (!sessionName || launching) return
+    setLaunching(true)
+    try {
+      const created = await createSession({
+        name: sessionName,
+        unixUser: user,
+        cwd: folder,
+        harness: harness.id,
+        workspaceId,
+        ...(attachTo ? { attachTo } : {}),
+      })
+      if (created) onLaunched?.()
+    } finally {
+      setLaunching(false)
+    }
+  }, [attachTo, createSession, folder, harness.id, launching, name, onLaunched, user, workspaceId])
+
+  const folderOption = (path: string, className: string) => (
+    <button
+      key={path}
+      type="button"
+      className={`${className}${path === folder ? ' selected' : ''}`}
+      aria-pressed={path === folder}
+      onClick={() => setChosenFolder(path)}
+    >
+      {path}
+    </button>
+  )
+
+  return (
+    <div className="launcher" onClick={event => event.stopPropagation()}>
+      <div className="launcher-title">Launch</div>
+      {options.harnesses.map(entry => {
+        const selected = entry.id === harness.id
+        return (
+          <button
+            key={entry.id}
+            type="button"
+            className={`launcher-row${selected ? ' selected' : ''}`}
+            aria-pressed={selected}
+            onClick={() => setChosenHarness(entry.id)}
+          >
+            <span className="launcher-mark" aria-hidden="true">
+              {entry.id === SHELL_HARNESS
+                ? '>_'
+                : KNOWN_HARNESSES.includes(entry.id) && <HarnessMark id={entry.id as HarnessId} />}
+            </span>
+            <span className="launcher-row-label">{entry.label}</span>
+          </button>
+        )
+      })}
+
+      <div className="launcher-label">Folder</div>
+      <div className="launcher-pick">
+        {options.folders.map(path => folderOption(path, 'launcher-option'))}
+        <button type="button" className="launcher-quiet launcher-browse" onClick={() => setBrowsing(true)}>
+          Browse…
+        </button>
+      </div>
+      {recents.length > 0 && (
+        <div className="launcher-recent">
+          <span className="launcher-recent-label">Recent</span>
+          <div className="launcher-recent-paths">
+            {recents.map(path => folderOption(path, 'launcher-recent-path'))}
+          </div>
+        </div>
+      )}
+
+      {/* A server with no configured Unix users has no user to choose: the
+          session runs as the one account CHROTE was given. */}
+      {terminalUsers.length > 0 && <div className="launcher-label">User</div>}
+      <div className="launcher-pick">
+        {terminalUsers.map(candidate => {
+          const selected = candidate === user
+          return (
+            <button
+              key={candidate}
+              type="button"
+              className={`launcher-option${selected ? ' selected' : ''}`}
+              aria-pressed={selected}
+              onClick={() => setChosenUser(candidate)}
+            >
+              <span
+                className="launcher-badge"
+                style={{ background: identityColorFor(candidate, terminalUsers, theme) }}
+                aria-hidden="true"
+              >
+                {getTerminalUserInitial(candidate)}
+              </span>
+              {candidate}
+            </button>
+          )
+        })}
+      </div>
+
+      <label className="launcher-label" htmlFor={nameFieldId}>Name</label>
+      <input
+        id={nameFieldId}
+        type="text"
+        className="launcher-name"
+        aria-label="Session name"
+        value={name}
+        onChange={event => setTypedName(event.target.value)}
+        onKeyDown={event => {
+          if (event.key === 'Enter') void launch()
+        }}
+      />
+
+      <div className="launcher-actions">
+        <button
+          type="button"
+          className="launcher-quiet launcher-launch"
+          onClick={() => { void launch() }}
+          disabled={launching || name.trim() === ''}
+        >
+          {launchLabel}
+        </button>
+      </div>
+
+      {browsing && (
+        <FolderPickerModal
+          initialPath={folder.startsWith('/') ? folder : '/'}
+          onSelect={path => { setChosenFolder(path); setBrowsing(false) }}
+          onClose={() => setBrowsing(false)}
+        />
+      )}
+    </div>
+  )
+}

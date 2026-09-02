@@ -152,39 +152,55 @@ describe('TerminalWindow launch user', () => {
     droppableState.isOver = false
     droppableState.active = null
     poolState.connectionStates = new Map()
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as any)
+    vi.stubGlobal('fetch', vi.fn((input: unknown) => (
+      String(input).includes('/api/launch')
+        ? Promise.resolve({
+          ok: true,
+          json: async () => ({
+            harnesses: [{ id: 'claude-code', label: 'Claude Code' }, { id: 'shell', label: 'Shell' }],
+            folders: ['/srv/chrote', '~'],
+          }),
+        })
+        : Promise.resolve({ ok: true })
+    )) as any)
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
       disconnect() {}
     })
   })
 
-  it('creates new sessions with the shared creation action and attaches to the current window', async () => {
+  it('launches the configured harness in the configured folder and binds it to this window', async () => {
     let finishCreate!: (sessionName: string) => void
     createSession.mockReturnValue(new Promise(resolve => { finishCreate = resolve }))
-    render(
+    const { container } = render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
       />
     )
 
-    const createButton = screen.getByRole('button', { name: /New Session/i })
-    // The shape a detached tile borrows for its own actions.
-    expect(createButton).toHaveClass('tile-action-btn')
-    fireEvent.click(createButton)
+    // The empty window is the launcher, not a button that has to be pressed
+    // before the operator learns what a new session would be.
+    expect(container.querySelector('.tile-action-btn')).toBeNull()
+    const launchButton = await screen.findByRole('button', { name: 'Launch claude in chrote' })
+    expect(screen.getByLabelText('Session name')).toHaveValue('claude-chrote')
+
+    fireEvent.click(launchButton)
 
     await waitFor(() => expect(createSession).toHaveBeenCalled())
-    expect(createButton).toBeDisabled()
-    expect(createButton).toHaveTextContent('...')
-    fireEvent.click(createButton)
+    expect(launchButton).toBeDisabled()
+    fireEvent.click(launchButton)
     expect(createSession).toHaveBeenCalledTimes(1)
     expect(createSession).toHaveBeenCalledWith({
+      name: 'claude-chrote',
+      unixUser: 'build',
+      cwd: '/srv/chrote',
+      harness: 'claude-code',
       workspaceId: 'terminal3',
       attachTo: { workspaceId: 'terminal3', windowId: 'terminal3-window-0' },
     })
-    await act(async () => finishCreate('forge1'))
-    await waitFor(() => expect(createButton).toBeEnabled())
+    await act(async () => finishCreate('claude-chrote'))
+    await waitFor(() => expect(launchButton).toBeEnabled())
   })
 
   it('shows cycle controls only for multiple sessions and marks the active tag', () => {
@@ -212,7 +228,7 @@ describe('TerminalWindow launch user', () => {
     expect(container.querySelectorAll('.cycle-btn')).toHaveLength(0)
   })
 
-  it('does not intercept right-click on the empty-window new-session button', async () => {
+  it('does not intercept right-click on the empty window launcher', async () => {
     render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -220,11 +236,12 @@ describe('TerminalWindow launch user', () => {
       />
     )
 
-    const event = dispatchContextMenu(screen.getByRole('button', { name: /New Session/i }))
+    const launchButton = await screen.findByRole('button', { name: 'Launch claude in chrote' })
+    const event = dispatchContextMenu(launchButton)
 
     expect(event.defaultPrevented).toBe(false)
     expect(document.querySelector('.session-context-menu')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /New Session/i }))
+    fireEvent.click(launchButton)
     await waitFor(() => expect(createSession).toHaveBeenCalled())
   })
 

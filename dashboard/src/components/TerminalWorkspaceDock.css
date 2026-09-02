@@ -380,67 +380,6 @@
   display: none;
 }
 
-/* Empty Window State */
-.empty-window-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  gap: 16px;
-}
-
-/* The one button shape a tile with no live terminal offers. An empty window
-   states it at full size; a detached tile states it compact, because there the
-   last rendered frame has to stay readable behind it. One shape, two sizes. */
-.tile-action-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: 2px dashed var(--accent);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  color: var(--accent);
-}
-
-.tile-action-btn:hover:not(:disabled) {
-  background: var(--accent-light);
-  border-style: solid;
-}
-
-.tile-action-btn:disabled {
-  opacity: 0.5;
-  cursor: wait;
-}
-
-.create-session-btn {
-  flex-direction: column;
-  gap: 8px;
-  padding: 24px 32px;
-  border-radius: 16px;
-}
-
-.create-session-icon {
-  font-size: 48px;
-  font-weight: 300;
-  line-height: 1;
-}
-
-.create-session-label {
-  font-size: 14px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-.empty-window-hint {
-  font-size: 16px;
-  color: var(--text-dim);
-  font-style: italic;
-  margin-top: 8px;
-}
-
 @media (max-width: 768px) {
   .terminal-area-controls {
     padding: 8px;

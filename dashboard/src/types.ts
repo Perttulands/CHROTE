@@ -341,6 +341,10 @@ export interface CreateSessionOptions {
   name?: string
   mouseScroll?: boolean
   attachTo?: CreateSessionAttachTarget
+  /** Folder the session starts in: absolute, or `~`/`~/...` for the user's home. */
+  cwd?: string
+  /** Harness id from GET /api/launch. Absent or `shell` starts nothing. */
+  harness?: string
 }
 
 // Layout preset for saving/restoring window configurations

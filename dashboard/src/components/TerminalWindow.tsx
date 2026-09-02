@@ -13,40 +13,7 @@ import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types
 import { isDetached, tileStateFor, type TileState } from '../terminal/tileState'
 import { useSessionEvidence } from '../context/useSessionEvidence'
 import DismissiblePanel from './DismissiblePanel'
-
-interface CreateSessionButtonProps {
-  workspaceId: WorkspaceId
-  windowId: string
-}
-
-function CreateSessionButton({ workspaceId, windowId }: CreateSessionButtonProps) {
-  const [creating, setCreating] = useState(false)
-  const { createSession } = useSession()
-
-  const handleCreate = async () => {
-    setCreating(true)
-    try {
-      await createSession({
-        workspaceId,
-        attachTo: { workspaceId, windowId },
-      })
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  return (
-    <button
-      className="tile-action-btn create-session-btn"
-      onClick={handleCreate}
-      disabled={creating}
-      title="Create new session"
-    >
-      <span className="create-session-icon">{creating ? '...' : '+'}</span>
-      <span className="create-session-label">New Session</span>
-    </button>
-  )
-}
+import EmptyWindow from './EmptyWindow'
 
 interface SessionTagProps {
   sessionName: string
@@ -566,10 +533,11 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
         onClick={handleWindowClick}
       >
         {!hasSessions && (
-          <div className="empty-window-state">
-            <CreateSessionButton workspaceId={workspaceId} windowId={windowConfig.id} />
-            <span className="empty-window-hint">or drag a session here</span>
-          </div>
+          <EmptyWindow
+            workspaceId={workspaceId}
+            windowId={windowConfig.id}
+            colorIndex={windowConfig.colorIndex}
+          />
         )}
         {windowConfig.boundSessions.map(sessionName => (
           <TerminalSurface
