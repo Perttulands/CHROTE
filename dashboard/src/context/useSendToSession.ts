@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
-import type { LaunchUser, SendSessionPane, SendToSessionOutcome, SendToSessionPayload, SendToSessionResult } from '../types'
+import type { LaunchUser, SendSessionPane, SendToSessionOutcome, SendToSessionPayload, SendToSessionReport, SendToSessionRequest, SendToSessionResult } from '../types'
 import { apiErrorMessage } from '../apiErrors'
-import { useStatus } from './StatusContext'
+import { useStatus, type StatusSeverity } from './StatusContext'
 
 const definitiveSendErrorCodes = new Map<number, ReadonlySet<string>>([
   [400, new Set(['BAD_REQUEST'])],
@@ -32,19 +32,19 @@ function definitiveSendErrorMessage(status: number, raw: string): string | null 
 
 export function useSendToSession() {
   const { announce } = useStatus()
-  const [sendToSessionTarget, setSendToSessionTarget] = useState<string | null>(null)
-  const [sendToSessionPrefill, setSendToSessionPrefill] = useState('')
+  const [sendToSessionRequest, setSendToSessionRequest] = useState<SendToSessionRequest | null>(null)
   const [sendToSessionRequestId, setSendToSessionRequestId] = useState(0)
 
-  const openSendToSession = useCallback((sessionName: string, prefill = '') => {
-    setSendToSessionPrefill(prefill)
+  // Every surface opens the one drawer, and each says what it was looking at.
+  // A surface with nothing to name opens it bare: the drawer then targets the
+  // focused tile, which is what "Send" means with no object in hand.
+  const openSendToSession = useCallback((request: SendToSessionRequest = {}) => {
     setSendToSessionRequestId(previous => previous + 1)
-    setSendToSessionTarget(sessionName)
+    setSendToSessionRequest(request)
   }, [])
 
   const closeSendToSession = useCallback(() => {
-    setSendToSessionTarget(null)
-    setSendToSessionPrefill('')
+    setSendToSessionRequest(null)
   }, [])
 
   const listSessionPanes = useCallback(async (sessionName: string, unixUser?: LaunchUser): Promise<SendSessionPane[] | null> => {
@@ -92,11 +92,22 @@ export function useSendToSession() {
     }
   }, [announce])
 
+  // One place decides what happened, says it on the status line, and hands the
+  // same words back to the caller. The drawer that stayed open prints them
+  // beside the note that failed; nothing has to reconstruct the reason.
   const sendToSession = useCallback(async (
     sessionName: string,
     payload: SendToSessionPayload,
     unixUser?: LaunchUser,
-  ): Promise<SendToSessionOutcome> => {
+  ): Promise<SendToSessionReport> => {
+    const report = (
+      message: string,
+      severity: StatusSeverity,
+      outcome: SendToSessionOutcome,
+    ): SendToSessionReport => {
+      announce(message, severity)
+      return { outcome, message }
+    }
     const expectedUnixUser = unixUser ?? ''
     try {
       const form = new FormData()
@@ -119,12 +130,8 @@ export function useSendToSession() {
         const errorText = await response.text()
         const definitiveMessage = definitiveSendErrorMessage(response.status, errorText)
         console.error('Failed to send to session:', errorText)
-        if (definitiveMessage) {
-          announce(definitiveMessage, 'error')
-          return 'failed'
-        }
-        announce(`Delivery outcome is unknown for '${sessionName}'; inspect the exact pane before retrying`, 'error')
-        return 'unknown'
+        if (definitiveMessage) return report(definitiveMessage, 'error', 'failed')
+        return report(`Delivery outcome is unknown for '${sessionName}'; inspect the exact pane before retrying`, 'error', 'unknown')
       }
       const result = await response.json().catch(() => null) as SendToSessionResult | null
       const commonResultValid = !!result &&
@@ -146,37 +153,30 @@ export function useSendToSession() {
       if (commonResultValid && result && result.success === false && result.transport === 'unknown' &&
           result.retryable === false && result.deliveryConfirmed === false &&
           result.submitKeyDispatched === false && result.targetVerified === false && result.warning.trim() !== '') {
-        announce(`Delivery outcome is unknown for '${sessionName}' (${result.pane}); ${result.warning.trim()}`, 'error')
-        return 'unknown'
+        return report(`Delivery outcome is unknown for '${sessionName}' (${result.pane}); ${result.warning.trim()}`, 'error', 'unknown')
       }
       if (commonResultValid && result && result.success === true && result.transport === 'pasted' &&
           payload.submit && result.submitKeyDispatched === false) {
         const warning = result.warning.trim()
-        announce(`Pasted to '${sessionName}' (${result.pane}), but the submit key was not dispatched${warning ? `; ${warning}` : ''}`, 'error')
-        return 'unknown'
+        return report(`Pasted to '${sessionName}' (${result.pane}), but the submit key was not dispatched${warning ? `; ${warning}` : ''}`, 'error', 'unknown')
       }
       if (!commonResultValid || !result || result.success !== true || result.transport !== 'pasted' ||
           result.submitKeyDispatched !== payload.submit || result.bufferCleaned !== true ||
           (result.targetVerified !== true && result.warning.trim() === '')) {
-        announce('Unexpected send response; inspect the target pane before retrying', 'error')
-        return 'unknown'
+        return report('Unexpected send response; inspect the target pane before retrying', 'error', 'unknown')
       }
       const paneLabel = ` (${result.pane})`
       const submitLabel = result.submitKeyDispatched ? '; submit key dispatched (application acceptance unconfirmed)' : ''
       const warning = result.warning?.trim() ?? ''
-      announce(`Pasted to '${sessionName}'${paneLabel}${submitLabel}${warning ? `; ${warning}` : ''}`, warning ? 'info' : 'success')
-      return 'sent'
+      return report(`Pasted to '${sessionName}'${paneLabel}${submitLabel}${warning ? `; ${warning}` : ''}`, warning ? 'info' : 'success', 'sent')
     } catch (e) {
       console.error('Send-to-session delivery outcome is unknown:', e)
-      announce(`Delivery outcome is unknown for '${sessionName}'; inspect the exact pane before retrying`, 'error')
-      return 'unknown'
+      return report(`Delivery outcome is unknown for '${sessionName}'; inspect the exact pane before retrying`, 'error', 'unknown')
     }
   }, [announce])
 
   return {
-    sendToSessionTarget,
-    setSendToSessionTarget,
-    sendToSessionPrefill,
+    sendToSessionRequest,
     sendToSessionRequestId,
     openSendToSession,
     closeSendToSession,

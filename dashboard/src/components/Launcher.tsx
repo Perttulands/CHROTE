@@ -212,8 +212,12 @@ interface LauncherProps {
   workspaceId: WorkspaceId
   /** The window the new session binds to, when one is launching it. */
   attachTo?: CreateSessionAttachTarget
-  /** Called once a session was created, so a popover can close itself. */
-  onLaunched?: () => void
+  /**
+   * Called once a session was created, with what it was created as. A popover
+   * uses it to close itself; the Send drawer uses it to reach the session it
+   * just launched.
+   */
+  onLaunched?: (created: { name: string; unixUser: LaunchUser }) => void
 }
 
 export default function Launcher({ workspaceId, attachTo, onLaunched }: LauncherProps) {
@@ -291,7 +295,7 @@ export default function Launcher({ workspaceId, attachTo, onLaunched }: Launcher
         ...(flagsOffered ? { flags: flagLine } : {}),
         ...(attachTo ? { attachTo } : {}),
       })
-      if (created) onLaunched?.()
+      if (created) onLaunched?.({ name: created, unixUser: user })
     } finally {
       setLaunching(false)
     }

@@ -259,6 +259,33 @@ export type SendToSessionPayload = {
 
 export type SendToSessionOutcome = 'sent' | 'failed' | 'unknown'
 
+/**
+ * What the send did, and what the host said about it. The drawer keeps a
+ * failure on screen and prints this message beside the note that failed, so
+ * the operator reads the server's own words where he can act on them rather
+ * than on a status line under a surface that has already closed.
+ */
+export interface SendToSessionReport {
+  outcome: SendToSessionOutcome
+  message: string
+}
+
+/**
+ * What a surface hands the Send drawer when it opens it.
+ *
+ * `reference` is the one line the agent can act on — "path /srv/x/y.ts",
+ * "bead chrote-abc: title" — and it is shown read-only above the note so it
+ * cannot be edited into something that no longer names the thing it came from.
+ */
+export interface SendToSessionRequest {
+  /** The session to preselect; the focused tile's session when absent. */
+  targetSessionKey?: string
+  /** The one line naming what the operator was looking at. */
+  reference?: string
+  /** A draft note under the reference. */
+  note?: string
+}
+
 export interface SendSessionPane {
   sessionId: string
   pane: string
@@ -386,8 +413,7 @@ export interface DashboardState {
   // UI state
   sidebarCollapsed: boolean
   floatingSession: string | null // Session shown in floating modal
-  sendToSessionTarget: string | null // Session targeted by the Send to Session modal
-  sendToSessionPrefill: string // Optional caller-provided draft for the current Send modal opening
+  sendToSessionRequest: SendToSessionRequest | null // What the Send drawer was opened with; null while it is closed
   sendToSessionRequestId: number // Distinguishes deliberate reopenings of the same target
 
   // Computed: which sessions are assigned to any window
@@ -422,10 +448,10 @@ export interface DashboardActions {
   toggleSidebar: () => void
   openFloatingModal: (sessionName: string) => void
   closeFloatingModal: () => void
-  openSendToSession: (sessionName: string, prefill?: string) => void
+  openSendToSession: (request?: SendToSessionRequest) => void
   closeSendToSession: () => void
   listSessionPanes: (sessionName: string, unixUser?: LaunchUser) => Promise<SendSessionPane[] | null>
-  sendToSession: (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser) => Promise<SendToSessionOutcome>
+  sendToSession: (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser) => Promise<SendToSessionReport>
 
   // Session row clicks always preview; assignment navigation is an explicit secondary action.
   handleSessionClick: (sessionName: string) => void

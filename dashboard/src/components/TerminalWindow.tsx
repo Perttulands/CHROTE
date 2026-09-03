@@ -130,7 +130,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
     {
       id: 'work',
       rows: [
-        { id: 'send', label: 'Send to session', chord: 'Alt+S', onSelect: () => openSendToSession(sessionKey) },
+        { id: 'send', label: 'Send to session', chord: 'Alt+S', onSelect: () => openSendToSession({ targetSessionKey: sessionKey }) },
         {
           id: 'files',
           label: 'Open files in working directory',
@@ -483,7 +483,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
           {activeSession && (
             <button
               className="window-send-btn"
-              onClick={() => openSendToSession(activeSession)}
+              onClick={() => openSendToSession({ targetSessionKey: activeSession })}
               title={`Send to ${getSessionNameFromKey(activeSession)}`}
               aria-label={`Send to session ${getSessionNameFromKey(activeSession)}`}
             >

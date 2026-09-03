@@ -20,6 +20,7 @@ function stubSession() {
     detach() { calls.detach += 1; element.remove() },
     fit() { calls.fit += 1 },
     focus: vi.fn(),
+    scrollToBottom: vi.fn(),
     setFontSize: vi.fn(),
     setScrollbarHidden: vi.fn(),
     reconnect: vi.fn(),

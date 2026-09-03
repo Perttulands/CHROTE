@@ -67,7 +67,7 @@ vi.mock('./components/TerminalArea', () => ({
 vi.mock('./components/FilesView', () => ({ default: () => null }))
 vi.mock('./components/SettingsView', () => ({ default: () => null }))
 vi.mock('./components/FloatingModal', () => ({ default: () => null }))
-vi.mock('./components/SendToSessionModal', () => ({ default: () => null }))
+vi.mock('./components/SendDrawer', () => ({ default: () => null }))
 vi.mock('./components/HelpView', () => ({ default: () => null }))
 vi.mock('./components/BeadsView', () => ({ default: () => null }))
 vi.mock('./components/ServicesView', () => ({ default: () => null }))

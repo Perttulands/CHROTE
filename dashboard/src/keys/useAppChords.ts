@@ -175,7 +175,7 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
         scope: 'tile',
         run: () => {
           const sessionKey = focusedSession()
-          if (sessionKey) stateRef.current.session.openSendToSession(sessionKey)
+          if (sessionKey) stateRef.current.session.openSendToSession({ targetSessionKey: sessionKey })
         },
       },
     ]

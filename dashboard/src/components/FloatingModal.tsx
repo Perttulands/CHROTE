@@ -94,7 +94,7 @@ function FloatingModal() {
           {connectionState === 'closed' || connectionState === 'dropped' ? 'Terminal disconnected' : 'Loading terminal…'}
         </span>
       )}
-      <button type="button" className="peek-send" onClick={() => openSendToSession(floatingSession)}>Send</button>
+      <button type="button" className="peek-send" onClick={() => openSendToSession({ targetSessionKey: floatingSession })}>Send</button>
       <button type="button" className="peek-close" onClick={closeFloatingModal} aria-label="Close Peek">×</button>
     </>
   )

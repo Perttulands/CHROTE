@@ -168,7 +168,7 @@ function SessionItem({ session }: SessionItemProps) {
   }, [openFloatingModal, sessionKey])
 
   const handleOpenSendToSession = useCallback(() => {
-    openSendToSession(sessionKey)
+    openSendToSession({ targetSessionKey: sessionKey })
   }, [openSendToSession, sessionKey])
 
   const handleClick = useCallback(() => {

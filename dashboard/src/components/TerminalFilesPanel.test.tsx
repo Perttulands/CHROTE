@@ -157,10 +157,10 @@ describe('TerminalFilesPanel', () => {
     await waitFor(() => expect(Number.parseFloat(peek.style.width)).toBeGreaterThan(initialWidth))
 
     fireEvent.click(screen.getByRole('button', { name: 'Send README.md to session' }))
-    expect(sessionMocks.openSendToSession).toHaveBeenCalledWith(
-      'alice:shell',
-      expect.stringContaining('/srv/chrote/README.md'),
-    )
+    expect(sessionMocks.openSendToSession).toHaveBeenCalledWith({
+      targetSessionKey: 'alice:shell',
+      reference: 'path /srv/chrote/README.md',
+    })
 
     fireEvent.click(screen.getByRole('button', { name: 'Open README.md in Files tab' }))
     expect(openInFiles).toHaveBeenCalledWith('/srv/chrote/README.md')

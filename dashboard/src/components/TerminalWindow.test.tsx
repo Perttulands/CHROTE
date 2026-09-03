@@ -278,7 +278,7 @@ describe('TerminalWindow launch user', () => {
       expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument()
     }
     fireEvent.click(screen.getByRole('menuitem', { name: 'Send to session' }))
-    expect(openSendToSession).toHaveBeenCalledWith('alice:shell-existing')
+    expect(openSendToSession).toHaveBeenCalledWith({ targetSessionKey: 'alice:shell-existing' })
 
     openInactiveMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect frame' }))
@@ -724,7 +724,7 @@ describe('TerminalWindow launch user', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Send to session forge-existing' }))
 
-    expect(openSendToSession).toHaveBeenCalledWith('build:forge-existing')
+    expect(openSendToSession).toHaveBeenCalledWith({ targetSessionKey: 'build:forge-existing' })
   })
 
   // What runs in a session is a mark in its own tag, not a line of prose in the

@@ -615,7 +615,7 @@ function TerminalFilesPanel({
           onClose={() => updateFilesState(previous => ({ ...previous, peek: null }))}
           onOpenInFiles={onOpenInFiles}
           onSend={path => {
-            if (sendTarget) openSendToSession(sendTarget, `Please inspect:\n\n${path}\n\nNote: `)
+            if (sendTarget) openSendToSession({ targetSessionKey: sendTarget, reference: `path ${path}` })
           }}
         />
       )}
