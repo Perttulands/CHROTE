@@ -25,7 +25,7 @@ process or the host exits.
 | Sessions/Files sidecar | Session discovery, Peek, assignment navigation, and workspace-local files |
 | Files | Configured-root file operations and terminal handoff |
 | Beads | Configured `bd` workspaces and issue data |
-| Services | Optional local adapters through CHROTE-owned routes |
+| Library | The configured context corpus, read and corrected through CHROTE-owned routes |
 | Scheduled | Scheduled-task definitions, locks, runs, and history |
 | Server | Health, resources, runtime events, and bounded system history |
 | Settings | Appearance, terminal behavior, flags, and session cleanup |
@@ -36,8 +36,7 @@ process or the host exits.
 | --- | --- |
 | `bd` | Beads issue source; configured workspaces remain authoritative |
 | `bv` | Optional graph-aware Beads TUI launched inside a terminal |
-| TTS Gateway adapter | Optional Services console; no upstream or credentials are bundled |
-| Context Citadel adapter | Optional adapter code; no current authentication or upstream is bundled |
+| Context corpus | The Library's source; a Markdown tree under git named by `CHROTE_LIBRARY_ROOT`, and no corpus is bundled |
 | Tailscale or equivalent | Private HTTPS/network access outside localhost |
 
 Optional integrations must degrade clearly when unavailable. They must not make

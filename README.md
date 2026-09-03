@@ -72,12 +72,12 @@ screen.
 | Settings | Appearance, tmux colors, session defaults, tab count, launch users, cleanup |
 | Beads | Issues, ready work, triage, dependency graph, insights, and comments from configured `bd` workspaces |
 | Scheduled | Host-owned tasks that deliver a prompt to a named tmux session on a schedule |
-| Services | Local adapters called through CHROTE routes, so their tokens stay on the server |
+| Library | The configured context corpus: shelves, pages, search, recent changes, and edits committed as the operator |
 
-Terminal, Files, Server, and Settings are the core. Beads, Scheduled, and
-Services are first-party components built on that core. Each one degrades alone
-when `bd` is missing or an adapter is down, and none of them can stop the core
-from loading.
+Terminal, Files, Server, and Settings are the core. Beads, Scheduled, and the
+Library are first-party components built on that core. Each one degrades alone
+when `bd` is missing or no corpus is configured, and none of them can stop the
+core from loading.
 
 A scheduled task sends its prompt into tmux verbatim. The receipt says CHROTE
 delivered the keystrokes. It does not claim the program on the other end read
@@ -150,7 +150,7 @@ socket, the attach fails instead of falling back to another tmux server.
 
 - `dashboard/src/` is the React UI.
 - `src/cmd/server/` wires the process together.
-- `src/internal/api/` holds the tmux, files, beads, scheduled, services, health,
+- `src/internal/api/` holds the tmux, files, beads, scheduled, library, health,
   and system handlers.
 - `src/internal/proxy/` owns the terminal transport and its pseudo-terminals.
 - `src/internal/dashboard/` embeds the built dashboard into the binary.

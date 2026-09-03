@@ -109,15 +109,14 @@ If `bd` is outside the service `PATH`, set an absolute `CHROTE_BD_COMMAND` in
 
 `bv` is optional. Its absence must not break Beads API or dashboard operation.
 
-## 6. Services show degraded
+## 6. The Library is empty or refuses edits
 
-Services cards are optional adapters. No upstream service, URL, or credential is
-bundled with CHROTE, and a degraded card does not mean the core is unhealthy.
-
-- Put private URLs/tokens in `~/.config/chrote/secrets.env`.
-- Restart `chrote.service` after changing server-side environment.
-- Check the upstream directly from the host without printing tokens.
-- Never paste bearer values into browser storage, screenshots, issues, or logs.
+The Library tab reads the corpus named by `CHROTE_LIBRARY_ROOT`. Unset, the tab
+says no library is configured. A page history or New arrivals that stays empty
+while the corpus has commits means the service account cannot run `git` in
+that repository; the server reports the reason in its log. Edits are refused
+when `CHROTE_LIBRARY_AUTHOR` is unset, or when the file already has an
+uncommitted change from someone else; the refusal names which.
 
 ## 7. Scheduled task is stuck
 

@@ -248,9 +248,10 @@ describe('TerminalWindow launch user', () => {
     const sendEvent = openInactiveMenu()
     expect(sendEvent.defaultPrevented).toBe(true)
     const menuButtons = screen.getAllByRole('menuitem')
-    expect(menuButtons).toHaveLength(7)
+    expect(menuButtons).toHaveLength(8)
     for (const label of [
       'Send to session',
+      'What this agent sees',
       'Reconnect frame',
       /Claim session/,
       'Refit frame',
@@ -402,7 +403,7 @@ describe('TerminalWindow launch user', () => {
     expect(menu).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: 'Send to session' })).toHaveFocus()
     fireEvent.keyDown(menu, { key: 'ArrowDown' })
-    expect(screen.getByRole('menuitem', { name: 'Reconnect frame' })).toHaveFocus()
+    expect(screen.getByRole('menuitem', { name: 'What this agent sees' })).toHaveFocus()
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(tag).toHaveFocus()

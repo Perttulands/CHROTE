@@ -85,7 +85,7 @@ vi.mock('./components/FloatingModal', () => ({ default: () => null }))
 vi.mock('./components/SendDrawer', () => ({ default: () => null }))
 vi.mock('./components/HelpView', () => ({ default: () => null }))
 vi.mock('./components/BeadsView', () => ({ default: () => null }))
-vi.mock('./components/ServicesView', () => ({ default: () => null }))
+vi.mock('./components/LibraryView', () => ({ default: () => null }))
 vi.mock('./components/SystemStatusView', () => ({
   default: ({ active }: { active?: boolean }) => <div data-testid="system-status-view" data-active={String(active)} />,
 }))

@@ -51,9 +51,9 @@ The core product is terminal workspaces, sessions, files, server status, and set
 | Settings | Configure presentation and explicit terminal controls |
 | Beads | Inspect and update configured project work stores |
 | Scheduled | Send prompts to named tmux sessions on a schedule |
-| Services | Use configured local service adapters through CHROTE routes |
+| Library | Read, search, and correct the configured context corpus |
 
-Components remain separated in the codebase and fail independently. A missing Beads workspace or unhealthy service adapter must not prevent terminal work.
+Components remain separated in the codebase and fail independently. A missing Beads workspace or unconfigured context corpus must not prevent terminal work.
 
 Agent formations may integrate as a component. Mission design, chains, gates, and the ARCHON command-line tool are owned outside the terminal core.
 

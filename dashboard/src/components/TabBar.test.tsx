@@ -78,7 +78,7 @@ function mockMatchMedia(matches: boolean) {
   })
 }
 
-describe('TabBar Services navigation', () => {
+describe('TabBar navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockState.deletePreset = vi.fn()
@@ -103,10 +103,6 @@ describe('TabBar Services navigation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Terminal 3' }))
     expect(onTabChange).toHaveBeenLastCalledWith('terminal3')
-    fireEvent.click(screen.getByRole('button', { name: 'Services' }))
-    expect(onTabChange).toHaveBeenLastCalledWith('services')
-    fireEvent.click(screen.getByRole('button', { name: 'Scheduled' }))
-    expect(onTabChange).toHaveBeenLastCalledWith('scheduled')
     unmount()
 
     // The strip follows whatever ids the layout resolved, not a fixed tab set.
@@ -115,6 +111,26 @@ describe('TabBar Services navigation', () => {
 
     expect(terminalLabels()).toEqual(['Terminal', 'Terminal 2', 'Terminal 3', 'Terminal 4', 'Terminal 5'])
     mockState.workspaceIds = null
+  })
+
+  it('shows the Library in desktop navigation', () => {
+    mockMatchMedia(false)
+    const onTabChange = vi.fn()
+
+    render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Library' }))
+
+    expect(onTabChange).toHaveBeenCalledWith('library')
+  })
+
+  it('shows Scheduled Tasks in desktop navigation', () => {
+    mockMatchMedia(false)
+    const onTabChange = vi.fn()
+
+    render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Scheduled' }))
+
+    expect(onTabChange).toHaveBeenCalledWith('scheduled')
   })
 
   // A phone has no room for the tab strip, so the hamburger is the only way to
@@ -130,14 +146,14 @@ describe('TabBar Services navigation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '☰' }))
 
-    for (const label of ['Terminal', 'Terminal 2', 'Terminal 3', 'Files', 'Beads', 'Services', 'Scheduled', 'Settings']) {
+    for (const label of ['Terminal', 'Terminal 2', 'Terminal 3', 'Files', 'Beads', 'Library', 'Scheduled', 'Settings']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
     }
     expect(screen.getByRole('button', { name: 'Terminal' })).toHaveClass('active')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Services' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Library' }))
 
-    expect(onTabChange).toHaveBeenCalledWith('services')
+    expect(onTabChange).toHaveBeenCalledWith('library')
   })
 
   it('opens terminal tab context actions without adding session defaults', () => {

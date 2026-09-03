@@ -161,8 +161,7 @@ filesystem."
 
 **Steps.**
 
-1. Step into the library: shelves, and pages rendered from their Markdown. Not
-   built yet.
+1. Step into the library: shelves, and pages rendered from their Markdown.
 2. Search across everything, and read what changed recently.
 3. Fix an odd wording where you find it; each save is a commit attributed to the
    operator.
@@ -174,5 +173,4 @@ and the Send drawer (4).
 
 **End action.** A small manual edit, or Send to Session pointed at the page.
 
-**Chords.** `Alt+L` opens the Library tab. It is not registered until the tab
-exists.
+**Chords.** `Alt+L` opens the Library tab; `Alt+S` sends the page on the table.

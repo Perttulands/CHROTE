@@ -58,7 +58,7 @@ func TestCORSMiddlewareAllowsOnlyExactConfiguredOrigins(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	allowedReq := httptest.NewRequest(http.MethodGet, "/api/services", nil)
+	allowedReq := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	allowedReq.Header.Set("Origin", "https://app.example")
 	allowedRec := httptest.NewRecorder()
 	handler.ServeHTTP(allowedRec, allowedReq)
@@ -67,7 +67,7 @@ func TestCORSMiddlewareAllowsOnlyExactConfiguredOrigins(t *testing.T) {
 		t.Fatalf("allowed Access-Control-Allow-Origin = %q, want exact requesting origin", got)
 	}
 
-	disallowedReq := httptest.NewRequest(http.MethodOptions, "/api/services", nil)
+	disallowedReq := httptest.NewRequest(http.MethodOptions, "/api/health", nil)
 	disallowedReq.Header.Set("Origin", "https://evil.example")
 	disallowedReq.Header.Set("Access-Control-Request-Method", http.MethodGet)
 	disallowedRec := httptest.NewRecorder()
