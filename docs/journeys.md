@@ -78,7 +78,7 @@ a Bead to an agent.
 3. Read an epic, its goals and its definitions of done.
 4. Find stale work to clear out.
 5. Open a Bead id printed in terminal output and read it beside the session that
-   named it. Not built yet.
+   named it.
 6. Annotate the Bead and send it.
 
 **Surfaces.** Beads tab (1, 2, 3, 4, 6); terminal workspace, for ids in output
