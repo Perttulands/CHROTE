@@ -31,7 +31,6 @@ vi.mock('../context/SessionContext', () => ({
     terminalUsers: ['alice', 'bob'],
     assignedSessions: new Map(),
     handleSessionClick: vi.fn(),
-    focusSessionAssignment: vi.fn(),
     deleteSession: vi.fn(),
     renameSession: vi.fn(),
     workspaces: {

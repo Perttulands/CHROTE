@@ -11,6 +11,9 @@ import { useTerminalPool } from './TerminalPool'
 
 export type Tab = WorkspaceId | 'files' | 'beads' | 'services' | 'scheduled' | 'server' | 'settings' | 'help'
 
+/** The counts a workspace can show, as the grid classes and the clamp allow. */
+const WINDOW_COUNTS = [1, 2, 3, 4] as const
+
 interface InternalTab {
   id: Tab
   label: string
@@ -50,7 +53,7 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
   // Renaming a tab happens in the tab, in the tab bar, like a session tag.
   const [renaming, setRenaming] = useState<{ workspaceId: WorkspaceId; value: string } | null>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
-  const { settings, updateSettings, saveCurrentLayout, loadPreset, deletePreset, layoutPresets, clearWorkspaceAssignments, workspaceIds, workspaces } = useSession()
+  const { settings, updateSettings, saveCurrentLayout, loadPreset, deletePreset, layoutPresets, clearWorkspaceAssignments, setWindowCount, workspaceIds, workspaces } = useSession()
   const pool = useTerminalPool()
 
   const isMobile = useMediaQuery('(max-width: 768px)')
@@ -171,6 +174,19 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
       id: 'layout',
       rows: presetName === null
         ? [
+          // Alt+= and Alt+- are the chords for this, and a phone has neither.
+          // The row is here on every viewport because it costs a desktop
+          // nothing and is the only way a phone changes the count.
+          {
+            id: 'windows',
+            label: 'Windows',
+            state: String(workspaces[tabMenu.workspaceId]?.windowCount ?? 1),
+            submenu: WINDOW_COUNTS.map(count => ({
+              id: `windows-${count}`,
+              label: String(count),
+              onSelect: () => setWindowCount(tabMenu.workspaceId, count),
+            })),
+          },
           { id: 'save-preset', label: 'Save layout as preset', keepOpen: true, onSelect: () => setPresetName('') },
           { id: 'restore-preset', label: 'Restore preset', submenu: presetRows },
           ...(layoutPresets.length > 0
@@ -421,7 +437,7 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
         <Menu
           at={{ x: tabMenu.x, y: tabMenu.y }}
           label="Terminal tab actions"
-          estimatedSize={{ width: 230, height: 180 }}
+          estimatedSize={{ width: 230, height: 210 }}
           onClose={closeTabMenu}
           groups={tabMenuGroups}
         />

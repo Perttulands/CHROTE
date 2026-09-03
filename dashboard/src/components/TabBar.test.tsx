@@ -9,6 +9,7 @@ const mockState = vi.hoisted(() => ({
   loadPreset: vi.fn(),
   clearWorkspaceAssignments: vi.fn(),
   deletePreset: vi.fn(),
+  setWindowCount: vi.fn(),
   workspaceIds: null as readonly string[] | null,
   windowCount: 2,
 }))
@@ -22,6 +23,7 @@ vi.mock('../context/SessionContext', () => ({
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout' }],
     clearWorkspaceAssignments: mockState.clearWorkspaceAssignments,
     deletePreset: mockState.deletePreset,
+    setWindowCount: mockState.setWindowCount,
     workspaceIds: mockState.workspaceIds ?? TERMINAL_WORKSPACE_IDS,
     workspaces: {
       terminal1: {
@@ -80,6 +82,7 @@ describe('TabBar Services navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockState.deletePreset = vi.fn()
+    mockState.setWindowCount = vi.fn()
     mockState.windowCount = 2
     pooledTerminals.clear()
   })
@@ -317,6 +320,21 @@ describe('TabBar Services navigation', () => {
     fireEvent.click(claimAll)
 
     expect(claim).not.toHaveBeenCalled()
+  })
+
+  // Alt+= and Alt+- are the chords for the count; a phone has no keyboard to
+  // press them with, so the menu carries the same step on every viewport.
+  it('reads the window count in the menu and sets a new one from its submenu', () => {
+    mockMatchMedia(false)
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
+
+    openTabMenu()
+    const windows = screen.getByRole('menuitem', { name: /^Windows/ })
+    expect(windows).toHaveTextContent('2')
+
+    fireEvent.click(windows)
+    fireEvent.click(screen.getByRole('menuitem', { name: '3' }))
+    expect(mockState.setWindowCount).toHaveBeenCalledWith('terminal1', 3)
   })
 
   it('reads the Sessions panel pin state in the menu and toggles it there', () => {

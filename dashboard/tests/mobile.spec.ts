@@ -75,6 +75,28 @@ test.describe('Terminal Area - Mobile View Switcher', () => {
     await expect(page.locator('.terminal-window:visible')).toHaveCount(1)
   })
 
+  // The count has chords on a desktop and nothing on a phone, so the tab menu
+  // carries it — reached here through the hamburger, which is the only way in.
+  test('changes the window count through the tab menu in the hamburger', async ({ page }) => {
+    const viewButtons = page.locator('.terminal-area:visible .mobile-controls-row .layout-btn')
+    await expect(viewButtons).toHaveCount(2)
+
+    await page.click('.hamburger-btn')
+    await page.click('.mobile-nav-item:has-text("Terminal tab options")')
+
+    const windowsRow = page.locator('.menu-sheet .menu-row', { hasText: 'Windows' })
+    await expect(windowsRow).toContainText('2')
+    await windowsRow.click()
+    await page.locator('.menu-submenu .menu-row', { hasText: /^3$/ }).click()
+
+    await expect(viewButtons).toHaveCount(3)
+
+    // The menu reads the new count back the next time it is opened.
+    await page.click('.hamburger-btn')
+    await page.click('.mobile-nav-item:has-text("Terminal tab options")')
+    await expect(page.locator('.menu-sheet .menu-row', { hasText: 'Windows' })).toContainText('3')
+  })
+
 })
 
 test.describe('Responsive Breakpoint', () => {
