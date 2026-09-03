@@ -6,6 +6,7 @@ import { StatusProvider } from './context/StatusContext'
 import TabBar, { Tab } from './components/TabBar'
 import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
 import Peek from './components/Peek'
+import ImageGlance from './components/ImageGlance'
 import SendDrawer from './components/SendDrawer'
 import BeadCard from './components/BeadCard'
 import AgentContextSheet from './components/AgentContextSheet'
@@ -494,6 +495,7 @@ function DashboardContent() {
           {/* Peek floats and the Send drawer docks inside the workspace, so
               the status line stays whole beneath both of them. */}
           <Peek />
+          <ImageGlance />
           <SendDrawer />
           <BeadCard onOpenInBeads={handleOpenInBeads} />
           <AgentContextSheet />

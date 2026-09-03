@@ -22,6 +22,7 @@ import { useConfirmInPlace } from './confirmInPlace'
 import Editor from './Editor'
 import Markdown from './Markdown'
 import PanelPath from './PanelPath'
+import { openImageGlance } from './imageGlance'
 import {
   getPreviewKind,
   getFileBaseName,
@@ -147,6 +148,7 @@ function FilePanelViewer({ path, onBack, onOpenPath, onSend }: FilePanelViewerPr
   const [error, setError] = useState<string | null>(null)
   const [diff, setDiff] = useState<FileDiffResult | null>(null)
   const [saving, setSaving] = useState(false)
+  const [pixels, setPixels] = useState<{ width: number; height: number } | null>(null)
 
   const name = getFileBaseName(path)
   const item = useMemo(() => makeFileItemFromPath(path), [path])
@@ -159,6 +161,7 @@ function FilePanelViewer({ path, onBack, onOpenPath, onSend }: FilePanelViewerPr
     setContent(null)
     setError(null)
     setDiff(null)
+    setPixels(null)
     setLoading(readable)
     if (readable) {
       const read = kind === 'text'
@@ -272,7 +275,18 @@ function FilePanelViewer({ path, onBack, onOpenPath, onSend }: FilePanelViewerPr
         ) : error ? (
           <p className="files-panel-note">{error}</p>
         ) : kind === 'image' ? (
-          <div className="files-panel-image"><img src={getDownloadUrl(path)} alt={name} /></div>
+          // The picture at the panel's width, its pixels beneath it, and the
+          // glance a click away for a look at it full size.
+          <>
+            <button type="button" className="files-panel-image" onClick={() => openImageGlance(path)}>
+              <img
+                src={getDownloadUrl(path)}
+                alt={name}
+                onLoad={event => setPixels({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+              />
+            </button>
+            <p className="files-panel-note">{pixels ? `${pixels.width} × ${pixels.height}` : ''}</p>
+          </>
         ) : content === null ? (
           <p className="files-panel-note">
             No inline view for this file. <a href={getDownloadUrl(path)} download>Download</a>

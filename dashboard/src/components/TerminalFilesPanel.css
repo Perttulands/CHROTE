@@ -415,14 +415,25 @@
   padding: 12px 10px;
 }
 
+/* The picture is a control: a press on it opens the image glance. */
 .files-panel-image {
+  display: block;
+  width: 100%;
   padding: 12px 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
 }
 
 .files-panel-image img {
   max-width: 100%;
   height: auto;
   display: block;
+}
+
+.files-panel-image:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 /* text with line numbers, capped at the first 2000 lines */
