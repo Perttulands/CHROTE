@@ -1,0 +1,187 @@
+/* The flags catalogue beside the launcher. Outlines, one quiet fill for a flag
+   that is on the line, and nothing that moves. */
+
+.flag-panel {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+}
+
+.flag-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flag-panel-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.flag-panel-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.flag-panel-search {
+  height: 26px;
+  padding: 0 8px;
+  background: var(--background);
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.flag-panel-search:focus {
+  outline: none;
+  border-color: var(--text-primary);
+}
+
+.flag-panel-empty {
+  padding: 4px 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.flag-panel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.flag-row {
+  min-width: 0;
+}
+
+.flag-row-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.flag-row.selected .flag-row-main {
+  background: var(--surface-secondary);
+}
+
+.flag-row-check {
+  flex: none;
+  width: 10px;
+  color: var(--text-primary);
+}
+
+.flag-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.flag-row-names {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.flag-row-value {
+  color: var(--text-dim);
+}
+
+.flag-row-description {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.flag-row-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px 4px 22px;
+}
+
+.flag-row-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  background: var(--background);
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.flag-row-input:focus {
+  outline: none;
+  border-color: var(--text-primary);
+}
+
+.flag-row-add {
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  background: none;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* Docked or stacked. The launcher frame is the query container, so the panel
+   answers to the room the launcher actually has — in a tile, in the Sessions
+   popover, on a phone — rather than to the size of the window. */
+@container (min-width: 820px) {
+  .launcher-frame > .launcher-body {
+    flex: 0 0 420px;
+  }
+
+  .launcher-frame > .flag-panel {
+    flex: 1 1 0;
+  }
+}

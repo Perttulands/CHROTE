@@ -29,9 +29,18 @@ vi.mock('./FolderPickerModal', () => ({
 
 const launchOptions = {
   harnesses: [
-    { id: 'claude-code', label: 'Claude Code' },
-    { id: 'codex', label: 'Codex' },
-    { id: 'shell', label: 'Shell' },
+    {
+      id: 'claude-code',
+      label: 'Claude Code',
+      binary: 'claude',
+      defaultFlags: '--dangerously-skip-permissions',
+      flags: [
+        { name: '--continue', short: '-c', description: 'Continue the most recent conversation' },
+        { name: '--model', short: '-m', value: '<model>', description: 'Model', values: ['sonnet', 'opus'] },
+      ],
+    },
+    { id: 'codex', label: 'Codex', binary: 'codex', defaultFlags: '--full-auto', flags: [] },
+    { id: 'shell', label: 'Shell', binary: '', defaultFlags: '', flags: [] },
   ],
   folders: ['/srv/chrote', '/srv', '~'],
 }
@@ -155,6 +164,7 @@ describe('Launcher', () => {
       unixUser: 'alice',
       cwd: '/srv/chrote',
       harness: 'codex',
+      flags: '--full-auto',
       workspaceId: 'terminal3',
       attachTo: { workspaceId: 'terminal3', windowId: 'terminal3-window-1' },
     }))
@@ -198,5 +208,93 @@ describe('Launcher', () => {
     expect(screen.getByRole('button', { name: 'Shell' })).toHaveClass('selected')
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
+  })
+})
+
+describe('Launcher flags', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockState.sessions = []
+    createSession.mockResolvedValue('claude-chrote')
+    fetchMock.mockImplementation((input: unknown) => (
+      String(input).includes('/api/launch')
+        ? Promise.resolve({ ok: true, json: async () => launchOptions })
+        : Promise.resolve({ ok: true, json: async () => ({}) })
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  it('offers the harness default and previews the line the host will type', async () => {
+    render(<Launcher workspaceId="terminal3" />)
+
+    expect(await screen.findByLabelText('Launch flags')).toHaveValue('--dangerously-skip-permissions')
+    expect(screen.getByText('claude --dangerously-skip-permissions')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument()
+  })
+
+  it('shows each harness its own line, and keeps an edit while the launcher lives', async () => {
+    render(<Launcher workspaceId="terminal3" />)
+
+    fireEvent.change(await screen.findByLabelText('Launch flags'), { target: { value: '--verbose' } })
+    expect(screen.getByText('claude --verbose')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Codex' }))
+    expect(screen.getByLabelText('Launch flags')).toHaveValue('--full-auto')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Claude Code' }))
+    expect(screen.getByLabelText('Launch flags')).toHaveValue('--verbose')
+  })
+
+  it('offers Reset once the line differs, and puts the default back', async () => {
+    render(<Launcher workspaceId="terminal3" />)
+
+    fireEvent.change(await screen.findByLabelText('Launch flags'), { target: { value: '--model opus' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
+
+    expect(screen.getByLabelText('Launch flags')).toHaveValue('--dangerously-skip-permissions')
+    expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument()
+  })
+
+  it('says nothing about flags for a shell, which takes none', async () => {
+    render(<Launcher workspaceId="terminal3" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Shell' }))
+
+    expect(screen.queryByLabelText('Launch flags')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Flags…' })).not.toBeInTheDocument()
+  })
+
+  it('opens the catalogue of the chosen harness and writes what it is told', async () => {
+    render(<Launcher workspaceId="terminal3" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Flags…' }))
+    expect(screen.getByText('Flags for Claude Code')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /--continue/ }))
+    expect(screen.getByLabelText('Launch flags')).toHaveValue('--dangerously-skip-permissions --continue')
+    expect(screen.getByText('claude --dangerously-skip-permissions --continue')).toBeInTheDocument()
+  })
+
+  it('launches with the line as it stands, empty line and all', async () => {
+    render(<Launcher workspaceId="terminal3" />)
+
+    fireEvent.change(await screen.findByLabelText('Launch flags'), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Launch claude in chrote' }))
+
+    await waitFor(() => expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ flags: '' })))
+    expect(screen.getByText('claude')).toBeInTheDocument()
+  })
+
+  it('launches from the flags field itself', async () => {
+    render(<Launcher workspaceId="terminal3" />)
+
+    const field = await screen.findByLabelText('Launch flags')
+    fireEvent.change(field, { target: { value: '--continue' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+
+    await waitFor(() => expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
+      harness: 'claude-code',
+      flags: '--continue',
+    })))
   })
 })

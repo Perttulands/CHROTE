@@ -15,6 +15,36 @@
   border-radius: 6px;
 }
 
+/* With the catalogue open the launcher asks for the room two columns need and
+   takes what the tile has; the frame's own width then decides which it gets. */
+.launcher.flags-open {
+  width: 880px;
+  /* Even at its widest the launcher stays a panel standing on the window,
+     never a bar wedged against its edges. */
+  max-width: calc(100% - 24px);
+}
+
+/* The frame is what the catalogue measures itself against, so the columns it
+   holds are what the container query moves: an element cannot ask about its
+   own container. Each column claims a whole line here and gives that up when
+   there is room for two. */
+.launcher-frame {
+  container-type: inline-size;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.launcher-body {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
 .launcher-title,
 .launcher-label {
   font-size: 12px;
@@ -146,6 +176,21 @@
 
 .launcher-recent-path.selected {
   color: var(--text-primary);
+}
+
+/* What will be typed after the binary, and the whole line as it will read.
+   Both are the terminal's own alphabet, which is the interface's alphabet. */
+.launcher-preview {
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launcher-reset {
+  margin-left: auto;
 }
 
 .launcher-name {

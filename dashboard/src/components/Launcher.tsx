@@ -9,14 +9,24 @@ import { useTheme } from '../theme/ThemeContext'
 import { identityColorFor } from '../theme/theme'
 import { HarnessMark, harnessShortName, type HarnessId } from './harnessMarks'
 import FolderPickerModal from './FolderPickerModal'
+import FlagPanel from './FlagPanel'
+import type { LaunchFlag } from './launchFlags'
 import { getTerminalUserInitial, resolveLaunchUser } from '../types'
 import type { CreateSessionAttachTarget, LaunchUser, TmuxSession, WorkspaceId } from '../types'
 import './Launcher.css'
 
-/** One harness the server offers. The command itself never leaves the host. */
+/**
+ * One harness the server offers. The binary is the first word of the command
+ * and the only part of it that leaves the host; the flags are what that
+ * binary's own `--help` reported, so an older server that has never been asked
+ * simply offers none.
+ */
 export interface LaunchHarnessOption {
   id: string
   label: string
+  binary: string
+  defaultFlags: string
+  flags: LaunchFlag[]
 }
 
 export interface LaunchOptions {
@@ -26,7 +36,7 @@ export interface LaunchOptions {
 
 /** What a browser that never heard from /api/launch may still offer: a shell at home. */
 export const FALLBACK_LAUNCH_OPTIONS: LaunchOptions = {
-  harnesses: [{ id: 'shell', label: 'Shell' }],
+  harnesses: [{ id: 'shell', label: 'Shell', binary: '', defaultFlags: '', flags: [] }],
   folders: ['~'],
 }
 
@@ -110,6 +120,37 @@ export function recentFolders(
   return folders
 }
 
+/** A string field the server may not have written yet, read as absent rather than wrong. */
+function optionalText(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+/**
+ * The harness's catalogue. A server that predates the flags route, or a
+ * harness whose `--help` was never read, has none; an entry missing the two
+ * things a row needs is dropped rather than taking the whole payload down.
+ */
+function parseFlags(value: unknown): LaunchFlag[] {
+  if (!Array.isArray(value)) return []
+  const flags: LaunchFlag[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const flag = entry as { name?: unknown; short?: unknown; value?: unknown; description?: unknown; values?: unknown }
+    if (typeof flag.name !== 'string' || flag.name === '') continue
+    const values = Array.isArray(flag.values)
+      ? flag.values.filter((candidate): candidate is string => typeof candidate === 'string')
+      : undefined
+    flags.push({
+      name: flag.name,
+      description: optionalText(flag.description),
+      ...(typeof flag.short === 'string' && flag.short !== '' ? { short: flag.short } : {}),
+      ...(typeof flag.value === 'string' && flag.value !== '' ? { value: flag.value } : {}),
+      ...(values && values.length > 0 ? { values } : {}),
+    })
+  }
+  return flags
+}
+
 function parseLaunchOptions(value: unknown): LaunchOptions | null {
   if (typeof value !== 'object' || value === null) return null
   const record = value as { harnesses?: unknown; folders?: unknown }
@@ -117,10 +158,16 @@ function parseLaunchOptions(value: unknown): LaunchOptions | null {
   const harnesses: LaunchHarnessOption[] = []
   for (const entry of record.harnesses) {
     if (typeof entry !== 'object' || entry === null) return null
-    const harness = entry as { id?: unknown; label?: unknown }
+    const harness = entry as { id?: unknown; label?: unknown; binary?: unknown; defaultFlags?: unknown; flags?: unknown }
     if (typeof harness.id !== 'string' || harness.id === '') return null
     if (typeof harness.label !== 'string' || harness.label === '') return null
-    harnesses.push({ id: harness.id, label: harness.label })
+    harnesses.push({
+      id: harness.id,
+      label: harness.label,
+      binary: optionalText(harness.binary),
+      defaultFlags: optionalText(harness.defaultFlags),
+      flags: parseFlags(harness.flags),
+    })
   }
   if (harnesses.length === 0) return null
   const folders = record.folders.filter((folder): folder is string => typeof folder === 'string' && folder.trim() !== '')
@@ -184,6 +231,12 @@ export default function Launcher({ workspaceId, attachTo, onLaunched }: Launcher
   const [typedName, setTypedName] = useState<string | null>(null)
   const [browsing, setBrowsing] = useState(false)
   const [launching, setLaunching] = useState(false)
+  // A flags line the operator edited, kept per harness so switching to Codex
+  // and back does not throw away what he wrote for Claude Code. It lives as
+  // long as the launcher does, and no longer: the defaults are the host's.
+  const [flagEdits, setFlagEdits] = useState<Record<string, string>>({})
+  const [flagsOpen, setFlagsOpen] = useState(false)
+  const flagsFieldId = useId()
 
   const harness = options.harnesses.find(entry => entry.id === chosenHarness) ?? options.harnesses[0]
   const folder = chosenFolder ?? options.folders[0] ?? HOME_TOKEN
@@ -205,6 +258,25 @@ export default function Launcher({ workspaceId, attachTo, onLaunched }: Launcher
     ? `Open shell in ${folderBasename(folder)}`
     : `Launch ${short} in ${folderBasename(folder)}`
 
+  // A shell takes no flags, and a harness whose binary the server did not name
+  // cannot be previewed honestly, so neither offers a line to edit.
+  const flagsOffered = harness.id !== SHELL_HARNESS && harness.binary !== ''
+  const flagLine = flagEdits[harness.id] ?? harness.defaultFlags
+  const flagsEdited = flagLine !== harness.defaultFlags
+  const commandPreview = flagLine === '' ? harness.binary : `${harness.binary} ${flagLine}`
+
+  const setFlagLine = useCallback((next: string) => {
+    setFlagEdits(edits => ({ ...edits, [harness.id]: next }))
+  }, [harness.id])
+
+  const resetFlags = useCallback(() => {
+    setFlagEdits(edits => {
+      const next = { ...edits }
+      delete next[harness.id]
+      return next
+    })
+  }, [harness.id])
+
   const launch = useCallback(async () => {
     const sessionName = name.trim()
     if (!sessionName || launching) return
@@ -216,13 +288,14 @@ export default function Launcher({ workspaceId, attachTo, onLaunched }: Launcher
         cwd: folder,
         harness: harness.id,
         workspaceId,
+        ...(flagsOffered ? { flags: flagLine } : {}),
         ...(attachTo ? { attachTo } : {}),
       })
       if (created) onLaunched?.()
     } finally {
       setLaunching(false)
     }
-  }, [attachTo, createSession, folder, harness.id, launching, name, onLaunched, user, workspaceId])
+  }, [attachTo, createSession, flagLine, flagsOffered, folder, harness.id, launching, name, onLaunched, user, workspaceId])
 
   const folderOption = (path: string, className: string) => (
     <button
@@ -237,93 +310,149 @@ export default function Launcher({ workspaceId, attachTo, onLaunched }: Launcher
   )
 
   return (
-    <div className="launcher" onClick={event => event.stopPropagation()}>
-      <div className="launcher-title">Launch</div>
-      {options.harnesses.map(entry => {
-        const selected = entry.id === harness.id
-        return (
-          <button
-            key={entry.id}
-            type="button"
-            className={`launcher-row${selected ? ' selected' : ''}`}
-            aria-pressed={selected}
-            onClick={() => setChosenHarness(entry.id)}
-          >
-            <span className="launcher-mark" aria-hidden="true">
-              {entry.id === SHELL_HARNESS
-                ? '>_'
-                : KNOWN_HARNESSES.includes(entry.id) && <HarnessMark id={entry.id as HarnessId} />}
-            </span>
-            <span className="launcher-row-label">{entry.label}</span>
-          </button>
-        )
-      })}
+    <div
+      className={`launcher${flagsOpen && flagsOffered ? ' flags-open' : ''}`}
+      onClick={event => event.stopPropagation()}
+    >
+      {/* The frame is the container the flags panel measures: it docks beside
+          the body when the launcher has the room and stacks under it when it
+          does not. The folder picker stays outside it, because a container
+          would become the containing block of its fixed overlay. */}
+      <div className="launcher-frame">
+        <div className="launcher-body">
+          <div className="launcher-title">Launch</div>
+          {options.harnesses.map(entry => {
+            const selected = entry.id === harness.id
+            return (
+              <button
+                key={entry.id}
+                type="button"
+                className={`launcher-row${selected ? ' selected' : ''}`}
+                aria-pressed={selected}
+                onClick={() => setChosenHarness(entry.id)}
+              >
+                <span className="launcher-mark" aria-hidden="true">
+                  {entry.id === SHELL_HARNESS
+                    ? '>_'
+                    : KNOWN_HARNESSES.includes(entry.id) && <HarnessMark id={entry.id as HarnessId} />}
+                </span>
+                <span className="launcher-row-label">{entry.label}</span>
+              </button>
+            )
+          })}
 
-      <div className="launcher-label">Folder</div>
-      <div className="launcher-pick">
-        {options.folders.map(path => folderOption(path, 'launcher-option'))}
-        <button type="button" className="launcher-quiet launcher-browse" onClick={() => setBrowsing(true)}>
-          Browse…
-        </button>
-      </div>
-      {recents.length > 0 && (
-        <div className="launcher-recent">
-          <span className="launcher-recent-label">Recent</span>
-          <div className="launcher-recent-paths">
-            {recents.map(path => folderOption(path, 'launcher-recent-path'))}
+          <div className="launcher-label">Folder</div>
+          <div className="launcher-pick">
+            {options.folders.map(path => folderOption(path, 'launcher-option'))}
+            <button type="button" className="launcher-quiet launcher-browse" onClick={() => setBrowsing(true)}>
+              Browse…
+            </button>
+          </div>
+          {recents.length > 0 && (
+            <div className="launcher-recent">
+              <span className="launcher-recent-label">Recent</span>
+              <div className="launcher-recent-paths">
+                {recents.map(path => folderOption(path, 'launcher-recent-path'))}
+              </div>
+            </div>
+          )}
+
+          {/* A server with no configured Unix users has no user to choose: the
+              session runs as the one account CHROTE was given. */}
+          {terminalUsers.length > 0 && <div className="launcher-label">User</div>}
+          <div className="launcher-pick">
+            {terminalUsers.map(candidate => {
+              const selected = candidate === user
+              return (
+                <button
+                  key={candidate}
+                  type="button"
+                  className={`launcher-option${selected ? ' selected' : ''}`}
+                  aria-pressed={selected}
+                  onClick={() => setChosenUser(candidate)}
+                >
+                  <span
+                    className="launcher-badge"
+                    style={{ background: identityColorFor(candidate, terminalUsers, theme) }}
+                    aria-hidden="true"
+                  >
+                    {getTerminalUserInitial(candidate)}
+                  </span>
+                  {candidate}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* The flags line is the whole of what will be typed after the
+              binary: the catalogue writes into it, and so may the operator. */}
+          {flagsOffered && (
+            <>
+              <label className="launcher-label" htmlFor={flagsFieldId}>Flags</label>
+              <input
+                id={flagsFieldId}
+                type="text"
+                className="launcher-name launcher-flags"
+                aria-label="Launch flags"
+                value={flagLine}
+                onChange={event => setFlagLine(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') void launch()
+                }}
+              />
+              <div className="launcher-preview" title={commandPreview}>{commandPreview}</div>
+              <div className="launcher-pick">
+                <button
+                  type="button"
+                  className="launcher-quiet"
+                  aria-expanded={flagsOpen}
+                  onClick={() => setFlagsOpen(open => !open)}
+                >
+                  Flags…
+                </button>
+                {flagsEdited && (
+                  <button type="button" className="launcher-quiet launcher-reset" onClick={resetFlags}>
+                    Reset
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+
+          <label className="launcher-label" htmlFor={nameFieldId}>Name</label>
+          <input
+            id={nameFieldId}
+            type="text"
+            className="launcher-name"
+            aria-label="Session name"
+            value={name}
+            onChange={event => setTypedName(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') void launch()
+            }}
+          />
+
+          <div className="launcher-actions">
+            <button
+              type="button"
+              className="launcher-quiet launcher-launch"
+              onClick={() => { void launch() }}
+              disabled={launching || name.trim() === ''}
+            >
+              {launchLabel}
+            </button>
           </div>
         </div>
-      )}
 
-      {/* A server with no configured Unix users has no user to choose: the
-          session runs as the one account CHROTE was given. */}
-      {terminalUsers.length > 0 && <div className="launcher-label">User</div>}
-      <div className="launcher-pick">
-        {terminalUsers.map(candidate => {
-          const selected = candidate === user
-          return (
-            <button
-              key={candidate}
-              type="button"
-              className={`launcher-option${selected ? ' selected' : ''}`}
-              aria-pressed={selected}
-              onClick={() => setChosenUser(candidate)}
-            >
-              <span
-                className="launcher-badge"
-                style={{ background: identityColorFor(candidate, terminalUsers, theme) }}
-                aria-hidden="true"
-              >
-                {getTerminalUserInitial(candidate)}
-              </span>
-              {candidate}
-            </button>
-          )
-        })}
-      </div>
-
-      <label className="launcher-label" htmlFor={nameFieldId}>Name</label>
-      <input
-        id={nameFieldId}
-        type="text"
-        className="launcher-name"
-        aria-label="Session name"
-        value={name}
-        onChange={event => setTypedName(event.target.value)}
-        onKeyDown={event => {
-          if (event.key === 'Enter') void launch()
-        }}
-      />
-
-      <div className="launcher-actions">
-        <button
-          type="button"
-          className="launcher-quiet launcher-launch"
-          onClick={() => { void launch() }}
-          disabled={launching || name.trim() === ''}
-        >
-          {launchLabel}
-        </button>
+        {flagsOpen && flagsOffered && (
+          <FlagPanel
+            harnessLabel={harness.label}
+            flags={harness.flags}
+            line={flagLine}
+            onChange={setFlagLine}
+            onClose={() => setFlagsOpen(false)}
+          />
+        )}
       </div>
 
       {browsing && (

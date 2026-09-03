@@ -345,6 +345,11 @@ export interface CreateSessionOptions {
   cwd?: string
   /** Harness id from GET /api/launch. Absent or `shell` starts nothing. */
   harness?: string
+  /**
+   * The flags typed after the harness's binary. Absent leaves the server its
+   * configured defaults; an empty string means this launch takes none.
+   */
+  flags?: string
 }
 
 // Layout preset for saving/restoring window configurations

@@ -137,6 +137,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           mouseScroll: options.mouseScroll ?? layouts.settings.mouseScroll,
           ...(options.cwd ? { cwd: options.cwd } : {}),
           ...(options.harness ? { harness: options.harness } : {}),
+          // An empty line is a real answer — this launch takes no flags — so
+          // it travels, and only an absent field leaves the server its default.
+          ...(options.flags !== undefined ? { flags: options.flags } : {}),
         }),
         signal: AbortSignal.timeout(10000),
       })
