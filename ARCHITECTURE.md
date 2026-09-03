@@ -33,6 +33,7 @@ CHROTE reads and controls existing resources instead of copying them into a cent
 | Layouts and presentation | Browser storage | Render device-local workspaces |
 | The interface theme | Host theme directory | Serve the active theme and the art it names |
 | Launchable harnesses and folders | Host launch configuration | Offer the choices and start the chosen one in a new session |
+| An agent's completion | Each harness's own completion hook | Install the hook per launch and keep the last report per session, in memory, until the operator looks |
 | Runtime observations | CHROTE process memory and bounded history | Report health and recent events |
 
 If CHROTE stops, tmux sessions, files, and Beads remain where they were.
@@ -52,6 +53,8 @@ A displayed terminal is the session's one sizing client, so opening a session ta
 Three parties share the interface's look, and each does one thing. A host apply script writes the active theme into the directory CHROTE reads; the server serves that document, unmodified, and refuses to guess when it is malformed; the dashboard applies it to its custom properties and to the terminal. CHROTE never writes a theme, and it no longer pushes appearance into tmux: the same apply script sets the tmux status bar and the agents' own settings once, in ANSI colour names, so a session looks the same to an SSH client in its own palette.
 
 The launch configuration names what may be started and where. It is read once at startup; the browser learns only harness ids, labels and folders, and the commands stay on the server. An unreadable or invalid launch configuration stops startup rather than presenting a launcher that cannot launch.
+
+A launched agent's completion is a fact the harness states, not one CHROTE infers. Each launch installs the harness's own completion hook through the harness's flags; the hook is the `chrote-agent-event` script installed beside the server, which asks tmux for its session's name and posts to `POST /api/agent/event`. The server keeps the last report per session in memory, attaches it to the session list, and forgets it with the session; `POST /api/agent/event/seen` records that the operator looked. No tmux activity heuristic and no poll of the harness stands in for the hook.
 
 ## Server composition
 

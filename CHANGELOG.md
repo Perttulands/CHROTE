@@ -26,6 +26,12 @@ release.
   from.
 - JetBrains Mono and a symbol fallback face bundled for chrome and terminal
   alike, so no request for a font leaves the host.
+- Agent events: a launched harness reports through its own completion hook,
+  the `chrote-agent-event` script installed beside the server, to
+  `POST /api/agent/event`; the session list carries the last report as
+  `lastEvent` until `POST /api/agent/event/seen`. The launcher installs the
+  hook for Claude Code and Codex while its **Notify on completion** setting is
+  on.
 
 ### Changed
 
