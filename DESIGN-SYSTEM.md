@@ -179,7 +179,6 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | `Alt+A` | Sessions panel |
 | `Alt+O` | Files panel |
 | `Alt+K` | Keybindings panel |
-| `Alt+I` | Close the table |
 
 `Plus` and `Minus` are matched by the character the layout produces, not by
 `Shift`, so `Alt++` and `Alt+=` are the same chord.
