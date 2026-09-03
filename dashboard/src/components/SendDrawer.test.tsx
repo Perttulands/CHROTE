@@ -228,17 +228,24 @@ describe('SendDrawer', () => {
     vi.unstubAllGlobals()
   })
 
-  // Wide enough, and the drawer takes its column out of the grid rather than
-  // covering the tile the message is addressed to.
-  it('takes a column from the grid when docked, and overlays when there is no room', async () => {
-    const { unmount } = await renderOpen({ targetSessionKey: 'alice:alice-shell' })
-    expect(screen.getByRole('dialog', { name: 'Send to session' })).toHaveStyle({ width: '380px' })
-    unmount()
+  // The drawer lies over whatever opened it, and closing it hands the focus
+  // back there: the card's Send button, a tile, a row.
+  it('closes on Escape and returns the focus to the control that opened it', async () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
 
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 720 })
-    await renderOpen({ targetSessionKey: 'alice:alice-shell' })
-    expect(screen.getByRole('dialog', { name: 'Send to session' })).toHaveStyle({ width: '50%' })
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    const { rerender } = await renderOpen({ targetSessionKey: 'alice:alice-shell' })
+    expect(note()).toHaveFocus()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(mockState.closeSendToSession).toHaveBeenCalledTimes(1)
+
+    mockState.request = null
+    rerender(<SendDrawer />)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(opener).toHaveFocus()
+    opener.remove()
   })
 })
 

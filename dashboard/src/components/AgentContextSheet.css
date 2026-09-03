@@ -1,22 +1,32 @@
 /* The panel: a header line naming the agent, then the stack itself. */
 
+.agent-sheet {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .agent-sheet-name {
   flex: none;
   color: var(--text-primary);
 }
 
-.agent-sheet-folder,
-.agent-sheet-user {
-  flex: none;
-  font-size: 12px;
+/* The folder is the one thing here allowed to give way: the name and the
+   actions keep their places, and a long path loses its head, not its tail. */
+.agent-sheet-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
   color: var(--text-secondary);
 }
 
-.agent-sheet-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
+.agent-sheet-user {
+  flex: none;
+  color: var(--text-secondary);
 }
 
 .agent-sheet-body {

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import LibraryView from './LibraryView'
 import { resetBeadCardForTest, useBeadCardRequest } from '../beads/beadCard'
 import { resetChordsForTest } from '../keys/chords'
+import { DEFAULT_SETTINGS } from '../types'
 import type {
   LibraryChange,
   LibraryPage,
@@ -27,7 +28,7 @@ const mockState = vi.hoisted(() => ({
 }))
 
 vi.mock('../context/SessionContext', () => ({
-  useSession: () => ({ openSendToSession: mockState.openSendToSession }),
+  useSession: () => ({ settings: DEFAULT_SETTINGS, openSendToSession: mockState.openSendToSession }),
 }))
 
 vi.mock('../context/StatusContext', () => ({

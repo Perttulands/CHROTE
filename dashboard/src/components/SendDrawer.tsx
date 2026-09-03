@@ -2,11 +2,11 @@
  * Send to Session: the one hand-off in CHROTE.
  *
  * Every surface that can name something an agent should act on — a tile, a
- * session row, Peek, the file viewer — opens this drawer and hands it a
- * reference. The drawer docks at the right of the workspace and takes 380px
- * from the terminal grid rather than covering it, so the tile the message is
- * going to stays whole and readable while the message is written. On a narrow
- * viewport there is no room to give, so it overlays the right half instead.
+ * session row, Peek, the file viewer, the Bead on the table — opens this
+ * drawer and hands it a reference. The drawer overlays the right edge of the
+ * workspace at 380px, above the table's column, and nothing beneath it moves:
+ * the card that opened it stays mounted where it was, and closing the drawer
+ * reveals it unchanged with the focus back where it was taken from.
  *
  * The reference is shown, not editable: it names the thing the operator was
  * looking at, and an edited reference names nothing. The note beneath it is
@@ -40,13 +40,7 @@ import {
 } from '../types'
 import { SessionCommandMark, SessionLabel } from './sessionLabel'
 import Launcher from './Launcher'
-import Sheet from './Sheet'
 import './SendDrawer.css'
-
-/** What the drawer takes from the grid when there is room to take it. */
-export const SEND_DRAWER_WIDTH = 380
-/** Below this the workspace has nothing to give, so the drawer overlays it. */
-export const SEND_DRAWER_DOCK_MIN_WIDTH = 900
 
 /** The picker's own row for a session that does not exist yet. */
 const NEW_AGENT = 'new-agent'
@@ -105,12 +99,6 @@ function resolveTarget(
   }
 }
 
-/** Whether the workspace is wide enough to give the drawer its own column. */
-function docksBeside(): boolean {
-  if (typeof window === 'undefined') return true
-  return window.innerWidth >= SEND_DRAWER_DOCK_MIN_WIDTH
-}
-
 export default function SendDrawer() {
   const {
     sendToSessionRequest,
@@ -139,7 +127,6 @@ export default function SendDrawer() {
   const [panesLoading, setPanesLoading] = useState(false)
   const [panesFailed, setPanesFailed] = useState(false)
   const [deliveryUnknown, setDeliveryUnknown] = useState(false)
-  const [docked, setDocked] = useState(docksBeside)
   const noteRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const activeSendRef = useRef<symbol | null>(null)
@@ -181,17 +168,35 @@ export default function SendDrawer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sendToSessionRequestId, open])
 
+  // The control that opened the drawer gets the focus back when it closes,
+  // whichever way it closed: the card's Send button, the tile, the row. With
+  // that control gone, the table's column is the next best place to land.
+  useEffect(() => {
+    if (!open) return
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    return () => {
+      const landing = opener?.isConnected && opener !== document.body
+        ? opener
+        : document.querySelector<HTMLElement>('.table-column')
+      landing?.focus()
+    }
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     noteRef.current?.focus()
   }, [open, sendToSessionRequestId])
 
   useEffect(() => {
-    const measure = () => setDocked(docksBeside())
-    measure()
-    window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
-  }, [])
+    if (!open) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeSendToSession()
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [open, closeSendToSession])
 
   const target = useMemo(
     () => (selected && selected !== NEW_AGENT ? resolveTarget(selected, sessions, evidence) : null),
@@ -359,34 +364,20 @@ export default function SendDrawer() {
     )
   }
 
-  const header = (
-    <>
-      <span className="send-drawer-title">Send to session</span>
-      <button
-        type="button"
-        className="send-drawer-close"
-        onClick={closeSendToSession}
-        aria-label="Close Send to Session"
-      >
-        ×
-      </button>
-    </>
-  )
-
   return (
-    <>
-      {/* The column the drawer stands in. It is a flex sibling of the docks, so
-          the grid narrows around it and the target tile stays whole; on a narrow
-          viewport it collapses and the drawer overlays instead. */}
-      {docked && <div className="send-drawer-gutter" aria-hidden="true" />}
-      <Sheet
-        open
-        edge="right"
-        extent={docked ? `${SEND_DRAWER_WIDTH}px` : '50%'}
-        label="Send to session"
-        onClose={closeSendToSession}
-        header={header}
-      >
+    <aside className="send-drawer" role="dialog" aria-label="Send to session">
+      <div className="send-drawer-header">
+        <span className="send-drawer-title">Send to session</span>
+        <button
+          type="button"
+          className="send-drawer-close"
+          onClick={closeSendToSession}
+          aria-label="Close Send to Session"
+          aria-keyshortcuts="Escape"
+        >
+          Close<span className="send-drawer-chord" aria-hidden="true">Esc</span>
+        </button>
+      </div>
         <div className="send-drawer-body" data-ui="send.drawer">
           <div className="send-drawer-section">Target</div>
           <input
@@ -534,7 +525,6 @@ export default function SendDrawer() {
           </div>
           <p className="send-drawer-hint">Enter sends · Shift+Enter pastes</p>
         </div>
-      </Sheet>
-    </>
+    </aside>
   )
 }
