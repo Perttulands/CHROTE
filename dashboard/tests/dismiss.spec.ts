@@ -123,10 +123,10 @@ test('Escape closes the topmost surface and never reaches the pane; a press outs
   await expect(drawer).toHaveCount(0)
 
   // Nothing above was typed at a shell.
-  expect(typed.join('')).not.toContain('')
+  expect(typed.join('')).not.toContain('\u001b')
 
   // With nothing open, Escape is the shell's.
   await first.locator('.xterm-screen').click()
   await page.keyboard.press('Escape')
-  await expect.poll(() => typed.join('')).toContain('')
+  await expect.poll(() => typed.join('')).toContain('\u001b')
 })

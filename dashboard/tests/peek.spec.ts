@@ -13,7 +13,7 @@ import { openSessionsSidecar } from './helpers'
  */
 
 const TTYD_OUTPUT = 0x30
-const MOUSE_MODE_ON = '[?1000h[?1002h[?1006h'
+const MOUSE_MODE_ON = '\u001b[?1000h\u001b[?1002h\u001b[?1006h'
 const PEEK_LINE = 'PEEK-SELECT-ME'
 
 /**
