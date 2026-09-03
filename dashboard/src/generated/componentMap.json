@@ -36,7 +36,7 @@
   "FilesViewContent": "dashboard/src/components/FilesView/FilesViewContent.tsx",
   "FlagPanel": "dashboard/src/components/FlagPanel.tsx",
   "FloatingModal": "dashboard/src/components/FloatingModal.tsx",
-  "FolderPickerModal": "dashboard/src/components/FolderPickerModal.tsx",
+  "FolderField": "dashboard/src/components/FolderField.tsx",
   "HarnessMark": "dashboard/src/components/harnessMarks.tsx",
   "HelpView": "dashboard/src/components/HelpView.tsx",
   "InboxPanel": "dashboard/src/components/FilesView/components/InboxPanel.tsx",

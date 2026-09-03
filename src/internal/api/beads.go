@@ -144,15 +144,6 @@ func isPathUnder(path string, roots []string) bool {
 	return false
 }
 
-func beadsAutoDiscoverEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("CHROTE_BEADS_AUTO_DISCOVER"))) {
-	case "0", "false":
-		return false
-	default:
-		return true
-	}
-}
-
 func isConfiguredBeadsWorkspace(path string) bool {
 	for _, workspace := range configuredBeadsWorkspaces() {
 		if path == workspace {
@@ -248,6 +239,13 @@ func (h *BeadsHandler) execBdIssues(projectPath string, args ...string) ([]map[s
 		return nil, err
 	}
 
+	// bd writes a bare array for some filters and {"issues": [...]} for
+	// others; both are the same list.
+	if envelope, ok := result.(map[string]interface{}); ok {
+		if _, listed := envelope["issues"]; listed {
+			result = envelope["issues"]
+		}
+	}
 	items, ok := result.([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("bd %s returned %T, expected JSON array", strings.Join(args, " "), result)
@@ -295,7 +293,9 @@ func (h *BeadsHandler) Health(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ListProjects handles GET /api/beads/projects
+// ListProjects handles GET /api/beads/projects: the configured Beads projects
+// and the manual paths the request names, each validated as a modern store.
+// Discovery under the roots is the workspace list's job.
 func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	var projects []map[string]interface{}
 	var warnings []string
@@ -305,41 +305,6 @@ func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	for _, workspace := range configuredWorkspaces {
 		if err := h.appendProject(&projects, seen, workspace, "configured"); err != nil {
 			warnings = append(warnings, "Configured Beads workspace is invalid: "+workspace+": "+err.Error())
-		}
-	}
-
-	if beadsAutoDiscoverEnabled() {
-		for _, root := range core.GetAllowedRoots() {
-			if !core.FileExists(root) {
-				warnings = append(warnings, "Allowed root does not exist: "+root)
-				continue
-			}
-
-			entries, err := os.ReadDir(root)
-			if err != nil {
-				warnings = append(warnings, "Cannot read directory "+root+": "+err.Error())
-				continue
-			}
-
-			for _, entry := range entries {
-				if entry.IsDir() {
-					projectPath := filepath.Join(root, entry.Name())
-					if err := h.appendProject(&projects, seen, projectPath, "auto"); err != nil {
-						beadsPath := filepath.Join(projectPath, ".beads")
-						if isDirectory(beadsPath) || errors.Is(err, fs.ErrPermission) {
-							warnings = append(warnings, "Ignoring invalid Beads workspace: "+projectPath+": "+err.Error())
-						}
-					}
-				}
-			}
-
-			// Check root itself
-			if err := h.appendProject(&projects, seen, root, "auto-root"); err != nil {
-				beadsPath := filepath.Join(root, ".beads")
-				if isDirectory(beadsPath) || errors.Is(err, fs.ErrPermission) {
-					warnings = append(warnings, "Ignoring invalid Beads workspace: "+root+": "+err.Error())
-				}
-			}
 		}
 	}
 
@@ -501,6 +466,29 @@ func (h *BeadsHandler) projectPrefix(projectPath string) string {
 		return ""
 	}
 	return beadPrefix(beadString(issues[0], "id"))
+}
+
+// storeSummary is what the workspace list needs of a store: the prefix its
+// ids carry and how much of it is open. One bd call answers both; a store with
+// nothing open is asked once more for the prefix, because the terminal links
+// on it either way. ok is false when bd could not be asked at all.
+func (h *BeadsHandler) storeSummary(projectPath string) (prefix string, open int, ok bool) {
+	issues, err := h.execBdIssues(projectPath, "list", "--limit", "0")
+	if err != nil {
+		return "", 0, false
+	}
+	for _, issue := range issues {
+		if prefix == "" {
+			prefix = beadPrefix(beadString(issue, "id"))
+		}
+		if beadString(issue, "status") != "closed" {
+			open++
+		}
+	}
+	if prefix == "" {
+		prefix = h.projectPrefix(projectPath)
+	}
+	return prefix, open, true
 }
 
 // addProjectPrefixes gives every discovered project the prefix its Bead ids

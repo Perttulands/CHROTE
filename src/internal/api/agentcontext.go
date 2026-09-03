@@ -81,9 +81,8 @@ const codexAppliesToPrefix = "applies_to:"
 // How much of a handbook or frontmatter block is read before giving up. Both
 // bounds exist so one enormous file cannot turn a request into a scan.
 const (
-	codexMemoryMaxLines   = 200000
-	frontmatterMaxLines   = 64
-	workspaceScanMaxDepth = 2
+	codexMemoryMaxLines = 200000
+	frontmatterMaxLines = 64
 )
 
 // AgentInstruction is one file in the stack, and where it sits in it.
@@ -133,27 +132,13 @@ type AgentFileResponse struct {
 	Content string `json:"content"`
 }
 
-// AgentWorkspace is one folder the Agents tab can resolve a stack for.
-type AgentWorkspace struct {
-	Path string `json:"path"`
-	// home, beads or root: why this folder is on the list.
-	Source string `json:"source"`
-	// How many instruction files the folder owns itself.
-	Instructions int `json:"instructions"`
-}
-
 // AgentTender names the session that tends the instruction layer, as the host
 // configured it. Empty fields mean the host said nothing, and the desk says so.
+// It is the body of GET /api/agent/tender.
 type AgentTender struct {
 	Session string `json:"session"`
 	Beads   string `json:"beads"`
 	Folder  string `json:"folder"`
-}
-
-// AgentWorkspacesResponse is the body of GET /api/agent/workspaces.
-type AgentWorkspacesResponse struct {
-	Workspaces []AgentWorkspace `json:"workspaces"`
-	Tender     AgentTender      `json:"tender"`
 }
 
 // AgentContextHandler resolves what an agent sees.
@@ -192,7 +177,7 @@ func NewAgentContextHandler() *AgentContextHandler {
 func (h *AgentContextHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent/context", h.Context)
 	mux.HandleFunc("GET /api/agent/file", h.File)
-	mux.HandleFunc("GET /api/agent/workspaces", h.Workspaces)
+	mux.HandleFunc("GET /api/agent/tender", h.Tender)
 }
 
 // defaultHomeForUser answers with the named account's home, or with this
@@ -290,19 +275,10 @@ func (h *AgentContextHandler) File(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, http.StatusOK, AgentFileResponse{Path: filepath.Clean(requested), Content: string(content)})
 }
 
-// Workspaces handles GET /api/agent/workspaces: the folders the Agents tab
-// offers, and the tender the host configured.
-func (h *AgentContextHandler) Workspaces(w http.ResponseWriter, r *http.Request) {
-	unixUser := strings.TrimSpace(r.URL.Query().Get("user"))
-	home, err := h.homeForUser(unixUser)
-	if err != nil {
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Cannot resolve the home directory: "+err.Error())
-		return
-	}
-	core.WriteJSON(w, http.StatusOK, AgentWorkspacesResponse{
-		Workspaces: h.workspaces(home),
-		Tender:     h.tender,
-	})
+// Tender handles GET /api/agent/tender: the tender the host configured. The
+// folders the Agents tab offers come from GET /api/workspaces.
+func (h *AgentContextHandler) Tender(w http.ResponseWriter, r *http.Request) {
+	core.WriteJSON(w, http.StatusOK, h.tender)
 }
 
 // validateFolder answers with the folder to resolve, or with the code and
@@ -841,67 +817,4 @@ func countInstructionFiles(dir string) int {
 		}
 	}
 	return count
-}
-
-func holdsInstructions(dir string) bool {
-	for _, name := range []string{kindClaudeMd, kindAgentsMd} {
-		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && info.Mode().IsRegular() {
-			return true
-		}
-	}
-	return false
-}
-
-// workspaces lists the folders worth asking about: the user's home, the
-// configured Beads projects, and every folder near the top of a configured root
-// that carries instructions of its own.
-func (h *AgentContextHandler) workspaces(home string) []AgentWorkspace {
-	found := []AgentWorkspace{}
-	seen := map[string]bool{}
-	add := func(dir, source string) {
-		dir = filepath.Clean(dir)
-		if seen[dir] {
-			return
-		}
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			return
-		}
-		seen[dir] = true
-		found = append(found, AgentWorkspace{Path: dir, Source: source, Instructions: countInstructionFiles(dir)})
-	}
-
-	add(home, "home")
-	for _, workspace := range configuredBeadsWorkspaces() {
-		add(workspace, "beads")
-	}
-	for _, root := range h.allowedRoots() {
-		scanWorkspaceRoot(root, 0, add)
-	}
-	return found
-}
-
-// scanWorkspaceRoot walks a root two levels deep, listing every folder that
-// holds a CLAUDE.md or an AGENTS.md. Two levels is where a project's own
-// instructions live; deeper is the project's business, and the panel is how it
-// is read.
-func scanWorkspaceRoot(dir string, depth int, add func(string, string)) {
-	if depth > workspaceScanMaxDepth {
-		return
-	}
-	if holdsInstructions(dir) {
-		add(dir, "root")
-	}
-	if depth == workspaceScanMaxDepth {
-		return
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		scanWorkspaceRoot(filepath.Join(dir, entry.Name()), depth+1, add)
-	}
 }

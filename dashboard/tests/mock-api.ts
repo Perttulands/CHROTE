@@ -7,6 +7,7 @@ const themePattern = /.*\/api\/theme\/?$/
 const launchPattern = /.*\/api\/launch\/?$/
 const tmuxMousePattern = /.*\/api\/tmux\/mouse\/?$/
 const tmuxSessionsPattern = /.*\/api\/tmux\/sessions\/?$/
+const workspacesPattern = /.*\/api\/workspaces\/?(\?.*)?$/
 
 // Mock beads data for testing
 export const mockBeadsProjects = {
@@ -117,6 +118,28 @@ export const mockSystemStatus = {
     ],
     warnings: [],
   },
+}
+
+/**
+ * The host's workspaces as the server lists them: the folder a live session
+ * runs in first, then the stores and repositories under the roots. One store
+ * has nothing open, so the Beads rail has something to fold.
+ */
+export const mockWorkspaces = [
+  { path: '/srv/chrote', sources: ['session', 'git'], sessions: ['gt-gastown-jack'], instructions: 2, lastActivity: freshTimestamp },
+  { path: '/code/test-project', sources: ['beads', 'git', 'store'], sessions: [], beadsPrefix: 'test', openBeads: 4, instructions: 1 },
+  { path: '/code/another-project', sources: ['git', 'store'], sessions: [], beadsPrefix: 'other', openBeads: 0, instructions: 0 },
+  { path: '/home/operator/repos/VSK-Zone', sources: ['git'], sessions: [], instructions: 0 },
+]
+
+export async function mockWorkspacesRoute(page: Page, workspaces: object[] = mockWorkspaces) {
+  await page.route(workspacesPattern, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(workspaces),
+    })
+  })
 }
 
 export const mockBeadsError = {
@@ -290,7 +313,9 @@ export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: S
   await mockFileApiRoutes(page)
   await mockSystemStatusApiRoutes(page)
   // Every terminal asks which Beads projects exist, so that ids in its output
-  // are links to the right store.
+  // are links to the right store: the workspace list carries them, and the
+  // projects route answers only for manual paths.
+  await mockWorkspacesRoute(page)
   await mockBeadsProjectsRoute(page)
 
   await page.route(tmuxSessionsPattern, async route => {

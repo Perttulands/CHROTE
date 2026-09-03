@@ -82,7 +82,6 @@ func runBeadsPermissionSubprocess(t *testing.T, project string) bool {
 		"CHROTE_BEADS_PERMISSION_PROJECT="+project,
 		"CHROTE_ROOTS="+project,
 		"CHROTE_BEADS_WORKSPACES=",
-		"CHROTE_BEADS_AUTO_DISCOVER=0",
 	)
 	if os.Geteuid() == 0 {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534}}
@@ -97,7 +96,6 @@ func resetBeadsTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("CHROTE_ROOTS", "")
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
-	t.Setenv("CHROTE_BEADS_AUTO_DISCOVER", "")
 	t.Setenv("CHROTE_BD_COMMAND", "")
 }
 
@@ -133,7 +131,7 @@ func TestBeadsHandler_ListProjectsSkipsPartialBeadsDirectories(t *testing.T) {
 	// for the real store to answer that.
 	makeSequencedBdCommand(t, "[]")
 	handler := NewBeadsHandler()
-	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+validProject+"&path="+partialProject, nil)
 	rec := httptest.NewRecorder()
 	handler.ListProjects(rec, req)
 
@@ -147,6 +145,7 @@ func TestBeadsHandler_ListProjectsSkipsPartialBeadsDirectories(t *testing.T) {
 			Projects []struct {
 				Path string `json:"path"`
 			} `json:"projects"`
+			Warnings []string `json:"warnings"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
@@ -161,15 +160,20 @@ func TestBeadsHandler_ListProjectsSkipsPartialBeadsDirectories(t *testing.T) {
 	if response.Data.Projects[0].Path != validProject {
 		t.Fatalf("project path = %q, want %q", response.Data.Projects[0].Path, validProject)
 	}
+	if len(response.Data.Warnings) != 1 || !strings.Contains(response.Data.Warnings[0], partialProject) {
+		t.Fatalf("warnings = %v, want the partial workspace named", response.Data.Warnings)
+	}
 }
 
 // A configured workspace is listed even though it sits outside every allowed
-// root, and a workspace found under a root is listed as discovered. The source
-// is part of the answer, because the operator can remove one and not the other.
-func TestBeadsHandler_ListProjectsIncludesConfiguredAndAllowedRootWorkspaces(t *testing.T) {
+// root, and a manual one is listed as manual. The source is part of the
+// answer, because the operator can remove one and not the other.
+func TestBeadsHandler_ListProjectsListsConfiguredAndManualWorkspacesOnly(t *testing.T) {
 	rootDir := t.TempDir()
 	rootWorkspace := filepath.Join(rootDir, "home-project")
 	makeValidBeadsWorkspace(t, rootWorkspace)
+	manualWorkspace := filepath.Join(rootDir, "manual")
+	makeValidBeadsWorkspace(t, manualWorkspace)
 	serviceWorkspace := filepath.Join(t.TempDir(), "srv")
 	makeValidBeadsWorkspace(t, serviceWorkspace)
 
@@ -180,7 +184,7 @@ func TestBeadsHandler_ListProjectsIncludesConfiguredAndAllowedRootWorkspaces(t *
 	// for the real store to answer that.
 	makeSequencedBdCommand(t, "[]")
 	handler := NewBeadsHandler()
-	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+manualWorkspace, nil)
 	rec := httptest.NewRecorder()
 	handler.ListProjects(rec, req)
 
@@ -207,71 +211,12 @@ func TestBeadsHandler_ListProjectsIncludesConfiguredAndAllowedRootWorkspaces(t *
 	if projectsByPath[serviceWorkspace] != "configured" {
 		t.Fatalf("configured workspace source = %q, want configured", projectsByPath[serviceWorkspace])
 	}
-	if projectsByPath[rootWorkspace] != "auto" {
-		t.Fatalf("allowed root workspace source = %q, want auto", projectsByPath[rootWorkspace])
+	if projectsByPath[manualWorkspace] != "manual" {
+		t.Fatalf("manual workspace source = %q, want manual", projectsByPath[manualWorkspace])
 	}
+	// A store under a root is the workspace list's to find, not this route's.
 	if len(response.Data.Projects) != 2 {
-		t.Fatalf("projects = %#v, want exactly the configured and the discovered workspace", projectsByPath)
-	}
-}
-
-func TestBeadsHandler_ListProjectsCanDisableAutoDiscovery(t *testing.T) {
-	for _, flag := range []string{"0", "false"} {
-		flag := flag
-		t.Run(flag, func(t *testing.T) {
-			rootDir := t.TempDir()
-			autoWorkspace := filepath.Join(rootDir, "auto")
-			makeValidBeadsWorkspace(t, autoWorkspace)
-			manualWorkspace := filepath.Join(rootDir, "manual")
-			makeValidBeadsWorkspace(t, manualWorkspace)
-			configuredWorkspace := filepath.Join(t.TempDir(), "configured")
-			makeValidBeadsWorkspace(t, configuredWorkspace)
-
-			t.Setenv("CHROTE_ROOTS", rootDir)
-			t.Setenv("CHROTE_BEADS_WORKSPACES", configuredWorkspace)
-			t.Setenv("CHROTE_BEADS_AUTO_DISCOVER", flag)
-
-			// The projects route asks bd for each project's prefix; no test reaches
-			// for the real store to answer that.
-			makeSequencedBdCommand(t, "[]")
-			handler := NewBeadsHandler()
-			req := httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+manualWorkspace, nil)
-			rec := httptest.NewRecorder()
-			handler.ListProjects(rec, req)
-
-			if rec.Code != http.StatusOK {
-				t.Fatalf("ListProjects status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
-			}
-
-			var response struct {
-				Data struct {
-					Projects []struct {
-						Path   string `json:"path"`
-						Source string `json:"source"`
-					} `json:"projects"`
-				} `json:"data"`
-			}
-			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-				t.Fatalf("decode response: %v", err)
-			}
-
-			projectsByPath := map[string]string{}
-			for _, project := range response.Data.Projects {
-				projectsByPath[project.Path] = project.Source
-			}
-			if len(projectsByPath) != 2 {
-				t.Fatalf("projects = %#v, want only configured and manual workspaces", projectsByPath)
-			}
-			if projectsByPath[configuredWorkspace] != "configured" {
-				t.Fatalf("configured source = %q, want configured", projectsByPath[configuredWorkspace])
-			}
-			if projectsByPath[manualWorkspace] != "manual" {
-				t.Fatalf("manual source = %q, want manual", projectsByPath[manualWorkspace])
-			}
-			if _, ok := projectsByPath[autoWorkspace]; ok {
-				t.Fatalf("auto-discovered workspace %q was included with CHROTE_BEADS_AUTO_DISCOVER=%s", autoWorkspace, flag)
-			}
-		})
+		t.Fatalf("projects = %#v, want exactly the configured and the manual workspace", projectsByPath)
 	}
 }
 
@@ -510,7 +455,6 @@ func TestBeadsHandler_ListProjectsCarriesTheBeadPrefix(t *testing.T) {
 
 	t.Setenv("CHROTE_ROOTS", rootDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
-	t.Setenv("CHROTE_BEADS_AUTO_DISCOVER", "0")
 	makeSequencedBdCommand(t, `[{"_type":"issue","id":"test-4ab","title":"Any Bead","status":"open"}]`)
 
 	handler := NewBeadsHandler()

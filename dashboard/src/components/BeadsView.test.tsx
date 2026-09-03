@@ -42,8 +42,10 @@ beforeEach(() => {
   mockState.openSendToSession.mockReset()
   mockState.announce.mockReset()
   mockState.projects = [
-    { name: 'chrote', path: '/srv/chrote', beadsPath: '/srv/chrote/.beads', prefix: 'chrote' },
-    { name: 'srv', path: '/srv', beadsPath: '/srv/.beads', prefix: 'ctx' },
+    { name: 'chrote', path: '/srv/chrote', beadsPath: '/srv/chrote/.beads', prefix: 'chrote', openBeads: 3 },
+    { name: 'srv', path: '/srv', beadsPath: '/srv/.beads', prefix: 'ctx', openBeads: 1 },
+    { name: 'quiet', path: '/srv/quiet', beadsPath: '/srv/quiet/.beads', prefix: 'qt', openBeads: 0 },
+    { name: 'silent', path: '/srv/silent', beadsPath: '/srv/silent/.beads', prefix: 'sl', openBeads: 0 },
   ]
   mockState.work = new Map<string, unknown>([
     ['/srv/chrote', {
@@ -64,6 +66,8 @@ beforeEach(() => {
       ],
     }],
     ['/srv', { prefix: 'ctx', projectPath: '/srv', beads: [bead({ id: 'ctx-t4ak', type: 'task', updated: OLD })] }],
+    ['/srv/quiet', { prefix: 'qt', projectPath: '/srv/quiet', beads: [] }],
+    ['/srv/silent', { prefix: 'sl', projectPath: '/srv/silent', beads: [] }],
   ])
 })
 
@@ -85,10 +89,26 @@ describe('the Beads tab', () => {
     expect(screen.getByText('Title of ctx-t4ak')).toBeInTheDocument()
   })
 
-  it('says what it loaded on the status line', async () => {
+  it('says what it loaded on the status line, and asks nothing of a quiet store', async () => {
     render(<BeadsView />)
     await waitFor(() => expect(mockState.announce).toHaveBeenCalled())
     expect(mockState.announce.mock.calls[0][0]).toBe('Beads loaded · chrote 3 open · ctx 1 open')
+  })
+
+  it('folds the stores with nothing open under one row that expands in place', async () => {
+    render(<BeadsView />)
+    await screen.findByText('Title of ctx-t4ak')
+
+    const rail = screen.getByRole('navigation', { name: 'Beads projects' })
+    const rows = () => [...rail.querySelectorAll('.beads-rail-item')].map(row => row.textContent)
+    expect(rows()).toEqual(['All', 'chrote', 'ctx', 'More (2 quiet)'])
+
+    fireEvent.click(screen.getByRole('button', { name: 'More (2 quiet)' }))
+    expect(rows()).toEqual(['All', 'chrote', 'ctx', 'Fewer', 'qt', 'sl'])
+
+    fireEvent.click(screen.getByRole('button', { name: 'qt' }))
+    await waitFor(() => expect(screen.queryByText('Title of ctx-t4ak')).toBeNull())
+    expect(screen.getByRole('button', { name: 'qt' })).toHaveClass('active')
   })
 
   it('narrows every view by id and title', async () => {

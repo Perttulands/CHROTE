@@ -206,7 +206,6 @@ CHROTE_TMUX_SOCKET="$(id -un)=$artifact_root/tmux/default" \
 CHROTE_WORKDIR="$workspace" \
 CHROTE_ROOTS="$workspace" \
 CHROTE_BEADS_WORKSPACES="$workspace" \
-CHROTE_BEADS_AUTO_DISCOVER=false \
 CHROTE_SCHEDULED_TASKS_DIR="$artifact_root/scheduled-tasks" \
 CHROTE_SESSION_DROPS_DIR="$artifact_root/session-drops" \
 CHROTE_LAUNCH_CONFIG="$launch_config" \

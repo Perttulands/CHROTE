@@ -25,13 +25,13 @@ import { useTheme } from '../../theme/ThemeContext'
 import {
   AGENT_HARNESSES,
   fetchAgentContext,
-  fetchAgentWorkspaces,
+  fetchAgentTender,
   shortWorkspacePath,
   type AgentContext,
   type AgentHarness,
   type AgentTender,
-  type AgentWorkspace,
 } from '../../agents/agentContextApi'
+import { fetchWorkspaces, isRunning, type Workspace } from '../../workspaces/workspacesApi'
 import './AgentsView.css'
 
 /** How many proposals the right column shows. */
@@ -56,7 +56,7 @@ export default function AgentsView() {
   const { announce } = useStatus()
   const theme = useTheme()
   const [harness, setHarness] = useState<AgentHarness>('claude-code')
-  const [workspaces, setWorkspaces] = useState<AgentWorkspace[]>([])
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [tender, setTender] = useState<AgentTender>({ session: '', beads: '', folder: '' })
   const [folder, setFolder] = useState<string>('')
   const [context, setContext] = useState<AgentContext | null>(null)
@@ -66,21 +66,30 @@ export default function AgentsView() {
 
   const user = resolveLaunchUser(settings, 'terminal1', terminalUsers)
 
+  // The list is the host's, not the user's: the most recently active folder
+  // comes first, and that is the one the tab opens on.
   useEffect(() => {
     let current = true
-    fetchAgentWorkspaces(user)
+    fetchWorkspaces()
       .then(found => {
         if (!current) return
-        setWorkspaces(found.workspaces)
-        setTender(found.tender)
-        setFolder(previous => previous || found.workspaces[0]?.path || '')
+        setWorkspaces(found)
+        setFolder(previous => previous || found[0]?.path || '')
       })
       .catch((cause: unknown) => {
         if (!current) return
         setError(cause instanceof Error ? cause.message : 'Could not list the workspaces')
       })
     return () => { current = false }
-  }, [user])
+  }, [])
+
+  useEffect(() => {
+    let current = true
+    fetchAgentTender()
+      .then(found => { if (current) setTender(found) })
+      .catch(() => { /* an unconfigured tender is what the empty fields already say */ })
+    return () => { current = false }
+  }, [])
 
   useEffect(() => {
     if (!folder) return
@@ -130,6 +139,23 @@ export default function AgentsView() {
     [harness],
   )
 
+  const running = useMemo(() => workspaces.filter(isRunning), [workspaces])
+  const projects = useMemo(() => workspaces.filter(workspace => !isRunning(workspace)), [workspaces])
+
+  const workspaceRow = (workspace: Workspace) => (
+    <button
+      type="button"
+      key={workspace.path}
+      className={`agents-rail-row ${workspace.path === folder ? 'active' : ''}`}
+      aria-pressed={workspace.path === folder}
+      title={workspace.sessions.length > 0 ? `${workspace.path} — ${workspace.sessions.join(', ')}` : workspace.path}
+      onClick={() => setFolder(workspace.path)}
+    >
+      <span className="agents-workspace-path">{shortWorkspacePath(workspace.path)}</span>
+      <span className="agents-count">{workspace.instructions}</span>
+    </button>
+  )
+
   return (
     <div className="agents-view">
       <div className="agents-columns">
@@ -158,21 +184,11 @@ export default function AgentsView() {
             ))}
           </div>
           <div className="agents-group agents-workspaces">
-            <h3>Workspaces</h3>
-            {workspaces.length === 0 && <span className="agent-note">No workspace holds instructions.</span>}
-            {workspaces.map(workspace => (
-              <button
-                type="button"
-                key={workspace.path}
-                className={`agents-rail-row ${workspace.path === folder ? 'active' : ''}`}
-                aria-pressed={workspace.path === folder}
-                title={workspace.path}
-                onClick={() => setFolder(workspace.path)}
-              >
-                <span className="agents-workspace-path">{shortWorkspacePath(workspace.path)}</span>
-                <span className="agents-count">{workspace.instructions}</span>
-              </button>
-            ))}
+            {running.length > 0 && <h3>Running</h3>}
+            {running.map(workspaceRow)}
+            <h3>Projects</h3>
+            {workspaces.length === 0 && <span className="agent-note">No workspace found under the roots.</span>}
+            {projects.map(workspaceRow)}
           </div>
         </aside>
 

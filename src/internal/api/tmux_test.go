@@ -125,7 +125,7 @@ func TestTmuxHandler_RefusesMalformedRequestsBeforeReachingTmux(t *testing.T) {
 func TestTmuxHandler_ListSessionsFiltersReservedProbeSessions(t *testing.T) {
 	installScriptedTmux(t, `
 case "$*" in
-  *list-sessions*) printf '$1\tchrote-probe-123\t1\t0\t/workspaces/alice\tbash\t1\t120\t40\tlatest\t1\t\n$2\twork\t1\t0\t/workspaces/alice\tbash\t1\t120\t40\tlatest\t1\t\n' ;;
+  *list-sessions*) printf '$1\tchrote-probe-123\t1\t0\t/workspaces/alice\tbash\t1\t120\t40\tlatest\t1\t\t1756900000\n$2\twork\t1\t0\t/workspaces/alice\tbash\t1\t120\t40\tlatest\t1\t\t1756900000\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
@@ -149,7 +149,7 @@ esac
 func TestTmuxHandler_ListSessionsReportsLiveActivePaneCWDAndCommand(t *testing.T) {
 	installScriptedTmux(t, `
 case "$*" in
-  *pane_current_path*) printf '$9\twork\t1\t0\t/workspaces/alice/live\tcodex\t1\t120\t40\tlatest\t1\t\n$10\tno-cwd\t1\t0\t\tbash\t1\t120\t40\tlatest\t1\t\n' ;;
+  *pane_current_path*) printf '$9\twork\t1\t0\t/workspaces/alice/live\tcodex\t1\t120\t40\tlatest\t1\t\t1756900000\n$10\tno-cwd\t1\t0\t\tbash\t1\t120\t40\tlatest\t1\t\t1756900000\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
@@ -307,9 +307,9 @@ func TestTmuxHandler_ListSessionsAggregatesConfiguredTerminalUsers(t *testing.T)
 	fakeTmux := filepath.Join(tmpDir, "tmux")
 	script := `#!/bin/sh
 case "$*" in
-  *"/tmp/tmux-p"*) printf '$1\talice-shell\t1\t0\t/home/operator\tbash\t1\t120\t40\tlatest\t1\t\n' ;;
-  *"/tmp/tmux-t"*) printf '$2\tbuild-shell\t2\t1\t/home/secondary\tbash\t1\t120\t40\tlatest\t1\t\n' ;;
-  *) printf '$3\tunexpected\t1\t0\t/tmp\tbash\t1\t120\t40\tlatest\t1\t\n' ;;
+  *"/tmp/tmux-p"*) printf '$1\talice-shell\t1\t0\t/home/operator\tbash\t1\t120\t40\tlatest\t1\t\t1756900000\n' ;;
+  *"/tmp/tmux-t"*) printf '$2\tbuild-shell\t2\t1\t/home/secondary\tbash\t1\t120\t40\tlatest\t1\t\t1756900000\n' ;;
+  *) printf '$3\tunexpected\t1\t0\t/tmp\tbash\t1\t120\t40\tlatest\t1\t\t1756900000\n' ;;
 esac
 `
 	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {

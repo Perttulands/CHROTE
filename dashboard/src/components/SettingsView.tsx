@@ -4,7 +4,7 @@ import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
 import type { WorkspaceId, LaunchUser } from '../types'
 import { MAX_TERMINAL_TAB_COUNT, MIN_TERMINAL_TAB_COUNT, defaultSessionPrefixForUser, getSessionPrefixForUser, getTerminalLabel, normalizeTerminalUsers, resolveLaunchUser } from '../types'
-import FolderPickerModal from './FolderPickerModal'
+import FolderField from './FolderField'
 import { useConfirmInPlace } from './confirmInPlace'
 import { toDisplayPath } from './FilesView/types'
 
@@ -20,7 +20,6 @@ const PROTECTED_SESSIONS = new Set(['chrote-chat'])
 function SettingsView() {
   const { settings, updateSettings, terminalUsers, sessions, refreshSessions, workspaceIds } = useSession()
   const { announce } = useStatus()
-  const [showFolderPicker, setShowFolderPicker] = useState(false)
   const [projectPathInput, setProjectPathInput] = useState('')
   const [nuking, setNuking] = useState(false)
   const configuredUsers = normalizeTerminalUsers(terminalUsers.length > 0
@@ -32,10 +31,7 @@ function SettingsView() {
 
   const handleAddProjectPath = (path: string) => {
     const normalizedPath = normalizeProjectPath(path)
-    if (!normalizedPath) {
-      setShowFolderPicker(false)
-      return
-    }
+    if (!normalizedPath) return
 
     const currentPaths = settings.beadsProjectPaths || []
     const exists = currentPaths.some(existing => normalizeProjectPath(existing) === normalizedPath)
@@ -43,7 +39,6 @@ function SettingsView() {
       updateSettings({ beadsProjectPaths: [...currentPaths, normalizedPath] })
     }
     setProjectPathInput('')
-    setShowFolderPicker(false)
   }
 
   const handleProjectPathSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -331,13 +326,13 @@ function SettingsView() {
         <form className="beads-project-add-form" onSubmit={handleProjectPathSubmit}>
           <label className="settings-label" htmlFor="beads-project-path-input">Project path</label>
           <div className="beads-project-add-row">
-            <input
+            <FolderField
               id="beads-project-path-input"
-              aria-label="Beads project path"
-              type="text"
-              className="settings-input"
+              ariaLabel="Beads project path"
+              inputClassName="settings-input"
               value={projectPathInput}
-              onChange={(event) => setProjectPathInput(event.target.value)}
+              onChange={setProjectPathInput}
+              onSubmit={handleAddProjectPath}
               placeholder="/workspace/project"
             />
             <button
@@ -347,15 +342,10 @@ function SettingsView() {
             >
               Add Path
             </button>
-            <button
-              type="button"
-              className="settings-btn settings-btn-add"
-              onClick={() => setShowFolderPicker(true)}
-            >
-              Browse...
-            </button>
           </div>
-          <p className="settings-hint">Enter an absolute path to a modern Beads project containing .beads, or browse for one.</p>
+          <p className="settings-hint">
+            An absolute path to a modern Beads project containing .beads. A fragment finds a workspace; Tab completes a folder.
+          </p>
         </form>
       </section>
 
@@ -363,14 +353,6 @@ function SettingsView() {
       <section className="settings-section settings-info">
         <p>Settings are automatically saved to your browser's local storage.</p>
       </section>
-
-      {/* Folder Picker Modal */}
-      {showFolderPicker && (
-        <FolderPickerModal
-          onSelect={handleAddProjectPath}
-          onClose={() => setShowFolderPicker(false)}
-        />
-      )}
 
     </div>
   )

@@ -19,9 +19,10 @@ vi.mock('../context/StatusContext', () => ({
   useStatus: () => ({ announce }),
 }))
 
-vi.mock('./FolderPickerModal', () => ({
-  default: () => <div data-testid="folder-picker" />,
-}))
+vi.mock('../workspaces/workspacesApi', async () => {
+  const actual = await vi.importActual<typeof import('../workspaces/workspacesApi')>('../workspaces/workspacesApi')
+  return { ...actual, fetchWorkspaces: () => Promise.resolve([]) }
+})
 
 const settings = {
   ...DEFAULT_SETTINGS,
@@ -229,7 +230,7 @@ describe('SettingsView Beads project paths', () => {
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
   })
 
-  it('adds a typed Beads project path without needing the folder picker', () => {
+  it('adds a typed Beads project path', () => {
     const updateSettings = vi.fn()
     mockUseSession.mockReturnValue(sessionReturn(updateSettings, {
       settings: {

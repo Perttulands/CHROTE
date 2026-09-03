@@ -532,50 +532,19 @@ func TestAgentFileRoute_ServesOnlyWhatTheStackLists(t *testing.T) {
 
 // The tab's left column: the home, the configured Beads projects, and the
 // folders near the top of a root that carry instructions of their own.
-func TestAgentWorkspacesRoute_ListsTheFoldersWorthAskingAbout(t *testing.T) {
+func TestAgentTenderRoute_SaysWhatTheHostConfigured(t *testing.T) {
 	host := newAgentTestHost(t)
-	project := filepath.Join(host.root, "project")
-	nested := filepath.Join(host.root, "group", "nested")
-	tooDeep := filepath.Join(host.root, "group", "deeper", "still", "here")
-	writeFile(t, filepath.Join(host.home, "CLAUDE.md"), "# home\n")
-	writeFile(t, filepath.Join(host.home, "AGENTS.md"), "# home\n")
-	writeFile(t, filepath.Join(project, "CLAUDE.md"), "# project\n")
-	writeFile(t, filepath.Join(project, ".claude", "settings.json"), "{}\n")
-	writeFile(t, filepath.Join(nested, "AGENTS.md"), "# nested\n")
-	writeFile(t, filepath.Join(tooDeep, "AGENTS.md"), "# too deep\n")
-	writeFile(t, filepath.Join(host.root, "plain", "readme.md"), "no instructions\n")
-
 	host.handler.tender = AgentTender{Session: "tender", Beads: "/beads", Folder: "/tender"}
 
-	recorder := host.get(t, "/api/agent/workspaces")
+	recorder := host.get(t, "/api/agent/tender")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
 	}
-	var response AgentWorkspacesResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+	var tender AgentTender
+	if err := json.Unmarshal(recorder.Body.Bytes(), &tender); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-
-	found := map[string]AgentWorkspace{}
-	for _, workspace := range response.Workspaces {
-		found[workspace.Path] = workspace
-	}
-	if _, ok := found[host.home]; !ok {
-		t.Fatalf("workspaces = %+v, want the home", response.Workspaces)
-	}
-	if got := found[project].Instructions; got != 2 {
-		t.Fatalf("%s instruction count = %d, want 2", project, got)
-	}
-	if _, ok := found[nested]; !ok {
-		t.Fatalf("workspaces = %+v, want the folder two levels down", response.Workspaces)
-	}
-	if _, ok := found[tooDeep]; ok {
-		t.Fatalf("workspaces = %+v, want nothing past two levels", response.Workspaces)
-	}
-	if _, ok := found[filepath.Join(host.root, "plain")]; ok {
-		t.Fatalf("workspaces = %+v, want no folder without instructions", response.Workspaces)
-	}
-	if response.Tender.Session != "tender" || response.Tender.Folder != "/tender" {
-		t.Fatalf("tender = %+v, want what the host configured", response.Tender)
+	if tender.Session != "tender" || tender.Beads != "/beads" || tender.Folder != "/tender" {
+		t.Fatalf("tender = %+v, want what the host configured", tender)
 	}
 }

@@ -37,33 +37,38 @@ func TestParseSessionsOutputReportsFactsThatContradictAppearances(t *testing.T) 
 		wantMouse   bool
 		wantForeign string
 		wantViewers int
+		// The workspace list orders folders by this; an inventory that stops
+		// reporting it would silently put every folder in path order.
+		wantActivity string
 	}{
 		{
-			name:        "a pinned window, the mouse off, and a viewer CHROTE did not create",
-			line:        inventoryLine("$1", "pinned", "1", "1", "/home/operator", "bash", "3", "100", "30", "manual", "0", "/dev/pts/9,/dev/pts/12"),
-			owned:       map[string]bool{"/dev/pts/9": true},
-			wantPinned:  true,
-			wantWidth:   100,
-			wantHeight:  30,
-			wantPanes:   3,
-			wantMouse:   false,
-			wantForeign: "/dev/pts/12",
-			wantViewers: 2,
+			name:         "a pinned window, the mouse off, and a viewer CHROTE did not create",
+			line:         inventoryLine("$1", "pinned", "1", "1", "/home/operator", "bash", "3", "100", "30", "manual", "0", "/dev/pts/9,/dev/pts/12", "1756900000"),
+			owned:        map[string]bool{"/dev/pts/9": true},
+			wantPinned:   true,
+			wantWidth:    100,
+			wantHeight:   30,
+			wantPanes:    3,
+			wantMouse:    false,
+			wantForeign:  "/dev/pts/12",
+			wantViewers:  2,
+			wantActivity: "2025-09-03T11:46:40Z",
 		},
 		{
-			name:        "an ordinary session raises no claim at all",
-			line:        inventoryLine("$1", "ordinary", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", "/dev/pts/9"),
-			owned:       map[string]bool{"/dev/pts/9": true},
-			wantWidth:   120,
-			wantHeight:  40,
-			wantPanes:   1,
-			wantMouse:   true,
-			wantViewers: 1,
+			name:         "an ordinary session raises no claim at all",
+			line:         inventoryLine("$1", "ordinary", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", "/dev/pts/9", "1756900000"),
+			owned:        map[string]bool{"/dev/pts/9": true},
+			wantWidth:    120,
+			wantHeight:   40,
+			wantPanes:    1,
+			wantMouse:    true,
+			wantViewers:  1,
+			wantActivity: "2025-09-03T11:46:40Z",
 		},
 		{
 			// A control-mode client has no tty, so nothing can be said about it.
 			name:       "nobody reports a tty, so nobody is watching and nobody is foreign",
-			line:       inventoryLine("$1", "sizing", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", ""),
+			line:       inventoryLine("$1", "sizing", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", "", ""),
 			owned:      map[string]bool{},
 			wantWidth:  120,
 			wantHeight: 40,
@@ -94,6 +99,9 @@ func TestParseSessionsOutputReportsFactsThatContradictAppearances(t *testing.T) 
 			}
 			if session.Viewers != testCase.wantViewers {
 				t.Fatalf("Viewers = %d, want %d attached clients counted", session.Viewers, testCase.wantViewers)
+			}
+			if session.Activity != testCase.wantActivity {
+				t.Fatalf("Activity = %q, want %q", session.Activity, testCase.wantActivity)
 			}
 		})
 	}
