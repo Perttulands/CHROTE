@@ -54,7 +54,7 @@ of them is the wall of buttons the doctrine exists to prevent.
 
 ## The colour rule
 
-The interface is monochrome except where colour carries meaning. Four uses live:
+The interface is monochrome except where colour carries meaning. Five uses live:
 
 | Use | Token | What the colour means |
 | --- | --- | --- |
@@ -62,6 +62,7 @@ The interface is monochrome except where colour carries meaning. Four uses live:
 | Focus and the primary action | `--accent` | Where input goes; the one button that acts |
 | The Claude Code mark | `#D97757` | The product's own mark, kept recognisable |
 | Unix-user identity | `--identity-0` … | Which account owns this session |
+| Diffs | `--ansi-2`, `--color-error` | An addition, a removal; always beside a +/- gutter |
 
 Everything else is gone: per-window accent colours, hashed per-user hues, the
 tmux status bar hue, theme-button glows, and per-severity notification colours.
