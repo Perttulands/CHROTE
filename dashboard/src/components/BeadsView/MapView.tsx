@@ -17,10 +17,14 @@ interface MapViewProps {
   expandAll: boolean
 }
 
-/** The columns a row draws in, so what explains a row lines up under it. */
+/**
+ * The columns a row draws in, so what explains a row lines up under it: the
+ * row's 12px inset, the 36px fold slot, the 14px glyph, then the type and the
+ * id at their fixed widths, with the row's 8px gaps between.
+ */
 const ROW_INDENT = 22
-const TYPE_COLUMN = 34
-const TITLE_COLUMN = 290
+const TYPE_COLUMN = 78
+const TITLE_COLUMN = 334
 
 function BlockedBy({ ids, depth, projectPath }: { ids: string[]; depth: number; projectPath: string }) {
   return (
