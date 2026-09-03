@@ -50,6 +50,15 @@
   text-align: center;
 }
 
+/* The bare leader key, which only works inside this window: second and quiet. */
+.leader-strip-leader-key {
+  flex: none;
+  min-width: 1ch;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
 .leader-strip-label {
   color: var(--text-secondary);
 }

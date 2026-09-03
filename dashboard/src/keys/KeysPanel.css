@@ -108,10 +108,19 @@
 /* One width for every key, so the labels read as a column. */
 .keys-panel-key {
   flex: none;
-  width: 8ch;
+  width: 12ch;
   padding: 0 4px;
   border: 1px solid var(--divider);
   color: var(--text-primary);
+  text-align: center;
+}
+
+/* The bare leader key: a second column, quieter than the Alt chord it repeats. */
+.keys-panel-leader-key {
+  flex: none;
+  width: 5ch;
+  font-size: 11px;
+  color: var(--text-dim);
   text-align: center;
 }
 

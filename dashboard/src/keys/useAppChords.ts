@@ -1,8 +1,9 @@
 /**
  * The dashboard's own chords, registered against the actions that exist today.
  *
- * Registration happens once: every `run` reads the current actions through a
- * ref, so a re-render never churns the registry and the strip never flickers.
+ * Registration happens once, and once more whenever the number of terminal
+ * tabs changes: every `run` reads the current actions through a ref, so a
+ * re-render never churns the registry and the strip never flickers.
  * Two chords reach a control this hook cannot hold — the workspace Files panel
  * and the Sessions panel's launcher both live inside a dock — so they are run
  * by clicking the dock's own button, the way `/` has always reached the session
@@ -39,6 +40,7 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
   stateRef.current = state
 
   const { workspaceIds, focusedWindowKey, settings } = session
+  const tabCount = workspaceIds.length
   const activeWorkspaceId = isTerminalWorkspaceId(surfaces.activeTab, workspaceIds) ? surfaces.activeTab : null
 
   useEffect(() => {
@@ -78,21 +80,18 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
       return windows.find(window => `${workspaceId}-${window.id}` === key) ?? null
     }
 
-    const focusWindow = (index: number) => {
+    // One chord in each direction beats a chord per window: the operator holds
+    // Alt and steps, and the layout can grow past the digits he can reach.
+    const cycleWindow = (delta: number) => {
       const { workspaceId, windows } = visibleWindows()
-      const target = windows[index]
-      if (!workspaceId || !target) return
-      stateRef.current.session.setFocusedWindowKey(`${workspaceId}-${target.id}`)
-    }
-
-    const stepTab = (delta: number) => {
-      const { surfaces: now, session: live } = stateRef.current
-      const workspaceId = workspaceNow()
-      if (!workspaceId) return
-      const index = live.workspaceIds.indexOf(workspaceId)
-      if (index < 0) return
-      const length = live.workspaceIds.length
-      now.onTabChange(live.workspaceIds[(index + delta + length) % length])
+      if (!workspaceId || windows.length === 0) return
+      const current = windows.findIndex(
+        window => `${workspaceId}-${window.id}` === stateRef.current.session.focusedWindowKey,
+      )
+      const next = current < 0
+        ? (delta > 0 ? 0 : windows.length - 1)
+        : (current + delta + windows.length) % windows.length
+      stateRef.current.session.setFocusedWindowKey(`${workspaceId}-${windows[next].id}`)
     }
 
     const addWindow = () => {
@@ -135,32 +134,34 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
     const focusedSession = () => focusedWindow()?.activeSession ?? null
 
     const chords: Chord[] = [
-      { id: 'keys.beads', key: 'b', label: 'Beads tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('beads') },
-      { id: 'keys.panel', key: '?', label: 'Keys panel', scope: 'global', run: () => stateRef.current.surfaces.onOpenKeysPanel() },
+      // Alt+L opens the Library tab in the keyboard map, and is deliberately
+      // not registered here: the Library does not exist yet. A chord with
+      // nothing behind it would list in the strip and do nothing.
+      { id: 'keys.beads', key: 'b', direct: { alt: true, shift: false, key: 'b' }, label: 'Beads tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('beads') },
+      // Alt+K opens the panel; the bare leader key `k` turns keys off. The
+      // panel is what the operator reaches for, so it gets the direct chord.
+      { id: 'keys.panel', key: '?', direct: { alt: true, shift: false, key: 'k' }, label: 'Keys panel', scope: 'global', run: () => stateRef.current.surfaces.onOpenKeysPanel() },
       { id: 'keys.off', key: 'k', label: 'Keys off', scope: 'global', run: () => stateRef.current.session.updateSettings({ keysEnabled: false }) },
       // The window is already shut by the time a chord runs, which is the whole
       // action; listing it is how the strip says so.
       { id: 'keys.cancel', key: 'Escape', label: 'Cancel', scope: 'global', run: () => {} },
 
-      ...[1, 2, 3, 4].map((n): Chord => ({
-        id: `keys.window${n}`,
-        key: String(n),
-        label: `Focus window ${n}`,
-        scope: 'workspace',
-        run: () => focusWindow(n - 1),
-      })),
-      { id: 'keys.prevTab', key: '[', label: 'Previous terminal tab', scope: 'workspace', run: () => stepTab(-1) },
-      { id: 'keys.nextTab', key: ']', label: 'Next terminal tab', scope: 'workspace', run: () => stepTab(1) },
-      { id: 'keys.addWindow', key: '=', label: 'Add a window', scope: 'workspace', run: addWindow },
-      { id: 'keys.removeWindow', key: '-', label: 'Remove the last empty window', scope: 'workspace', run: removeWindow },
+      { id: 'keys.nextWindow', key: 'w', direct: { alt: true, shift: false, key: 'w' }, label: 'Next window', scope: 'workspace', run: () => cycleWindow(1) },
+      { id: 'keys.prevWindow', key: 'W', direct: { alt: true, shift: true, key: 'w' }, label: 'Previous window', scope: 'workspace', run: () => cycleWindow(-1) },
+      // Plus and Minus are read from the character, not from Shift: a Finnish
+      // layout types `+` unshifted where a US one types `=` with Shift, and
+      // both spellings mean the same key to the operator.
+      { id: 'keys.addWindow', key: '=', direct: { alt: true, key: '+', layoutKeys: ['='] }, label: 'Add a window', scope: 'workspace', run: addWindow },
+      { id: 'keys.removeWindow', key: '-', direct: { alt: true, key: '-' }, label: 'Remove the last empty window', scope: 'workspace', run: removeWindow },
       { id: 'keys.search', key: '/', label: 'Session search', scope: 'workspace', run: () => { focusSessionSearch() } },
-      { id: 'keys.launcher', key: 'n', label: 'Launcher', scope: 'workspace', run: openLauncher },
-      { id: 'keys.sessions', key: 'Tab', label: 'Sessions panel', scope: 'workspace', run: () => stateRef.current.surfaces.onToggleSessionsPanel() },
-      { id: 'keys.files', key: 'f', label: 'Files panel', scope: 'workspace', run: () => clickInActiveDock('button[aria-label="Files sidecar"]') },
+      { id: 'keys.launcher', key: 'n', direct: { alt: true, shift: false, key: 'n' }, label: 'Launcher', scope: 'workspace', run: openLauncher },
+      { id: 'keys.sessions', key: 'Tab', direct: { alt: true, shift: false, key: 'a' }, label: 'Sessions panel', scope: 'workspace', run: () => stateRef.current.surfaces.onToggleSessionsPanel() },
+      { id: 'keys.files', key: 'f', direct: { alt: true, shift: false, key: 'o' }, label: 'Files panel', scope: 'workspace', run: () => clickInActiveDock('button[aria-label="Files sidecar"]') },
 
       {
         id: 'keys.peek',
         key: 'p',
+        direct: { alt: true, shift: false, key: 'p' },
         label: 'Peek this session',
         scope: 'tile',
         run: () => {
@@ -171,6 +172,7 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
       {
         id: 'keys.send',
         key: 's',
+        direct: { alt: true, shift: false, key: 's' },
         label: 'Send to this session',
         scope: 'tile',
         run: () => {
@@ -182,4 +184,22 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
 
     return registerChords(chords)
   }, [])
+
+  // The terminal tabs are their own registration because there are as many
+  // chords as there are tabs: registering Alt+4 while three tabs exist would
+  // put a dead entry in the strip.
+  useEffect(() => {
+    const chords: Chord[] = Array.from({ length: tabCount }, (_, index): Chord => ({
+      id: `keys.tab${index + 1}`,
+      key: String(index + 1),
+      direct: { alt: true, shift: false, key: String(index + 1) },
+      label: `Terminal tab ${index + 1}`,
+      scope: 'global',
+      run: () => {
+        const target = stateRef.current.session.workspaceIds[index]
+        if (target) stateRef.current.surfaces.onTabChange(target)
+      },
+    }))
+    return registerChords(chords)
+  }, [tabCount])
 }
