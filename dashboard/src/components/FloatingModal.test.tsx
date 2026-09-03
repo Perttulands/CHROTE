@@ -54,7 +54,7 @@ describe('FloatingModal Send to Session action', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
-    expect(mockState.openSendToSession).toHaveBeenCalledWith('alice:alice-shell')
+    expect(mockState.openSendToSession).toHaveBeenCalledWith({ targetSessionKey: 'alice:alice-shell' })
     expect(mockState.closeFloatingModal).not.toHaveBeenCalled()
   })
 

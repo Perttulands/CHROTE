@@ -282,7 +282,7 @@ describe('SessionItem user badge and context actions', () => {
     fireEvent.contextMenu(row)
     fireEvent.click(screen.getByRole('menuitem', { name: /Send to session/i }))
     expect(mockState.openSendToSession).toHaveBeenCalledTimes(1)
-    expect(mockState.openSendToSession).toHaveBeenLastCalledWith('alice:alice-shell')
+    expect(mockState.openSendToSession).toHaveBeenLastCalledWith({ targetSessionKey: 'alice:alice-shell' })
   })
 
   it('calls removeSessionFromWindow when Unassign is chosen from the context menu', () => {

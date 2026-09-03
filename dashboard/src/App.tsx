@@ -6,7 +6,7 @@ import { StatusProvider } from './context/StatusContext'
 import TabBar, { Tab } from './components/TabBar'
 import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
 import FloatingModal from './components/FloatingModal'
-import SendToSessionModal from './components/SendToSessionModal'
+import SendDrawer from './components/SendDrawer'
 import ErrorBoundary from './components/ErrorBoundary'
 import Skeleton from './components/LoadingSkeleton'
 import StatusLine from './components/StatusLine'
@@ -183,7 +183,7 @@ function DashboardContent() {
     return null
   }, [focusedWindowKey, workspaces])
   const handleSendFilePath = useCallback((path: string) => {
-    if (filesSendTarget) openSendToSession(filesSendTarget, path)
+    if (filesSendTarget) openSendToSession({ targetSessionKey: filesSendTarget, reference: `path ${path}` })
   }, [filesSendTarget, openSendToSession])
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
@@ -422,14 +422,15 @@ function DashboardContent() {
               </Suspense>
             </ErrorBoundary>
           )}
-          {/* Peek docks inside the workspace, so the status line stays whole. */}
+          {/* Peek and the Send drawer dock inside the workspace, so the status
+              line stays whole beneath both of them. */}
           <FloatingModal />
+          <SendDrawer />
           <KeyEcho />
         </div>
 
         <StatusLine />
 
-        <SendToSessionModal />
         <KeysPanel isOpen={keysPanelOpen} onClose={handleCloseKeys} />
       </div>
 

@@ -38,6 +38,8 @@ export interface TerminalSession {
   /** Resize the grid to the container. A no-op while detached or hidden. */
   fit(): void
   focus(): void
+  /** Put the viewport at the newest output, where an answer arrives. */
+  scrollToBottom(): void
   setFontSize(fontSize: number): void
   setScrollbarHidden(hidden: boolean): void
   /** Drop the connection and open a new one, without reloading anything. */
@@ -235,6 +237,9 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
     fit,
     focus() {
       terminal.focus()
+    },
+    scrollToBottom() {
+      terminal.scrollToBottom()
     },
     setFontSize(fontSize) {
       if (terminal.options.fontSize === fontSize) return

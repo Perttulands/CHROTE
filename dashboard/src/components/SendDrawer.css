@@ -1,0 +1,282 @@
+/* The Send drawer: a column of the workspace, not a window over it. */
+
+/* The room the docked drawer takes out of the terminal grid. It is a flex
+   sibling of the docks, so the tiles reflow into what is left and the target
+   tile stays whole rather than being covered by the surface addressing it. */
+.send-drawer-gutter {
+  flex: 0 0 380px;
+  min-width: 0;
+}
+
+.send-drawer-title {
+  flex: 1;
+  color: var(--text-secondary);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.send-drawer-close {
+  flex: none;
+  padding: 0 2px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.send-drawer-close:hover {
+  color: var(--text-primary);
+}
+
+.send-drawer-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+/* The section headings: the operator's own words for the two things he is
+   choosing, said once and quietly. */
+.send-drawer-section {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.send-drawer-search,
+.send-drawer-pane {
+  flex: none;
+  width: 100%;
+  padding: 6px 10px;
+  background-color: var(--background);
+  border: 1px solid var(--divider);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.send-drawer-search::placeholder {
+  color: var(--text-dim);
+}
+
+.send-drawer-search:focus,
+.send-drawer-pane:focus,
+.send-drawer-note:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.send-drawer-targets {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.send-drawer-target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* A target row is the menu's row: words, a hairline frame, and one highlight
+   for the row in hand — the surface it takes and the accent bar at its left. */
+.send-drawer-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--divider);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+
+.send-drawer-target:hover,
+.send-drawer-target:focus-visible {
+  background-color: var(--surface-secondary);
+  box-shadow: inset 2px 0 0 var(--accent);
+  outline: none;
+}
+
+.send-drawer-target.selected {
+  background-color: var(--surface-secondary);
+  border-color: var(--text-secondary);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.send-drawer-target-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.send-drawer-target-note {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.send-drawer-launcher {
+  flex: none;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.send-drawer-status {
+  flex: none;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.send-drawer-status.error {
+  color: var(--color-error);
+}
+
+/* The message is one field with two parts: the reference the surface named,
+   above the hairline and not editable, and the operator's note under it. */
+.send-drawer-message {
+  flex: 1;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--background);
+  border: 1px solid var(--divider);
+}
+
+.send-drawer-message:focus-within {
+  border-color: var(--accent);
+}
+
+.send-drawer-reference {
+  flex: none;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--divider);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.send-drawer-note {
+  flex: 1;
+  min-height: 96px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+}
+
+.send-drawer-files {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.send-drawer-files li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.send-drawer-files em {
+  color: var(--text-dim);
+  font-style: normal;
+}
+
+.send-drawer-files button {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.send-drawer-attach {
+  flex: none;
+  align-self: flex-start;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.send-drawer-attach:hover {
+  color: var(--text-secondary);
+}
+
+.send-drawer-file-input {
+  display: none;
+}
+
+.send-drawer-actions {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.send-drawer-secondary,
+.send-drawer-primary {
+  padding: 4px 12px;
+  background: transparent;
+  border: 1px solid var(--divider);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.send-drawer-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.send-drawer-secondary:disabled,
+.send-drawer-primary:disabled {
+  border-color: var(--divider);
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.send-drawer-hint {
+  flex: none;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: right;
+}

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
-import type { SendToSessionOutcome } from '../types'
+import type { SendToSessionReport } from '../types'
 import {
   renderSession,
   renderSessionWithStatus,
@@ -96,12 +96,12 @@ describe('sendToSession', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     fetchMock.mockClear()
 
-    let delivered: SendToSessionOutcome = 'sent'
+    let delivered: SendToSessionReport = { outcome: 'sent', message: '' }
     await act(async () => {
       delivered = await result.current.session.sendToSession('shell1', { text: 'wrong scope', files: [], submit: false })
     })
 
-    expect(delivered).toBe('unknown')
+    expect(delivered.outcome).toBe('unknown')
     await waitFor(() => expect(result.current.status.status?.message).toContain('Unexpected send response'))
   })
 
@@ -138,7 +138,7 @@ describe('sendToSession', () => {
     await waitFor(() => expect(result.current.terminalUsers).toEqual(['alice']))
     fetchMock.mockClear()
 
-    let delivered: SendToSessionOutcome = 'failed'
+    let delivered: SendToSessionReport = { outcome: 'failed', message: '' }
     await act(async () => {
       delivered = await result.current.sendToSession('shell1', {
         text: 'inspect this',
@@ -151,7 +151,7 @@ describe('sendToSession', () => {
       }, 'alice')
     })
 
-    expect(delivered).toBe('sent')
+    expect(delivered.outcome).toBe('sent')
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, init] = fetchMock.mock.calls[0]
     expect(String(url)).toBe('/api/tmux/sessions/shell1/send?unixUser=alice')
@@ -197,7 +197,7 @@ describe('sendToSession', () => {
     await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
     fetchMock.mockClear()
 
-    let delivered: SendToSessionOutcome = 'sent'
+    let delivered: SendToSessionReport = { outcome: 'sent', message: '' }
     await act(async () => {
       delivered = await result.current.session.sendToSession('shell1', {
         text: 'pasted but not submitted',
@@ -210,7 +210,7 @@ describe('sendToSession', () => {
       }, 'alice')
     })
 
-    expect(delivered).toBe('unknown')
+    expect(delivered.outcome).toBe('unknown')
     await waitFor(() => expect(result.current.status.status?.message).toContain('submit key was not dispatched'))
   })
 
@@ -249,7 +249,7 @@ describe('sendToSession', () => {
     await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
     fetchMock.mockClear()
 
-    let delivered: SendToSessionOutcome = 'sent'
+    let delivered: SendToSessionReport = { outcome: 'sent', message: '' }
     await act(async () => {
       delivered = await result.current.session.sendToSession('shell1', {
         text: 'do not duplicate',
@@ -262,7 +262,7 @@ describe('sendToSession', () => {
       }, 'alice')
     })
 
-    expect(delivered).toBe('unknown')
+    expect(delivered.outcome).toBe('unknown')
     await waitFor(() => expect(result.current.status.status?.message).toContain('inspect the exact pane before retrying'))
   })
 
@@ -280,7 +280,7 @@ describe('sendToSession', () => {
     const { result } = renderSessionWithStatus()
     await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
 
-    let delivered: SendToSessionOutcome = 'sent'
+    let delivered: SendToSessionReport = { outcome: 'sent', message: '' }
     await act(async () => {
       delivered = await result.current.session.sendToSession('shell1', {
         text: 'could already be pasted',
@@ -289,7 +289,7 @@ describe('sendToSession', () => {
       }, 'alice')
     })
 
-    expect(delivered).toBe('unknown')
+    expect(delivered.outcome).toBe('unknown')
     await waitFor(() => expect(result.current.status.status?.message).toContain('inspect the exact pane before retrying'))
   })
 
@@ -334,7 +334,7 @@ describe('sendToSession', () => {
     const { result } = renderSessionWithStatus()
     await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
 
-    let delivered: SendToSessionOutcome = 'sent'
+    let delivered: SendToSessionReport = { outcome: 'sent', message: '' }
     await act(async () => {
       delivered = await result.current.session.sendToSession('shell1', {
         text: 'classify this response',
@@ -343,7 +343,7 @@ describe('sendToSession', () => {
       }, 'alice')
     })
 
-    expect(delivered).toBe(unknown ? 'unknown' : 'failed')
+    expect(delivered.outcome).toBe(unknown ? 'unknown' : 'failed')
     await waitFor(() => expect(result.current.status.status?.message).toContain(expected))
     if (!unknown) {
       expect(result.current.status.status?.message).not.toContain('outcome is unknown')
@@ -369,7 +369,7 @@ describe('sendToSession', () => {
     await waitFor(() => expect(result.current.terminalUsers).toEqual(['alice']))
     fetchMock.mockClear()
 
-    let delivered: SendToSessionOutcome = 'sent'
+    let delivered: SendToSessionReport = { outcome: 'sent', message: '' }
     await act(async () => {
       delivered = await result.current.sendToSession('shell1', {
         text: 'do not overclaim',
@@ -382,6 +382,6 @@ describe('sendToSession', () => {
       }, 'alice')
     })
 
-    expect(delivered).toBe('unknown')
+    expect(delivered.outcome).toBe('unknown')
   })
 })

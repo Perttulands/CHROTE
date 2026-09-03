@@ -397,7 +397,7 @@ describe('refreshSessions', () => {
     expect(result.current.sessions).toEqual([knownSession])
     act(() => {
       result.current.openFloatingModal('alice:known')
-      result.current.openSendToSession('alice:known')
+      result.current.openSendToSession({ targetSessionKey: 'alice:known' })
     })
 
     let timeoutSettled = false
@@ -423,7 +423,7 @@ describe('refreshSessions', () => {
       groupedSessions: knownGrouped,
       terminalUsers: ['alice'],
       floatingSession: 'alice:known',
-      sendToSessionTarget: 'alice:known',
+      sendToSessionRequest: { targetSessionKey: 'alice:known' },
       loading: false,
       error: 'Failed to fetch sessions (request timed out)',
     })
@@ -447,7 +447,7 @@ describe('refreshSessions', () => {
       activeSession: 'alice:known',
     })
     expect(result.current.floatingSession).toBe('alice:known')
-    expect(result.current.sendToSessionTarget).toBe('alice:known')
+    expect(result.current.sendToSessionRequest?.targetSessionKey).toBe('alice:known')
 
     unmount()
     expect(vi.getTimerCount()).toBe(0)
@@ -493,7 +493,7 @@ describe('refreshSessions', () => {
     })
     act(() => {
       result.current.openFloatingModal('build:worker')
-      result.current.openSendToSession('build:worker')
+      result.current.openSendToSession({ targetSessionKey: 'build:worker' })
     })
 
     for (const requestIndex of [1, 2]) {
@@ -524,7 +524,7 @@ describe('refreshSessions', () => {
       activeSession: 'build:worker',
     })
     expect(result.current.floatingSession).toBe('build:worker')
-    expect(result.current.sendToSessionTarget).toBe('build:worker')
+    expect(result.current.sendToSessionRequest?.targetSessionKey).toBe('build:worker')
 
     // A poll that fails outright says nothing about any user, so the partial
     // verdict must not outlive it and be joined against again.
@@ -581,7 +581,7 @@ describe('refreshSessions', () => {
     })
     act(() => {
       result.current.openFloatingModal('alice:stale')
-      result.current.openSendToSession('alice:stale')
+      result.current.openSendToSession({ targetSessionKey: 'alice:stale' })
       result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'protected', 'alice')
     })
 
@@ -590,7 +590,7 @@ describe('refreshSessions', () => {
       groupedSessions: result.current.groupedSessions,
       terminalUsers: result.current.terminalUsers,
       floatingSession: result.current.floatingSession,
-      sendToSessionTarget: result.current.sendToSessionTarget,
+      sendToSessionRequest: result.current.sendToSessionRequest,
     }
     const failedPayload = {
       error: 'tmux unavailable',
@@ -634,7 +634,7 @@ describe('refreshSessions', () => {
     }
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:stale', 'alice:protected'])
     expect(result.current.floatingSession).toBe('alice:stale')
-    expect(result.current.sendToSessionTarget).toBe('alice:stale')
+    expect(result.current.sendToSessionRequest?.targetSessionKey).toBe('alice:stale')
 
     consoleError.mockRestore()
     vi.useRealTimers()
@@ -681,7 +681,7 @@ describe('refreshSessions', () => {
       })
       act(() => {
         result.current.openFloatingModal('alice:known')
-        result.current.openSendToSession('alice:known')
+        result.current.openSendToSession({ targetSessionKey: 'alice:known' })
       })
 
       const failedRefresh = result.current.refreshSessions()
@@ -705,7 +705,7 @@ describe('refreshSessions', () => {
         groupedSessions: knownGrouped,
         terminalUsers: ['alice'],
         floatingSession: 'alice:known',
-        sendToSessionTarget: 'alice:known',
+        sendToSessionRequest: { targetSessionKey: 'alice:known' },
       })
       expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
         boundSessions: ['alice:known'],
@@ -724,7 +724,7 @@ describe('refreshSessions', () => {
         activeSession: 'alice:known',
       })
       expect(result.current.floatingSession).toBe('alice:known')
-      expect(result.current.sendToSessionTarget).toBe('alice:known')
+      expect(result.current.sendToSessionRequest?.targetSessionKey).toBe('alice:known')
 
       unmount()
       expect(vi.getTimerCount()).toBe(0)
