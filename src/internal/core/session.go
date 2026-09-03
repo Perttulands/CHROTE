@@ -43,6 +43,23 @@ type Session struct {
 	// foreign alike. More than one means the window is drawn once for all of
 	// them, at the size the claiming viewer set.
 	Viewers int `json:"viewers,omitempty"`
+	// LastEvent is what the agent inside the session last reported through
+	// its own completion hook. Absent when nothing has been reported.
+	LastEvent *AgentEvent `json:"lastEvent,omitempty"`
+}
+
+// AgentEvent is one report from a harness's own completion hook: the agent
+// finished a turn, or it is waiting on the operator. CHROTE keeps the latest
+// per session, in memory, until the operator looks at the session.
+type AgentEvent struct {
+	// Event is "finished" or "needs-input".
+	Event string `json:"event"`
+	// Time is when the report arrived, RFC 3339 with milliseconds, UTC.
+	Time string `json:"time"`
+	// Summary is what the harness said about it, if anything.
+	Summary string `json:"summary,omitempty"`
+	// Seen is true once the operator focused the session after the event.
+	Seen bool `json:"seen"`
 }
 
 // GroupPriority defines the sort order for session groups

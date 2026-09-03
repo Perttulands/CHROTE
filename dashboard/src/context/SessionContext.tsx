@@ -140,6 +140,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           // An empty line is a real answer — this launch takes no flags — so
           // it travels, and only an absent field leaves the server its default.
           ...(options.flags !== undefined ? { flags: options.flags } : {}),
+          ...(options.notify !== undefined ? { notify: options.notify } : {}),
         }),
         signal: AbortSignal.timeout(10000),
       })

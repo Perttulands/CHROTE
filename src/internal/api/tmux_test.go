@@ -521,7 +521,7 @@ esac
 `)
 	handler := NewTmuxHandler()
 
-	_, err := handler.createOwnedTmuxSession(context.Background(), "/tmp/tmux-a", "ambiguous-smoke", "/tmp")
+	_, err := handler.createOwnedTmuxSession(context.Background(), "/tmp/tmux-a", "ambiguous-smoke", "/tmp", nil)
 	if err == nil || !strings.Contains(err.Error(), "tmux command failed") || strings.Contains(err.Error(), "after server-side creation") {
 		t.Fatalf("create error = %v, want a redacted ambiguous creation error", err)
 	}
@@ -550,7 +550,7 @@ esac
 `)
 	handler := NewTmuxHandler()
 
-	_, err := handler.createOwnedTmuxSession(context.Background(), "/tmp/tmux-a", "malformed-id-smoke", "/tmp")
+	_, err := handler.createOwnedTmuxSession(context.Background(), "/tmp/tmux-a", "malformed-id-smoke", "/tmp", nil)
 	if err == nil || !strings.Contains(err.Error(), "without a valid session ID") {
 		t.Fatalf("create error = %v, want malformed session ID error", err)
 	}
@@ -572,7 +572,7 @@ esac
 `)
 	handler := NewTmuxHandler()
 
-	_, err := handler.createOwnedTmuxSession(context.Background(), "/tmp/tmux-a", "existing-smoke", "/tmp")
+	_, err := handler.createOwnedTmuxSession(context.Background(), "/tmp/tmux-a", "existing-smoke", "/tmp", nil)
 	if err == nil || !strings.Contains(err.Error(), "creation token does not match") {
 		t.Fatalf("create error = %v, want ownership mismatch joined to create failure", err)
 	}
@@ -755,7 +755,7 @@ func TestAPIEnvelopeContract_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.T)
 			path:     "/api/tmux/sessions",
 			body:     `{"name":"baseline-session"}`,
 			call:     handler.CreateSession,
-			wantKeys: []string{"cwd", "flags", "harness", "session", "success", "timestamp"},
+			wantKeys: []string{"cwd", "flags", "harness", "notify", "session", "success", "timestamp"},
 		},
 		{
 			name:     "delete session",

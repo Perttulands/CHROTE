@@ -52,8 +52,10 @@ The installer:
 
 1. builds the dashboard and exact embedded Go binary from the checkout;
 2. injects the version from `VERSION`;
-3. installs `chrote-server` under the user prefix;
-4. writes XDG-scoped state paths for schedules and session drops;
+3. installs `chrote-server` and the `chrote-agent-event` hook script under the
+   user prefix, side by side;
+4. writes XDG-scoped state paths for schedules, session drops and generated
+   agent hooks;
 5. writes the `chrote.service` user unit that runs the cockpit itself;
 6. enables, starts, and health-checks the service.
 
@@ -228,6 +230,36 @@ refused.
 Unset: the launcher offers `Shell` in `~`. Set but unreadable or invalid: the
 server refuses to start and logs the reason, instead of running a launcher that
 cannot launch.
+
+### Agent events
+
+CHROTE learns that an agent finished a turn, or is waiting on the operator,
+from the harness's own completion hook, never from guessing at terminal output.
+The hook is the `chrote-agent-event` script, a POSIX `sh` script the installer
+places beside `chrote-server`. It asks tmux for the name of the session it runs
+in and posts `POST /api/agent/event` with `{ session, unixUser, event, summary? }`,
+where `event` is `finished` or `needs-input`. It bounds its request to two
+seconds and always exits 0: no notification is worth failing the harness for.
+
+The launcher installs the hook per launch when its **Notify on completion**
+setting is on (the default), through the harness's own flags: Claude Code
+(harness id `claude-code`) gets `--settings <file>` naming a generated settings
+file whose `Stop` hook reports `finished` and whose `Notification` hook reports
+`needs-input`; Codex (harness id `codex`) gets `-c notify=[...]` naming the
+script. Other harness ids launch as they are.
+
+| Variable | What it names |
+| --- | --- |
+| `CHROTE_AGENT_EVENT_HOOK` | The script's path. Unset: `chrote-agent-event` beside the server binary. Missing there: hooks are off, and the startup log says so. |
+| `CHROTE_AGENT_HOOKS_DIR` | Where the generated Claude Code settings files are written, one per Unix user and session name, world-readable, overwritten by the next launch of that name. The installer sets it under the state directory. |
+| `CHROTE_AGENT_EVENT_URL` | Not a server setting: the server sets it in every session it creates while hooks are configured, as the address the script posts to (`http://<bind host>:<port>/api/agent/event`, loopback for a bind to every interface). A hook wired by hand in a session CHROTE did not create must set it itself. |
+
+The server keeps each session's last event in memory as `lastEvent:
+{ event, time, summary?, seen }` on `GET /api/tmux/sessions`, and forgets it
+with the session. `POST /api/agent/event/seen` with `{ session, unixUser? }`
+marks it seen; the dashboard calls that when the session is focused. A report
+about a session that does not exist on the user's socket is answered `404`.
+Nothing is persisted and nothing polls the harness.
 
 ### The Library
 
