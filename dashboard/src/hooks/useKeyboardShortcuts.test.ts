@@ -9,9 +9,9 @@ vi.mock('../context/SessionContext', () => ({
   useSession: () => mockUseSession(),
 }))
 
-function mount(onShowHelp = vi.fn()) {
-  renderHook(() => useKeyboardShortcuts({ onShowHelp, isHelpOpen: false }))
-  return onShowHelp
+function mount(onShowKeys = vi.fn()) {
+  renderHook(() => useKeyboardShortcuts({ onShowKeys, isKeysPanelOpen: false }))
+  return onShowKeys
 }
 
 describe('useKeyboardShortcuts', () => {
@@ -37,8 +37,8 @@ describe('useKeyboardShortcuts', () => {
     }
   })
 
-  it('shows help and focuses search only from dashboard chrome', () => {
-    const onShowHelp = mount()
+  it('opens the keys panel and focuses search only from dashboard chrome', () => {
+    const onShowKeys = mount()
     const dock = document.createElement('div')
     dock.className = 'terminal-workspace-dock'
     dock.dataset.active = 'true'
@@ -48,7 +48,7 @@ describe('useKeyboardShortcuts', () => {
     document.body.appendChild(dock)
 
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))
-    expect(onShowHelp).toHaveBeenCalledTimes(1)
+    expect(onShowKeys).toHaveBeenCalledTimes(1)
 
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true }))
     expect(search).toHaveFocus()
@@ -57,7 +57,7 @@ describe('useKeyboardShortcuts', () => {
     terminalBody.className = 'terminal-window-body'
     document.body.appendChild(terminalBody)
     terminalBody.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))
-    expect(onShowHelp).toHaveBeenCalledTimes(1)
+    expect(onShowKeys).toHaveBeenCalledTimes(1)
   })
 
   it('opens the active Sessions sidecar and focuses its search when slash is pressed while closed', async () => {
@@ -88,12 +88,12 @@ describe('useKeyboardShortcuts', () => {
 
   it('closes Peek on Escape without handling other keys while typing', () => {
     mockUseSession.mockReturnValue({ floatingSession: 'alice:shell', closeFloatingModal })
-    const onShowHelp = mount()
+    const onShowKeys = mount()
     const input = document.createElement('input')
     document.body.appendChild(input)
 
     input.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))
-    expect(onShowHelp).not.toHaveBeenCalled()
+    expect(onShowKeys).not.toHaveBeenCalled()
 
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     expect(closeFloatingModal).toHaveBeenCalledTimes(1)

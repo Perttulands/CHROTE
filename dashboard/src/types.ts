@@ -121,6 +121,7 @@ export interface UserSettings {
   terminalLabels: Partial<Record<WorkspaceId, string>> // Optional terminal tab display labels
   mouseScroll: boolean               // tmux mouse mode: scroll wheel scrolls history
   hideScrollbar: boolean             // Hide the dead xterm scrollbar gutter in terminals
+  keysEnabled: boolean               // Leader chords intercept keys; off hands every key to the pty
   beadsProjectPaths?: string[]       // Manually added beads project paths
 }
 
@@ -135,6 +136,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   terminalLabels: {},
   mouseScroll: true,
   hideScrollbar: true,
+  keysEnabled: true,
 }
 
 export interface TmuxSession {

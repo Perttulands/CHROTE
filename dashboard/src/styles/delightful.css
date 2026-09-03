@@ -110,19 +110,7 @@
   background: var(--color-error);
 }
 
-/* ==================== KEYBOARD SHORTCUTS OVERLAY ==================== */
-
-.keyboard-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
-  z-index: 10001;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: fadeIn 0.2s ease-out;
-}
+/* Shared fades for the panels that still use one. */
 
 @keyframes fadeIn {
   from { opacity: 0; }
@@ -132,148 +120,6 @@
 @keyframes fadeOut {
   from { opacity: 1; }
   to { opacity: 0; }
-}
-
-.keyboard-modal {
-  background: var(--surface-primary);
-  border: 1px solid var(--divider);
-  border-radius: 12px;
-  width: 90%;
-  max-width: 700px;
-  max-height: 80vh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  animation: fadeIn 0.2s ease-out;
-}
-
-.keyboard-modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--divider);
-}
-
-.keyboard-modal-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--accent);
-}
-
-.keyboard-modal-close {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 20px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: all 0.2s;
-}
-
-.keyboard-modal-close:hover {
-  background: var(--surface-secondary);
-  color: var(--text-primary);
-}
-
-.keyboard-modal-body {
-  padding: 20px;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.shortcut-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 24px;
-}
-
-.shortcut-section {
-  background: var(--surface-secondary);
-  border-radius: 8px;
-  padding: 16px;
-}
-
-.shortcut-section-title {
-  margin: 0 0 12px 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.shortcut-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.shortcut-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.shortcut-keys {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 140px;
-  flex-shrink: 0;
-}
-
-.key-separator {
-  color: var(--text-dim);
-  font-size: 12px;
-}
-
-.keyboard-key {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 28px;
-  height: 28px;
-  padding: 0 8px;
-  background: var(--surface-secondary);
-  border: 1px solid var(--divider);
-  border-radius: 5px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.keyboard-key.modifier {
-  border-color: var(--text-dim);
-}
-
-.keyboard-key.wide {
-  min-width: 48px;
-}
-
-.shortcut-description {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.keyboard-modal-footer {
-  padding: 12px 20px;
-  border-top: 1px solid var(--divider);
-  text-align: center;
-}
-
-.keyboard-hint {
-  color: var(--text-dim);
-  font-size: 12px;
-}
-
-.keyboard-hint .keyboard-key {
-  height: 22px;
-  min-width: 22px;
-  font-size: 11px;
 }
 
 /* ==================== LAYOUT PRESETS PANEL ==================== */
@@ -551,6 +397,21 @@
 .presets-hint {
   color: var(--text-dim);
   font-size: 12px;
+}
+
+/* The presets panel still spells a key out inline. */
+.keyboard-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--surface-secondary);
+  border: 1px solid var(--divider);
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--text-primary);
 }
 
 .presets-hint .keyboard-key {

@@ -137,11 +137,20 @@ describe('TabBar Services navigation', () => {
     expect(screen.queryByRole('button', { name: /Rename tab label/i })).not.toBeInTheDocument()
   })
 
-  it('keeps help and terminal tab menus mutually exclusive', () => {
+  it('toggles keys from the tab bar and offers the keys panel on its context menu', () => {
     mockMatchMedia(false)
-    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} onShowKeys={vi.fn()} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '?' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Keys on' }))
+    expect(mockState.updateSettings).toHaveBeenCalledWith({ keysEnabled: false })
+    expect(screen.queryByRole('button', { name: 'Keys panel' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the keys menu and terminal tab menus mutually exclusive', () => {
+    mockMatchMedia(false)
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} onShowKeys={vi.fn()} />)
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Keys on' }))
     expect(screen.getByRole('button', { name: 'Dashboard Help' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '⋯ Tab' }))

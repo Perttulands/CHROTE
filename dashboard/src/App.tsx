@@ -9,7 +9,8 @@ import SendToSessionModal from './components/SendToSessionModal'
 import ErrorBoundary from './components/ErrorBoundary'
 import Skeleton from './components/LoadingSkeleton'
 import { ToastContainer } from './components/ToastNotification'
-import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
+import KeysPanel from './keys/KeysPanel'
+import LeaderStrip from './keys/LeaderStrip'
 import LayoutPresetsPanel from './components/LayoutPresetsPanel'
 import { TerminalPoolProvider } from './components/TerminalPool'
 import { SessionCommandMark, SessionLabel } from './components/sessionLabel'
@@ -19,6 +20,7 @@ import {
   type SessionsDockState,
 } from './components/workspaceFilesState'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import { useAppChords } from './keys/useAppChords'
 import { installFeatureFlagHelpers, isFeatureEnabled } from './featureFlags'
 import { getSessionNameFromKey, getTerminalUserInitial, isTerminalWorkspaceId, sortTerminalWorkspaceIds } from './types'
 import type { WorkspaceId } from './types'
@@ -160,7 +162,7 @@ function DashboardContent() {
   const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
   const [openFilesWorkspaceIds, setOpenFilesWorkspaceIds] = useState<Set<WorkspaceId>>(() => new Set())
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null)
-  const [showHelp, setShowHelp] = useState(false)
+  const [keysPanelOpen, setKeysPanelOpen] = useState(false)
   const [showPresets, setShowPresets] = useState(false)
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
   const {
@@ -219,8 +221,14 @@ function DashboardContent() {
     if (!workspaceIds.includes(lastActiveWorkspaceId)) setLastActiveWorkspaceId('terminal1')
   }, [lastActiveWorkspaceId, workspaceIds])
 
-  const handleShowHelp = useCallback(() => setShowHelp(true), [])
-  const handleCloseHelp = useCallback(() => setShowHelp(false), [])
+  const handleShowKeys = useCallback(() => setKeysPanelOpen(true), [])
+  const handleCloseKeys = useCallback(() => setKeysPanelOpen(false), [])
+  const toggleSessionsPanel = useCallback(() => {
+    setSessionsDockState(previous => ({ ...previous, open: !previous.open }))
+  }, [])
+  const openSessionsPanel = useCallback(() => {
+    setSessionsDockState(previous => previous.open ? previous : { ...previous, open: true })
+  }, [])
   const handleShowPresets = useCallback(() => setShowPresets(true), [])
   const handleClosePresets = useCallback(() => setShowPresets(false), [])
   const handleTabChange = useCallback((tab: Tab) => {
@@ -238,10 +246,18 @@ function DashboardContent() {
     }
   }, [windowRevealRequest])
 
-  // Global keyboard shortcuts
+  // Plain keys outside a terminal; the leader model lives in the registry.
   useKeyboardShortcuts({
-    onShowHelp: handleShowHelp,
-    isHelpOpen: showHelp,
+    onShowKeys: handleShowKeys,
+    isKeysPanelOpen: keysPanelOpen,
+  })
+
+  useAppChords({
+    activeTab,
+    onTabChange: handleTabChange,
+    onToggleSessionsPanel: toggleSessionsPanel,
+    onOpenSessionsPanel: openSessionsPanel,
+    onOpenKeysPanel: handleShowKeys,
   })
 
   useEffect(() => {
@@ -305,7 +321,7 @@ function DashboardContent() {
         <TabBar
           activeTab={activeTab}
           onTabChange={handleTabChange}
-          onShowHelp={handleShowHelp}
+          onShowKeys={handleShowKeys}
           onShowPresets={handleShowPresets}
         />
 
@@ -406,7 +422,8 @@ function DashboardContent() {
         <SendToSessionModal />
 
         {/* Overlays */}
-        <KeyboardShortcutsOverlay isOpen={showHelp} onClose={handleCloseHelp} />
+        <LeaderStrip />
+        <KeysPanel isOpen={keysPanelOpen} onClose={handleCloseKeys} />
         <LayoutPresetsPanel isOpen={showPresets} onClose={handleClosePresets} />
       </div>
 

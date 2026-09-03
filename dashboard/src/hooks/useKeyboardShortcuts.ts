@@ -1,9 +1,10 @@
-import { useCallback, useEffect } from 'react'
+import { useEffect } from 'react'
 import { useSession } from '../context/SessionContext'
+import { focusSessionSearch } from '../keys/focusSessionSearch'
 
 interface KeyboardShortcutsConfig {
-  onShowHelp: () => void
-  isHelpOpen: boolean
+  onShowKeys: () => void
+  isKeysPanelOpen: boolean
 }
 
 // The terminal is rendered in this document now (ADR-0018), so its keystrokes
@@ -17,28 +18,13 @@ function isDashboardChrome(target: HTMLElement): boolean {
   return !isTerminal(target)
 }
 
-export function useKeyboardShortcuts({ onShowHelp, isHelpOpen }: KeyboardShortcutsConfig) {
+/**
+ * The two plain keys that still work without the leader, outside a terminal:
+ * `/` for the session search and `?` for the keys panel. Everything else the
+ * dashboard answers to is a chord, registered in src/keys.
+ */
+export function useKeyboardShortcuts({ onShowKeys, isKeysPanelOpen }: KeyboardShortcutsConfig) {
   const { closeFloatingModal, floatingSession } = useSession()
-
-  const focusSearchBox = useCallback((): boolean => {
-    const activeDock = document.querySelector('.terminal-workspace-dock[data-active="true"]')
-    if (!activeDock) return false
-
-    const focusVisibleSearch = () => {
-      const searchInput = activeDock.querySelector('.session-search-input') as HTMLInputElement | null
-      searchInput?.focus()
-      searchInput?.select()
-      return searchInput !== null
-    }
-
-    if (focusVisibleSearch()) return true
-
-    const sessionsTrigger = activeDock.querySelector('button[aria-label="Sessions sidecar"]') as HTMLButtonElement | null
-    if (!sessionsTrigger) return false
-    sessionsTrigger.click()
-    queueMicrotask(focusVisibleSearch)
-    return true
-  }, [])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -52,20 +38,20 @@ export function useKeyboardShortcuts({ onShowHelp, isHelpOpen }: KeyboardShortcu
         return
       }
 
-      if (isHelpOpen || !isDashboardChrome(target)) return
+      if (isKeysPanelOpen || !isDashboardChrome(target)) return
 
       if (event.key === '?' || (event.shiftKey && event.key === '/')) {
         event.preventDefault()
-        onShowHelp()
+        onShowKeys()
         return
       }
 
-      if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey && focusSearchBox()) {
+      if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey && focusSessionSearch()) {
         event.preventDefault()
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [closeFloatingModal, floatingSession, focusSearchBox, isHelpOpen, onShowHelp])
+  }, [closeFloatingModal, floatingSession, isKeysPanelOpen, onShowKeys])
 }
