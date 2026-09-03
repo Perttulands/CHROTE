@@ -63,6 +63,8 @@ The launch configuration names what may be started and where. It is read once at
 - `src/internal/scheduled/` contains scheduled-task persistence and execution support.
 - `dashboard/src/` contains the React interface, browser-local state, API clients, and views.
 
+The keyboard chord registry is dashboard state: the chords, their scopes, and whether CHROTE intercepts keys at all live in the browser, and the server has neither a route nor a record for them.
+
 The build script compiles the dashboard and embeds its output into the Go server. The source tree, not a hand-copied distribution directory, is authoritative.
 
 ## Core and components

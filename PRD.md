@@ -4,7 +4,7 @@
 
 ## Operator and environment
 
-CHROTE is a browser-based agentic IDE for one trusted operator managing command-line work on one host.
+CHROTE is a browser-based agentic IDE for one trusted operator managing command-line work on one host. [`docs/journeys.md`](docs/journeys.md) states the seven journeys that are this product's use cases, and every surface answers to one of them.
 
 The host runs tmux, the CHROTE server, and the resources exposed through CHROTE. Remote access uses an operator-controlled private network such as Tailscale. CHROTE does not provide accounts, login, roles, or tenant isolation.
 
@@ -18,6 +18,8 @@ The host runs tmux, the CHROTE server, and the resources exposed through CHROTE.
 - Cleanup may remove only the exact session the operator authorized or the exact test-owned or failed-creation-owned session being cleaned up.
 - Any command-line program can run in a CHROTE terminal. Core terminal behavior does not depend on a particular agent harness.
 - Painting a selection in a terminal copies it to the system clipboard. Under tmux mouse mode that is the browser's own selection gesture; tmux's copy-mode selection from a plain drag is separate and never reaches the system clipboard.
+- A leader chord reaches CHROTE's own actions from anywhere, including a focused terminal, shows what it offers while it waits, and is disabled entirely by a device-local toggle.
+- Send to Session is the one path for handing work to an agent: it opens beside the session it targets rather than over it, and carries a one-line reference to the object being handed over.
 - Send to Session reports delivery to tmux. It does not claim that the process consumed or understood the message.
 
 ## Files

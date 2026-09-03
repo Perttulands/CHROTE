@@ -27,6 +27,31 @@ and honest about state. Nothing decorative competes with the terminal.
    shown in its own words, untranslated.
 7. **Accessible contrast.** Themes may differ; state and text stay readable.
 
+## Doctrine
+
+The principles say what CHROTE is like. The doctrine decides cases. It is
+derived from [`docs/journeys.md`](docs/journeys.md), which names the seven
+journeys the product exists to serve, and it applies to any control on any
+surface. Every control CHROTE carries was defensible when it was added; the sum
+of them is the wall of buttons the doctrine exists to prevent.
+
+1. **A control exists only for a step in a journey the operator takes more than
+   once a day and no chord or gesture already covers.** Everything rarer has a
+   home in the object's menu or on the keyboard, and costs nothing there.
+2. **Secondary actions live in one context menu per object, never in a toolbar,
+   and an overflow menu is not a hiding place.** Actions are found by pointing at
+   the thing they act on; a "…" that collects unrelated leftovers is a junk
+   drawer, not a menu.
+3. **Words over icons, except the product marks.** A word needs no tooltip,
+   while a mark is read instantly only because it is the harness's own.
+4. **Every action has a chord, and the chord is shown where the action is.** The
+   keyboard reaches everything only if the way in is visible at the point of use
+   rather than in a manual.
+5. **One primary action per surface.** `--accent` marks where input goes and the
+   one button that acts; a second primary marks neither.
+6. **A surface states its purpose in a sentence, or it is not a surface.** A tab
+   that cannot say what it is for collects whatever else has no home.
+
 ## The colour rule
 
 The interface is monochrome except where colour carries meaning. Four uses live:
@@ -128,6 +153,49 @@ The Sessions panel's plus opens the same launcher.
   editable before launching.
 - One quiet button states what will happen, and the new session binds to the
   window it was launched from.
+
+## Keyboard
+
+A focused terminal forwards every key to the program inside it, so CHROTE
+reserves one chord and nothing else.
+
+- **Leader.** `Ctrl+Shift+Space`, taken before the key reaches the pty and again
+  at document level, so it answers inside a focused tile as well as outside one.
+  It opens a short window in which the next key chooses the action.
+- **Toggle.** A text button at the right of the tab bar reads `Keys on` or
+  `Keys off`. It is a device-local setting, on by default, and while it is off
+  CHROTE intercepts nothing anywhere.
+- **Strip.** While the leader window is open — until the next key, `Escape`, or a
+  short timeout — a strip along the bottom of the workspace lists every chord in
+  scope as `key  action` pairs, with the keys pressed so far echoed at its left.
+  Nothing echoes outside that window.
+- **Panel.** Leader then `?` opens a searchable list of every registered chord,
+  grouped by scope; clicking an entry runs it.
+- **Scopes.** `global` chords are always listed, `workspace` chords when a
+  terminal tab is active, `tile` chords when a tile is focused. Scope decides
+  what the strip and the panel show.
+- Plain `/` and `?` keep working outside a terminal, as they do today.
+
+## Hand-off
+
+Send to Session is the one way to hand work to an agent. Every object that can
+be handed over opens it: a tile, a session row, Peek, a file, a diff, a Bead, a
+library page, an annotated element.
+
+- **A drawer, not a modal.** It docks as a column at the right edge of the
+  workspace and the grid narrows to fit, so the tile it targets stays visible.
+  Only on a narrow viewport does it overlay.
+- **A reference, then the note.** Each entry point passes one line the agent can
+  act on — a path, a Bead id and title, a library page, a component and its file.
+  The drawer shows that line first, styled read-only, and puts the cursor in the
+  note beneath it.
+- **A target.** The focused tile's session by default, a searchable picker
+  otherwise, and a "new agent" entry that opens the launcher carrying the
+  message.
+- **One primary action.** Send pastes and submits. Pasting without submitting is
+  the secondary action, for a prompt the operator wants to read before it runs.
+- **A receipt.** The tile scrolls to the bottom and the drawer closes; a failure
+  keeps the drawer open with the server's own message.
 
 ## Effects
 
