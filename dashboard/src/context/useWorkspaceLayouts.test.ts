@@ -737,73 +737,6 @@ describe('removeSessionFromWindow', () => {
   })
 })
 
-describe('cycleSession', () => {
-  beforeEach(() => {
-    localStorage.clear()
-  })
-
-  function setupThreeSessions() {
-    const hook = renderSession()
-    act(() => {
-      hook.result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'S0')
-    })
-    act(() => {
-      hook.result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'S1')
-    })
-    act(() => {
-      hook.result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'S2')
-    })
-    // Deliberate attaches activate their targets; restore the baseline under test.
-    act(() => hook.result.current.setActiveSession('terminal1', 'terminal1-window-0', 'S0'))
-    return hook
-  }
-
-  it('cycles forward through sessions', () => {
-    const { result } = setupThreeSessions()
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('S0')
-
-    act(() => result.current.cycleSession('terminal1', 'terminal1-window-0', 'next'))
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('S1')
-
-    act(() => result.current.cycleSession('terminal1', 'terminal1-window-0', 'next'))
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('S2')
-  })
-
-  it('wraps forward: next from last goes to first', () => {
-    const { result } = setupThreeSessions()
-
-    // Set active to last session
-    act(() => result.current.setActiveSession('terminal1', 'terminal1-window-0', 'S2'))
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('S2')
-
-    act(() => result.current.cycleSession('terminal1', 'terminal1-window-0', 'next'))
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('S0')
-  })
-
-  it('wraps backward: prev from first goes to last', () => {
-    const { result } = setupThreeSessions()
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('S0')
-
-    act(() => result.current.cycleSession('terminal1', 'terminal1-window-0', 'prev'))
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('S2')
-  })
-
-  it('does nothing when window has 0 or 1 sessions', () => {
-    const { result } = renderSession()
-
-    // Add a single session
-    act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'solo')
-    })
-
-    act(() => result.current.cycleSession('terminal1', 'terminal1-window-0', 'next'))
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('solo')
-
-    act(() => result.current.cycleSession('terminal1', 'terminal1-window-0', 'prev'))
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('solo')
-  })
-})
-
 describe('canonical terminal layout invariants', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -1091,27 +1024,6 @@ describe('canonical terminal layout invariants', () => {
     expect(result.current.workspaces.terminal2).toEqual(before)
     expect(result.current.focusedWindowKey).toBeNull()
     expect(result.current.windowRevealRequest).toBeNull()
-  })
-
-  it('reveals, activates, and focuses an assigned hidden session through its explicit location action', () => {
-    const { result } = renderSession()
-
-    act(() => {
-      result.current.addSessionToWindow('terminal2', 'terminal2-window-3', 'hidden', 'alice')
-      result.current.setWindowCount('terminal2', 1)
-    })
-    act(() => {
-      result.current.focusSessionAssignment('alice:hidden')
-    })
-
-    expect(result.current.workspaces.terminal2.windowCount).toBe(4)
-    expect(result.current.workspaces.terminal2.windows[3].activeSession).toBe('alice:hidden')
-    expect(result.current.focusedWindowKey).toBe('terminal2-terminal2-window-3')
-    expect(result.current.windowRevealRequest).toMatchObject({
-      workspaceId: 'terminal2',
-      windowId: 'terminal2-window-3',
-    })
-    expect(result.current.floatingSession).toBeNull()
   })
 })
 

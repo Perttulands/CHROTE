@@ -123,12 +123,13 @@ function MenuRows({ rows, armed, onArm, onSelect, openSubmenu, onToggleSubmenu, 
                 {row.reason !== undefined && <span className="menu-row-reason">{row.reason}</span>}
               </span>
               {row.checked === true && <span className="menu-row-check" aria-hidden="true">·</span>}
+              {/* A row that opens a submenu still reads back what it is set to. */}
+              {row.state !== undefined && (
+                <span className="menu-row-chord menu-row-state">{row.state}</span>
+              )}
               {hasSubmenu && <span className="menu-row-chord" aria-hidden="true">▸</span>}
               {!hasSubmenu && row.chord !== undefined && (
                 <span className="menu-row-chord" aria-hidden="true">{row.chord}</span>
-              )}
-              {!hasSubmenu && row.state !== undefined && (
-                <span className="menu-row-chord menu-row-state">{row.state}</span>
               )}
             </button>
             {hasSubmenu && openSubmenu === row.id && (

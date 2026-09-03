@@ -182,27 +182,6 @@ export function useWorkspaceLayouts() {
     })
   }, [])
 
-  const cycleSession = useCallback((workspaceId: WorkspaceId, windowId: string, direction: 'prev' | 'next') => {
-    setWorkspaces(previous => {
-      const workspace = previous[workspaceId]
-      if (!workspace) return previous
-      return {
-        ...previous,
-        [workspaceId]: {
-          ...workspace,
-          windows: workspace.windows.map(window => {
-            if (window.id !== windowId || window.boundSessions.length <= 1) return window
-            const currentIndex = window.activeSession ? window.boundSessions.indexOf(window.activeSession) : 0
-            const nextIndex = direction === 'next'
-              ? (currentIndex + 1) % window.boundSessions.length
-              : (currentIndex - 1 + window.boundSessions.length) % window.boundSessions.length
-            return { ...window, activeSession: window.boundSessions[nextIndex] }
-          }),
-        },
-      }
-    })
-  }, [])
-
   const toggleSidebar = useCallback(() => setSidebarCollapsed(previous => !previous), [])
 
   const updateSettings = useCallback((newSettings: Partial<UserSettings>) => {
@@ -273,7 +252,6 @@ export function useWorkspaceLayouts() {
     clearWorkspaceAssignments,
     removeSessionFromWindow,
     setActiveSession,
-    cycleSession,
     toggleSidebar,
     updateSettings,
     saveCurrentLayout,

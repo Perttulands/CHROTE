@@ -442,7 +442,6 @@ export interface DashboardActions {
   addSessionToWindow: (workspaceId: WorkspaceId, windowId: string, sessionName: string, unixUser?: LaunchUser) => void
   removeSessionFromWindow: (workspaceId: WorkspaceId, windowId: string, sessionName: string) => void
   setActiveSession: (workspaceId: WorkspaceId, windowId: string, sessionName: string) => void
-  cycleSession: (workspaceId: WorkspaceId, windowId: string, direction: 'prev' | 'next') => void
 
   // UI actions
   toggleSidebar: () => void
@@ -453,9 +452,8 @@ export interface DashboardActions {
   listSessionPanes: (sessionName: string, unixUser?: LaunchUser) => Promise<SendSessionPane[] | null>
   sendToSession: (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser) => Promise<SendToSessionReport>
 
-  // Session row clicks always preview; assignment navigation is an explicit secondary action.
+  // Session row clicks always preview.
   handleSessionClick: (sessionName: string) => void
-  focusSessionAssignment: (sessionName: string) => void
 
   // Refresh sessions from API
   refreshSessions: () => Promise<void>

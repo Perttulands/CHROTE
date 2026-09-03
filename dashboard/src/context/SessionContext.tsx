@@ -186,14 +186,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const closeFloatingModal = useCallback(() => setFloatingSession(null), [])
   const handleSessionClick = useCallback((sessionName: string) => openFloatingModal(sessionName), [openFloatingModal])
 
-  const focusSessionAssignment = useCallback((sessionName: string) => {
-    const assignment = layouts.assignedSessions.get(sessionName)
-    if (!assignment) return
-    layouts.revealWindow(assignment.workspaceId, assignment.windowId)
-    layouts.setActiveSession(assignment.workspaceId, assignment.windowId, sessionName)
-    layouts.setFocusedWindowKey(`${assignment.workspaceId}-${assignment.windowId}`)
-  }, [layouts.assignedSessions, layouts.revealWindow, layouts.setActiveSession, layouts.setFocusedWindowKey])
-
   const deleteSession = useCallback(async (sessionName: string, unixUser?: LaunchUser) => {
     try {
       const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
@@ -307,7 +299,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     addSessionToWindow,
     removeSessionFromWindow: layouts.removeSessionFromWindow,
     setActiveSession: layouts.setActiveSession,
-    cycleSession: layouts.cycleSession,
     toggleSidebar: layouts.toggleSidebar,
     openFloatingModal,
     closeFloatingModal,
@@ -316,7 +307,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     listSessionPanes: send.listSessionPanes,
     sendToSession: send.sendToSession,
     handleSessionClick,
-    focusSessionAssignment,
     refreshSessions: poll.refreshSessions,
     createSession,
     restartSession,
@@ -335,13 +325,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     layouts.workspaces, layouts.workspaceIds, layouts.sidebarCollapsed, layouts.assignedSessions,
     layouts.settings, layouts.focusedWindowKey, layouts.windowRevealRequest, layouts.layoutPresets,
     layouts.setWindowCount, layouts.clearWorkspaceAssignments, layouts.removeSessionFromWindow,
-    layouts.setActiveSession, layouts.cycleSession, layouts.toggleSidebar, layouts.updateSettings,
+    layouts.setActiveSession, layouts.toggleSidebar, layouts.updateSettings,
     layouts.setFocusedWindowKey, layouts.revealWindow, layouts.saveCurrentLayout, layouts.loadPreset,
     layouts.deletePreset, layouts.renamePreset, floatingSession, send.sendToSessionRequest,
     send.sendToSessionRequestId, send.openSendToSession,
     send.closeSendToSession, send.listSessionPanes, send.sendToSession,
     addSessionToWindow, restartSession, openFloatingModal, closeFloatingModal, handleSessionClick,
-    focusSessionAssignment, createSession, deleteSession, renameSession,
+    createSession, deleteSession, renameSession,
   ])
 
   return <SessionContext.Provider value={contextValue}>{children}</SessionContext.Provider>

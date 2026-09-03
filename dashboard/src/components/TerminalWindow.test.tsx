@@ -21,7 +21,6 @@ const redialIfDropped = vi.fn()
 const fit = vi.fn()
 const setFocusedWindowKey = vi.fn()
 const setActiveSession = vi.fn()
-const cycleSession = vi.fn()
 const openSendToSession = vi.fn()
 const restartSession = vi.fn()
 const draggableState = vi.hoisted(() => ({
@@ -83,7 +82,6 @@ vi.mock('../context/SessionContext', () => ({
     addSessionToWindow,
     removeSessionFromWindow,
     setActiveSession,
-    cycleSession,
     setWindowCount: vi.fn(),
     restartSession,
     loading: false,
@@ -219,7 +217,6 @@ describe('TerminalWindow launch user', () => {
     expect(container.querySelectorAll('.cycle-btn')).toHaveLength(0)
     expect(screen.queryByTitle('Previous session')).not.toBeInTheDocument()
     expect(screen.queryByTitle('Next session')).not.toBeInTheDocument()
-    expect(cycleSession).not.toHaveBeenCalled()
   })
 
   it('does not intercept right-click on the empty window launcher', async () => {
