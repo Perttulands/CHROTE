@@ -35,6 +35,7 @@ function start(overrides: Partial<Parameters<typeof createTerminalSession>[0]> =
     terminalTheme: DEFAULT_THEME.terminal,
     fontFamily: TERMINAL_FONT_FAMILY,
     onStateChange: state => states.push(state),
+    announce: () => {},
     ...overrides,
   })
   const host = document.createElement('div')

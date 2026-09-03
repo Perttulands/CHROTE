@@ -27,7 +27,7 @@ import {
 } from './fileService'
 import { CONFIRM_WINDOW_MS } from '../confirmInPlace'
 import { useStatus } from '../../context/StatusContext'
-import { copyTextToClipboard } from '../../utils/clipboard'
+import { copyAndAnnounce } from '../../utils/clipboard'
 import {
   MAX_TEXT_PREVIEW_BYTES,
   getFileBaseName as getBaseName,
@@ -140,9 +140,7 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
   const currentPathPinned = pinnedPaths.some(item => item.path === currentPath)
   const workbenchStyle = { '--fb-explorer-width': `${explorerWidth}px` } as CSSProperties
   const { announce } = useStatus()
-  const showError = useCallback((message: string) => {
-    announce(message, 'error')
-  }, [announce])
+  const showError = useCallback((message: string) => announce(message, 'error'), [announce])
 
   const loadDirectory = useCallback(async (path: string) => {
     const normalized = normalizePath(path)
@@ -632,7 +630,7 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
   }
 
   const copyPath = (path: string) => {
-    void copyTextToClipboard(toDisplayPath(path))
+    void copyAndAnnounce(toDisplayPath(path), toDisplayPath(path), announce)
     setContextMenu(null)
   }
 
@@ -642,12 +640,13 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
 
   const copySelectedPaths = (targets: FileItem[]) => {
     if (targets.length === 0) return
-    void copyTextToClipboard(targets.map(target => toDisplayPath(target.path)).join('\n'))
+    const shown = targets.map(target => toDisplayPath(target.path))
+    void copyAndAnnounce(shown.join('\n'), shown.length === 1 ? shown[0] : `${shown.length} paths`, announce)
     setContextMenu(null)
   }
 
   const copyRelativePath = (path: string) => {
-    void copyTextToClipboard(pathRelativeToCurrent(path))
+    void copyAndAnnounce(pathRelativeToCurrent(path), pathRelativeToCurrent(path), announce)
     setContextMenu(null)
   }
 

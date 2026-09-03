@@ -14,7 +14,7 @@ import { connectTtyd, type TtydConnection } from './ttydProtocol'
 import { createBeadLinkProvider } from './beadLinks'
 import { ensureBeadProjects } from '../beads/beadIds'
 import { terminalKeyEvent } from '../keys/chords'
-import { copyTextToClipboard } from '../utils/clipboard'
+import { copyAndAnnounce, type CopyAnnouncer } from '../utils/clipboard'
 import type { TerminalTheme } from '../theme/theme'
 import '@xterm/xterm/css/xterm.css'
 import './terminal.css'
@@ -79,6 +79,8 @@ export interface TerminalSessionOptions {
   terminalTheme: TerminalTheme
   fontFamily: string
   onStateChange?: (state: TerminalConnectionState) => void
+  /** Where a painted selection reports whether it reached the clipboard. */
+  announce: CopyAnnouncer
 }
 
 // xterm names the 16 ansi entries; the theme carries them as an ordered array,
@@ -187,7 +189,7 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   const copySettledSelection = () => {
     document.removeEventListener('mouseup', copySettledSelection)
     const painted = terminal.getSelection()
-    if (painted && painted !== selectionAtPress) void copyTextToClipboard(painted)
+    if (painted && painted !== selectionAtPress) void copyAndAnnounce(painted, 'selection', options.announce)
   }
   const watchSelectionDrag = () => {
     selectionAtPress = terminal.getSelection()

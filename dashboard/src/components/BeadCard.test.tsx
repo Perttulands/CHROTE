@@ -28,7 +28,7 @@ vi.mock('../beads/beadsApi', () => ({
 }))
 
 vi.mock('../utils/clipboard', () => ({
-  copyTextToClipboard: (text: string) => mockState.copy(text),
+  copyAndAnnounce: (text: string, what: string, announce: unknown) => mockState.copy(text, what, announce),
 }))
 
 function detail(overrides: Partial<BeadDetail> & { id: string }): BeadDetail {
@@ -147,15 +147,14 @@ describe('the Bead card', () => {
     expect(await screen.findByText('Title of chrote-5grx')).toBeInTheDocument()
   })
 
-  it('copies the id and says it did', async () => {
+  it('copies the id through the helper that reports how it went', async () => {
     render(<BeadCard />)
     act(() => openBeadCard('chrote-5grx.15'))
     await screen.findByText('Title of chrote-5grx.15')
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy id' }))
 
-    expect(mockState.copy).toHaveBeenCalledWith('chrote-5grx.15')
-    expect(mockState.announce).toHaveBeenCalledWith('Copied chrote-5grx.15', 'success')
+    expect(mockState.copy).toHaveBeenCalledWith('chrote-5grx.15', 'chrote-5grx.15', mockState.announce)
   })
 
   it('offers the Bead to the tab that maps its project', async () => {

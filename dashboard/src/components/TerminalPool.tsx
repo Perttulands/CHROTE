@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useSession } from '../context/SessionContext'
+import { useStatus } from '../context/StatusContext'
 import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
 import type { LaunchUser } from '../types'
 import { createTerminalSession, type TerminalConnectionState, type TerminalSession } from '../terminal/terminalSession'
@@ -23,6 +24,7 @@ export function useTerminalPool(): TerminalPoolContextType {
 
 export function TerminalPoolProvider({ children }: { children: ReactNode }) {
   const { workspaces, settings, sessions } = useSession()
+  const { announce } = useStatus()
   const theme = useTheme()
 
   const sessionUsers = useMemo(() => {
@@ -58,6 +60,8 @@ export function TerminalPoolProvider({ children }: { children: ReactNode }) {
   // applyAppearance rather than by rebuilding the pool.
   const themeRef = useRef(theme)
   themeRef.current = theme
+  const announceRef = useRef(announce)
+  announceRef.current = announce
   const terminalsRef = useRef<Map<string, TerminalSession>>(new Map())
   const [terminals, setTerminals] = useState<ReadonlyMap<string, TerminalSession>>(terminalsRef.current)
   const [connectionStates, setConnectionStates] = useState<ReadonlyMap<string, TerminalConnectionState>>(new Map())
@@ -82,6 +86,7 @@ export function TerminalPoolProvider({ children }: { children: ReactNode }) {
         terminalTheme: themeRef.current.terminal,
         fontFamily: TERMINAL_FONT_FAMILY,
         onStateChange: state => setConnectionStates(prev => new Map(prev).set(sessionKey, state)),
+        announce: (message, severity) => announceRef.current(message, severity),
       }))
       changed = true
     })

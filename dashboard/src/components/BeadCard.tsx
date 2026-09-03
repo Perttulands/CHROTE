@@ -14,7 +14,7 @@ import Sheet from './Sheet'
 import Markdown from './Markdown'
 import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
-import { copyTextToClipboard } from '../utils/clipboard'
+import { copyAndAnnounce } from '../utils/clipboard'
 import { registerChords, type Chord } from '../keys/chords'
 import { closeBeadCard, openBeadCard, useBeadCardRequest } from '../beads/beadCard'
 import { beadIdPattern, beadProjectPath, ensureBeadProjects } from '../beads/beadIds'
@@ -181,10 +181,7 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
       <button
         type="button"
         className="bead-card-action"
-        onClick={() => {
-          void copyTextToClipboard(request.id)
-          announce(`Copied ${request.id}`, 'success')
-        }}
+        onClick={() => { void copyAndAnnounce(request.id, request.id, announce) }}
       >
         Copy id
       </button>

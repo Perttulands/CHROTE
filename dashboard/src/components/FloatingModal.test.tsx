@@ -34,6 +34,10 @@ vi.mock('../context/SessionContext', () => ({
   }),
 }))
 
+vi.mock('../context/StatusContext', () => ({
+  useStatus: () => ({ status: null, announce: () => {} }),
+}))
+
 describe('FloatingModal Send to Session action', () => {
   beforeEach(() => {
     vi.clearAllMocks()

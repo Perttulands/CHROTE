@@ -72,3 +72,26 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
 
   return fallbackCopyText(text)
 }
+
+export type CopyAnnouncer = (message: string, severity: 'success' | 'error') => void
+
+// The boolean says only that the text did not land; this says what stood in
+// the way, from what the page has to work with.
+function clipboardFailureReason(): string {
+  if (canUseAsyncClipboard()) return 'the browser refused'
+  if (typeof document === 'undefined' || typeof document.execCommand !== 'function') return 'this browser has no clipboard API'
+  return 'the clipboard API is unavailable here and the fallback was refused'
+}
+
+/**
+ * Copy, wait for the write to settle, and say how it went: "Copied <what>",
+ * or "Could not copy <what>: <reason>" as a failure. Every copy action in the
+ * dashboard reports through here, so none of them claims success before it
+ * has it.
+ */
+export async function copyAndAnnounce(text: string, what: string, announce: CopyAnnouncer): Promise<boolean> {
+  const copied = await copyTextToClipboard(text)
+  if (copied) announce(`Copied ${what}`, 'success')
+  else announce(`Could not copy ${what}: ${clipboardFailureReason()}`, 'error')
+  return copied
+}

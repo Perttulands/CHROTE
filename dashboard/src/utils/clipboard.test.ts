@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { copyTextToClipboard } from './clipboard'
+import { copyAndAnnounce, copyTextToClipboard } from './clipboard'
 
 function setClipboard(value: { writeText: ReturnType<typeof vi.fn> } | undefined) {
   Object.defineProperty(navigator, 'clipboard', {
@@ -71,6 +71,44 @@ describe('copyTextToClipboard', () => {
       expect(execCopy.copiedText()).toBe('ctx-cnl')
     } finally {
       execCopy.restore()
+    }
+  })
+})
+
+describe('copyAndAnnounce', () => {
+  it('says Copied only once the write has settled', async () => {
+    let settle: () => void = () => {}
+    const writeText = vi.fn(() => new Promise<void>(resolve => { settle = resolve }))
+    setClipboard({ writeText })
+    const announce = vi.fn()
+
+    const pending = copyAndAnnounce('chrote-5grx.40', 'chrote-5grx.40', announce)
+    expect(announce).not.toHaveBeenCalled()
+
+    settle()
+    await expect(pending).resolves.toBe(true)
+    expect(announce).toHaveBeenCalledWith('Copied chrote-5grx.40', 'success')
+  })
+
+  it('reports a failure with its reason when nothing takes the text', async () => {
+    setClipboard(undefined)
+    const hadExecCommand = 'execCommand' in document
+    const originalExecCommand = document.execCommand
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: vi.fn(() => false) })
+    const announce = vi.fn()
+
+    try {
+      await expect(copyAndAnnounce('/srv/chrote', 'path', announce)).resolves.toBe(false)
+      expect(announce).toHaveBeenCalledWith(
+        'Could not copy path: the clipboard API is unavailable here and the fallback was refused',
+        'error',
+      )
+    } finally {
+      if (hadExecCommand) {
+        Object.defineProperty(document, 'execCommand', { configurable: true, value: originalExecCommand })
+      } else {
+        Reflect.deleteProperty(document, 'execCommand')
+      }
     }
   })
 })
