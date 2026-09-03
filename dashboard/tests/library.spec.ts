@@ -2,23 +2,24 @@
  * Journey 7, keep the library (bead: chrote-5grx.17).
  *
  * One pass through the surface the browser is the point of: step into the
- * library, take a page off a shelf, read it, and ask the Librarian about it
- * from the front desk. Everything narrower — a date, a title, a state word —
- * is a unit test.
+ * library, take a page off a shelf, read it, and hand it to the Librarian in
+ * the column at the right. Everything narrower — a date, a title, a state
+ * word — is a unit test.
  */
 
 import { test, expect, allowBrowserConsoleMessage, type Page } from './fixtures'
 import { mockApiRoutes, mockBeadsApiRoutes, mockLibraryApiRoutes } from './mock-api'
 
-/** The Librarian's own session, answering a paste the way tmux would. */
-async function mockLibrarianSend(page: Page, sends: string[]) {
+/** The Librarian's own session, accepting a paste the way tmux would. */
+async function mockLibrarianSend(page: Page, sends: { text: string; submit: string }[]) {
   await page.route('**/api/tmux/sessions/*/send', async route => {
     const session = decodeURIComponent(new URL(route.request().url()).pathname.split('/')[4])
     const body = route.request().postData() ?? ''
     const text = /name="text"\r?\n\r?\n([\s\S]*?)\r?\n--/.exec(body)?.[1] ?? ''
-    // A multipart text field carries CRLF; the message the operator typed had
+    const submit = /name="submit"\r?\n\r?\n([\s\S]*?)\r?\n--/.exec(body)?.[1] ?? ''
+    // A multipart text field carries CRLF; the line the column pasted ends in
     // one newline, so the record is normalised before it is compared.
-    sends.push(text.replace(/\r\n/g, '\n'))
+    sends.push({ text: text.replace(/\r\n/g, '\n'), submit })
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -31,8 +32,8 @@ async function mockLibrarianSend(page: Page, sends: string[]) {
         serverPid: '9001',
         unixUser: '',
         transport: 'pasted',
-        submissionRequested: true,
-        submitKeyDispatched: true,
+        submissionRequested: submit === 'true',
+        submitKeyDispatched: submit === 'true',
         bufferCleaned: true,
         targetVerified: true,
         deliveryConfirmed: true,
@@ -44,12 +45,12 @@ async function mockLibrarianSend(page: Page, sends: string[]) {
 }
 
 test.describe('The Library', () => {
-  test('steps into the library, opens a page from a shelf, and asks the desk', async ({ page }) => {
+  test('steps into the library, opens a page from a shelf, and hands it to the Librarian', async ({ page }) => {
     // The room asks the corpus for its own README and CLAUDE.md before it
     // falls back to the shelves as cards. This corpus has neither, and a
     // browser logs the misses.
     allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 404')
-    const sends: string[] = []
+    const sends: { text: string; submit: string }[] = []
     await mockApiRoutes(page)
     await mockBeadsApiRoutes(page)
     await mockLibraryApiRoutes(page)
@@ -74,14 +75,15 @@ test.describe('The Library', () => {
     await expect(page.locator('.library-history-message')).toHaveText('Record a workflow preference')
     await expect(page.locator('.library-right')).toContainText('On preferences')
 
-    // The front desk sends the question with the page as its first line, and
-    // the status line is the receipt.
-    await page.fill('.desk-ask', 'What else says this?')
-    await page.press('.desk-ask', 'Enter')
+    // The Librarian is live in the column at the right, and Alt+S puts the
+    // page into its prompt on a line of its own, for the operator to finish.
+    const column = page.getByRole('complementary', { name: 'The Librarian' })
+    await expect(column.locator('.resident-header')).toContainText('hq-deacon')
+    await expect(column.locator('.xterm-rows')).toContainText('mock terminal hq-deacon')
+    await page.keyboard.press('Alt+s')
 
-    await expect.poll(() => sends).toEqual(['library preferences/workflow.md\nWhat else says this?'])
-    await expect(page.locator('.status-line')).toContainText('Asked hq-deacon')
-    await expect(page.locator('.desk-ask')).toHaveValue('')
+    await expect.poll(() => sends).toEqual([{ text: 'library preferences/workflow.md\n', submit: 'false' }])
+    await expect(page.locator('.status-line')).toContainText("Pasted to 'hq-deacon'")
   })
 
   test('says so when the host has no library', async ({ page }) => {

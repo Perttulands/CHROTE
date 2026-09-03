@@ -273,10 +273,32 @@ export async function mockLaunchApiRoute(page: Page) {
   })
 }
 
+/**
+ * The residents as a host names them: the Librarian and the Clerk share a
+ * session that is in the mocked list with a client attached, so their columns
+ * open live; the tender's session is not there, so its column offers Launch.
+ */
+export const mockResidents = [
+  { tab: 'library', label: 'Librarian', session: 'hq-deacon', folder: '/corpus', beads: '/code/test-project' },
+  { tab: 'agents', label: 'Tender', session: 'tender', folder: '/code/tender', beads: '/code/test-project' },
+  { tab: 'beads', label: 'Clerk', session: 'hq-deacon', folder: '/code/clerk', beads: '/code/test-project' },
+]
+
+export async function mockResidentsApiRoute(page: Page, residents: object[] = mockResidents) {
+  await page.route('**/api/residents', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(residents),
+    })
+  })
+}
+
 export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: SessionsResponse }) {
   await mockTerminalSocket(page)
   await mockThemeApiRoute(page)
   await mockLaunchApiRoute(page)
+  await mockResidentsApiRoute(page)
 
   await page.route(tmuxMousePattern, async route => {
     const body = route.request().postDataJSON() as { enabled?: boolean } | null
