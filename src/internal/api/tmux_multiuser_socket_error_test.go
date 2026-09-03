@@ -33,7 +33,7 @@ func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 		"case \"$sock\" in\n" +
 		"  *" + failFor + "*) printf '%s\\n' \"$TMUX_STDERR\" >&2; exit 1 ;;\n" +
 		"esac\n" +
-		"printf '%s	%s	%s	%s	%s\\n' '$7' 'healthy-session' '1' '0' '/workspaces/healthy'\n" +
+		"printf '%s	%s	%s	%s	%s	%s	%s	%s	%s	%s	%s	%s\\n' '$7' 'healthy-session' '1' '0' '/workspaces/healthy' 'bash' '1' '120' '40' 'latest' '1' ''\n" +
 		"exit 0\n"
 	scriptPath := filepath.Join(dir, "tmux")
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {

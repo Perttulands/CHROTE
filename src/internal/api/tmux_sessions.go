@@ -441,19 +441,14 @@ func parseSessionsOutput(output string, unixUser string, ownedPTYs map[string]bo
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		// Older shapes stop after the working directory or the foreground
-		// command. They still describe a session; they just raise none of the
-		// claims the badges make.
+		// Every line answers the format string above, so a line that is not
+		// exactly that many fields did not come from this inventory and is
+		// not guessed at.
 		parts := strings.SplitN(line, "\t", sessionInventoryFieldCount)
-		if len(parts) != sessionInventoryFieldCount && len(parts) != 6 && len(parts) != 5 {
+		if len(parts) != sessionInventoryFieldCount {
 			continue
 		}
-		field := func(index int) string {
-			if index < len(parts) {
-				return parts[index]
-			}
-			return ""
-		}
+		field := func(index int) string { return parts[index] }
 		name := field(1)
 		if isReservedInternalSessionName(name) {
 			continue
@@ -472,18 +467,16 @@ func parseSessionsOutput(output string, unixUser string, ownedPTYs map[string]bo
 			CWD:            field(4),
 			CurrentCommand: field(5),
 		}
-		if len(parts) == sessionInventoryFieldCount {
-			session.Panes, _ = strconv.Atoi(field(6))  //nolint:errcheck // an unparsable count claims nothing
-			session.Width, _ = strconv.Atoi(field(7))  //nolint:errcheck // an unparsable size claims nothing
-			session.Height, _ = strconv.Atoi(field(8)) //nolint:errcheck // an unparsable size claims nothing
-			session.SizePinned = field(9) == "manual"
-			if mouse := field(10); mouse == "0" || mouse == "1" {
-				enabled := mouse == "1"
-				session.MouseEnabled = &enabled
-			}
-			session.ForeignClients = foreignClientTTYs(field(11), ownedPTYs)
-			session.Viewers = countAttachedClients(field(11))
+		session.Panes, _ = strconv.Atoi(field(6))  //nolint:errcheck // an unparsable count claims nothing
+		session.Width, _ = strconv.Atoi(field(7))  //nolint:errcheck // an unparsable size claims nothing
+		session.Height, _ = strconv.Atoi(field(8)) //nolint:errcheck // an unparsable size claims nothing
+		session.SizePinned = field(9) == "manual"
+		if mouse := field(10); mouse == "0" || mouse == "1" {
+			enabled := mouse == "1"
+			session.MouseEnabled = &enabled
 		}
+		session.ForeignClients = foreignClientTTYs(field(11), ownedPTYs)
+		session.Viewers = countAttachedClients(field(11))
 		sessions = append(sessions, session)
 	}
 	return sessions
