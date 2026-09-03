@@ -125,6 +125,13 @@
   color: var(--text-primary);
 }
 
+/* A control that has nothing to do right now keeps its place and says so
+   by its colour, not by leaving. */
+.launcher-quiet:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
 .launcher-badge {
   width: 14px;
   height: 14px;
@@ -148,8 +155,10 @@
 /* What will be typed after the binary, and the whole line as it will read.
    Both are the terminal's own alphabet, which is the interface's alphabet. */
 .launcher-preview {
+  height: 16px;
   padding: 0 2px;
   font-size: 11px;
+  line-height: 16px;
   color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -174,6 +183,11 @@
 .launcher-name:focus {
   outline: none;
   border-color: var(--text-primary);
+}
+
+.launcher-name:disabled {
+  color: var(--text-dim);
+  background: none;
 }
 
 .launcher-actions {

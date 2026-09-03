@@ -392,40 +392,45 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
           </div>
 
           {/* The flags line is the whole of what will be typed after the
-              binary: the catalogue writes into it, and so may the operator. */}
-          {flagsOffered && (
-            <>
-              <label className="launcher-label" htmlFor={flagsFieldId}>Flags</label>
-              <input
-                id={flagsFieldId}
-                type="text"
-                className="launcher-name launcher-flags"
-                data-ui="launcher.flags"
-                aria-label="Launch flags"
-                value={flagLine}
-                onChange={event => setFlagLine(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Enter') void launch()
-                }}
-              />
-              <div className="launcher-preview" title={commandPreview}>{commandPreview}</div>
-              <div className="launcher-pick">
-                <button
-                  type="button"
-                  className="launcher-quiet"
-                  aria-expanded={flagsOpen}
-                  onClick={() => setFlagsOpen(open => !open)}
-                >
-                  Flags…
-                </button>
-                {flagsEdited && (
-                  <button type="button" className="launcher-quiet launcher-reset" onClick={resetFlags}>
-                    Reset
-                  </button>
-                )}
-              </div>
-            </>
-          )}
+              binary: the catalogue writes into it, and so may the operator.
+              A shell takes none and keeps the block all the same, greyed and
+              inert, so the harness buttons above it stay where they are
+              while the operator clicks through them; Reset keeps its slot
+              for the same reason. */}
+          <label className="launcher-label" htmlFor={flagsFieldId}>Flags</label>
+          <input
+            id={flagsFieldId}
+            type="text"
+            className="launcher-name launcher-flags"
+            data-ui="launcher.flags"
+            aria-label="Launch flags"
+            value={flagsOffered ? flagLine : ''}
+            disabled={!flagsOffered}
+            onChange={event => setFlagLine(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') void launch()
+            }}
+          />
+          <div className="launcher-preview" title={commandPreview}>{flagsOffered ? commandPreview : '\u00a0'}</div>
+          <div className="launcher-pick">
+            <button
+              type="button"
+              className="launcher-quiet"
+              aria-expanded={flagsOpen && flagsOffered}
+              disabled={!flagsOffered}
+              onClick={() => setFlagsOpen(open => !open)}
+            >
+              Flags…
+            </button>
+            <button
+              type="button"
+              className="launcher-quiet launcher-reset"
+              disabled={!flagsEdited}
+              onClick={resetFlags}
+            >
+              Reset
+            </button>
+          </div>
 
           <label className="launcher-label" htmlFor={nameFieldId}>Name</label>
           <input

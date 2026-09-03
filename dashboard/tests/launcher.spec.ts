@@ -66,6 +66,28 @@ test.describe('Launcher', () => {
     expect(created[0]).toMatchObject({ name: 'claude-other', cwd: '/srv/other', harness: 'claude-code' })
   })
 
+  test('switching harnesses moves neither the harness buttons nor the frame', async ({ page }) => {
+    await mockApiRoutes(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    const launcher = page.locator('.terminal-window').first().locator('.launcher')
+    const shell = launcher.getByRole('button', { name: 'Shell', exact: true })
+    await expect(launcher.getByLabel('Launch flags')).toBeEnabled()
+    const frameBefore = await launcher.boundingBox()
+    const shellBefore = await shell.boundingBox()
+
+    await shell.click()
+    await expect(launcher.getByLabel('Launch flags')).toBeDisabled()
+    expect(await launcher.boundingBox()).toEqual(frameBefore)
+    expect(await shell.boundingBox()).toEqual(shellBefore)
+
+    await launcher.getByRole('button', { name: 'Claude Code' }).click()
+    await launcher.getByLabel('Launch flags').fill('--verbose')
+    await expect(launcher.getByRole('button', { name: 'Reset' })).toBeEnabled()
+    expect(await launcher.boundingBox()).toEqual(frameBefore)
+    expect(await shell.boundingBox()).toEqual(shellBefore)
+  })
+
   test('the catalogue docks beside the launcher with room, and stacks under it without', async ({ page }) => {
     await mockApiRoutes(page)
     await page.goto('/')

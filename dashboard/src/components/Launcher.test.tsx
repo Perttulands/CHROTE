@@ -248,7 +248,7 @@ describe('Launcher flags', () => {
 
     expect(await screen.findByLabelText('Launch flags')).toHaveValue('--dangerously-skip-permissions')
     expect(screen.getByText('claude --dangerously-skip-permissions')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled()
   })
 
   it('shows each harness its own line, and keeps an edit while the launcher lives', async () => {
@@ -264,23 +264,26 @@ describe('Launcher flags', () => {
     expect(screen.getByLabelText('Launch flags')).toHaveValue('--verbose')
   })
 
-  it('offers Reset once the line differs, and puts the default back', async () => {
+  it('arms Reset once the line differs, and puts the default back', async () => {
     render(<Launcher workspaceId="terminal3" />)
 
     fireEvent.change(await screen.findByLabelText('Launch flags'), { target: { value: '--model opus' } })
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
 
     expect(screen.getByLabelText('Launch flags')).toHaveValue('--dangerously-skip-permissions')
-    expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled()
   })
 
-  it('says nothing about flags for a shell, which takes none', async () => {
+  it('keeps the flags block for a shell, greyed and inert, so nothing above it moves', async () => {
     render(<Launcher workspaceId="terminal3" />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Shell' }))
 
-    expect(screen.queryByLabelText('Launch flags')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Flags…' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Launch flags')).toBeDisabled()
+    expect(screen.getByLabelText('Launch flags')).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Flags…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled()
   })
 
   it('opens the catalogue of the chosen harness and writes what it is told', async () => {
