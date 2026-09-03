@@ -53,6 +53,8 @@ The core product is terminal workspaces, sessions, files, server status, and set
 | Scheduled | Send prompts to named tmux sessions on a schedule |
 | Library | Read, search, and correct the configured context corpus |
 
+Beads, Library and Agents each host a resident agent, the Clerk, the Librarian and the tender, as a tmux session in a column at the right of the view; the one selected object, the table, is carried from view to view.
+
 Components remain separated in the codebase and fail independently. A missing Beads workspace or unconfigured context corpus must not prevent terminal work.
 
 Agent formations may integrate as a component. Mission design, chains, gates, and the ARCHON command-line tool are owned outside the terminal core.

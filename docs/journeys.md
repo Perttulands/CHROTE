@@ -6,17 +6,18 @@ step in one of them. [`DESIGN-SYSTEM.md`](../DESIGN-SYSTEM.md) derives its
 doctrine from this document; [`PRD.md`](../PRD.md) cites it.
 
 Every journey ends in one of two actions. Either the operator prompts an agent
-through Send to Session, the product's one hand-off path, or he makes a small
-manual edit himself. In the operator's words: "In the end CHROTE is
-fundamentally about running agents and everything serves to make that as easy as
-possible."
+or he makes a small manual edit himself. The prompt goes through Send to
+Session, the product's hand-off path, or, in a tab with a resident agent, is
+pasted straight into the resident's prompt for him to finish and submit there.
+In the operator's words: "In the end CHROTE is fundamentally about running
+agents and everything serves to make that as easy as possible."
 
 Chords are written as `Alt` and a key: `Alt` is the CHROTE key, and the chord
 works whether or not a terminal has the cursor. The leader,
-`Ctrl+Shift+Space`, is discovery — it opens a strip listing the same chords, and
-inside its window the bare key runs the action. Where a journey names a surface
-or a chord CHROTE does not have yet, the entry says so. Beads owns when it
-arrives.
+`Ctrl+Shift+Space`, is discovery: it opens the keybindings panel listing the
+same chords, and inside its window the bare key runs the action. Where a
+journey names a surface or a chord CHROTE does not have yet, the entry says so.
+Beads owns when it arrives.
 
 ## 1. Launch an agent
 
@@ -69,25 +70,32 @@ Session search has no direct chord: leader then `/`.
 ## 3. Understand the work
 
 **Goal.** Read what is planned, in progress and stale across projects, and hand
-a Bead to an agent.
+a Bead to the Clerk, the agent that keeps the register.
 
 **Steps.**
 
-1. Open Beads and choose the project store.
-2. Read open work as a map and dig into it.
+1. Open Beads and choose the project store from the rail.
+2. Read open work as a map. A click on a row puts its Bead on the table and,
+   where the row has children, folds or unfolds them.
 3. Read an epic, its goals and its definitions of done.
 4. Find stale work to clear out.
-5. Open a Bead id printed in terminal output and read it beside the session that
-   named it.
-6. Annotate the Bead and send it.
+5. Open a Bead id printed in terminal output and read it on the table beside
+   the session that named it.
+6. Annotate the Bead and hand it to the Clerk, whose column is at the right of
+   the tab.
 
-**Surfaces.** Beads tab (1, 2, 3, 4, 6); terminal workspace, for ids in output
-(5); the Send drawer (6).
+**Surfaces.** Beads tab, its map and the table (1, 2, 3, 4, 6); terminal
+workspace with the table at its right, for ids in output (5); the Clerk's
+column (6); the Send drawer, for any other session (6).
 
-**End action.** Send to Session, carrying the Bead id and the note. Writing
-Beads stays with `bd` and the agents.
+**End action.** Paste into the Clerk: `Alt+S` puts the Bead's reference into the
+Clerk's prompt, and the operator writes the rest and presses `Enter` there.
+Send to Session carries the same reference to any other session. Writing Beads
+stays with `bd` and the agents, the Clerk among them.
 
-**Chords.** `Alt+B` opens the Beads tab; `Alt+S` opens the Send drawer.
+**Chords.** `Alt+B` opens the Beads tab; `Alt+S` pastes the Bead on the table
+into the Clerk's prompt; `Alt+Enter` focuses the Clerk's column; `Alt+I` closes
+the table.
 
 ## 4. Understand what an agent sees
 
@@ -98,18 +106,23 @@ with and what they see is perhaps the most critical thing of all."
 **Steps.**
 
 1. Ask what a running agent sees: its instruction stack in order, the skills
-   available to it, its memories, and where each came from. Not built yet.
+   available to it, its memories, and where each came from.
 2. Read the layer that surprised you.
 3. Compare workspaces, when the same instruction should hold in several. Not
    built yet.
-4. Correct the wording, or hand the curation to the agent that tends the layer.
+4. Correct the wording, or hand the curation to the tender, the agent that
+   tends the layers, whose column is at the right of the Agents tab.
 
-**Surfaces.** A session's tile or row, as the way in (1); the instructions
-surface (1, 2, 3); the editor shared with Files (4); the Send drawer (4).
+**Surfaces.** A session's tile or row, as the way in (1); What this agent sees,
+on the table (1, 2); the Agents tab, for any workspace and harness (1, 2, 3);
+the editor shared with Files (4); the tender's column (4).
 
-**End action.** A small manual edit, or Send to Session.
+**End action.** A small manual edit, or paste into the tender: `Alt+S` puts the
+chosen workspace and harness into the tender's prompt. Send to Session carries
+the same reference to any other session.
 
-**Chords.** None yet.
+**Chords.** `Alt+G` opens the Agents tab; `Alt+S` pastes into the tender's
+prompt; `Alt+Enter` focuses the tender's column.
 
 ## 5. Review files and changes
 
@@ -155,22 +168,28 @@ edit in Settings.
 ## 7. Keep the library
 
 **Goal.** Understand what is in the context corpus, correct it where it is
-wrong, and ask the librarian for the rest. The operator: "This library is an
+wrong, and ask the Librarian for the rest. The operator: "This library is an
 opportunity to make something with real character and opinion instead of just a
 filesystem."
 
 **Steps.**
 
-1. Step into the library: shelves, and pages rendered from their Markdown.
+1. Step into the library at its map: every page, shelves as labelled clusters,
+   wiki links and shared tags as edges, size from length, brightness from
+   recency, candidates dim. Click a page to read it in the reading room, where
+   the map shrinks to a strip of what is near this page.
 2. Search across everything, and read what changed recently.
 3. Fix an odd wording where you find it; each save is a commit attributed to the
    operator.
-4. Point the librarian at the page or the shelf.
+4. Point the Librarian at the page or the shelf.
 
-**Surfaces.** The Library surface and its shelves, pages, search and recent
-changes (1, 2, 3); the editor shared with Files (3); the librarian's own session
-and the Send drawer (4).
+**Surfaces.** The Library's map and reading room, its search and recent changes
+(1, 2, 3); the editor shared with Files (3); the Librarian's column (4).
 
-**End action.** A small manual edit, or Send to Session pointed at the page.
+**End action.** A small manual edit, or paste into the Librarian: `Alt+S` puts
+the page on the table into the Librarian's prompt, and a shelf's menu sends the
+shelf the same way.
 
-**Chords.** `Alt+L` opens the Library tab; `Alt+S` sends the page on the table.
+**Chords.** `Alt+L` opens the Library tab; `Alt+R` switches between the map and
+the reading room; `Alt+S` pastes the page into the Librarian's prompt;
+`Alt+Enter` focuses the Librarian's column.
