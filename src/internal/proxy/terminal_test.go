@@ -348,13 +348,13 @@ func TestTerminal_ViewingModeSelectsTheAttachFlags(t *testing.T) {
 		{
 			name:    "a tile observes a session another client already sizes",
 			mode:    "tile",
-			clients: "/dev/pts/7\tattached,focused,UTF-8\n",
+			clients: "/dev/pts/907\tattached,focused,UTF-8\n",
 			want:    "-S /tmp/tmux-b attach-session -f ignore-size -t shell-one",
 		},
 		{
 			name:    "a tile takes the seat back from clients that all ignore size",
 			mode:    "tile",
-			clients: "/dev/pts/7\tattached,ignore-size,UTF-8\n",
+			clients: "/dev/pts/907\tattached,ignore-size,UTF-8\n",
 			want:    "-S /tmp/tmux-b attach-session -t shell-one",
 		},
 		{
@@ -365,7 +365,7 @@ func TestTerminal_ViewingModeSelectsTheAttachFlags(t *testing.T) {
 		{
 			name:    "a peek never takes the seat from a sizing client either",
 			mode:    "peek",
-			clients: "/dev/pts/7\tattached,focused,UTF-8\n",
+			clients: "/dev/pts/907\tattached,focused,UTF-8\n",
 			want:    "-S /tmp/tmux-b attach-session -f ignore-size -t shell-one",
 		},
 	} {
@@ -399,7 +399,7 @@ func TestTerminal_ViewingModeSelectsTheAttachFlags(t *testing.T) {
 func TestTerminal_ClaimFlagsTheOtherSizingClientsBeforeClearingItsOwn(t *testing.T) {
 	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
 	t.Setenv("FAKE_TMUX_ATTACH", harness.attachScript(`printf 'attached\n'; cat`))
-	t.Setenv("FAKE_TMUX_CLIENTS", "/dev/pts/7\tattached,focused,UTF-8\n/dev/pts/9\tattached,ignore-size,UTF-8\n")
+	t.Setenv("FAKE_TMUX_CLIENTS", "/dev/pts/907\tattached,focused,UTF-8\n/dev/pts/909\tattached,ignore-size,UTF-8\n")
 
 	client := harness.dial("arg=tile&arg=shell-one&arg=bob", 80, 24)
 	client.readUntil("attached")
@@ -410,7 +410,7 @@ func TestTerminal_ClaimFlagsTheOtherSizingClientsBeforeClearingItsOwn(t *testing
 	client.readUntil("claimed")
 
 	args := harness.tmuxArgs()
-	handOver := strings.Index(args, "refresh-client -t /dev/pts/7 -f ignore-size")
+	handOver := strings.Index(args, "refresh-client -t /dev/pts/907 -f ignore-size")
 	takeOver := strings.Index(args, "-f !ignore-size")
 	if handOver < 0 {
 		t.Fatalf("claim did not hand the size over from the other sizing client; args=%q", args)
@@ -418,7 +418,7 @@ func TestTerminal_ClaimFlagsTheOtherSizingClientsBeforeClearingItsOwn(t *testing
 	if takeOver < 0 || takeOver < handOver {
 		t.Fatalf("claim cleared its own flag before flagging the other sizer; args=%q", args)
 	}
-	if strings.Contains(args, "refresh-client -t /dev/pts/9") {
+	if strings.Contains(args, "refresh-client -t /dev/pts/909") {
 		t.Fatalf("claim flagged a client that was already ignoring size; args=%q", args)
 	}
 }
@@ -428,7 +428,7 @@ func TestTerminal_ClaimFlagsTheOtherSizingClientsBeforeClearingItsOwn(t *testing
 func TestTerminal_PeekCannotClaimTheSize(t *testing.T) {
 	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
 	t.Setenv("FAKE_TMUX_ATTACH", harness.attachScript(`printf 'attached\n'; cat`))
-	t.Setenv("FAKE_TMUX_CLIENTS", "/dev/pts/7\tattached,focused,UTF-8\n")
+	t.Setenv("FAKE_TMUX_CLIENTS", "/dev/pts/907\tattached,focused,UTF-8\n")
 
 	client := harness.dial("arg=peek&arg=shell-one&arg=bob", 80, 24)
 	client.readUntil("attached")
