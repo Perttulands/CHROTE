@@ -57,21 +57,37 @@ test('built server serves embedded assets and preserves terminal and Files workf
     expect(filesBody).toEqual(expect.objectContaining({ isDir: true }))
   }
 
+  // The panel is search-first, so the contract proves the routes it now leans
+  // on: the write route that the in-panel editor saves through, the find route
+  // that reaches a file by name, and the per-workspace open file.
+  const contractFile1 = `${contractFilesTerminal1}/contract-find-terminal1.md`
+  const contractFile2 = `${contractFilesTerminal2}/contract-find-terminal2.md`
+  for (const [contractFile, heading] of [[contractFile1, 'Terminal 1 contract'], [contractFile2, 'Terminal 2 contract']] as const) {
+    const written = await request.post(`/api/files/resources${contractFile}`, {
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      data: `# ${heading}\n`,
+    })
+    expect(written.ok(), `write route returned ${written.status()} for ${contractFile}`).toBeTruthy()
+  }
+
+  const diffResponse = await request.get(`/api/files/diff?path=${encodeURIComponent(contractFile1)}`)
+  expect(diffResponse.ok(), `diff route returned ${diffResponse.status()}`).toBeTruthy()
+  expect(await diffResponse.json()).toEqual(expect.objectContaining({ repository: '', diff: '' }))
+
   const filesButton1 = terminal1Dock.getByRole('button', { name: 'Files sidecar' })
   await filesButton1.click()
   const filesPanel1 = terminal1Dock.locator('[aria-label="Files sidecar"]')
-  const filesPath1 = filesPanel1.getByRole('textbox', { name: 'Files panel path' })
-  const filesResponsePromise1 = page.waitForResponse(response => (
+  const findField1 = filesPanel1.getByRole('textbox', { name: 'Find files' })
+  const findResponsePromise1 = page.waitForResponse(response => (
     response.request().method() === 'GET' &&
-    response.request().resourceType() === 'fetch' &&
-    response.url().includes('/api/files/resources') &&
-    response.url().includes('contract-files-terminal1')
+    response.url().includes('/api/files/find') &&
+    response.url().includes('contract-find-terminal1')
   ))
-  await filesPath1.fill(contractFilesTerminal1)
-  await filesPath1.press('Enter')
-  const filesResponse1 = await filesResponsePromise1
-  expect(filesResponse1.ok(), `Files sidecar route returned ${filesResponse1.status()}`).toBeTruthy()
-  await expect(filesPath1).toHaveValue(contractFilesTerminal1)
+  await findField1.fill('contract-find-terminal1')
+  const findResponse1 = await findResponsePromise1
+  expect(findResponse1.ok(), `find route returned ${findResponse1.status()}`).toBeTruthy()
+  await filesPanel1.getByRole('listitem').filter({ hasText: 'contract-find-terminal1.md' }).first().click()
+  await expect(filesPanel1.getByRole('heading', { name: 'Terminal 1 contract' })).toBeVisible()
 
   await page.getByRole('button', { name: 'Terminal 2', exact: true }).click()
   const terminal2Dock = page.locator('.terminal-workspace-dock[data-workspace="terminal2"][data-active="true"]')
@@ -80,23 +96,23 @@ test('built server serves embedded assets and preserves terminal and Files workf
 
   await terminal2Dock.getByRole('button', { name: 'Files sidecar' }).click()
   const filesPanel2 = terminal2Dock.locator('[aria-label="Files sidecar"]')
-  const filesPath2 = filesPanel2.getByRole('textbox', { name: 'Files panel path' })
-  await expect(filesPath2).toHaveValue('/')
-  const filesResponsePromise2 = page.waitForResponse(response => (
+  const findField2 = filesPanel2.getByRole('textbox', { name: 'Find files' })
+  await expect(findField2).toHaveValue('')
+  const findResponsePromise2 = page.waitForResponse(response => (
     response.request().method() === 'GET' &&
-    response.request().resourceType() === 'fetch' &&
-    response.url().includes('/api/files/resources') &&
-    response.url().includes('contract-files-terminal2')
+    response.url().includes('/api/files/find') &&
+    response.url().includes('contract-find-terminal2')
   ))
-  await filesPath2.fill(contractFilesTerminal2)
-  await filesPath2.press('Enter')
-  const filesResponse2 = await filesResponsePromise2
-  expect(filesResponse2.ok(), `Files sidecar route returned ${filesResponse2.status()}`).toBeTruthy()
-  await expect(filesPath2).toHaveValue(contractFilesTerminal2)
+  await findField2.fill('contract-find-terminal2')
+  const findResponse2 = await findResponsePromise2
+  expect(findResponse2.ok(), `find route returned ${findResponse2.status()}`).toBeTruthy()
+  await filesPanel2.getByRole('listitem').filter({ hasText: 'contract-find-terminal2.md' }).first().click()
+  await expect(filesPanel2.getByRole('heading', { name: 'Terminal 2 contract' })).toBeVisible()
 
+  // Each workspace keeps its own open file across a tab switch.
   await page.getByRole('button', { name: 'Terminal', exact: true }).click()
   await expect(terminal1Dock.locator('[aria-label="Files sidecar"]')
-    .getByRole('textbox', { name: 'Files panel path' })).toHaveValue(contractFilesTerminal1)
+    .getByRole('heading', { name: 'Terminal 1 contract' })).toBeVisible()
   await page.getByRole('button', { name: 'Terminal 2', exact: true }).click()
-  await expect(filesPanel2.getByRole('textbox', { name: 'Files panel path' })).toHaveValue(contractFilesTerminal2)
+  await expect(filesPanel2.getByRole('heading', { name: 'Terminal 2 contract' })).toBeVisible()
 })

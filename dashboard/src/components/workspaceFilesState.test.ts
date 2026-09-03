@@ -123,43 +123,21 @@ describe('workspace Files persistence', () => {
     })
   })
 
-  it('keeps navigation, tree, Peek, and viewer state isolated per terminal workspace', () => {
+  it('keeps navigation, tree, and open-file state isolated per terminal workspace', () => {
     writeWorkspaceFilesState('terminal1', {
       ...DEFAULT_WORKSPACE_FILES_STATE,
       currentPath: '/srv/chrote',
       expandedPaths: ['/', '/srv', '/srv/chrote'],
       selectedPath: '/srv/chrote/README.md',
       treeScrollTop: 240,
-      peek: {
-        path: '/srv/chrote/README.md',
-        name: 'README.md',
-        size: 100,
-        type: 'text/markdown',
-        x: 420,
-        y: 120,
-        width: 720,
-        height: 640,
-      },
-      fileViewStates: {
-        '/srv/chrote/README.md': {
-          scrollTop: 480,
-          markdownMode: 'preview',
-          fontSize: 16,
-          markdownSplitPercent: 58,
-          imageZoom: 1.25,
-          imageFit: true,
-        },
-      },
+      openPath: '/srv/chrote/README.md',
     })
 
     expect(readWorkspaceFilesState('terminal1')).toMatchObject({
       currentPath: '/srv/chrote',
       selectedPath: '/srv/chrote/README.md',
       treeScrollTop: 240,
-      peek: { path: '/srv/chrote/README.md', width: 720 },
-      fileViewStates: {
-        '/srv/chrote/README.md': { scrollTop: 480, markdownMode: 'preview' },
-      },
+      openPath: '/srv/chrote/README.md',
     })
     expect(readWorkspaceFilesState('terminal2')).toEqual(DEFAULT_WORKSPACE_FILES_STATE)
   })
@@ -171,8 +149,7 @@ describe('workspace Files persistence', () => {
         expandedPaths: ['/', 12, '/srv'],
         selectedPath: false,
         treeScrollTop: -9,
-        peek: { path: '', width: 99999 },
-        fileViewStates: null,
+        openPath: 'relative/path',
       },
     }))
 

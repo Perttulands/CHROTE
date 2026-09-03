@@ -1,0 +1,51 @@
+/* The one editor: a textarea, a line-number gutter, and nothing else. */
+
+.chrote-editor {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  background: var(--terminal-background);
+  font-size: var(--chrote-editor-font-size, 12px);
+  line-height: 1.45;
+}
+
+.chrote-editor-gutter {
+  flex: none;
+  margin: 0;
+  padding: 8px 10px 8px 8px;
+  min-width: 3.4em;
+  overflow: hidden;
+  color: var(--text-dim);
+  font: inherit;
+  text-align: right;
+  white-space: pre;
+  user-select: none;
+}
+
+.chrote-editor-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 8px 8px 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: auto;
+  background: transparent;
+  color: var(--text-primary);
+  caret-color: var(--accent);
+  font: inherit;
+  white-space: pre;
+  tab-size: 2;
+}
+
+/*
+ * The field fills the panel, so the global focus ring would draw a rectangle
+ * around the whole surface and say nothing. The accent caret says it instead,
+ * and it says where.
+ */
+.chrote-editor-input:focus-visible {
+  outline: none;
+}

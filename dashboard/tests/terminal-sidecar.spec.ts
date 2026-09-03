@@ -28,6 +28,20 @@ test.describe('terminal workspace sidecars', () => {
     await expect(page.locator('.session-search-input')).toBeFocused()
   })
 
+  test('opens Files and focuses its find field on Alt+O, and closes it again', async ({ page }) => {
+    await openFreshTerminal(page, { width: 1280, height: 800 })
+    const filesTrigger = page.getByRole('button', { name: 'Files sidecar', exact: true })
+    await expect(filesTrigger).toHaveAttribute('aria-expanded', 'false')
+
+    await page.keyboard.press('Alt+o')
+
+    await expect(filesTrigger).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.getByRole('textbox', { name: 'Find files' })).toBeFocused()
+
+    await page.keyboard.press('Alt+o')
+    await expect(filesTrigger).toHaveAttribute('aria-expanded', 'false')
+  })
+
   test('keeps open desktop sidecars beside terminal content', async ({ page }) => {
     await openFreshTerminal(page, { width: 1280, height: 800 })
 

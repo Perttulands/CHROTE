@@ -11,24 +11,13 @@ export interface FileViewState {
   imageFit: boolean
 }
 
-export interface WorkspaceFilePeekState {
-  path: string
-  name: string
-  size: number
-  type: string
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
 export interface WorkspaceFilesState {
   currentPath: string
   expandedPaths: string[]
   selectedPath: string | null
   treeScrollTop: number
-  peek: WorkspaceFilePeekState | null
-  fileViewStates: Record<string, FileViewState>
+  /** The file the panel is showing instead of the tree, or null for the tree. */
+  openPath: string | null
 }
 
 export interface SessionsDockState {
@@ -79,8 +68,7 @@ export const DEFAULT_WORKSPACE_FILES_STATE: WorkspaceFilesState = {
   expandedPaths: ['/'],
   selectedPath: null,
   treeScrollTop: 0,
-  peek: null,
-  fileViewStates: {},
+  openPath: null,
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -145,34 +133,8 @@ function writeStorageRecord(key: string, value: unknown, version = 1): void {
   }
 }
 
-function sanitizeFileViewState(value: unknown): FileViewState {
-  if (!isRecord(value)) return { ...DEFAULT_FILE_VIEW_STATE }
-  const markdownMode = value.markdownMode === 'source' || value.markdownMode === 'split'
-    ? value.markdownMode
-    : 'preview'
-  return {
-    scrollTop: finiteNumber(value.scrollTop, 0, 0, 10_000_000),
-    markdownMode,
-    fontSize: finiteNumber(value.fontSize, DEFAULT_FILE_VIEW_STATE.fontSize, 11, 28),
-    markdownSplitPercent: finiteNumber(value.markdownSplitPercent, DEFAULT_FILE_VIEW_STATE.markdownSplitPercent, 20, 80),
-    imageZoom: finiteNumber(value.imageZoom, 1, 0.1, 8),
-    imageFit: value.imageFit !== false,
-  }
-}
-
-function sanitizePeek(value: unknown): WorkspaceFilePeekState | null {
-  if (!isRecord(value) || typeof value.path !== 'string' || !value.path.startsWith('/')) return null
-  const name = typeof value.name === 'string' && value.name ? value.name : value.path.split('/').pop() || value.path
-  return {
-    path: value.path,
-    name,
-    size: finiteNumber(value.size, 0, 0, Number.MAX_SAFE_INTEGER),
-    type: typeof value.type === 'string' ? value.type : '',
-    x: finiteNumber(value.x, 360, 0, 100_000),
-    y: finiteNumber(value.y, 96, 0, 100_000),
-    width: finiteNumber(value.width, 720, 320, 1600),
-    height: finiteNumber(value.height, 620, 260, 1200),
-  }
+function sanitizeOpenPath(value: unknown): string | null {
+  return typeof value === 'string' && value.startsWith('/') ? value : null
 }
 
 function readLegacySidebarCollapsed(): boolean | null {
@@ -279,7 +241,6 @@ export function readWorkspaceFilesState(workspaceId: WorkspaceId): WorkspaceFile
   if (!isRecord(raw)) return {
     ...DEFAULT_WORKSPACE_FILES_STATE,
     expandedPaths: [...DEFAULT_WORKSPACE_FILES_STATE.expandedPaths],
-    fileViewStates: {},
   }
 
   const expandedPaths = Array.isArray(raw.expandedPaths)
@@ -287,20 +248,12 @@ export function readWorkspaceFilesState(workspaceId: WorkspaceId): WorkspaceFile
     : ['/']
   if (!expandedPaths.includes('/')) expandedPaths.unshift('/')
 
-  const fileViewStates = isRecord(raw.fileViewStates)
-    ? Object.entries(raw.fileViewStates).reduce<Record<string, FileViewState>>((next, [path, value]) => {
-        if (path.startsWith('/')) next[path] = sanitizeFileViewState(value)
-        return next
-      }, {})
-    : {}
-
   return {
     currentPath: typeof raw.currentPath === 'string' && raw.currentPath.startsWith('/') ? raw.currentPath : '/',
     expandedPaths,
     selectedPath: typeof raw.selectedPath === 'string' && raw.selectedPath.startsWith('/') ? raw.selectedPath : null,
     treeScrollTop: finiteNumber(raw.treeScrollTop, 0, 0, 10_000_000),
-    peek: sanitizePeek(raw.peek),
-    fileViewStates,
+    openPath: sanitizeOpenPath(raw.openPath),
   }
 }
 
@@ -309,10 +262,6 @@ export function writeWorkspaceFilesState(workspaceId: WorkspaceId, state: Worksp
     ...state,
     expandedPaths: Array.from(new Set(state.expandedPaths.filter(path => path.startsWith('/')))),
     treeScrollTop: finiteNumber(state.treeScrollTop, 0, 0, 10_000_000),
-    peek: sanitizePeek(state.peek),
-    fileViewStates: Object.entries(state.fileViewStates).reduce<Record<string, FileViewState>>((next, [path, value]) => {
-      if (path.startsWith('/')) next[path] = sanitizeFileViewState(value)
-      return next
-    }, {}),
+    openPath: sanitizeOpenPath(state.openPath),
   })
 }

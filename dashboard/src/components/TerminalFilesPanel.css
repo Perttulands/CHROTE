@@ -59,7 +59,6 @@
 }
 
 .terminal-files-header button,
-.file-peek button,
 .fb-viewer-controls button {
   border: 1px solid var(--divider);
   background: transparent;
@@ -69,7 +68,6 @@
 }
 
 .terminal-files-header button:hover:not(:disabled),
-.file-peek button:hover:not(:disabled),
 .fb-viewer-controls button:hover:not(:disabled) {
   color: var(--text-primary);
   border-color: var(--accent);
@@ -77,7 +75,6 @@
 }
 
 .terminal-files-header button:disabled,
-.file-peek button:disabled,
 .fb-viewer-controls button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -95,124 +92,13 @@
   margin-left: auto;
 }
 
-.terminal-files-path {
-  padding: 7px;
-  border-bottom: 1px solid var(--divider);
-}
-
-.terminal-files-path input {
-  width: 100%;
-  min-width: 0;
-  height: 28px;
-  border: 1px solid var(--divider);
-  background: var(--background);
-  color: var(--text-primary);
-  padding: 0 7px;
-  font: 12px/1.2 'JetBrains Mono', 'CHROTE Term Symbols', monospace;
-  outline: none;
-}
-
-.terminal-files-path input:focus {
-  border-color: var(--accent);
-}
 
 .terminal-files-panel .shared-file-tree {
   padding: 6px 0;
 }
 
-.terminal-files-footer {
-  min-height: 28px;
-  padding: 6px 8px;
-  border-top: 1px solid var(--divider);
-  color: var(--text-dim);
-  font-size: 10px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .fb-tree-toggle-spacer {
   cursor: default;
-}
-
-.file-peek {
-  position: fixed;
-  z-index: 920;
-  min-width: 320px;
-  min-height: 260px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--accent);
-  background: var(--surface-primary);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.58);
-}
-
-.file-peek-header {
-  min-height: 46px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 7px 8px 7px 12px;
-  border-bottom: 1px solid var(--divider);
-  cursor: move;
-  touch-action: none;
-  user-select: none;
-}
-
-.file-peek-title {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.file-peek-title strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.file-peek-title span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-dim);
-  font-size: 10px;
-}
-
-.file-peek-actions {
-  flex-shrink: 0;
-  display: flex;
-  gap: 5px;
-}
-
-.file-peek-actions button {
-  min-height: 28px;
-  padding: 0 7px;
-  font-size: 11px;
-}
-
-.file-peek-target {
-  min-height: 24px;
-  padding: 5px 10px;
-  border-bottom: 1px solid var(--divider);
-  color: var(--text-dim);
-  font-size: 10px;
-}
-
-.file-peek-resizer {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 18px;
-  height: 18px;
-  cursor: nwse-resize;
-  touch-action: none;
-  background: linear-gradient(135deg, transparent 45%, var(--divider) 46%, var(--divider) 55%, transparent 56%);
 }
 
 .fb-file-viewer {
@@ -337,6 +223,297 @@
   height: 100%;
 }
 
+/* ---- find: the header is a field, and its results are a flat list ---- */
+
+.terminal-files-search {
+  flex: none;
+  padding: 7px 8px 0;
+}
+
+.terminal-files-search input {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.terminal-files-search input::placeholder {
+  color: var(--text-dim);
+}
+
+.terminal-files-matches {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.terminal-files-match {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.terminal-files-match.is-first,
+.terminal-files-match:hover {
+  background: var(--surface-secondary);
+}
+
+.terminal-files-match.is-first {
+  border-left-color: var(--accent);
+}
+
+.terminal-files-count {
+  flex: none;
+  margin: 0;
+  padding: 10px 16px 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* ---- a path that shortens from the front and keeps its file name ---- */
+
+.panel-path {
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+
+.panel-path-head {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.panel-path-tail {
+  flex: none;
+  color: var(--text-primary);
+}
+
+/* ---- the tree's own row of controls, above the tree ---- */
+
+.terminal-files-nav {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px 0;
+  min-width: 0;
+}
+
+.terminal-files-here {
+  min-width: 0;
+  font-size: 12px;
+}
+
+.terminal-files-nav button {
+  border: 1px solid var(--divider);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.terminal-files-nav button:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.terminal-files-nav button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---- the viewer that replaces the tree ---- */
+
+.files-panel-viewer-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 8px 0;
+  font-size: 12px;
+}
+
+.files-panel-viewer-path {
+  min-width: 0;
+}
+
+.files-panel-actions {
+  margin-left: auto;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.files-panel-action {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.files-panel-action:hover:not(:disabled),
+.files-panel-action.is-current {
+  color: var(--text-primary);
+}
+
+.files-panel-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.files-panel-viewer-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  margin-top: 8px;
+  border-top: 1px solid var(--divider);
+}
+
+.files-panel-note {
+  margin: 0;
+  padding: 12px 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.files-panel-markdown {
+  padding: 12px 10px;
+}
+
+.files-panel-image {
+  padding: 12px 10px;
+}
+
+.files-panel-image img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* text with line numbers, capped at the first 2000 lines */
+
+.files-panel-lines {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  background: var(--terminal-background);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.files-panel-lines-gutter {
+  flex: none;
+  margin: 0;
+  padding: 8px 10px 8px 8px;
+  min-width: 3.4em;
+  overflow: hidden;
+  color: var(--text-dim);
+  font: inherit;
+  text-align: right;
+  white-space: pre;
+  user-select: none;
+}
+
+.files-panel-lines-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 8px 8px 0;
+  overflow: auto;
+  color: var(--text-primary);
+  font: inherit;
+  white-space: pre;
+}
+
+/* the diff: the fifth colour exception, with a sign in the gutter */
+
+.files-panel-diff {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 8px 0;
+  background: var(--terminal-background);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.files-panel-diff-line {
+  display: flex;
+  padding: 0 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.files-panel-diff-gutter {
+  flex: none;
+  width: 1.2em;
+  color: var(--text-dim);
+}
+
+.files-panel-diff-text {
+  min-width: 0;
+}
+
+.files-panel-diff-line.is-context .files-panel-diff-text {
+  color: var(--text-secondary);
+}
+
+.files-panel-diff-line.is-add .files-panel-diff-gutter,
+.files-panel-diff-line.is-add .files-panel-diff-text {
+  color: var(--ansi-2);
+}
+
+.files-panel-diff-line.is-del .files-panel-diff-gutter,
+.files-panel-diff-line.is-del .files-panel-diff-text {
+  color: var(--color-error);
+}
+
+.files-panel-diff-line.is-hunk {
+  margin: 6px 0 4px;
+}
+
+.files-panel-diff-line.is-hunk .files-panel-diff-text {
+  color: var(--text-dim);
+}
+
 @media (max-width: 768px) {
   .terminal-workspace-dock {
     overflow: hidden;
@@ -351,22 +528,6 @@
 
   .terminal-workspace-dock .dock-resizer,
   .terminal-workspace-dock .sidecar-pin-btn {
-    display: none;
-  }
-
-  .file-peek {
-    inset: 42px 0 0 !important;
-    width: 100vw !important;
-    height: calc(100dvh - 42px) !important;
-    min-width: 0;
-    min-height: 0;
-  }
-
-  .file-peek-header {
-    cursor: default;
-  }
-
-  .file-peek-resizer {
     display: none;
   }
 

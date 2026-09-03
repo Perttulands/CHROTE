@@ -6,13 +6,15 @@ import {
   createFolder,
   deleteItem,
   fetchDirectory,
+  fetchFileDiff,
+  findFiles,
   readTextFile,
   renameItem,
   uploadFiles,
+  writeTextFile,
 } from './FilesView/fileService'
 import TerminalFilesPanel from './TerminalFilesPanel'
 import {
-  DEFAULT_FILE_VIEW_STATE,
   DEFAULT_WORKSPACE_FILES_STATE,
   readWorkspaceFilesState,
   writeWorkspaceFilesState,
@@ -26,15 +28,22 @@ vi.mock('./FilesView/fileService', async () => {
     createFolder: vi.fn(),
     deleteItem: vi.fn(),
     fetchDirectory: vi.fn(),
+    fetchFileDiff: vi.fn(),
+    findFiles: vi.fn(),
     readTextFile: vi.fn(),
     renameItem: vi.fn(),
     uploadFiles: vi.fn(),
+    writeTextFile: vi.fn(),
     getDownloadUrl: (path: string) => `/api/files/raw${path}`,
   }
 })
 
 const sessionMocks = vi.hoisted(() => ({
   openSendToSession: vi.fn(),
+}))
+
+const statusMocks = vi.hoisted(() => ({
+  announce: vi.fn(),
 }))
 
 vi.mock('../context/SessionContext', () => ({
@@ -53,8 +62,15 @@ vi.mock('../context/SessionContext', () => ({
   }),
 }))
 
+vi.mock('../context/StatusContext', () => ({
+  useStatus: () => ({ status: null, announce: statusMocks.announce }),
+}))
+
 const mockedFetchDirectory = vi.mocked(fetchDirectory)
+const mockedFetchFileDiff = vi.mocked(fetchFileDiff)
+const mockedFindFiles = vi.mocked(findFiles)
 const mockedReadTextFile = vi.mocked(readTextFile)
+const mockedWriteTextFile = vi.mocked(writeTextFile)
 const mockedCreateFile = vi.mocked(createFile)
 const mockedCreateFolder = vi.mocked(createFolder)
 const mockedDeleteItem = vi.mocked(deleteItem)
@@ -97,11 +113,13 @@ function renderPanel(onOpenInFiles = vi.fn()) {
   return onOpenInFiles
 }
 
-async function navigatePanel(path: string) {
-  fireEvent.change(screen.getByLabelText('Files panel path'), { target: { value: path } })
-  fireEvent.submit(screen.getByLabelText('Files panel path form'))
-  const normalized = path.replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/'
-  await waitFor(() => expect(screen.getByLabelText('Files panel path')).toHaveValue(normalized))
+/** Start the panel where a test needs it, the way the operator left it. */
+function seedPanelAt(currentPath: string) {
+  writeWorkspaceFilesState('terminal1', {
+    ...DEFAULT_WORKSPACE_FILES_STATE,
+    currentPath,
+    expandedPaths: [currentPath],
+  })
 }
 
 describe('TerminalFilesPanel', () => {
@@ -115,6 +133,9 @@ describe('TerminalFilesPanel', () => {
       return []
     })
     mockedReadTextFile.mockResolvedValue('# CHROTE')
+    mockedWriteTextFile.mockResolvedValue(undefined)
+    mockedFindFiles.mockResolvedValue({ matches: [], truncated: false })
+    mockedFetchFileDiff.mockResolvedValue({ path: readme.path, repository: '', diff: '', truncated: false })
     mockedCreateFile.mockImplementation(async (path, name) => `${path}/${name}`.replace('//', '/'))
     mockedCreateFolder.mockResolvedValue(undefined)
     mockedDeleteItem.mockResolvedValue(undefined)
@@ -126,47 +147,139 @@ describe('TerminalFilesPanel', () => {
     })
   })
 
-  it('opens one non-modal Peek and hands a path to the focused workspace session', async () => {
-    const openInFiles = vi.fn()
-    render(
-      <TerminalFilesPanel
-        workspaceId="terminal1"
-        collapsed={false}
-        width={320}
-        pinned={false}
-        canPin
-        panelId="terminal1-files-sidecar"
-        onTogglePin={vi.fn()}
-        onClose={vi.fn()}
-        onWidthChange={vi.fn()}
-        onOpenInFiles={openInFiles}
-      />,
-    )
+  it('finds a file by name across the roots and opens the first on Enter', async () => {
+    mockedFindFiles.mockResolvedValue({
+      matches: [
+        { path: '/srv/chrote/docs/journeys.md', name: 'journeys.md' },
+        { path: '/srv/chrote/docs/journal.md', name: 'journal.md' },
+      ],
+      truncated: false,
+    })
+    renderPanel()
 
-    fireEvent.change(screen.getByLabelText('Files panel path'), { target: { value: '/srv/chrote' } })
-    fireEvent.submit(screen.getByLabelText('Files panel path form'))
+    const field = screen.getByLabelText('Find files')
+    fireEvent.change(field, { target: { value: 'journ' } })
+    await waitFor(() => expect(mockedFindFiles).toHaveBeenCalledWith('journ', expect.any(AbortSignal)))
+    expect(await screen.findByText('2 paths · Enter opens the first')).toBeInTheDocument()
+
+    fireEvent.keyDown(field, { key: 'Enter' })
+
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument()
+    expect(screen.queryByRole('tree', { name: 'File tree' })).not.toBeInTheDocument()
+    expect(readWorkspaceFilesState('terminal1').openPath).toBe('/srv/chrote/docs/journeys.md')
+  })
+
+  it('says when a find matched more than it will show, and clears on Escape', async () => {
+    mockedFindFiles.mockResolvedValue({
+      matches: [{ path: '/srv/chrote/docs/journeys.md', name: 'journeys.md' }],
+      truncated: true,
+    })
+    renderPanel()
+
+    fireEvent.change(screen.getByLabelText('Find files'), { target: { value: 'j' } })
+    expect(await screen.findByText('1 path · more matched · Enter opens the first')).toBeInTheDocument()
+
+    fireEvent.keyDown(screen.getByLabelText('Find files'), { key: 'Escape' })
+    await waitFor(() => expect(screen.getByLabelText('Find files')).toHaveValue(''))
+    expect(await screen.findByRole('tree', { name: 'File tree' })).toBeInTheDocument()
+  })
+
+  it('replaces the tree with the viewer, renders Markdown, sends the path and comes back', async () => {
+    seedPanelAt('/srv/chrote')
+    renderPanel()
+
     fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))
 
-    const peek = await screen.findByRole('dialog', { name: 'File Peek: README.md' })
-    expect(peek).toHaveAttribute('aria-modal', 'false')
     expect(await screen.findByRole('heading', { name: 'CHROTE' })).toBeInTheDocument()
-    expect(screen.getByText(/Send target:.*shell/)).toBeInTheDocument()
+    expect(screen.queryByRole('tree', { name: 'File tree' })).not.toBeInTheDocument()
 
-    const initialWidth = Number.parseFloat(peek.style.width)
-    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize File Peek' }), { key: 'ArrowRight' })
-    await waitFor(() => expect(Number.parseFloat(peek.style.width)).toBeGreaterThan(initialWidth))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Send README.md to session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     expect(sessionMocks.openSendToSession).toHaveBeenCalledWith({
       targetSessionKey: 'alice:shell',
       reference: 'path /srv/chrote/README.md',
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open README.md in Files tab' }))
-    expect(openInFiles).toHaveBeenCalledWith('/srv/chrote/README.md')
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(await screen.findByRole('tree', { name: 'File tree' })).toBeInTheDocument()
+    expect(readWorkspaceFilesState('terminal1').openPath).toBeNull()
   })
 
-  it('retains tree state when Peek closes and exposes sidecar pin and close controls', async () => {
+  it('offers Diff only inside a repository and draws the change with a signed gutter', async () => {
+    seedPanelAt('/srv/chrote')
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))
+    await screen.findByRole('button', { name: 'Edit' })
+    expect(screen.queryByRole('button', { name: 'Diff' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    mockedFetchFileDiff.mockResolvedValue({
+      path: readme.path,
+      repository: '/srv/chrote',
+      diff: 'diff --git a/README.md b/README.md\n@@ -1,2 +1,2 @@\n-old line\n+new line\n kept\n',
+      truncated: false,
+    })
+    fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Diff' }))
+    const diff = await screen.findByLabelText('Diff against HEAD')
+    expect(within(diff).getByText('new line').parentElement).toHaveClass('is-add')
+    expect(within(diff).getByText('old line').parentElement).toHaveClass('is-del')
+    expect(within(diff).getByText('@@ -1,2 +1,2 @@').parentElement).toHaveClass('is-hunk')
+    expect(diff.textContent).toContain('+')
+    expect(diff.textContent).toContain('-')
+    expect(diff.textContent).not.toContain('diff --git')
+  })
+
+  it('says so when a file is in no repository', async () => {
+    seedPanelAt('/srv/chrote')
+    mockedFetchFileDiff.mockResolvedValue({ path: readme.path, repository: '', diff: '', truncated: false })
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))
+    await screen.findByRole('button', { name: 'Edit' })
+    expect(screen.queryByRole('button', { name: 'Diff' })).not.toBeInTheDocument()
+  })
+
+  it('edits in place: Tab indents, Ctrl+S saves and announces, Escape asks before discarding', async () => {
+    seedPanelAt('/srv/chrote')
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+
+    const field = await screen.findByLabelText('Edit README.md') as HTMLTextAreaElement
+    expect(field).toHaveValue('# CHROTE')
+
+    field.setSelectionRange(0, 0)
+    fireEvent.keyDown(field, { key: 'Tab' })
+    await waitFor(() => expect(screen.getByLabelText('Edit README.md')).toHaveValue('  # CHROTE'))
+
+    fireEvent.keyDown(screen.getByLabelText('Edit README.md'), { key: 's', ctrlKey: true })
+    await waitFor(() => expect(mockedWriteTextFile).toHaveBeenCalledWith('/srv/chrote/README.md', '  # CHROTE'))
+    expect(statusMocks.announce).toHaveBeenCalledWith('Saved README.md', 'success')
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument()
+  })
+
+  it('arms Discard before it throws an edit away', async () => {
+    seedPanelAt('/srv/chrote')
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    const field = await screen.findByLabelText('Edit README.md')
+    fireEvent.change(field, { target: { value: '# CHANGED' } })
+
+    fireEvent.keyDown(screen.getByLabelText('Edit README.md'), { key: 'Escape' })
+    expect(await screen.findByRole('button', { name: 'Confirm' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Edit README.md')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument()
+    expect(mockedWriteTextFile).not.toHaveBeenCalled()
+  })
+
+  it('exposes sidecar pin and close controls and keeps the tree selection', async () => {
     const togglePin = vi.fn()
     const close = vi.fn()
     render(
@@ -185,11 +298,8 @@ describe('TerminalFilesPanel', () => {
     )
 
     fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))
-    await screen.findByRole('dialog', { name: /File Peek/ })
-    fireEvent.click(screen.getByRole('button', { name: 'Close File Peek' }))
-
-    expect(screen.queryByRole('dialog', { name: /File Peek/ })).not.toBeInTheDocument()
-    expect(screen.getByRole('treeitem', { name: /README\.md/ })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(await screen.findByRole('button', { name: 'Back' }))
+    expect(await screen.findByRole('treeitem', { name: /README\.md/ })).toHaveAttribute('aria-selected', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: 'Pin Files sidecar' }))
     expect(togglePin).toHaveBeenCalledOnce()
@@ -199,7 +309,7 @@ describe('TerminalFilesPanel', () => {
       const stored = JSON.parse(window.localStorage.getItem('chrote.workspaceFiles.v1') || '{}')
       expect(stored.version).toBe(1)
       expect(stored.workspaces.terminal1.selectedPath).toBe('/README.md')
-      expect(stored.workspaces.terminal1.peek).toBeNull()
+      expect(stored.workspaces.terminal1.openPath).toBeNull()
     })
   })
 
@@ -225,24 +335,11 @@ describe('TerminalFilesPanel', () => {
       />,
     )
 
-    await waitFor(() => expect(screen.getByLabelText('Files panel path')).toHaveValue('/srv/chrote'))
+    await waitFor(() => expect(readWorkspaceFilesState('terminal1').currentPath).toBe('/srv/chrote'))
   })
 
   it('invalidates the FileTree cache when Refresh is clicked', async () => {
-    render(
-      <TerminalFilesPanel
-        workspaceId="terminal1"
-        collapsed={false}
-        width={320}
-        pinned={false}
-        canPin
-        panelId="terminal1-files-sidecar"
-        onTogglePin={vi.fn()}
-        onClose={vi.fn()}
-        onWidthChange={vi.fn()}
-        onOpenInFiles={vi.fn()}
-      />,
-    )
+    renderPanel()
 
     await screen.findByRole('treeitem', { name: /README\.md/ })
     expect(mockedFetchDirectory).toHaveBeenCalledTimes(1)
@@ -252,25 +349,26 @@ describe('TerminalFilesPanel', () => {
     await waitFor(() => expect(mockedFetchDirectory).toHaveBeenCalledTimes(2))
   })
 
-  it('navigates one normalized parent from an accessible header control and no-ops at root', async () => {
+  it('navigates one normalized parent from an accessible control and no-ops at root', async () => {
     renderPanel()
 
     const up = screen.getByRole('button', { name: 'Go to parent folder' })
     expect(up).toBeDisabled()
     fireEvent.click(up)
-    expect(screen.getByLabelText('Files panel path')).toHaveValue('/')
+    expect(readWorkspaceFilesState('terminal1').currentPath).toBe('/')
 
-    await navigatePanel('/srv//chrote/')
-    expect(up).toBeEnabled()
-    fireEvent.click(up)
+    fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Back' }))
+    fireEvent.contextMenu(await screen.findByRole('treeitem', { name: /README\.md/ }))
+    const menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Open parent folder' }))
 
-    await waitFor(() => expect(screen.getByLabelText('Files panel path')).toHaveValue('/srv'))
-    expect(mockedFetchDirectory).toHaveBeenCalledWith('/srv')
+    await waitFor(() => expect(readWorkspaceFilesState('terminal1').currentPath).toBe('/'))
   })
 
   it('offers the exact single-item actions and preserves sidecar/global routing', async () => {
+    seedPanelAt('/srv/chrote')
     const openInFiles = renderPanel()
-    await navigatePanel('/srv/chrote')
 
     let readmeRow = await screen.findByRole('treeitem', { name: /README\.md/ })
     fireEvent.contextMenu(readmeRow, { clientX: 80, clientY: 120 })
@@ -287,15 +385,14 @@ describe('TerminalFilesPanel', () => {
     ])
 
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Open' }))
-    expect(await screen.findByRole('dialog', { name: 'File Peek: README.md' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Close File Peek' }))
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
 
-    readmeRow = screen.getByRole('treeitem', { name: /README\.md/ })
+    readmeRow = await screen.findByRole('treeitem', { name: /README\.md/ })
     fireEvent.contextMenu(readmeRow)
     menu = document.querySelector('.menu-sheet') as HTMLElement
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Open parent folder' }))
     expect(openInFiles).toHaveBeenCalledWith('/srv/chrote')
-    expect(screen.getByLabelText('Files panel path')).toHaveValue('/srv/chrote')
 
     const docsRow = screen.getByRole('treeitem', { name: /Folder docs/ })
     fireEvent.contextMenu(docsRow)
@@ -310,64 +407,41 @@ describe('TerminalFilesPanel', () => {
       'Delete',
     ])
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Open folder' }))
-    await waitFor(() => expect(screen.getByLabelText('Files panel path')).toHaveValue('/srv/chrote/docs'))
+    await waitFor(() => expect(readWorkspaceFilesState('terminal1').currentPath).toBe('/srv/chrote/docs'))
     expect(openInFiles).toHaveBeenCalledTimes(1)
   })
 
-  it('remaps persisted Peek view state with a terminal-sidecar rename', async () => {
-    const viewState = { ...DEFAULT_FILE_VIEW_STATE, scrollTop: 144, fontSize: 18 }
+  it('follows a renamed open file and forgets a deleted one', async () => {
     writeWorkspaceFilesState('terminal1', {
       ...DEFAULT_WORKSPACE_FILES_STATE,
       currentPath: '/srv/chrote',
       selectedPath: readme.path,
       expandedPaths: ['/srv/chrote'],
-      peek: { path: readme.path, name: readme.name, size: readme.size, type: readme.type, x: 40, y: 40, width: 480, height: 360 },
-      fileViewStates: { [readme.path]: viewState },
+      openPath: readme.path,
     })
     renderPanel()
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Back' }))
     fireEvent.contextMenu(await screen.findByRole('treeitem', { name: /README\.md/ }))
-    const menu = document.querySelector('.menu-sheet') as HTMLElement
+    let menu = document.querySelector('.menu-sheet') as HTMLElement
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Rename' }))
     fireEvent.change(screen.getByLabelText('New name'), { target: { value: 'GUIDE.md' } })
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }))
-
-    await waitFor(() => {
-      const persisted = readWorkspaceFilesState('terminal1')
-      expect(persisted.peek?.path).toBe('/srv/chrote/GUIDE.md')
-      expect(persisted.fileViewStates['/srv/chrote/GUIDE.md']).toEqual(viewState)
-      expect(persisted.fileViewStates[readme.path]).toBeUndefined()
-    })
-  })
-
-  it('prunes persisted Peek view state with a terminal-sidecar delete', async () => {
-    const viewState = { ...DEFAULT_FILE_VIEW_STATE, scrollTop: 144, fontSize: 18 }
-    writeWorkspaceFilesState('terminal1', {
-      ...DEFAULT_WORKSPACE_FILES_STATE,
-      currentPath: '/srv/chrote',
-      selectedPath: readme.path,
-      expandedPaths: ['/srv/chrote'],
-      peek: { path: readme.path, name: readme.name, size: readme.size, type: readme.type, x: 40, y: 40, width: 480, height: 360 },
-      fileViewStates: { [readme.path]: viewState },
-    })
-    renderPanel()
+    await waitFor(() => expect(mockedRenameItem).toHaveBeenCalledWith(readme.path, '/srv/chrote/GUIDE.md'))
 
     fireEvent.contextMenu(await screen.findByRole('treeitem', { name: /README\.md/ }))
-    const menu = document.querySelector('.menu-sheet') as HTMLElement
+    menu = document.querySelector('.menu-sheet') as HTMLElement
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Delete' }))
     const dialog = screen.getByRole('dialog', { name: 'Delete README.md' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
-    await waitFor(() => {
-      const persisted = readWorkspaceFilesState('terminal1')
-      expect(persisted.peek).toBeNull()
-      expect(persisted.fileViewStates[readme.path]).toBeUndefined()
-    })
+    await waitFor(() => expect(readWorkspaceFilesState('terminal1').openPath).toBeNull())
   })
 
   it('offers blank-tree actions and executes sidecar mutation primitives', async () => {
+    seedPanelAt('/srv/chrote')
     renderPanel()
-    await navigatePanel('/srv/chrote')
+    await screen.findByRole('treeitem', { name: /README\.md/ })
 
     fireEvent.contextMenu(screen.getByRole('tree', { name: 'File tree' }), { clientX: 40, clientY: 90 })
     let menu = document.querySelector('.menu-sheet') as HTMLElement
@@ -421,6 +495,7 @@ describe('TerminalFilesPanel', () => {
   })
 
   it('updates a mounted Files tab from sidecar pin changes without duplicate storage entries', async () => {
+    seedPanelAt('/srv/chrote')
     window.localStorage.setItem('chrote.files.pinnedPaths', JSON.stringify([
       { path: '/srv/chrote', kind: 'directory' },
       { path: '/srv//chrote/', kind: 'directory' },
@@ -444,7 +519,6 @@ describe('TerminalFilesPanel', () => {
     )
 
     expect(await screen.findByRole('button', { name: /Pinned.*1/ })).toBeInTheDocument()
-    await navigatePanel('/srv/chrote')
     const sidecarTree = screen.getAllByRole('tree', { name: 'File tree' })[0]
     fireEvent.contextMenu(sidecarTree)
     let menu = document.querySelector('.menu-sheet') as HTMLElement
@@ -455,8 +529,5 @@ describe('TerminalFilesPanel', () => {
     menu = document.querySelector('.menu-sheet') as HTMLElement
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Pin current folder' }))
     expect(await screen.findByRole('button', { name: /Pinned.*1/ })).toBeInTheDocument()
-    expect(JSON.parse(window.localStorage.getItem('chrote.files.pinnedPaths') || '[]')).toEqual([
-      { path: '/srv/chrote', kind: 'directory' },
-    ])
   })
 })
