@@ -291,6 +291,7 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
     return (
       <button
         key={tab.id}
+        data-ui="tabbar.tab"
         className={`tab ${!tab.external && activeTab === tab.id ? 'active' : ''} ${tab.external ? 'external' : ''} ${carries ? 'tab-with-menu' : ''} ${carries && tabMenu ? 'dismissible-trigger-active' : ''}`}
         aria-haspopup={carries ? 'menu' : undefined}
         aria-expanded={carries ? tabMenu !== null : undefined}
@@ -321,7 +322,7 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
   }
 
   return (
-    <div className={`tab-bar ${isMobile ? 'mobile-mode' : ''}`}>
+    <div className={`tab-bar ${isMobile ? 'mobile-mode' : ''}`} data-ui="tabbar">
       {isMobile ? (
         <>
           <div className="tab-bar-mobile-start">

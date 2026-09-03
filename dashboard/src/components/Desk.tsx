@@ -149,7 +149,7 @@ export default function Desk({ label, sessionName, reference, placeholder, launc
 
   return (
     <div className={`desk ${expanded && terminal ? 'desk-expanded' : ''}`}>
-      <div className="desk-line">
+      <div className="desk-line" data-ui="desk">
         <span className="desk-label">{label}</span>
         {session && <SessionCommandMark command={session.currentCommand} />}
         {sessionName && <span className="desk-session">{sessionName}</span>}

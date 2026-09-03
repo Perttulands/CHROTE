@@ -284,6 +284,23 @@ export interface SendToSessionRequest {
   reference?: string
   /** A draft note under the reference. */
   note?: string
+  /** A new agent worth offering for this message, when the surface knows one. */
+  launch?: SendToSessionLaunch
+}
+
+/**
+ * The new agent a surface can name for the message it is opening the drawer
+ * with. Dev mode knows the complaint belongs to whoever works on CHROTE, so it
+ * says so on the picker's row and preselects that agent's harness rather than
+ * making the operator assemble it again for every annotation.
+ */
+export interface SendToSessionLaunch {
+  /** What the picker's row reads, in place of the bare "New agent…". */
+  label: string
+  /** The folder to start in, when the surface knows it. */
+  folder?: string
+  /** The harness to preselect, by its launch id. */
+  harness?: string
 }
 
 export interface SendSessionPane {

@@ -218,6 +218,11 @@ interface LauncherProps {
    */
   initialFolder?: string
   /**
+   * The harness to start with, by its launch id, when the surface knows which
+   * agent it is asking for. The operator can still choose another.
+   */
+  initialHarness?: string
+  /**
    * Called once a session was created, with what it was created as. A popover
    * uses it to close itself; the Send drawer uses it to reach the session it
    * just launched.
@@ -225,7 +230,7 @@ interface LauncherProps {
   onLaunched?: (created: { name: string; unixUser: LaunchUser }) => void
 }
 
-export default function Launcher({ workspaceId, attachTo, initialFolder, onLaunched }: LauncherProps) {
+export default function Launcher({ workspaceId, attachTo, initialFolder, initialHarness, onLaunched }: LauncherProps) {
   const { sessions, settings, terminalUsers, createSession } = useSession()
   const theme = useTheme()
   const options = useLaunchOptions()
@@ -247,7 +252,9 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, onLaunc
   const [flagsOpen, setFlagsOpen] = useState(false)
   const flagsFieldId = useId()
 
-  const harness = options.harnesses.find(entry => entry.id === chosenHarness) ?? options.harnesses[0]
+  const harness = options.harnesses.find(entry => entry.id === chosenHarness) ??
+    options.harnesses.find(entry => entry.id === initialHarness) ??
+    options.harnesses[0]
   const folder = chosenFolder ?? initialFolder ?? options.folders[0] ?? HOME_TOKEN
   const defaultUser = resolveLaunchUser(settings, workspaceId, terminalUsers)
   const user = chosenUser ?? defaultUser
@@ -321,6 +328,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, onLaunc
   return (
     <div
       className={`launcher${flagsOpen && flagsOffered ? ' flags-open' : ''}`}
+      data-ui="launcher"
       onClick={event => event.stopPropagation()}
     >
       {/* The frame is the container the flags panel measures: it docks beside
@@ -337,6 +345,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, onLaunc
                 key={entry.id}
                 type="button"
                 className={`launcher-row${selected ? ' selected' : ''}`}
+                data-ui="launcher.harness"
                 aria-pressed={selected}
                 onClick={() => setChosenHarness(entry.id)}
               >
@@ -351,7 +360,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, onLaunc
           })}
 
           <div className="launcher-label">Folder</div>
-          <div className="launcher-pick">
+          <div className="launcher-pick" data-ui="launcher.folder">
             {options.folders.map(path => folderOption(path, 'launcher-option'))}
             <button type="button" className="launcher-quiet launcher-browse" onClick={() => setBrowsing(true)}>
               Browse…
@@ -369,7 +378,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, onLaunc
           {/* A server with no configured Unix users has no user to choose: the
               session runs as the one account CHROTE was given. */}
           {terminalUsers.length > 0 && <div className="launcher-label">User</div>}
-          <div className="launcher-pick">
+          <div className="launcher-pick" data-ui="launcher.user">
             {terminalUsers.map(candidate => {
               const selected = candidate === user
               return (
@@ -402,6 +411,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, onLaunc
                 id={flagsFieldId}
                 type="text"
                 className="launcher-name launcher-flags"
+                data-ui="launcher.flags"
                 aria-label="Launch flags"
                 value={flagLine}
                 onChange={event => setFlagLine(event.target.value)}
@@ -433,6 +443,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, onLaunc
             id={nameFieldId}
             type="text"
             className="launcher-name"
+            data-ui="launcher.name"
             aria-label="Session name"
             value={name}
             onChange={event => setTypedName(event.target.value)}

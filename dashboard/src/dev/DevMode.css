@@ -1,0 +1,29 @@
+/* The outline sits over everything and takes no pointer events of its own: it
+   must not become the thing the pointer is over. One hairline, no fill and no
+   transition, so it reads as a measurement rather than as a selection. */
+.dev-mode-outline {
+  position: fixed;
+  z-index: 3000;
+  pointer-events: none;
+  border: 1px solid var(--accent);
+  transition: none;
+}
+
+.dev-mode-label {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 3001;
+  pointer-events: none;
+  max-width: 60vw;
+  padding: 4px 8px;
+  font-family: 'JetBrains Mono', 'CHROTE Term Symbols', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+  background: var(--surface-primary);
+  border: 1px solid var(--accent);
+}

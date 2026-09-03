@@ -144,6 +144,7 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
     <div className="terminal-area">
       <div
         className="terminal-area-controls"
+        data-ui="workspace.strip"
         aria-label="Terminal workspace controls"
       >
         {sidecarControls}

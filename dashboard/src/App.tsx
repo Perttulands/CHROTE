@@ -15,6 +15,7 @@ import Skeleton from './components/LoadingSkeleton'
 import StatusLine from './components/StatusLine'
 import KeysPanel from './keys/KeysPanel'
 import KeyEcho from './keys/KeyEcho'
+import DevMode from './dev/DevMode'
 import { closeLeaderWindow, useLeader } from './keys/chords'
 import { TerminalPoolProvider } from './components/TerminalPool'
 import { SessionCommandMark, SessionLabel } from './components/sessionLabel'
@@ -486,6 +487,10 @@ function DashboardContent() {
         </div>
 
         <StatusLine />
+
+        {/* Outside the content column: the highlight is positioned against the
+            viewport and must be able to reach every surface, tab bar included. */}
+        <DevMode activeTab={activeTab} />
 
         <KeysPanel isOpen={keysPanelOpen} onClose={handleCloseKeys} />
       </div>

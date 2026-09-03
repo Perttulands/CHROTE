@@ -220,7 +220,7 @@ function FilePanelViewer({ path, onBack, onOpenPath, onSend }: FilePanelViewerPr
 
   return (
     <>
-      <div className="files-panel-viewer-head">
+      <div className="files-panel-viewer-head" data-ui="files.header">
         <button type="button" className="files-panel-action" onClick={onBack}>Back</button>
         <PanelPath path={path} className="files-panel-viewer-path" />
         <div className="files-panel-actions">
@@ -255,7 +255,7 @@ function FilePanelViewer({ path, onBack, onOpenPath, onSend }: FilePanelViewerPr
           )}
         </div>
       </div>
-      <div className="files-panel-viewer-body">
+      <div className="files-panel-viewer-body" data-ui="files.viewer">
         {mode === 'edit' ? (
           <Editor
             value={draft}

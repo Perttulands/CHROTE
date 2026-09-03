@@ -264,6 +264,7 @@ function SessionItem({ session }: SessionItemProps) {
       <div
         ref={setNodeRef}
         className={`session-item ${isAssigned ? 'assigned' : ''} ${isInFocusedTile ? 'in-focused-tile' : ''} ${isDragging ? 'dragging' : ''}`}
+        data-ui="session.row"
         style={style}
         title={dragLabel}
         aria-current={isInFocusedTile ? 'true' : undefined}

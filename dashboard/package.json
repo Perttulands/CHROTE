@@ -8,7 +8,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "node ../scripts/component-map.mjs && tsc && vite build",
     "preview": "vite preview",
     "test": "env -u NO_COLOR playwright test",
     "test:server-contract": "env -u NO_COLOR CHROTE_PLAYWRIGHT_SERVER_CONTRACT=1 playwright test tests/contract",

@@ -24,7 +24,7 @@ export default function BeadRow({ row, depth = 0, fold, trailing }: BeadRowProps
   const state = beadStatusLabel(row.status, row.blocked)
 
   return (
-    <div className="bead-row" style={{ paddingLeft: `${12 + depth * 22}px` }}>
+    <div className="bead-row" data-ui="beads.row" style={{ paddingLeft: `${12 + depth * 22}px` }}>
       {fold ? (
         <button
           type="button"
