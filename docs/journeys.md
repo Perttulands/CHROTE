@@ -11,9 +11,12 @@ manual edit himself. In the operator's words: "In the end CHROTE is
 fundamentally about running agents and everything serves to make that as easy as
 possible."
 
-Chords are written as the leader, `Ctrl+Shift+Space`, followed by a key. Where a
-journey names a surface or a chord CHROTE does not have yet, the entry says so.
-Beads owns when it arrives.
+Chords are written as `Alt` and a key: `Alt` is the CHROTE key, and the chord
+works whether or not a terminal has the cursor. The leader,
+`Ctrl+Shift+Space`, is discovery — it opens a strip listing the same chords, and
+inside its window the bare key runs the action. Where a journey names a surface
+or a chord CHROTE does not have yet, the entry says so. Beads owns when it
+arrives.
 
 ## 1. Launch an agent
 
@@ -36,8 +39,8 @@ the window in front of the operator.
 another surface through Send to Session and left for the operator to submit when
 the agent is ready.
 
-**Chords.** Leader then `N` opens the launcher in the focused window, or the
-panel launcher when no window is empty. Leader then `1`–`4` focuses window n.
+**Chords.** `Alt+N` opens the launcher in the focused window, or the panel
+launcher when no window is empty. `Alt+W` steps to the next window.
 
 ## 2. Run and steer
 
@@ -57,10 +60,11 @@ search (2); Peek (3); the Send drawer (4).
 
 **End action.** Typing in the tile, or Send to Session.
 
-**Chords.** Leader then `[` and `]` for the previous and next terminal tab;
-`1`–`4` to focus a window; `=` to add a window and `-` to remove the last empty
-one; `/` to focus session search; `Tab` to toggle the Sessions panel; `P` to
-Peek at the focused tile's session; `S` to open the Send drawer.
+**Chords.** `Alt+1`–`Alt+6` for the terminal tabs that exist; `Alt+W` and
+`Alt+Shift+W` for the next and previous window; `Alt+Plus` to add a window and
+`Alt+Minus` to remove the last empty one; `Alt+A` to toggle the Sessions panel;
+`Alt+P` to Peek at the focused tile's session; `Alt+S` to open the Send drawer.
+Session search has no direct chord: leader then `/`.
 
 ## 3. Understand the work
 
@@ -83,8 +87,7 @@ a Bead to an agent.
 **End action.** Send to Session, carrying the Bead id and the note. Writing
 Beads stays with `bd` and the agents.
 
-**Chords.** Leader then `B` opens the Beads tab; leader then `S` opens the Send
-drawer.
+**Chords.** `Alt+B` opens the Beads tab; `Alt+S` opens the Send drawer.
 
 ## 4. Understand what an agent sees
 
@@ -127,8 +130,8 @@ for browsing (1, 2); the Send drawer (4).
 **End action.** A small manual edit, or Send to Session with the file's path as
 the reference.
 
-**Chords.** Leader then `F` toggles the Files panel; leader then `S` opens the
-Send drawer. Find by name has no chord yet.
+**Chords.** `Alt+O` toggles the Files panel; `Alt+S` opens the Send drawer. Find
+by name has no chord yet.
 
 ## 6. Watch the host
 
@@ -171,4 +174,5 @@ and the Send drawer (4).
 
 **End action.** A small manual edit, or Send to Session pointed at the page.
 
-**Chords.** None yet.
+**Chords.** `Alt+L` opens the Library tab. It is not registered until the tab
+exists.

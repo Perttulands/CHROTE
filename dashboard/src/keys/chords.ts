@@ -12,17 +12,47 @@
  * capture listener runs first and marks the event taken, so the xterm handler
  * that would see the same event only confirms the verdict. Neither runs at all
  * while keys are off — that is the whole meaning of the toggle.
+ *
+ * Alt is the CHROTE key. Most chords also carry a direct form the operator
+ * reaches without the leader, and the leader is then discovery: it opens the
+ * strip, which lists the same chords, and inside its window the bare key runs
+ * the same action. Only a registered direct chord is swallowed; every other Alt
+ * combination is the shell's.
  */
 
 import { useSyncExternalStore } from 'react'
 
 export type ChordScope = 'global' | 'workspace' | 'tile'
 
+/**
+ * The Alt form of a chord: how the operator actually runs it, leader or no
+ * leader, terminal focused or not.
+ */
+export interface DirectChord {
+  /** Alt is the CHROTE key, so every direct chord holds it. */
+  alt: true
+  /**
+   * Whether Shift is held. Leave it out where the character in
+   * `KeyboardEvent.key` already answers the question: the layout decides
+   * whether Plus needs Shift, and CHROTE has no business insisting.
+   */
+  shift?: boolean
+  /** The canonical `KeyboardEvent.key`, and what the strip reads. */
+  key: string
+  /**
+   * The same physical key as another layout spells it, by `KeyboardEvent.key`.
+   * A Finnish keyboard types `+` unshifted where a US one types `=`.
+   */
+  layoutKeys?: readonly string[]
+}
+
 export interface Chord {
   /** Stable identity, unique per registration site. */
   id: string
   /** `KeyboardEvent.key`. Single letters match either case. */
   key: string
+  /** The Alt chord that runs this without the leader, where one exists. */
+  direct?: DirectChord
   /** What running it does, in the operator's words. */
   label: string
   scope: ChordScope
@@ -42,10 +72,16 @@ export const SCOPE_TITLES: Record<ChordScope, string> = {
   tile: 'Focused tile',
 }
 
-// The order the wave-1 contract lists the first chords in. It is presentation,
-// but it belongs here: the strip and the keys panel must read the same, however
-// many surfaces registered the chords.
-const KEY_ORDER = ['1', '2', '3', '4', '[', ']', '=', '-', '/', 'n', 'p', 's', 'Tab', 'f', 'b', '?', 'k', 'Escape']
+// The order the keyboard map lists the chords in. It is presentation, but it
+// belongs here: the strip and the keys panel must read the same, however many
+// surfaces registered the chords. Case matters, so `w` and `W` can both appear.
+const KEY_ORDER = [
+  '1', '2', '3', '4', '5', '6', 'b', '?', 'k', 'Escape',
+  'w', 'W', '=', '-', '/', 'n', 'Tab', 'f', 'p', 's',
+]
+
+/** How a key reads once it is a chord: `Alt+Plus`, never `Alt++`. */
+const KEY_NAMES: Record<string, string> = { '+': 'Plus', '-': 'Minus' }
 
 // A modifier's own keydown is not "the next key": holding Shift to reach ? or S
 // would otherwise cancel the window before the chord ever arrived.
@@ -71,12 +107,20 @@ let leaderOpen = false
 let pressed: readonly string[] = []
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 
+/** How the operator reads a direct chord: `Alt+S`, `Alt+Shift+W`, `Alt+Plus`. */
+export function directChordLabel(direct: DirectChord): string {
+  const name = KEY_NAMES[direct.key]
+    ?? (direct.key.length === 1 ? direct.key.toUpperCase() : direct.key)
+  return `Alt+${direct.shift ? 'Shift+' : ''}${name}`
+}
+
 function orderChords(chords: Chord[]): Chord[] {
   return chords.sort((a, b) => {
     const byScope = SCOPE_RANK[a.scope] - SCOPE_RANK[b.scope]
     if (byScope !== 0) return byScope
     const rank = (chord: Chord) => {
-      const index = KEY_ORDER.indexOf(chord.key.length === 1 ? chord.key.toLowerCase() : chord.key)
+      const exact = KEY_ORDER.indexOf(chord.key)
+      const index = exact !== -1 ? exact : KEY_ORDER.indexOf(chord.key.toLowerCase())
       return index === -1 ? KEY_ORDER.length : index
     }
     return rank(a) - rank(b)
@@ -182,15 +226,45 @@ export function isLeaderEvent(event: KeyboardEvent): boolean {
   return event.code === 'Space' || event.key === ' ' || event.key === 'Spacebar'
 }
 
+function keyMatches(wanted: string, event: KeyboardEvent): boolean {
+  return wanted.length === 1 && /[a-z]/i.test(wanted)
+    ? event.key.length === 1 && event.key.toLowerCase() === wanted.toLowerCase()
+    : event.key === wanted
+}
+
+// Later registrations win, so a surface that is on screen can take a key from
+// one that registered the same key earlier.
+function last(chords: readonly Chord[]): Chord | null {
+  return chords[chords.length - 1] ?? null
+}
+
 function chordFor(event: KeyboardEvent): Chord | null {
-  const match = snapshot.scopeChords.filter(chord => (
-    chord.key.length === 1 && /[a-z]/i.test(chord.key)
-      ? event.key.length === 1 && event.key.toLowerCase() === chord.key.toLowerCase()
-      : event.key === chord.key
+  // An exact key beats a case-insensitive one, which is how `w` and `W` can
+  // both be leader keys for the two directions of the window cycle.
+  const exact = snapshot.scopeChords.filter(chord => chord.key === event.key)
+  if (exact.length > 0) return last(exact)
+  return last(snapshot.scopeChords.filter(chord => keyMatches(chord.key, event)))
+}
+
+/**
+ * Whether this keydown is a candidate for a direct chord at all. AltGr arrives
+ * as Ctrl+Alt on Windows and a Finnish layout needs it for @, $, { and }: those
+ * keys belong to the program in the terminal, never to CHROTE.
+ */
+function isDirectEvent(event: KeyboardEvent): boolean {
+  return event.altKey && !event.ctrlKey && !event.metaKey
+}
+
+function directMatches(direct: DirectChord, event: KeyboardEvent): boolean {
+  if (direct.shift !== undefined && direct.shift !== event.shiftKey) return false
+  return [direct.key, ...(direct.layoutKeys ?? [])].some(key => keyMatches(key, event))
+}
+
+function directChordFor(event: KeyboardEvent): Chord | null {
+  if (!isDirectEvent(event)) return null
+  return last(snapshot.scopeChords.filter(
+    chord => chord.direct !== undefined && directMatches(chord.direct, event),
   ))
-  // Later registrations win, so a surface that is on screen can take a key
-  // from one that registered the same key earlier.
-  return match[match.length - 1] ?? null
 }
 
 function resolveLeaderKey(event: KeyboardEvent) {
@@ -217,11 +291,25 @@ export function interceptKeyEvent(event: KeyboardEvent): boolean {
     openLeader()
     return true
   }
-  if (!leaderOpen) return false
-  if (MODIFIER_KEYS.has(event.key)) return false
-  taken.add(event)
-  resolveLeaderKey(event)
-  return true
+  // Registered Alt chords, and nothing else with Alt in it: an unregistered
+  // combination is the pty's, which is what makes Alt safe to take. This is
+  // asked before the leader window's next key, because an operator holding Alt
+  // means the direct chord — Alt+K is the keys panel even while the window that
+  // reads a bare `k` as "keys off" is open.
+  const direct = directChordFor(event)
+  if (direct !== null) {
+    taken.add(event)
+    cancelLeader()
+    direct.run()
+    return true
+  }
+  if (leaderOpen) {
+    if (MODIFIER_KEYS.has(event.key)) return false
+    taken.add(event)
+    resolveLeaderKey(event)
+    return true
+  }
+  return false
 }
 
 /**

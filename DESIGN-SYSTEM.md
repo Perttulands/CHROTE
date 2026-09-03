@@ -156,24 +156,46 @@ The Sessions panel's plus opens the same launcher.
 
 ## Keyboard
 
-A focused terminal forwards every key to the program inside it, so CHROTE
-reserves one chord and nothing else.
+A focused terminal forwards every key to the program inside it, so CHROTE takes
+one modifier and nothing else. **`Alt` is the CHROTE key.** A registered `Alt`
+chord runs its action wherever the cursor is; every other `Alt` combination
+reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
+`@`, `$`, `{` and `}`.
 
-- **Leader.** `Ctrl+Shift+Space`, taken before the key reaches the pty and again
-  at document level, so it answers inside a focused tile as well as outside one.
-  It opens a short window in which the next key chooses the action.
+| Chord | Action |
+| --- | --- |
+| `Alt+1` … `Alt+6` | Terminal tab n, for the tabs that exist |
+| `Alt+B` | Beads tab |
+| `Alt+W`, `Alt+Shift+W` | Next and previous window in the active tab |
+| `Alt+Plus`, `Alt+Minus` | Add a window; remove the last empty one |
+| `Alt+N` | Launcher in the focused window |
+| `Alt+S` | Send to Session for the focused tile |
+| `Alt+P` | Peek the focused tile's session |
+| `Alt+A` | Sessions panel |
+| `Alt+O` | Files panel |
+| `Alt+K` | Keys panel |
+
+`Alt+L` opens the Library tab and is registered once that tab exists. `Plus` and
+`Minus` are matched by the character the layout produces, not by `Shift`, so
+`Alt++` and `Alt+=` are the same chord.
+
+- **Leader.** `Ctrl+Shift+Space` is discovery, not the daily path. It is taken
+  before the key reaches the pty and again at document level, so it answers
+  inside a focused tile as well as outside one, and it opens a short window in
+  which the bare key runs the same action as the `Alt` chord.
 - **Toggle.** A text button at the right of the tab bar reads `Keys on` or
   `Keys off`. It is a device-local setting, on by default, and while it is off
   CHROTE intercepts nothing anywhere.
 - **Strip.** While the leader window is open — until the next key, `Escape`, or a
   short timeout — a strip along the bottom of the workspace lists every chord in
-  scope as `key  action` pairs, with the keys pressed so far echoed at its left.
-  Nothing echoes outside that window.
-- **Panel.** Leader then `?` opens a searchable list of every registered chord,
-  grouped by scope; clicking an entry runs it.
+  scope, the `Alt` chord first and the bare key second and smaller, with the
+  keys pressed so far echoed at its left. Nothing echoes outside that window.
+- **Panel.** `Alt+K`, or leader then `?`, opens a searchable list of every
+  registered chord grouped by scope; the search reads both columns and clicking
+  an entry runs it.
 - **Scopes.** `global` chords are always listed, `workspace` chords when a
   terminal tab is active, `tile` chords when a tile is focused. Scope decides
-  what the strip and the panel show.
+  what the strip and the panel show, and what a chord can reach.
 - Plain `/` and `?` keep working outside a terminal, as they do today.
 
 ## Hand-off
