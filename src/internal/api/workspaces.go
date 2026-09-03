@@ -100,9 +100,12 @@ func (h *WorkspacesHandler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // List handles GET /api/workspaces: every workspace, ordered by last session
-// activity and then by path.
+// activity and then by path. With beads=1 each store is also asked for its
+// prefix and open count, which costs one bd process per store; the launcher
+// and the Agents rail do not ask, the Beads rail and the terminal's links do.
 func (h *WorkspacesHandler) List(w http.ResponseWriter, r *http.Request) {
-	core.WriteJSON(w, http.StatusOK, h.list())
+	probe := r.URL.Query().Get("beads") == "1"
+	core.WriteJSON(w, http.StatusOK, h.list(probe))
 }
 
 type workspaceEntry struct {
@@ -155,7 +158,7 @@ func (h *WorkspacesHandler) resolveWorkspace(path string) (string, bool) {
 	return resolved, true
 }
 
-func (h *WorkspacesHandler) list() []Workspace {
+func (h *WorkspacesHandler) list(probeStores bool) []Workspace {
 	list := &workspaceList{handler: h, entries: map[string]*workspaceEntry{}}
 
 	for _, session := range h.sessions() {
@@ -181,7 +184,9 @@ func (h *WorkspacesHandler) list() []Workspace {
 	for _, entry := range list.entries {
 		entries = append(entries, entry)
 	}
-	h.probeStores(entries)
+	if probeStores {
+		h.probeStores(entries)
+	}
 
 	found := make([]Workspace, 0, len(entries))
 	for _, entry := range entries {

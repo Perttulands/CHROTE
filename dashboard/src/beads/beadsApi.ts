@@ -88,7 +88,7 @@ async function get<T>(path: string, params: Record<string, string | string[]>): 
  */
 export async function fetchBeadProjects(manualPaths: readonly string[] = []): Promise<BeadProject[]> {
   const [workspaces, manual] = await Promise.all([
-    fetchWorkspaces(),
+    fetchWorkspaces({ beads: true }),
     manualPaths.length > 0
       ? get<{ projects: BeadProject[] }>('/projects', { path: [...manualPaths] }).then(data => data.projects ?? [])
       : Promise.resolve([] as BeadProject[]),

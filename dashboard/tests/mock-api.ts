@@ -7,7 +7,7 @@ const themePattern = /.*\/api\/theme\/?$/
 const launchPattern = /.*\/api\/launch\/?$/
 const tmuxMousePattern = /.*\/api\/tmux\/mouse\/?$/
 const tmuxSessionsPattern = /.*\/api\/tmux\/sessions\/?$/
-const workspacesPattern = /.*\/api\/workspaces\/?$/
+const workspacesPattern = /.*\/api\/workspaces\/?(\?.*)?$/
 
 // Mock beads data for testing
 export const mockBeadsProjects = {

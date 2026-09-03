@@ -56,10 +56,10 @@ func (tree *workspaceTestTree) gitRoot(t *testing.T, path string) string {
 	return path
 }
 
-func (tree *workspaceTestTree) list(t *testing.T) []Workspace {
+func (tree *workspaceTestTree) list(t *testing.T, query string) []Workspace {
 	t.Helper()
 	recorder := httptest.NewRecorder()
-	tree.handler.List(recorder, httptest.NewRequest(http.MethodGet, "/api/workspaces", nil))
+	tree.handler.List(recorder, httptest.NewRequest(http.MethodGet, "/api/workspaces"+query, nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
 	}
@@ -111,7 +111,7 @@ func TestWorkspacesWalkListsGitRootsAndStoresToDepthThreeAndNothingExcluded(t *t
 	// A root that is itself under a skipped path contributes nothing.
 	tree.handler.roots = func() []string { return []string{tree.root, filepath.Join(tree.base, "tmp")} }
 
-	found := tree.list(t)
+	found := tree.list(t, "")
 
 	want := []string{homeRepo, both, deepest, repo, store}
 	if got := workspacePaths(found); strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -132,8 +132,8 @@ func TestWorkspacesWalkListsGitRootsAndStoresToDepthThreeAndNothingExcluded(t *t
 		t.Fatalf("both = %+v, want git and store", bothEntry)
 	}
 	storeEntry, _ := workspaceByPath(found, store)
-	if strings.Join(storeEntry.Sources, ",") != "store" || storeEntry.OpenBeads != nil {
-		t.Fatalf("store = %+v, want a store bd could not be asked about", storeEntry)
+	if strings.Join(storeEntry.Sources, ",") != "store" || storeEntry.OpenBeads != nil || storeEntry.BeadsPrefix != "" {
+		t.Fatalf("store = %+v, want a store nobody asked bd about", storeEntry)
 	}
 }
 
@@ -161,7 +161,7 @@ func TestWorkspacesOrderBySessionActivityThenPathAndMergeOnResolvedPath(t *testi
 	}
 	mkdirAll(t, filepath.Join(tree.base, "tmp", "x"))
 
-	found := tree.list(t)
+	found := tree.list(t, "")
 
 	want := []string{beta, elsewhere, configured, alpha}
 	if got := workspacePaths(found); strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -193,7 +193,7 @@ func TestWorkspacesAskBdForEachStoresPrefixAndOpenCount(t *testing.T) {
 	)
 	tree.handler.beads = NewBeadsHandler()
 
-	found := tree.list(t)
+	found := tree.list(t, "?beads=1")
 
 	entry, ok := workspaceByPath(found, store)
 	if !ok || entry.BeadsPrefix != "chr" || entry.OpenBeads == nil || *entry.OpenBeads != 2 {
@@ -215,7 +215,7 @@ func TestWorkspacesAskBdAgainForThePrefixOfAQuietStore(t *testing.T) {
 	makeSequencedBdCommand(t, `{"issues":[]}`, `[{"id":"chr-9zz","status":"closed"}]`)
 	tree.handler.beads = NewBeadsHandler()
 
-	found := tree.list(t)
+	found := tree.list(t, "?beads=1")
 
 	entry, ok := workspaceByPath(found, store)
 	if !ok || entry.BeadsPrefix != "chr" || entry.OpenBeads == nil || *entry.OpenBeads != 0 {

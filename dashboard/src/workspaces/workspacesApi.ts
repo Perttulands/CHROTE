@@ -31,8 +31,18 @@ export interface Workspace {
 
 const REQUEST_TIMEOUT_MS = 30000
 
-export async function fetchWorkspaces(signal?: AbortSignal): Promise<Workspace[]> {
-  const response = await fetch('/api/workspaces', { signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+export interface FetchWorkspacesOptions {
+  /**
+   * Ask bd about each store for its prefix and open count. One process per
+   * store on the server, so only the surfaces that read Beads ask for it.
+   */
+  beads?: boolean
+  signal?: AbortSignal
+}
+
+export async function fetchWorkspaces({ beads = false, signal }: FetchWorkspacesOptions = {}): Promise<Workspace[]> {
+  const url = beads ? '/api/workspaces?beads=1' : '/api/workspaces'
+  const response = await fetch(url, { signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
   if (!response.ok) throw new Error(apiErrorMessage(await response.text(), 'Could not list the workspaces'))
   const body = await response.json() as unknown
   return Array.isArray(body) ? body as Workspace[] : []
