@@ -27,8 +27,8 @@ case "$*" in
     exit 1
     ;;
   *"list-sessions -F "*)
-    printf '$1\talpha\t1\t0\t/srv/work\tclaude\t1\t200\t50\tlatest\t1\t\n'
-    printf '$2\tbeta\t1\t0\t/srv/work\tcodex\t1\t200\t50\tlatest\t1\t\n'
+    printf '$1\talpha\t1\t0\t/srv/work\tclaude\t1\t200\t50\tlatest\t1\t\t1725400000\n'
+    printf '$2\tbeta\t1\t0\t/srv/work\tcodex\t1\t200\t50\tlatest\t1\t\t1725400000\n'
     exit 0
     ;;
 esac
@@ -191,7 +191,7 @@ func TestAgentEventCutsAnOverlongSummary(t *testing.T) {
 func TestAgentEventIsForgottenWithItsSession(t *testing.T) {
 	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
 	inventory := filepath.Join(t.TempDir(), "inventory")
-	if err := os.WriteFile(inventory, []byte("$1\talpha\t1\t0\t/srv/work\tclaude\t1\t200\t50\tlatest\t1\t\n"), 0o600); err != nil {
+	if err := os.WriteFile(inventory, []byte("$1\talpha\t1\t0\t/srv/work\tclaude\t1\t200\t50\tlatest\t1\t\t1725400000\n"), 0o600); err != nil {
 		t.Fatalf("write inventory: %v", err)
 	}
 	t.Setenv("TMUX_INVENTORY_FILE", inventory)
