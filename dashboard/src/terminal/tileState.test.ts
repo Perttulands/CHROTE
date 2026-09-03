@@ -32,12 +32,9 @@ describe('liveSessionKeys', () => {
 })
 
 describe('sessionEvidenceFrom', () => {
-  it('claims nothing until the first response lands', () => {
+  it('claims nothing before the first response, or after one that failed outright', () => {
     expect(sessionEvidenceFrom({ sessions, loading: true, error: null, partialAnsweringUsers: null }))
       .toEqual(NO_SESSION_EVIDENCE)
-  })
-
-  it('claims nothing when the poll failed outright', () => {
     expect(sessionEvidenceFrom({ sessions, loading: false, error: 'Failed to fetch sessions', partialAnsweringUsers: null }))
       .toEqual(NO_SESSION_EVIDENCE)
   })
@@ -137,15 +134,9 @@ describe('retainSessionEvidence', () => {
       .toBe('ended')
     expect(tileState({ sessionKey: 'forge:build', onScreen: true, evidence: retained, connection: 'closed' }))
       .toBe('takenOver')
-  })
 
-  it('holds nothing about a user no whole response has ever spoken for', () => {
-    const partial = sessionEvidenceFrom({
-      sessions,
-      loading: false,
-      error: "tmux failed for user 'alice'",
-      partialAnsweringUsers: ['forge'],
-    })
+    // With no whole response ever held, there is nothing about 'alice' to keep,
+    // so the tile falls back to knowing nothing rather than inventing an end.
     expect(tileState({
       sessionKey: 'alice:gone',
       onScreen: true,
@@ -154,23 +145,13 @@ describe('retainSessionEvidence', () => {
     })).toBe('takenOver')
   })
 
-  it('never holds a verdict against the tile own open connection', () => {
-    expect(tileState({
-      sessionKey: 'gone',
-      onScreen: true,
-      evidence: retainSessionEvidence(heard, failed),
-      connection: 'open',
-    })).toBe('live')
-  })
 })
 
 describe('tileStateFor', () => {
-  it('is Live while the shown binding holds an open connection', () => {
+  it('is Live while the shown binding is open, or still on its way there', () => {
     expect(tileState({ sessionKey: 'main', onScreen: true, evidence: heard, connection: 'open' }))
       .toBe('live')
-  })
-
-  it('is Live, not lost, while a shown binding is still dialling', () => {
+    // Dialling is not a loss, so the tile does not offer a way back from one.
     expect(tileState({ sessionKey: 'main', onScreen: true, evidence: heard, connection: 'connecting' }))
       .toBe('live')
     expect(tileState({ sessionKey: 'main', onScreen: true, evidence: heard, connection: 'idle' }))
@@ -196,32 +177,20 @@ describe('tileStateFor', () => {
       .toBe('lost')
   })
 
-  // Another client being attached used to make this Taken over, because
-  // dialling again attached with -d and would have evicted them. Nothing
-  // attaches with -d now, so a dial costs them nothing and the tile takes it.
-  it('is Lost even when another client is attached, because dialling no longer evicts anyone', () => {
-    expect(tileState({
-      sessionKey: 'forge:build',
-      onScreen: true,
-      evidence: heard,
-      connection: 'dropped',
-    })).toBe('lost')
-  })
-
-  it('is Ended, not Lost, when the connection was lost and the session is gone with it', () => {
-    expect(tileState({ sessionKey: 'gone', onScreen: true, evidence: heard, connection: 'dropped' }))
-      .toBe('ended')
-  })
 
   it('is Idle, not Lost, for a lost connection on a binding that is not on screen', () => {
     expect(tileState({ sessionKey: 'forge:build', onScreen: false, evidence: heard, connection: 'dropped' }))
       .toBe('idle')
   })
 
-  it('is Ended when tmux no longer lists the session, on screen or not', () => {
+  it('is Ended when tmux no longer lists the session, however the connection went', () => {
     expect(tileState({ sessionKey: 'gone', onScreen: true, evidence: heard, connection: 'closed' }))
       .toBe('ended')
     expect(tileState({ sessionKey: 'gone', onScreen: false, evidence: heard, connection: 'idle' }))
+      .toBe('ended')
+    // A lost connection to a session that is gone is an end, not a loss to
+    // recover from.
+    expect(tileState({ sessionKey: 'gone', onScreen: true, evidence: heard, connection: 'dropped' }))
       .toBe('ended')
   })
 

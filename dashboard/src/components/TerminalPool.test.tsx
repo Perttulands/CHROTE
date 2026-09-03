@@ -123,7 +123,7 @@ describe('terminal pool', () => {
     expect(Array.from(pool.terminals.keys())).toEqual(['alice:alpha'])
   })
 
-  it('applies the appearance settings to every pooled terminal', () => {
+  it('paints every pooled terminal with the appearance settings, the host theme and the one font stack', () => {
     const { rerender } = renderPool()
     expect(created.map(session => session.fontSize)).toEqual([14, 14])
 
@@ -132,13 +132,8 @@ describe('terminal pool', () => {
 
     expect(created.map(session => session.fontSize)).toEqual([18, 18])
     expect(created.map(session => session.hideScrollbar)).toEqual([true, true])
-  })
 
-  // The theme arrives from the host after the pool has already built its
-  // terminals from stored bindings, so every live one has to take it.
-  it('paints every pooled terminal in the host theme and the one font stack', () => {
-    renderPool()
-
+    // The host owns the colours and there is one font stack for all of them.
     expect(created.map(session => session.terminalBackground)).toEqual([
       DEFAULT_THEME.terminal.background,
       DEFAULT_THEME.terminal.background,

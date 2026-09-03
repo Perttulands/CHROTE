@@ -20,10 +20,10 @@ describe('refreshSessions', () => {
     vi.useRealTimers()
   })
 
-  it('runs one request at a time and coalesces interval, manual, create, delete, and rename triggers', async () => {
+  it('runs one request at a time, coalescing every trigger and settling every caller', async () => {
     vi.useFakeTimers()
     const { requests } = stubDeferredSessionFetch()
-    const { result } = renderSession()
+    const { result, unmount } = renderSession()
 
     expect(requests).toHaveLength(1)
     const refreshSessions = result.current.refreshSessions
@@ -66,11 +66,53 @@ describe('refreshSessions', () => {
     expect(requests).toHaveLength(3)
     expect(coalescedSettled).toBe(true)
 
+    // A refresh asked for while the trailing flight is out cannot be answered by
+    // it: only the GET after that one can have seen the change.
+    let duringTrailingSettled = false
+    let duringTrailing!: Promise<void>
+    act(() => {
+      duringTrailing = result.current.refreshSessions()
+      void duringTrailing.then(() => { duringTrailingSettled = true })
+    })
+    expect(requests).toHaveLength(3)
+    expect(duringTrailingSettled).toBe(false)
+
     await act(async () => {
       requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: ['alice'] }))
       await Promise.resolve()
     })
-    expect(requests).toHaveLength(3)
+    expect(requests).toHaveLength(4)
+    expect(duringTrailingSettled).toBe(false)
+
+    await act(async () => {
+      requests[3].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: ['alice'] }))
+      await duringTrailing
+    })
+    expect(duringTrailingSettled).toBe(true)
+    expect(requests).toHaveLength(4)
+
+    // Unmounting aborts the flight in the air, and every caller still waiting on
+    // it is settled rather than left holding a promise nothing will resolve.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let settledCallers = 0
+    act(() => {
+      void result.current.refreshSessions().then(() => { settledCallers += 1 })
+      void result.current.refreshSessions().then(() => { settledCallers += 1 })
+    })
+    expect(requests).toHaveLength(5)
+
+    unmount()
+    expect(requests[4].signal?.aborted).toBe(true)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(settledCallers).toBe(2)
+    expect(requests).toHaveLength(5)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(consoleError).not.toHaveBeenCalled()
+    consoleError.mockRestore()
     vi.useRealTimers()
   })
 
@@ -109,50 +151,6 @@ describe('refreshSessions', () => {
       await Promise.resolve()
     })
     expect(requests).toHaveLength(2)
-
-    unmount()
-    expect(vi.getTimerCount()).toBe(0)
-    vi.useRealTimers()
-  })
-
-  it('keeps a refresh requested during the trailing flight pending through one further coalesced GET', async () => {
-    vi.useFakeTimers()
-    const { requests } = stubDeferredSessionFetch()
-    const { result, unmount } = renderSession()
-
-    expect(requests).toHaveLength(1)
-    act(() => {
-      void result.current.refreshSessions()
-    })
-
-    await act(async () => {
-      requests[0].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
-      await Promise.resolve()
-    })
-    expect(requests).toHaveLength(2)
-
-    let refreshSettled = false
-    let refreshDuringTrailing!: Promise<void>
-    act(() => {
-      refreshDuringTrailing = result.current.refreshSessions()
-      void refreshDuringTrailing.then(() => { refreshSettled = true })
-    })
-    expect(requests).toHaveLength(2)
-    expect(refreshSettled).toBe(false)
-
-    await act(async () => {
-      requests[1].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
-      await Promise.resolve()
-    })
-    expect(requests).toHaveLength(3)
-    expect(refreshSettled).toBe(false)
-
-    await act(async () => {
-      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, terminalUsers: [] }))
-      await refreshDuringTrailing
-    })
-    expect(refreshSettled).toBe(true)
-    expect(requests).toHaveLength(3)
 
     unmount()
     expect(vi.getTimerCount()).toBe(0)
@@ -284,34 +282,6 @@ describe('refreshSessions', () => {
 
     unmount()
     expect(vi.getTimerCount()).toBe(0)
-    consoleError.mockRestore()
-    vi.useRealTimers()
-  })
-
-  it('settles coalesced callers on unmount without resolving an abort-ignoring fetch or honoring trailing intent', async () => {
-    vi.useFakeTimers()
-    const { requests } = stubDeferredSessionFetch()
-    const { result, unmount } = renderSession()
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    let settledCallers = 0
-
-    act(() => {
-      void result.current.refreshSessions().then(() => { settledCallers += 1 })
-      void result.current.refreshSessions().then(() => { settledCallers += 1 })
-    })
-    expect(requests).toHaveLength(1)
-
-    unmount()
-    expect(requests[0].signal?.aborted).toBe(true)
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(settledCallers).toBe(2)
-    expect(requests).toHaveLength(1)
-    expect(vi.getTimerCount()).toBe(0)
-    expect(consoleError).not.toHaveBeenCalled()
     consoleError.mockRestore()
     vi.useRealTimers()
   })
@@ -807,7 +777,7 @@ describe('refreshSessions', () => {
     expect(result.current.workspaces.terminal2.windows[0].activeSession).toBe('build:agent-dead')
   })
 
-  it('preserves terminal bindings when a refresh fails instead of sweeping on uncertainty', async () => {
+  it('forgets nothing on a non-ok poll, whether or not one has ever succeeded', async () => {
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
       version: 3,
       settingsSchemaVersion: 2,
@@ -832,14 +802,16 @@ describe('refreshSessions', () => {
       text: () => Promise.resolve('{"error":"tmux server not running"}'),
     })))
 
-    const { result } = renderSession()
+    const { result, unmount } = renderSession()
 
+    // Nothing has ever succeeded here, so there is no live list to reconcile
+    // against. Sweeping on that would unbind a session that is very likely alive.
     await waitFor(() => expect(result.current.error).toBe('tmux server not running'))
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['probably-live'])
     expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('probably-live')
-  })
+    unmount()
 
-  it('preserves existing sessions and groups when a poll returns a non-ok response', async () => {
+    // And once a poll has succeeded, a later non-ok one does not undo it.
     const existingSessions = [
       { name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
     ]
@@ -855,9 +827,9 @@ describe('refreshSessions', () => {
       text: () => Promise.resolve(''),
     }))
     vi.stubGlobal('fetch', fetchMock)
-    const { result } = renderSession()
+    const settled = renderSession()
 
-    await waitFor(() => expect(result.current.sessions).toEqual(existingSessions))
+    await waitFor(() => expect(settled.result.current.sessions).toEqual(existingSessions))
     fetchMock.mockImplementationOnce(() => Promise.resolve({
       ok: false,
       json: () => Promise.resolve({ error: 'tmux server not running' }),
@@ -865,11 +837,11 @@ describe('refreshSessions', () => {
     }))
 
     await act(async () => {
-      await result.current.refreshSessions()
+      await settled.result.current.refreshSessions()
     })
 
-    expect(result.current.error).toBe('tmux server not running')
-    expect(result.current.sessions).toEqual(existingSessions)
-    expect(result.current.groupedSessions).toEqual(existingGrouped)
+    expect(settled.result.current.error).toBe('tmux server not running')
+    expect(settled.result.current.sessions).toEqual(existingSessions)
+    expect(settled.result.current.groupedSessions).toEqual(existingGrouped)
   })
 })

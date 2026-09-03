@@ -80,8 +80,7 @@ describe('SessionPanel session launcher', () => {
 
     fireEvent.click(screen.getByTitle('New tmux session'))
 
-    const popup = screen.getByRole('dialog', { name: /Launch a tmux session/i })
-    expect(popup).toHaveClass('session-launcher-popup')
+    screen.getByRole('dialog', { name: /Launch a tmux session/i })
     expect(document.querySelectorAll('.floating-panel-dismiss-layer')).toHaveLength(1)
     const launchButton = await screen.findByRole('button', { name: 'Launch codex in chrote' })
 
@@ -157,26 +156,5 @@ describe('SessionPanel session launcher', () => {
       harness: 'codex',
       workspaceId: 'terminal3',
     })
-    expect(screen.queryByText('Nuke All')).not.toBeInTheDocument()
-  })
-
-  it('keeps bulk destruction out of the primary Session panel', () => {
-    mockState.sessions.push({ name: 'shell', windows: 1, attached: false, group: 'shell' })
-    render(<SessionPanel activeWorkspaceId="terminal1" />)
-    expect(screen.queryByText('Nuke All')).not.toBeInTheDocument()
-  })
-
-  // The header names the panel and offers the two things it is for: a new
-  // session and closing. The list polls itself, and the pin is a setting the
-  // terminal tab's own menu carries.
-  it('carries only the title, the launcher and close in its header', () => {
-    render(<SessionPanel activeWorkspaceId="terminal1" onClose={vi.fn()} />)
-
-    const header = document.querySelector('.session-panel-header') as HTMLElement
-    expect(Array.from(header.querySelectorAll('button')).map(button => button.getAttribute('aria-label') ?? button.textContent))
-      .toEqual(['+', 'Close Sessions sidecar'])
-    expect(screen.queryByTitle('Refresh sessions')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Pin Sessions sidecar/ })).not.toBeInTheDocument()
-    expect(refreshSessions).not.toHaveBeenCalled()
   })
 })

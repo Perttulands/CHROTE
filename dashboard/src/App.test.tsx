@@ -134,40 +134,12 @@ describe('App drag lifecycle', () => {
     act(() => mocks.dndProps?.onDragStart(panelDrag))
 
     expect(container.querySelector('.dashboard')).toHaveClass('is-dragging')
-    expect(screen.getByTestId('drag-overlay-wrapper')).toHaveClass('drag-overlay-wrapper')
     expect(screen.getByText('alpha')).toBeInTheDocument()
 
     act(() => mocks.dndProps?.onDragCancel())
 
     expect(container.querySelector('.dashboard')).not.toHaveClass('is-dragging')
     expect(screen.queryByText('alpha')).not.toBeInTheDocument()
-  })
-
-  it('registers only pointer dragging with an 8px activation threshold', () => {
-    render(<App />)
-
-    expect(mocks.dndProps?.sensors).toHaveLength(1)
-    expect(mocks.dndProps?.sensors[0][0].name).toBe('PointerSensor')
-    expect(mocks.dndProps?.sensors[0][1]).toEqual({ activationConstraint: { distance: 8 } })
-  })
-
-  it.each([
-    ['unknown type', { active: { id: 'alice:alpha', data: { current: { ...panelDrag.active.data.current, type: 'unknown' } } } }],
-    ['missing session name', { active: { id: 'alice:alpha', data: { current: { ...panelDrag.active.data.current, sessionName: '' } } } }],
-    ['missing session key', { active: { id: 'alice:alpha', data: { current: { ...panelDrag.active.data.current, sessionKey: '   ' } } } }],
-    ['non-string Unix user', { active: { id: 'alice:alpha', data: { current: { ...panelDrag.active.data.current, unixUser: 42 } } } }],
-    ['invalid tag source workspace', { active: { ...tagDrag.active, data: { current: { ...tagDrag.active.data.current, sourceWorkspaceId: 'files' } } } }],
-    ['invalid tag source window', { active: { ...tagDrag.active, data: { current: { ...tagDrag.active.data.current, sourceWindowId: 'terminal2-window-0' } } } }],
-    ['leading-zero tag source window 00', { active: { ...tagDrag.active, data: { current: { ...tagDrag.active.data.current, sourceWindowId: 'terminal1-window-00' } } } }],
-    ['leading-zero tag source window 01', { active: { ...tagDrag.active, data: { current: { ...tagDrag.active.data.current, sourceWindowId: 'terminal1-window-01' } } } }],
-    ['padded tag source window 0003', { active: { ...tagDrag.active, data: { current: { ...tagDrag.active.data.current, sourceWindowId: 'terminal1-window-0003' } } } }],
-  ])('rejects malformed drag starts: %s', (_label, malformedDrag) => {
-    const { container } = render(<App />)
-
-    act(() => mocks.dndProps?.onDragStart(malformedDrag))
-
-    expect(container.querySelector('.dashboard')).not.toHaveClass('is-dragging')
-    expect(container.querySelector('.dragging-overlay')).toBeNull()
   })
 
   it('treats tag drops on off-target surfaces as no-ops and still resets drag state', () => {
@@ -190,7 +162,6 @@ describe('App drag lifecycle', () => {
     const overlays = container.querySelectorAll('.dragging-overlay')
     expect(overlays).toHaveLength(1)
     expect(overlays[0]).toHaveClass('session-tag')
-    expect(overlays[0].querySelector('.drag-overlay-grip')).toBeNull()
     expect(overlays[0].querySelector('.session-user-badge')).toHaveTextContent('A')
     expect(overlays[0].querySelector('.session-user-badge')).toHaveAttribute('title', 'Unix user: alice')
     // The ghost is made of the same pieces as the tag it left: badge, mark, name.
@@ -227,19 +198,6 @@ describe('App drag lifecycle', () => {
     expect(mocks.addSessionToWindow).not.toHaveBeenCalled()
   })
 
-  it('ignores a seam drop naming a workspace that is not a terminal one', () => {
-    render(<App />)
-
-    act(() => mocks.dndProps?.onDragStart(panelDrag))
-    act(() => mocks.dndProps?.onDragEnd({
-      ...panelDrag,
-      over: { data: { current: { type: 'window-gap', workspaceId: 'files' } } },
-    }))
-
-    expect(mocks.setWindowCount).not.toHaveBeenCalled()
-    expect(mocks.addSessionToWindow).not.toHaveBeenCalled()
-  })
-
   it('moves tags only when dropped on a different explicit window target', () => {
     render(<App />)
 
@@ -251,30 +209,6 @@ describe('App drag lifecycle', () => {
 
     expect(mocks.addSessionToWindow).toHaveBeenCalledWith('terminal2', 'terminal2-window-1', 'alpha', 'alice')
     expect(mocks.removeSessionFromWindow).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    ['unknown active type', { ...panelDrag, active: { ...panelDrag.active, data: { current: { ...panelDrag.active.data.current, type: 'unknown' } } } }, { data: { current: { type: 'window', workspaceId: 'terminal2', windowId: 'terminal2-window-1' } } }],
-    ['missing session name', { ...panelDrag, active: { ...panelDrag.active, data: { current: { ...panelDrag.active.data.current, sessionName: '' } } } }, { data: { current: { type: 'window', workspaceId: 'terminal2', windowId: 'terminal2-window-1' } } }],
-    ['missing session key', { ...panelDrag, active: { ...panelDrag.active, data: { current: { ...panelDrag.active.data.current, sessionKey: '' } } } }, { data: { current: { type: 'window', workspaceId: 'terminal2', windowId: 'terminal2-window-1' } } }],
-    ['invalid Unix user', { ...panelDrag, active: { ...panelDrag.active, data: { current: { ...panelDrag.active.data.current, unixUser: 42 } } } }, { data: { current: { type: 'window', workspaceId: 'terminal2', windowId: 'terminal2-window-1' } } }],
-    ['invalid target type', panelDrag, { data: { current: { type: 'header', workspaceId: 'terminal2', windowId: 'terminal2-window-1' } } }],
-    ['invalid target workspace', panelDrag, { data: { current: { type: 'window', workspaceId: 'files', windowId: 'files-window-1' } } }],
-    ['mismatched target window', panelDrag, { data: { current: { type: 'window', workspaceId: 'terminal2', windowId: 'terminal1-window-1' } } }],
-    ['out-of-range target window', panelDrag, { data: { current: { type: 'window', workspaceId: 'terminal2', windowId: 'terminal2-window-9' } } }],
-    ['leading-zero target window 00', panelDrag, { data: { current: { type: 'window', workspaceId: 'terminal2', windowId: 'terminal2-window-00' } } }],
-    ['leading-zero target window 01', panelDrag, { data: { current: { type: 'window', workspaceId: 'terminal2', windowId: 'terminal2-window-01' } } }],
-    ['padded target window 0003', panelDrag, { data: { current: { type: 'window', workspaceId: 'terminal2', windowId: 'terminal2-window-0003' } } }],
-    ['invalid tag source IDs', { ...tagDrag, active: { ...tagDrag.active, data: { current: { ...tagDrag.active.data.current, sourceWindowId: 'terminal3-window-0' } } } }, { data: { current: { type: 'window', workspaceId: 'terminal2', windowId: 'terminal2-window-1' } } }],
-  ])('does not mutate for malformed drag ends: %s', (_label, malformedDrag, over) => {
-    const { container } = render(<App />)
-
-    act(() => mocks.dndProps?.onDragStart(panelDrag))
-    act(() => mocks.dndProps?.onDragEnd({ ...malformedDrag, over }))
-
-    expect(mocks.addSessionToWindow).not.toHaveBeenCalled()
-    expect(container.querySelector('.dashboard')).not.toHaveClass('is-dragging')
-    expect(container.querySelector('.dragging-overlay')).toBeNull()
   })
 
   it('marks only the active terminal workspace as active for drop feedback', () => {

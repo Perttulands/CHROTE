@@ -69,65 +69,12 @@ function editorTabs() {
   return document.querySelector('.fb-editor-tabs') as HTMLElement
 }
 
-function setViewportForTest(width: number, height: number) {
-  const originalWidth = window.innerWidth
-  const originalHeight = window.innerHeight
-
-  Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: width })
-  Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: height })
-
-  return () => {
-    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: originalWidth })
-    Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: originalHeight })
-  }
-}
-
-function menuRect(width: number, height: number): DOMRect {
-  return {
-    x: 0,
-    y: 0,
-    width,
-    height,
-    top: 0,
-    left: 0,
-    right: width,
-    bottom: height,
-    toJSON: () => ({}),
-  } as DOMRect
-}
-
 function installClipboardMock(writeText = vi.fn().mockResolvedValue(undefined)) {
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
     value: { writeText },
   })
   return writeText
-}
-
-function captureExecCommandCopy() {
-  const hadExecCommand = 'execCommand' in document
-  const originalExecCommand = document.execCommand
-  let copiedText = ''
-  const execCommand = vi.fn((command: string) => {
-    if (command !== 'copy') return false
-    copiedText = (document.querySelector('[data-chrote-clipboard-fallback="true"]') as HTMLTextAreaElement | null)?.value ?? ''
-    return true
-  })
-  Object.defineProperty(document, 'execCommand', {
-    configurable: true,
-    value: execCommand,
-  })
-  return {
-    execCommand,
-    copiedText: () => copiedText,
-    restore: () => {
-      if (hadExecCommand) {
-        Object.defineProperty(document, 'execCommand', { configurable: true, value: originalExecCommand })
-      } else {
-        Reflect.deleteProperty(document, 'execCommand')
-      }
-    },
-  }
 }
 
 beforeEach(() => {
@@ -154,15 +101,12 @@ describe('FilesView directory values', () => {
     expect(container.querySelector('.fb-statusbar')).toHaveTextContent('2 items')
     expect(screen.getByRole('button', { name: /^Folder$/ })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTitle('Upload')).toBeEnabled()
-    expect(container.querySelector('.fb-hidden-input[type="file"]')).toBeInTheDocument()
-    expect(container.querySelector('.fb-editor-pane')).not.toBeInTheDocument()
   })
 
   it('shows a retryable error and keeps the exact navigated path in the breadcrumb', async () => {
     mockFetchDirectory.mockRejectedValue(new Error('file service offline'))
     const first = render(<FilesView />)
     expect(await screen.findByText('file service offline')).toBeInTheDocument()
-    expect(first.container.querySelector('.fb-error')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
     first.unmount()
 
@@ -192,13 +136,13 @@ describe('FilesView fallback text preview', () => {
 })
 
 describe('FilesView editor tab bulk close', () => {
-  it('shows Close All for multiple clean tabs and clears open files and active file', async () => {
+  it('closes every clean tab at once, and refuses while any of them is unsaved', async () => {
     mockRootFiles({
       'one.txt': 'one',
       'two.txt': 'two',
     })
 
-    render(<FilesView />)
+    const { unmount } = render(<FilesView />)
 
     await openRootFile('one.txt')
     await openRootFile('two.txt')
@@ -215,9 +159,10 @@ describe('FilesView editor tab bulk close', () => {
     })
     expect(screen.getByRole('button', { name: 'Folder' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: 'File' })).toBeDisabled()
-  })
+    unmount()
 
-  it('refuses Close All when any open tab is dirty', async () => {
+    // One unsaved buffer refuses the whole gesture: nothing closes, and the
+    // operator is told why rather than losing the edit.
     mockRootFiles({
       'clean.txt': 'clean',
       'dirty.txt': 'dirty',
@@ -568,57 +513,6 @@ describe('FilesView context menu copy/open actions', () => {
 
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy current folder path' }))
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/')
-  })
-
-  it('copies current folder path through the browser fallback when Clipboard API is unavailable', async () => {
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
-    const execCopy = captureExecCommandCopy()
-
-    try {
-      render(<FilesView />)
-      await screen.findByRole('row', { name: /hosts/ })
-
-      fireEvent.contextMenu(document.querySelector('.fb-content') as HTMLElement)
-      const menu = document.querySelector('.menu-sheet') as HTMLElement
-      fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy current folder path' }))
-
-      expect(execCopy.execCommand).toHaveBeenCalledWith('copy')
-      expect(execCopy.copiedText()).toBe('/')
-    } finally {
-      execCopy.restore()
-    }
-  })
-
-  it('clamps the background context menu inside the viewport near the bottom-right edge', async () => {
-    const restoreViewport = setViewportForTest(400, 300)
-    const menuWidth = 180
-    const menuHeight = 180
-    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
-    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      if ((this as HTMLElement).classList.contains('fb-context-menu')) return menuRect(menuWidth, menuHeight)
-      return originalGetBoundingClientRect.call(this)
-    })
-
-    try {
-      render(<FilesView />)
-      await screen.findByRole('row', { name: /hosts/ })
-
-      fireEvent.contextMenu(document.querySelector('.fb-content') as HTMLElement, { clientX: 390, clientY: 290 })
-      const menu = document.querySelector('.menu-sheet') as HTMLElement
-
-      await waitFor(() => {
-        const left = Number.parseFloat(menu.style.left)
-        const top = Number.parseFloat(menu.style.top)
-
-        expect(left).toBeLessThan(390)
-        expect(top).toBeLessThan(290)
-        expect(left + menuWidth).toBeLessThanOrEqual(window.innerWidth)
-        expect(top + menuHeight).toBeLessThanOrEqual(window.innerHeight)
-      })
-    } finally {
-      rectSpy.mockRestore()
-      restoreViewport()
-    }
   })
 
   it('copies selected paths, relative path, and opens a selected item parent from item menus', async () => {

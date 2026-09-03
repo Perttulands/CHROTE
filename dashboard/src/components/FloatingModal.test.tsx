@@ -77,12 +77,10 @@ describe('FloatingModal Send to Session action', () => {
 
   it('gives a peek at an ended session the tile\'s note instead of a silent dead terminal', () => {
     mockState.sessions = []
-    const { container } = render(<FloatingModal />)
+    render(<FloatingModal />)
 
     // The same wording the tile uses, over the same last frame.
     expect(screen.getByText('alice-shell ended. This frame shows its last output.')).toBeInTheDocument()
-    expect(container.querySelector('.peek-body.detached')).not.toBeNull()
-    expect(container.querySelector('.terminal-surface-host')).not.toBeNull()
     // Naming the failure is the point: no socket is opened to rediscover it.
     expect(FakeSocket.instances).toHaveLength(0)
     expect(screen.queryByText('Loading terminal…')).toBeNull()

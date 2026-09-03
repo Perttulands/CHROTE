@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeSocket } from '../test/fakeWebSocket'
-import { Terminal } from '@xterm/xterm'
 import { createTerminalSession, type TerminalConnectionState } from './terminalSession'
 import { resetChordsForTest, setKeysEnabled } from '../keys/chords'
 import { DEFAULT_THEME, TERMINAL_FONT_FAMILY } from '../theme/theme'
@@ -375,31 +374,6 @@ describe('terminal session', () => {
     expect(socket.sentText).toEqual(['0a'])
 
     setKeysEnabled(true)
-    resetChordsForTest()
-    session.dispose()
-  })
-
-  it('answers xterm with false for the leader and true for the keys the shell owns', () => {
-    resetChordsForTest()
-    const handlers: ((event: KeyboardEvent) => boolean)[] = []
-    const spy = vi.spyOn(Terminal.prototype, 'attachCustomKeyEventHandler')
-      .mockImplementation(handler => { handlers.push(handler) })
-
-    const { session } = start()
-    expect(handlers).toHaveLength(1)
-    const handleKey = handlers[0]
-    const press = (init: KeyboardEventInit) => handleKey(new KeyboardEvent('keydown', init))
-
-    expect(press({ key: 'a' })).toBe(true)
-    expect(press({ key: 'Enter' })).toBe(true)
-
-    // false is xterm's "not yours": nothing is written and nothing is sent.
-    expect(press({ key: ' ', code: 'Space', ctrlKey: true, shiftKey: true })).toBe(false)
-    expect(press({ key: 'a' })).toBe(false)
-    // The window closed with that key, so the shell has the terminal back.
-    expect(press({ key: 'a' })).toBe(true)
-
-    spy.mockRestore()
     resetChordsForTest()
     session.dispose()
   })

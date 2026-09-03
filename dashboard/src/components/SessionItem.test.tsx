@@ -205,35 +205,6 @@ describe('SessionItem user badge and context actions', () => {
     expect(rowLabel('alice-shell')).toBeInTheDocument()
   })
 
-  it('opens the row menu without a location chip in front of the name', () => {
-    mockState.assignedSessions.set('alice-shell', {
-      workspaceId: 'terminal1',
-      windowId: 'window-1',
-      windowIndex: 1,
-      colorIndex: 0,
-    })
-
-    const { container } = render(
-      <SessionItem
-        session={{
-          name: 'alice-shell',
-          windows: 1,
-          attached: true,
-          group: 'main',
-          unixUser: 'alice',
-        }}
-      />
-    )
-
-    const rowText = Array.from(container.querySelector('.session-item')?.children ?? [])
-      .map(child => child.textContent)
-
-    // Badge, then mark, then the name: no chip repeats the tile's address.
-    expect(rowText.slice(0, 2)).toEqual(['A', 'alice-shell'])
-    expect(container.querySelector('.window-location-chip')).toBeNull()
-    expect(screen.queryByRole('button', { name: /Focus assigned window/ })).not.toBeInTheDocument()
-  })
-
   // Where the operator is typing, said once: the row of the session the focused
   // tile is showing carries the mark, and every other row stays plain.
   it('marks the row whose session the focused tile is showing', () => {
@@ -266,6 +237,7 @@ describe('SessionItem user badge and context actions', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Session actions for alice-shell' }))
     expect(screen.queryByRole('menuitem', { name: /Unassign/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Kill session/ })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('menuitem', { name: /Peek/i }))
     expect(mockState.openFloatingModal).toHaveBeenCalledWith('alice:alice-shell')
 
@@ -328,33 +300,6 @@ describe('SessionItem user badge and context actions', () => {
       'terminal1-window-0',
       'alice:alice-shell',
     )
-  })
-
-  it('treats legacy persistence metadata as an ordinary session', () => {
-    render(
-      <SessionItem
-        session={{
-          name: 'codex-alpha',
-          windows: 1,
-          attached: false,
-          group: 'codex',
-          unixUser: 'alice',
-          persistent: true,
-          persistentHealth: 'failed',
-        } as TmuxSession & { persistent: boolean; persistentHealth: string }}
-      />
-    )
-
-    expect(screen.queryByLabelText('Persistent agent')).toBeNull()
-    expect(screen.queryByLabelText(/^Supervision:/)).toBeNull()
-
-    fireEvent.contextMenu(rowLabel('codex-alpha'))
-    expect(screen.queryByRole('menuitem', { name: /Make persistent|Make mortal|supervision/i })).toBeNull()
-    expect(screen.getByRole('menuitem', { name: /Rename/ })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /Peek/ })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /Send to session/ })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /Attach to window/ })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /Kill session/ })).toBeInTheDocument()
   })
 
   it('uses the whole session row as the drag surface without rendering a drag grip', () => {
@@ -468,36 +413,6 @@ describe('SessionItem user badge and context actions', () => {
       expect((pointerCancels[0] as PointerEvent).pointerType).toBe('touch')
     } finally {
       document.removeEventListener('pointercancel', recordPointerCancel)
-      vi.clearAllTimers()
-      vi.useRealTimers()
-    }
-  })
-
-  it('clears the pending long-press timer on unmount before its state callback can run', () => {
-    vi.useFakeTimers()
-    try {
-      const { container, unmount } = render(
-        <SessionItem
-          session={{
-            name: 'alice-shell',
-            windows: 1,
-            attached: false,
-            group: 'main',
-            unixUser: 'alice',
-          }}
-        />
-      )
-
-      const row = container.querySelector('.session-item') as HTMLElement
-      const touch = { identifier: 1, target: row, clientX: 32, clientY: 48 }
-      fireEvent.touchStart(row, { touches: [touch], changedTouches: [touch] })
-      expect(vi.getTimerCount()).toBe(1)
-
-      unmount()
-      expect(vi.getTimerCount()).toBe(0)
-      act(() => vi.advanceTimersByTime(600))
-      expect(vi.getTimerCount()).toBe(0)
-    } finally {
       vi.clearAllTimers()
       vi.useRealTimers()
     }

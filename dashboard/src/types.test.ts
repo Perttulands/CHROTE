@@ -16,54 +16,49 @@ import {
 } from './types'
 
 describe('session group presentation', () => {
-  it('presents arbitrary name-prefix groups without harness-specific rewriting', () => {
+  it('names every group as the operator wrote it, and orders main first and ungrouped last', () => {
     expect(getGroupDisplayName('project')).toBe('project')
     expect(getGroupDisplayName('team-tools')).toBe('team-tools')
-    expect(getGroupPriority('project')).toBe(getGroupPriority('team-tools'))
-  })
-
-  it('keeps only the product-wide main and ungrouped ordering', () => {
     expect(getGroupDisplayName('main')).toBe('Main')
+
+    expect(getGroupPriority('project')).toBe(getGroupPriority('team-tools'))
     expect(getGroupPriority('main')).toBeLessThan(getGroupPriority('project'))
     expect(getGroupPriority('project')).toBeLessThan(getGroupPriority('other'))
   })
 })
 
 describe('normalizeTerminalTabCount', () => {
-  it('passes through integers in range', () => {
-    expect(normalizeTerminalTabCount(1)).toBe(1)
-    expect(normalizeTerminalTabCount(3)).toBe(3)
-    expect(normalizeTerminalTabCount(6)).toBe(6)
-  })
+  // Whatever the setting or old storage hands over, the answer is a count the
+  // tab bar can actually draw.
+  it('answers every shape with a count the tab bar can draw', () => {
+    const answers: [unknown, number][] = [
+      [1, 1],
+      [3, 3],
+      [6, 6],
+      [0, MIN_TERMINAL_TAB_COUNT],
+      [-4, MIN_TERMINAL_TAB_COUNT],
+      [99, MAX_TERMINAL_TAB_COUNT],
+      [Number.POSITIVE_INFINITY, MAX_TERMINAL_TAB_COUNT],
+      [Number.NEGATIVE_INFINITY, MIN_TERMINAL_TAB_COUNT],
+      [2.9, 2],
+      [undefined, DEFAULT_TERMINAL_TAB_COUNT],
+      [null, DEFAULT_TERMINAL_TAB_COUNT],
+      ['5', DEFAULT_TERMINAL_TAB_COUNT],
+      [Number.NaN, DEFAULT_TERMINAL_TAB_COUNT],
+      [{}, DEFAULT_TERMINAL_TAB_COUNT],
+    ]
 
-  it('clamps out-of-range numbers', () => {
-    expect(normalizeTerminalTabCount(0)).toBe(MIN_TERMINAL_TAB_COUNT)
-    expect(normalizeTerminalTabCount(-4)).toBe(MIN_TERMINAL_TAB_COUNT)
-    expect(normalizeTerminalTabCount(99)).toBe(MAX_TERMINAL_TAB_COUNT)
-    expect(normalizeTerminalTabCount(Number.POSITIVE_INFINITY)).toBe(MAX_TERMINAL_TAB_COUNT)
-    expect(normalizeTerminalTabCount(Number.NEGATIVE_INFINITY)).toBe(MIN_TERMINAL_TAB_COUNT)
-  })
-
-  it('floors fractional counts', () => {
-    expect(normalizeTerminalTabCount(2.9)).toBe(2)
-  })
-
-  it('defaults every non-numeric shape', () => {
-    expect(normalizeTerminalTabCount(undefined)).toBe(DEFAULT_TERMINAL_TAB_COUNT)
-    expect(normalizeTerminalTabCount(null)).toBe(DEFAULT_TERMINAL_TAB_COUNT)
-    expect(normalizeTerminalTabCount('5')).toBe(DEFAULT_TERMINAL_TAB_COUNT)
-    expect(normalizeTerminalTabCount(Number.NaN)).toBe(DEFAULT_TERMINAL_TAB_COUNT)
-    expect(normalizeTerminalTabCount({})).toBe(DEFAULT_TERMINAL_TAB_COUNT)
+    for (const [given, expected] of answers) {
+      expect(normalizeTerminalTabCount(given)).toBe(expected)
+    }
   })
 })
 
 describe('terminalWorkspaceIds', () => {
-  it('derives terminal1..terminalN for the requested count', () => {
+  it('derives terminal1..terminalN, and the exported list is that derivation at the default count', () => {
     expect(terminalWorkspaceIds(1)).toEqual(['terminal1'])
     expect(terminalWorkspaceIds(4)).toEqual(['terminal1', 'terminal2', 'terminal3', 'terminal4'])
-  })
 
-  it('defaults to the canonical count and TERMINAL_WORKSPACE_IDS is that derivation', () => {
     expect(DEFAULT_TERMINAL_TAB_COUNT).toBe(3)
     expect(TERMINAL_WORKSPACE_IDS).toEqual(['terminal1', 'terminal2', 'terminal3'])
     expect(TERMINAL_WORKSPACE_IDS).toEqual(terminalWorkspaceIds())
@@ -71,11 +66,10 @@ describe('terminalWorkspaceIds', () => {
 })
 
 describe('getTerminalLabel', () => {
-  it('labels the first workspace as plain Terminal', () => {
+  // The first tab is the plain one; every other carries its number, including
+  // past the default count.
+  it('labels the first workspace Terminal and every other by its number', () => {
     expect(getTerminalLabel('terminal1')).toBe('Terminal')
-  })
-
-  it('labels later workspaces by their number, beyond the default count too', () => {
     expect(getTerminalLabel('terminal2')).toBe('Terminal 2')
     expect(getTerminalLabel('terminal3')).toBe('Terminal 3')
     expect(getTerminalLabel('terminal12')).toBe('Terminal 12')
@@ -83,37 +77,32 @@ describe('getTerminalLabel', () => {
 })
 
 describe('isTerminalWorkspaceId', () => {
-  it('accepts members of the default id list', () => {
+  it('answers membership of the canonical list, or of an explicit one', () => {
     expect(isTerminalWorkspaceId('terminal1')).toBe(true)
     expect(isTerminalWorkspaceId('terminal3')).toBe(true)
-  })
 
-  it('rejects ids outside the list and non-strings', () => {
     expect(isTerminalWorkspaceId('terminal4')).toBe(false)
     expect(isTerminalWorkspaceId('terminal')).toBe(false)
     expect(isTerminalWorkspaceId('files')).toBe(false)
     expect(isTerminalWorkspaceId(3)).toBe(false)
     expect(isTerminalWorkspaceId(null)).toBe(false)
-  })
 
-  it('honors an explicit id list', () => {
+    // A grown tab bar passes its own list, so terminal4 is a member there and
+    // terminal3 is not a member of a shrunken one.
     expect(isTerminalWorkspaceId('terminal4', terminalWorkspaceIds(4))).toBe(true)
     expect(isTerminalWorkspaceId('terminal3', terminalWorkspaceIds(2))).toBe(false)
   })
 })
 
 describe('getDefaultLaunchUser terminal3 rule', () => {
-  it('keeps terminal3 defaulting to the second configured Unix user', () => {
+  it('gives terminal3 the second configured user, and every other tab the first', () => {
     expect(getDefaultLaunchUser('terminal3', ['alice', 'build'])).toBe('build')
-  })
-
-  it('defaults every other workspace to the first configured user', () => {
     expect(getDefaultLaunchUser('terminal1', ['alice', 'build'])).toBe('alice')
     expect(getDefaultLaunchUser('terminal2', ['alice', 'build'])).toBe('alice')
     expect(getDefaultLaunchUser('terminal4', ['alice', 'build'])).toBe('alice')
-  })
 
-  it('falls back to the first user when no second user exists', () => {
+    // With no second user configured there is nothing to prefer, so terminal3
+    // launches as everyone else does.
     expect(getDefaultLaunchUser('terminal3', ['alice'])).toBe('alice')
     expect(getDefaultLaunchUser('terminal3', [])).toBe('')
   })
@@ -158,9 +147,8 @@ describe('getSessionBadges', () => {
     expect(badge?.label).toBe('Watched by 2')
     expect(badge?.detail).toContain('200x50')
     expect(badge?.detail).toContain('the size the claiming one set')
-  })
 
-  it('raises no shared-view claim for a session with one viewer or none', () => {
+    // One viewer is the ordinary case and says nothing.
     for (const viewers of [undefined, 0, 1]) {
       expect(getSessionBadges({ ...plain, viewers }).map(badge => badge.id)).not.toContain('shared-view')
     }

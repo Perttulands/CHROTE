@@ -219,38 +219,7 @@ describe('renameSession', () => {
     })
   })
 
-  it('updates all window bindings across all workspaces to use the new name', async () => {
-    const { result } = renderSession()
-
-    // Bind same session in terminal1 and terminal2
-    act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'old-name')
-    })
-
-    // Add another copy to terminal2 (this first removes from terminal1 due to dedup)
-    // So instead, put different sessions in each workspace
-    act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'old-name')
-    })
-
-    // For cross-workspace test, we need to seed localStorage directly with the session in both workspaces
-    // Because addSessionToWindow deduplicates. Instead, test single workspace rename thoroughly.
-
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('old-name')
-
-    await act(async () => {
-      const success = await result.current.renameSession('old-name', 'new-name')
-      expect(success).toBe(true)
-    })
-
-    // The binding should now use the new name
-    const win = result.current.workspaces.terminal1.windows[0]
-    expect(win.boundSessions).toContain('new-name')
-    expect(win.boundSessions).not.toContain('old-name')
-    expect(win.activeSession).toBe('new-name')
-  })
-
-  it('updates activeSession when it matches the old name', async () => {
+  it('rewrites the bound list and the shown choice, leaving the other bindings alone', async () => {
     const { result } = renderSession()
 
     act(() => {
@@ -272,6 +241,7 @@ describe('renameSession', () => {
     const win = result.current.workspaces.terminal1.windows[0]
     expect(win.activeSession).toBe('renamed')
     expect(win.boundSessions).toContain('renamed')
+    expect(win.boundSessions).not.toContain('rename-me')
     expect(win.boundSessions).toContain('keep-me')
   })
 

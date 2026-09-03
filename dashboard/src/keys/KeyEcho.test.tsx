@@ -30,7 +30,7 @@ describe('KeyEcho', () => {
     vi.useRealTimers()
   })
 
-  it('echoes a registered chord as key caps and takes them away again', () => {
+  it('echoes a registered chord as its key caps, then takes them away again', () => {
     const { container } = render(<KeyEcho />)
     expect(container.querySelector('.key-echo')).toBeNull()
 
@@ -44,11 +44,8 @@ describe('KeyEcho', () => {
 
     act(() => { vi.advanceTimersByTime(800) })
     expect(container.querySelector('.key-echo')).toBeNull()
-  })
 
-  it('shows every modifier the chord holds', () => {
-    const { container } = render(<KeyEcho />)
-
+    // Every modifier the chord holds gets its own cap, in the order it is said.
     press({ key: 'w', altKey: true, shiftKey: true })
 
     expect(Array.from(container.querySelectorAll('.key-echo-cap')).map(cap => cap.textContent))

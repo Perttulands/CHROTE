@@ -81,7 +81,7 @@ describe('servicesClient', () => {
     }))
   })
 
-  it('supports Context read, save, and ask without browser tokens', async () => {
+  it('reaches every Context route through CHROTE, and never with a browser token', async () => {
     fetchMock
       .mockResolvedValueOnce(new Response(JSON.stringify({
         success: true,
@@ -112,9 +112,9 @@ describe('servicesClient', () => {
       '/api/services/context/docs/identity%2Fcommunication.md',
       '/api/services/context/ask',
     ])
-  })
 
-  it('supports Context integration routes without browser bearer tokens', async () => {
+    // The grant and ingestion routes are the same deal: CHROTE holds the token.
+    fetchMock.mockReset()
     fetchMock.mockImplementation(() => success({
       grant: { id: 'grant_1' },
       token: 'ctx_live_fixturehandle_fixturesecretvalue',

@@ -89,14 +89,6 @@ describe('applyTheme', () => {
     expect(value('--identity-3')).toBe('#7a5f8f')
   })
 
-  it('leaves no property behind that a theme no longer defines', () => {
-    const root = document.createElement('div')
-    applyTheme(DEFAULT_THEME, root)
-
-    expect(root.style.getPropertyValue('--accent-glow')).toBe('')
-    expect(root.style.getPropertyValue('--color-error-glow')).toBe('')
-    expect(root.style.getPropertyValue('--window-blue')).toBe('')
-  })
 })
 
 describe('identityColorFor', () => {

@@ -70,7 +70,7 @@ describe('workspace Files persistence', () => {
     expect(readSessionsDockState()).toEqual(DEFAULT_SESSIONS_DOCK_STATE)
   })
 
-  it('does not let the oldest global sidebar state override the newer per-workspace generation', () => {
+  it('never lets the oldest global sidebar key override a newer generation', () => {
     window.localStorage.setItem('chrote.workspaceDock.v2', JSON.stringify({
       version: 2,
       workspaces: {
@@ -85,9 +85,9 @@ describe('workspace Files persistence', () => {
     window.localStorage.setItem('chrote-dashboard-state', JSON.stringify({ sidebarCollapsed: false }))
 
     expect(readSessionsDockState()).toEqual(DEFAULT_SESSIONS_DOCK_STATE)
-  })
 
-  it('does not let the oldest global sidebar state override the v1 per-workspace generation', () => {
+    // Same for the generation before it, whose Files state is still read.
+    window.localStorage.clear()
     window.localStorage.setItem('chrote.workspaceDock.v1', JSON.stringify({
       version: 1,
       workspaces: {
@@ -101,9 +101,10 @@ describe('workspace Files persistence', () => {
 
     expect(readWorkspaceFilesDockState('terminal1')).toEqual({ open: true, pinned: true, width: 380 })
     expect(readSessionsDockState()).toEqual(DEFAULT_SESSIONS_DOCK_STATE)
-  })
 
-  it('does not let the oldest global sidebar state override a malformed current Sessions generation', () => {
+    // Even a current generation the reader cannot make sense of outranks it:
+    // unreadable is not the same as absent.
+    window.localStorage.clear()
     window.localStorage.setItem('chrote.sessionsDock.v1', JSON.stringify({
       version: 1,
       state: 'malformed',

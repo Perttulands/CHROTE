@@ -117,7 +117,7 @@ describe('ttyd transport', () => {
     expect(control()).toContain('3')
   })
 
-  it('reports a terminal the server ended, because it closed with a close frame', () => {
+  it('tells a terminal that ended from a connection that was lost, and stays quiet about a close it was asked for', () => {
     const { sink } = recordingSink()
     const onClose = vi.fn()
     connect(sink, { onClose })
@@ -128,47 +128,36 @@ describe('ttyd transport', () => {
 
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(onClose).toHaveBeenCalledWith({ terminalEnded: true })
-  })
 
-  it('reports a lost connection as a lost connection, not as a terminal that ended', () => {
-    const { sink } = recordingSink()
-    const onClose = vi.fn()
-    connect(sink, { onClose })
-    const socket = FakeSocket.instances[0]
-    socket.accept()
+    // No close frame: the service restarted, or the network went away. That is
+    // a lost connection to recover from, not a terminal that finished.
+    const lost = recordingSink()
+    const onLost = vi.fn()
+    connect(lost.sink, { onClose: onLost })
+    FakeSocket.instances[1].accept()
+    FakeSocket.instances[1].close()
 
-    // No close frame: the service restarted, or the network went away.
-    socket.close()
+    expect(onLost).toHaveBeenCalledWith({ terminalEnded: false })
 
-    expect(onClose).toHaveBeenCalledWith({ terminalEnded: false })
-  })
-
-  it('does not report a close the caller asked for', () => {
-    const { sink } = recordingSink()
-    const onClose = vi.fn()
-    const connection = connect(sink, { onClose })
-    FakeSocket.instances[0].accept()
-
+    // A close the caller asked for is not news, so nobody is told about it.
+    const asked = recordingSink()
+    const onAsked = vi.fn()
+    const connection = connect(asked.sink, { onClose: onAsked })
+    FakeSocket.instances[2].accept()
     connection.close()
 
-    expect(onClose).not.toHaveBeenCalled()
-    expect(FakeSocket.instances[0].readyState).toBe(FakeSocket.CLOSED)
+    expect(onAsked).not.toHaveBeenCalled()
+    expect(FakeSocket.instances[2].readyState).toBe(FakeSocket.CLOSED)
   })
 })
 
 describe('terminalSocketUrl', () => {
-  it('carries the viewing mode, the session and the Unix user as ttyd argument fragments', () => {
+  // The mode leads so a session with no Unix user cannot shift it out of place.
+  it('carries the mode, the session and the Unix user as ttyd argument fragments', () => {
     expect(terminalSocketUrl('my session', 'alice', 'tile'))
       .toBe(`ws://${window.location.host}/terminal/ws?arg=tile&arg=my%20session&arg=alice`)
-  })
-
-  it('omits the user fragment when the session carries no Unix user', () => {
     expect(terminalSocketUrl('main', '  ', 'tile'))
       .toBe(`ws://${window.location.host}/terminal/ws?arg=tile&arg=main`)
-  })
-
-  // The mode leads so a session with no Unix user cannot shift it out of place.
-  it('keeps the mode first for a peek without a Unix user', () => {
     expect(terminalSocketUrl('main', '', 'peek'))
       .toBe(`ws://${window.location.host}/terminal/ws?arg=peek&arg=main`)
   })

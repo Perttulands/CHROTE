@@ -155,7 +155,8 @@ describe('the leader window', () => {
     expect(next.defaultPrevented).toBe(true)
   })
 
-  it('cancels on Escape without running anything', () => {
+  it('shuts without running anything on Escape, and on its own once the window elapses', () => {
+    vi.useFakeTimers()
     const { result } = renderHook(() => useLeader())
 
     press(LEADER)
@@ -163,11 +164,6 @@ describe('the leader window', () => {
 
     expect(run).not.toHaveBeenCalled()
     expect(result.current.leaderOpen).toBe(false)
-  })
-
-  it('closes on its own after the window elapses', () => {
-    vi.useFakeTimers()
-    const { result } = renderHook(() => useLeader())
 
     press(LEADER)
     act(() => { vi.advanceTimersByTime(LEADER_WINDOW_MS - 1) })
@@ -216,19 +212,17 @@ describe('the terminal handler', () => {
 
   afterEach(() => resetChordsForTest())
 
-  it('keeps the leader and the chord that follows it out of the pty', () => {
-    // false is xterm's "do not handle this key", so nothing is written and
-    // nothing is sent on the socket.
-    expect(offerToTerminal(LEADER)).toBe(false)
-    expect(offerToTerminal({ key: '2' })).toBe(false)
-    expect(run).toHaveBeenCalledTimes(1)
-  })
-
-  it('hands every ordinary key to the shell', () => {
+  it('takes the leader and its chord out of the pty, and hands every other key to the shell', () => {
+    // true is xterm's "xterm handles this key", so an ordinary key reaches the
+    // shell; false is "do not handle this", so nothing is written or sent.
     expect(offerToTerminal({ key: '2' })).toBe(true)
     expect(offerToTerminal({ key: 'a' })).toBe(true)
     expect(offerToTerminal({ key: ' ', code: 'Space', ctrlKey: true })).toBe(true)
     expect(run).not.toHaveBeenCalled()
+
+    expect(offerToTerminal(LEADER)).toBe(false)
+    expect(offerToTerminal({ key: '2' })).toBe(false)
+    expect(run).toHaveBeenCalledTimes(1)
   })
 
   it('intercepts nothing anywhere while keys are off', () => {
@@ -280,11 +274,21 @@ describe('direct chords', () => {
 
   afterEach(() => resetChordsForTest())
 
-  it('runs without the leader and takes the key from the browser', () => {
+  it('runs without the leader, taking the key from both the browser and the pty', () => {
     const event = press({ key: 's', altKey: true })
 
     expect(run).toHaveBeenCalledTimes(1)
     expect(event.defaultPrevented).toBe(true)
+
+    expect(offerToTerminal({ key: 's', altKey: true })).toBe(false)
+    expect(run).toHaveBeenCalledTimes(2)
+
+    // Off is off here too: the browser keeps the key and the pty gets it.
+    act(() => setKeysEnabled(false))
+    expect(press({ key: 's', altKey: true }).defaultPrevented).toBe(false)
+    expect(offerToTerminal({ key: 's', altKey: true })).toBe(true)
+    expect(run).toHaveBeenCalledTimes(2)
+    act(() => setKeysEnabled(true))
   })
 
   it('leaves an unregistered Alt key to the pty', () => {
@@ -296,11 +300,6 @@ describe('direct chords', () => {
     // The xterm handler agrees: true is "xterm handles this key", which is how
     // Alt+X leaves as the escape sequence the shell expects.
     expect(offerToTerminal({ key: 'x', altKey: true })).toBe(true)
-  })
-
-  it('keeps a matched chord out of the pty', () => {
-    expect(offerToTerminal({ key: 's', altKey: true })).toBe(false)
-    expect(run).toHaveBeenCalledTimes(1)
   })
 
   it('tells Alt+W from Alt+Shift+W', () => {
@@ -340,14 +339,6 @@ describe('direct chords', () => {
     act(() => setActiveScopes({ workspace: true, tile: true }))
     press({ key: 'p', altKey: true })
     expect(other).toHaveBeenCalledTimes(1)
-  })
-
-  it('intercepts nothing while keys are off', () => {
-    act(() => setKeysEnabled(false))
-
-    expect(press({ key: 's', altKey: true }).defaultPrevented).toBe(false)
-    expect(offerToTerminal({ key: 's', altKey: true })).toBe(true)
-    expect(run).not.toHaveBeenCalled()
   })
 
   // Holding Alt says which chord is meant, so the open window does not get to
