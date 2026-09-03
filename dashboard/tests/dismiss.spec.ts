@@ -92,13 +92,14 @@ test('Escape closes the topmost surface and never reaches the pane; a press outs
   await page.keyboard.press('Escape')
   await expect(menu).toHaveCount(0)
 
-  // Peek is a glance: a press on the other tile closes it, is consumed, and
-  // leaves the focus where it was.
+  // Peek is a glance: a press on the other tile, beside the window, closes it,
+  // is consumed, and leaves the focus where it was.
   await first.locator('.xterm-screen').click()
   await page.keyboard.press('Alt+p')
   const peek = page.getByRole('dialog', { name: /^Peek/ })
   await expect(peek).toBeVisible()
-  await second.locator('.xterm-screen').click({ position: { x: 20, y: 20 } })
+  const beside = (await second.locator('.terminal-window-body').boundingBox())!
+  await page.mouse.click(beside.x + beside.width - 24, beside.y + beside.height - 24)
   await expect(peek).toHaveCount(0)
   await expect(second).not.toHaveClass(/focused/)
   await expect(first).toHaveClass(/focused/)
@@ -117,6 +118,7 @@ test('Escape closes the topmost surface and never reaches the pane; a press outs
   await expect(drawer).toBeVisible()
   await second.locator('.xterm-screen').click({ position: { x: 20, y: 20 } })
   await expect(drawer).toBeVisible()
+  await expect(second).toHaveClass(/focused/)
   await page.keyboard.press('Escape')
   await expect(drawer).toHaveCount(0)
 

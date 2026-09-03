@@ -5,7 +5,7 @@ import { SessionProvider, useSession } from './context/SessionContext'
 import { StatusProvider } from './context/StatusContext'
 import TabBar, { Tab } from './components/TabBar'
 import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
-import FloatingModal from './components/FloatingModal'
+import Peek from './components/Peek'
 import SendDrawer from './components/SendDrawer'
 import BeadCard from './components/BeadCard'
 import AgentContextSheet from './components/AgentContextSheet'
@@ -478,9 +478,9 @@ function DashboardContent() {
               </Suspense>
             </ErrorBoundary>
           )}
-          {/* Peek and the Send drawer dock inside the workspace, so the status
-              line stays whole beneath both of them. */}
-          <FloatingModal />
+          {/* Peek floats and the Send drawer docks inside the workspace, so
+              the status line stays whole beneath both of them. */}
+          <Peek />
           <SendDrawer />
           <BeadCard onOpenInBeads={handleOpenInBeads} />
           <AgentContextSheet />

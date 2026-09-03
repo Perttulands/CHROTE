@@ -68,7 +68,20 @@ export interface TerminalSession {
    * local storage — so every live terminal takes it when it lands.
    */
   applyAppearance(terminalTheme: TerminalTheme, fontFamily: string): void
+  /**
+   * The grid as drawn: its columns and rows, and the CSS size of one cell.
+   * Null while the terminal is not open or not on screen, because a hidden
+   * grid measures nothing. Peek sizes itself by this.
+   */
+  grid(): TerminalGrid | null
   dispose(): void
+}
+
+export interface TerminalGrid {
+  cols: number
+  rows: number
+  cellWidth: number
+  cellHeight: number
 }
 
 export interface TerminalSessionOptions {
@@ -284,6 +297,20 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
       terminal.options.theme = xtermTheme(terminalTheme)
       terminal.options.fontFamily = fontFamily
       fit()
+    },
+    grid() {
+      // xterm sizes its screen element to exactly cols by rows cells, so the
+      // cell is read from the element rather than from anything private.
+      if (!opened || !isMeasurable() || terminal.cols === 0 || terminal.rows === 0) return null
+      const screen = element.querySelector<HTMLElement>('.xterm-screen')
+      const rect = screen?.getBoundingClientRect()
+      if (!rect || rect.width < MIN_VISIBLE_PX || rect.height < MIN_VISIBLE_PX) return null
+      return {
+        cols: terminal.cols,
+        rows: terminal.rows,
+        cellWidth: rect.width / terminal.cols,
+        cellHeight: rect.height / terminal.rows,
+      }
     },
     dispose() {
       disposed = true

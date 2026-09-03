@@ -240,7 +240,9 @@ it; a work surface stays until you close it — the Send drawer, an editor, the
 Bead card, What this agent sees — on `Escape`, its Close word or its chord,
 never on a click outside, and a drawer holding typed text confirms in place
 first. `Escape` belongs to the topmost open surface and reaches the pty only
-when nothing is open.
+when nothing is open. Peek is a centred floating window sized by the session —
+its columns and rows at the tile font, capped at 70% of the workspace's width
+and 80% of its height — with no drag and no resize.
 Every announcement lands on the status line, a 28px footer across the full width
 of the window beneath both the Sessions panel and the workspace, carrying the
 last event with its time, where only a failure takes colour. Nothing asks a

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { dismissKeyEvent, ownsKey, registerSurface, resetSurfacesForTest, topSurface, type Surface } from './dismiss'
 import { terminalKeyEvent } from './chords'
 
@@ -6,10 +6,10 @@ afterEach(() => {
   resetSurfacesForTest()
 })
 
-function surface(kind: Surface['kind'], element?: HTMLElement): Surface & { close: ReturnType<typeof vi.fn> } {
+function surface(kind: Surface['kind'], element?: HTMLElement): Surface & { close: Mock<() => void> } {
   return {
     kind,
-    close: vi.fn(),
+    close: vi.fn<() => void>(),
     contains: target => element?.contains(target) ?? false,
   }
 }
