@@ -9,7 +9,7 @@ import Menu, { type MenuGroup } from './Menu'
 import { CLAIM_EXPLANATION } from './TerminalWindow'
 import { useTerminalPool } from './TerminalPool'
 
-export type Tab = WorkspaceId | 'files' | 'beads' | 'agents' | 'services' | 'scheduled' | 'server' | 'settings' | 'help'
+export type Tab = WorkspaceId | 'files' | 'beads' | 'library' | 'agents' | 'scheduled' | 'server' | 'settings' | 'help'
 
 /** The counts a workspace can show, as the grid classes and the clamp allow. */
 const WINDOW_COUNTS = [1, 2, 3, 4] as const
@@ -68,8 +68,8 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
     ...workspaceIds.map((id): InternalTab => ({ id, label: settings.terminalLabels[id]?.trim() || getTerminalLabel(id) })),
     { id: 'files', label: 'Files' },
     { id: 'beads', label: 'Beads' },
+    { id: 'library', label: 'Library' },
     { id: 'agents', label: 'Agents' },
-    { id: 'services', label: 'Services' },
     { id: 'scheduled', label: 'Scheduled' },
     ...(isFeatureEnabled('serverStatusTab') ? [{ id: 'server' as const, label: 'Server' }] : []),
     { id: 'settings', label: 'Settings' },

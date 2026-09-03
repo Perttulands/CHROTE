@@ -44,6 +44,9 @@ type Config struct {
 	// Launch is what the launcher may start and where. Its zero value offers
 	// the shell in the target user's home.
 	Launch api.LaunchConfig
+	// Library is the corpus the Library tab reads. Its zero value is a host
+	// with no library, and the tab says so.
+	Library api.LibraryConfig
 }
 
 func main() {
@@ -72,6 +75,13 @@ func main() {
 		log.Fatalf("invalid launch configuration: %v", err)
 	}
 	config.Launch = launchConfig
+	// A corpus root that is not there is the same kind of mistake: the Library
+	// would refuse every read, and the operator would learn it one tab later.
+	libraryConfig, err := api.LoadLibraryConfig()
+	if err != nil {
+		log.Fatalf("invalid library configuration: %v", err)
+	}
+	config.Library = libraryConfig
 	if origins := os.Getenv("CORS_ORIGINS"); origins != "" {
 		config.CORSOrigins = strings.Split(origins, ",")
 		for i := range config.CORSOrigins {
@@ -166,8 +176,8 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	themeHandler := api.NewThemeHandler()
 	themeHandler.RegisterRoutes(mux)
 
-	servicesHandler := api.NewServicesHandler(api.LoadServiceConfigFromEnv())
-	servicesHandler.RegisterRoutes(mux)
+	libraryHandler := api.NewLibraryHandler(config.Library)
+	libraryHandler.RegisterRoutes(mux)
 
 	systemHandler := api.NewSystemHandler()
 	var stopSystemHistory context.CancelFunc = func() {}

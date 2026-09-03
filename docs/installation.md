@@ -144,9 +144,10 @@ access grants, but must not remove or narrow the session owner's access.
 
 ## Environment
 
-Two optional variables move presentation and launch choices out of the binary
-and into operator configuration. Set them in `chrote.env` and restart the
-service. Both are unset on a fresh install, and CHROTE runs without either.
+A few optional variables move presentation, launch and library choices out of
+the binary and into operator configuration. Set them in `chrote.env` and restart
+the service. All are unset on a fresh install, and CHROTE runs without any of
+them.
 
 ### `CHROTE_THEME_DIR`
 
@@ -227,6 +228,36 @@ refused.
 Unset: the launcher offers `Shell` in `~`. Set but unreadable or invalid: the
 server refuses to start and logs the reason, instead of running a launcher that
 cannot launch.
+
+### The Library
+
+Four variables describe the context corpus the Library tab reads. The corpus is
+a Markdown tree under git whose top-level directories are its shelves.
+
+| Variable | What it names |
+| --- | --- |
+| `CHROTE_LIBRARY_ROOT` | The corpus directory. Unset: the tab reads "No library is configured" and nothing else. |
+| `CHROTE_LIBRARY_AUTHOR` | The git identity the operator's edits are committed as, as `Name <email>`. Unset: an edit is refused with that reason. |
+| `CHROTE_LIBRARIAN_SESSION` | The tmux session the front desk asks. Unset: the desk says no Librarian is configured. |
+| `CHROTE_LIBRARY_BEADS` | The Beads project whose open Beads are the proposals in flight. Unset: there is no Proposals shelf. |
+
+```bash
+CHROTE_LIBRARY_ROOT=/absolute/path/to/corpus
+CHROTE_LIBRARY_AUTHOR="Example Operator <operator@example.invalid>"
+CHROTE_LIBRARIAN_SESSION=librarian
+CHROTE_LIBRARY_BEADS=/absolute/path/to/corpus
+```
+
+`GET /api/library/shelves` reports the root, the shelves and their page counts,
+and the two names above; `pages`, `page`, `search` and `changes` read the tree
+and its git log; `PUT /api/library/page` writes one page and commits it as the
+configured author, refusing a page that already carries somebody else's
+uncommitted change. Every path is validated inside the root, and CHROTE writes
+nowhere else in the corpus.
+
+A root that is set but is not a directory is an operator mistake: the server
+refuses to start and logs it, rather than serving a library that answers
+nothing.
 
 ## Upgrade
 

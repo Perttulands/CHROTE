@@ -1,4 +1,5 @@
-/* A desk: one line, and the session's own terminal when it is expanded. */
+/* A desk: one line at the foot of a tab, and the session's own terminal when
+   it is expanded. */
 
 .desk {
   display: flex;
@@ -8,6 +9,14 @@
   overflow: hidden;
   border-top: 1px solid var(--divider);
   background-color: var(--surface-primary);
+}
+
+/* Expanded, the desk takes the share of the tab the terminal needs to be worth
+   reading, and the columns above it give up that height rather than scrolling
+   out of the window. */
+.desk-expanded {
+  flex: 0 0 40%;
+  min-height: 0;
 }
 
 .desk-line {
@@ -22,7 +31,10 @@
 
 .desk-label {
   flex: none;
-  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 .desk-session {
@@ -32,7 +44,8 @@
 
 .desk-state {
   flex: none;
-  color: var(--text-dim);
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .desk-word {
@@ -51,8 +64,9 @@
 }
 
 .desk-ask {
-  flex: 1;
-  min-width: 0;
+  margin-left: auto;
+  width: 400px;
+  max-width: 50%;
   height: 24px;
   padding: 0 8px;
   border: 1px solid var(--divider);
@@ -63,6 +77,20 @@
   font-size: 12px;
 }
 
+/* Expanded, the field leaves the line and takes the desk's own width, above
+   the terminal it is talking to. */
+.desk-ask-wide {
+  margin: 0 8px 8px;
+  width: auto;
+  max-width: none;
+  height: 26px;
+  font-size: 13px;
+}
+
+.desk-ask::placeholder {
+  color: var(--text-dim);
+}
+
 .desk-ask:focus {
   outline: none;
   border-color: var(--accent);
@@ -70,6 +98,23 @@
 
 .desk-ask:disabled {
   color: var(--text-dim);
+}
+
+/* Launch and the Ask field are never on the line together — one means the
+   session is running and the other means it is not — so both take the space
+   between the identity at the left and Expand at the right. */
+.desk-launch {
+  margin-left: auto;
+}
+
+.desk-expand {
+  margin-left: 16px;
+}
+
+/* Expanded, the Ask field has left the line, so Collapse takes the space it
+   was holding and stays at the right edge where it was. */
+.desk-expanded .desk-expand {
+  margin-left: auto;
 }
 
 .desk-launcher {
@@ -82,7 +127,7 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  margin: 0 4px 4px;
+  margin: 0 8px 8px;
   border: 1px solid var(--divider);
   border-radius: 4px;
   overflow: hidden;
@@ -102,4 +147,14 @@
 
 .desk-tile-send {
   margin-left: auto;
+}
+
+/* The terminal surface positions itself against the nearest positioned
+   ancestor, so the body it lives in must be one. Without this the terminal
+   escapes the desk and covers the whole tab, head and columns with it. */
+.desk-tile-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }

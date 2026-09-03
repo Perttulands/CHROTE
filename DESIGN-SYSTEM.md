@@ -170,6 +170,7 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | --- | --- |
 | `Alt+1` … `Alt+6` | Terminal tab n, for the tabs that exist |
 | `Alt+B` | Beads tab |
+| `Alt+L` | Library tab |
 | `Alt+W`, `Alt+Shift+W` | Next and previous window in the active tab |
 | `Alt+Plus`, `Alt+Minus` | Add a window; remove the last empty one |
 | `Alt+N` | Launcher in the focused window |
@@ -179,9 +180,8 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | `Alt+O` | Files panel |
 | `Alt+K` | Keybindings panel |
 
-`Alt+L` opens the Library tab and is registered once that tab exists. `Plus` and
-`Minus` are matched by the character the layout produces, not by `Shift`, so
-`Alt++` and `Alt+=` are the same chord.
+`Plus` and `Minus` are matched by the character the layout produces, not by
+`Shift`, so `Alt++` and `Alt+=` are the same chord.
 
 - **Leader.** `Ctrl+Shift+Space` is discovery, not the daily path. It is taken
   before the key reaches the pty and again at document level, so it answers

@@ -13,11 +13,11 @@
  * and the expansion is remembered for that session.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import TerminalSurface, { useTerminalSession } from './TerminalSurface'
 import Launcher from './Launcher'
 import { SessionCommandMark } from './sessionLabel'
-import { useTerminalPool } from './TerminalPool'
 import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
 import { getSessionKey } from '../types'
@@ -39,9 +39,6 @@ export interface DeskProps {
 /** What the state word can read, in the order the desk decides it. */
 export type DeskState = 'live' | 'idle' | 'not running' | 'not configured'
 
-/** How much of the tab an expanded desk takes. */
-const EXPANDED_HEIGHT = '40%'
-
 function expansionKey(label: string, sessionName: string): string {
   return `chrote.desk.${label}.${sessionName}`
 }
@@ -58,11 +55,10 @@ function readExpanded(label: string, sessionName: string): boolean {
 export default function Desk({ label, sessionName, reference, placeholder, launchFolder }: DeskProps) {
   const { sessions, settings, openSendToSession, sendToSession, refreshSessions } = useSession()
   const { announce } = useStatus()
-  const pool = useTerminalPool()
   const [question, setQuestion] = useState('')
+  const [sending, setSending] = useState(false)
   const [launching, setLaunching] = useState(false)
   const [expanded, setExpanded] = useState(() => readExpanded(label, sessionName ?? ''))
-  const askRef = useRef<HTMLInputElement>(null)
 
   const session = useMemo(
     () => (sessionName ? sessions.find(candidate => candidate.name === sessionName) ?? null : null),
@@ -74,6 +70,7 @@ export default function Desk({ label, sessionName, reference, placeholder, launc
     : session === null
       ? 'not running'
       : session.attached ? 'live' : 'idle'
+  const running = state === 'live' || state === 'idle'
 
   const sessionKey = session ? getSessionKey(session.name, session.unixUser) : ''
 
@@ -91,31 +88,38 @@ export default function Desk({ label, sessionName, reference, placeholder, launc
     }
   }, [expanded, label, sessionName])
 
-  // The pool holds a terminal for every session bound to a window; a desk over
-  // a session no tile shows owns one for as long as it is expanded.
-  const pooled = sessionKey ? pool.terminals.get(sessionKey) ?? null : null
+  /*
+   * The desk owns the terminal it shows rather than taking the pool's. A pooled
+   * terminal belongs to the tile that bound it, and a terminal can be attached
+   * in one place at a time: mounting it here would move it out of that tile and
+   * leave the operator's workspace blank behind him. Peek answers the same
+   * problem the same way.
+   */
   const socketUrl = useMemo(
-    () => (expanded && session && !pooled
-      ? terminalSocketUrl(session.name, session.unixUser ?? '', 'tile')
-      : null),
-    [expanded, pooled, session],
+    () => (expanded && session ? terminalSocketUrl(session.name, session.unixUser ?? '', 'tile') : null),
+    [expanded, session],
   )
-  const { session: owned } = useTerminalSession(socketUrl, settings.fontSize, settings.hideScrollbar)
-  const terminal = pooled ?? owned
+  const { session: terminal } = useTerminalSession(socketUrl, settings.fontSize, settings.hideScrollbar)
 
   const ask = useCallback(async () => {
     const text = question.trim()
-    if (!text || !session) return
-    setQuestion('')
+    if (!text || !session || sending) return
+    setSending(true)
     const report = await sendToSession(
       session.name,
       { text: `${reference}\n${text}`, files: [], submit: true },
       session.unixUser,
     )
-    if (report.outcome === 'sent') announce(`Asked ${session.name}`, 'success')
-  }, [announce, question, reference, sendToSession, session])
+    setSending(false)
+    // A question that did not land stays in the field: the status line already
+    // carries the reason, and retyping it is the operator's time.
+    if (report.outcome === 'sent') {
+      setQuestion('')
+      announce(`Asked ${session.name}`, 'success')
+    }
+  }, [announce, question, reference, sendToSession, sending, session])
 
-  const handleAskKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleAskKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
       event.preventDefault()
       void ask()
@@ -130,40 +134,38 @@ export default function Desk({ label, sessionName, reference, placeholder, launc
     }
   }, [ask, openSendToSession, question, reference, sessionKey])
 
-  const actionWord = state === 'not running' && launchFolder !== undefined
-    ? (
-      <button type="button" className="desk-word" onClick={() => setLaunching(open => !open)}>
-        {launching ? 'Cancel' : 'Launch'}
-      </button>
-    )
-    : (state === 'live' || state === 'idle')
-      ? (
-        <button type="button" className="desk-word" onClick={() => setExpanded(open => !open)}>
-          {expanded ? 'Collapse' : 'Expand'}
-        </button>
-      )
-      : null
+  const askField = state === 'not configured' ? null : (
+    <input
+      type="text"
+      className={`desk-ask ${expanded ? 'desk-ask-wide' : ''}`}
+      aria-label={`Ask ${sessionName}`}
+      placeholder={placeholder}
+      value={question}
+      disabled={state === 'not running' || sending}
+      onChange={event => setQuestion(event.target.value)}
+      onKeyDown={handleAskKeyDown}
+    />
+  )
 
   return (
-    <div className="desk" style={expanded && terminal ? { height: EXPANDED_HEIGHT } : undefined}>
+    <div className={`desk ${expanded && terminal ? 'desk-expanded' : ''}`}>
       <div className="desk-line">
         <span className="desk-label">{label}</span>
         {session && <SessionCommandMark command={session.currentCommand} />}
         {sessionName && <span className="desk-session">{sessionName}</span>}
         <span className="desk-state">{state}</span>
-        {actionWord}
-        {state !== 'not configured' && (
-          <input
-            ref={askRef}
-            type="text"
-            className="desk-ask"
-            aria-label={`Ask ${sessionName}`}
-            placeholder={placeholder}
-            value={question}
-            disabled={state === 'not running'}
-            onChange={event => setQuestion(event.target.value)}
-            onKeyDown={handleAskKeyDown}
-          />
+        {state === 'not running' && launchFolder !== undefined && (
+          <button type="button" className="desk-word desk-launch" onClick={() => setLaunching(open => !open)}>
+            {launching ? 'Cancel' : 'Launch'}
+          </button>
+        )}
+        {/* Collapsed, the question shares the line; expanded, it takes a row of
+            its own beneath, because then it is the one place input goes here. */}
+        {!expanded && askField}
+        {running && (
+          <button type="button" className="desk-word desk-expand" onClick={() => setExpanded(open => !open)}>
+            {expanded ? 'Collapse' : 'Expand'}
+          </button>
         )}
       </div>
       {launching && launchFolder !== undefined && (
@@ -175,6 +177,7 @@ export default function Desk({ label, sessionName, reference, placeholder, launc
           />
         </div>
       )}
+      {expanded && askField}
       {expanded && terminal && (
         <div className="desk-tile">
           <div className="desk-tile-head">
@@ -188,7 +191,9 @@ export default function Desk({ label, sessionName, reference, placeholder, launc
               Send
             </button>
           </div>
-          <TerminalSurface session={terminal} />
+          <div className="desk-tile-body">
+            <TerminalSurface session={terminal} />
+          </div>
         </div>
       )}
     </div>
