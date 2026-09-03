@@ -196,6 +196,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
       <div
         ref={setTagNodeRef}
         className={`session-tag ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
+        data-ui="tile.tag"
         data-tile-state={tileState}
         style={style}
         title={dragLabel}
@@ -449,14 +450,22 @@ function TerminalWindow({ workspaceId, window: windowConfig, style, onOpenFilesA
 
   const hasSessions = windowConfig.boundSessions.length > 0
 
+  // The tile's place in the layout as the operator counts them, from 1. The
+  // window's own id already carries it, so an annotation can say which tile it
+  // came from without anyone counting tiles.
+  const ordinal = Number.parseInt(windowConfig.id.split('-').pop() ?? '', 10)
+  const windowNumber = Number.isFinite(ordinal) ? ordinal + 1 : 1
+
   return (
     <div
       ref={windowRef}
       className={`terminal-window ${isFocused ? 'focused' : ''} ${isDropTarget ? 'drop-target' : ''}`}
+      data-ui="tile"
+      data-window={windowNumber}
       tabIndex={-1}
       style={style}
     >
-      <div className="terminal-window-header">
+      <div className="terminal-window-header" data-ui="tile.header">
         <div className="session-tags">
           {windowConfig.boundSessions.map(sessionName => (
             <SessionTag

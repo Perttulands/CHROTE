@@ -118,7 +118,7 @@ function SessionPanel({
       aria-label="Sessions sidecar"
       data-active-workspace={activeWorkspaceId}
     >
-      <div className="session-panel-header">
+      <div className="session-panel-header" data-ui="sessions.header">
         <strong className="terminal-sidecar-title">Sessions</strong>
         {!isCollapsed && (
           <>

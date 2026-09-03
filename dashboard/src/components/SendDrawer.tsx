@@ -146,6 +146,7 @@ export default function SendDrawer() {
 
   const open = sendToSessionRequest !== null
   const reference = sendToSessionRequest?.reference
+  const launch = sendToSessionRequest?.launch
 
   /** The session in the focused tile: what "Send" means with nothing in hand. */
   const focusedSessionKey = useMemo(() => {
@@ -386,7 +387,7 @@ export default function SendDrawer() {
         onClose={closeSendToSession}
         header={header}
       >
-        <div className="send-drawer-body">
+        <div className="send-drawer-body" data-ui="send.drawer">
           <div className="send-drawer-section">Target</div>
           <input
             type="search"
@@ -409,13 +410,18 @@ export default function SendDrawer() {
               className={`send-drawer-target${selected === NEW_AGENT ? ' selected' : ''}`}
               onClick={() => setSelected(NEW_AGENT)}
             >
-              <span className="send-drawer-target-name">New agent…</span>
+              <span className="send-drawer-target-name">{launch?.label ?? 'New agent…'}</span>
             </button>
           </div>
 
           {selected === NEW_AGENT && (
             <div className="send-drawer-launcher">
-              <Launcher workspaceId={focusedWorkspaceId} onLaunched={handleLaunched} />
+              <Launcher
+                workspaceId={focusedWorkspaceId}
+                initialFolder={launch?.folder}
+                initialHarness={launch?.harness}
+                onLaunched={handleLaunched}
+              />
             </div>
           )}
 

@@ -16,6 +16,14 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    // Dev mode reads the component under the pointer off the React fiber, and
+    // all a fiber carries is the function itself. The minifier renames every
+    // function it can, so without this the served bundle could only ever answer
+    // "a" and the annotation an agent receives would name nothing. Rolldown
+    // spells esbuild's keepNames as an output option.
+    rollupOptions: {
+      output: { keepNames: true },
+    },
   },
   server: {
     forwardConsole: false,

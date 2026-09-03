@@ -20,7 +20,7 @@ export default function StatusLine() {
   const { status } = useStatus()
 
   return (
-    <div className="status-line" role="status" aria-live="polite" aria-label="Status">
+    <div className="status-line" data-ui="status.line" role="status" aria-live="polite" aria-label="Status">
       {status !== null && (
         <>
           <span className="status-line-time">{timeOf(status.at)}</span>

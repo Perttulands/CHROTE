@@ -216,6 +216,16 @@ library page, an annotated element.
 - **A receipt.** The tile scrolls to the bottom and the drawer closes; a failure
   keeps the drawer open with the server's own message.
 
+**Dev mode** is the hand-off for the dashboard's own faults. It is a chord away
+in the keys panel; while it is on, a highlight follows the pointer, a corner
+label names the component under it and the file it is written in, and a click
+opens the drawer with that line already written instead of pressing whatever it
+landed on. The identity in the line comes from `data-ui="<surface>.<part>"`,
+which the surfaces worth naming carry by hand, and from the component name,
+which the build is told to keep through minification. The target picker offers a
+new CHROTE agent alongside the live sessions, because a complaint about CHROTE
+usually has no session waiting for it.
+
 ## Floating surfaces
 
 A menu is a flat sheet of words attached flush to the edge of the control that

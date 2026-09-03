@@ -132,7 +132,7 @@ export default function AgentsView() {
   return (
     <div className="agents-view">
       <div className="agents-columns">
-        <aside className="agents-rail">
+        <aside className="agents-rail" data-ui="agents.rail">
           <input
             type="text"
             className="agents-filter"
@@ -175,7 +175,7 @@ export default function AgentsView() {
           </div>
         </aside>
 
-        <div className="agents-main">
+        <div className="agents-main" data-ui="agents.stack">
           <div className="agents-subject">
             <span className="agents-folder">{folder || 'no workspace'}</span>
             <HarnessMark id={harness} />
@@ -203,7 +203,7 @@ export default function AgentsView() {
           </div>
         </div>
 
-        <aside className="agents-proposals">
+        <aside className="agents-proposals" data-ui="agents.proposals">
           <h3>Proposals</h3>
           {!tender.beads && <span className="agent-note">No tender Beads project is configured.</span>}
           {tender.beads && proposals.length === 0 && <span className="agent-note">Nothing is in flight.</span>}

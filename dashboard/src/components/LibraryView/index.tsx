@@ -260,7 +260,7 @@ export default function LibraryView() {
   return (
     <div className="library-view">
       <div className="library-columns">
-        <div className="library-left">
+        <div className="library-left" data-ui="library.shelves">
           <input
             className="library-search"
             type="search"
@@ -327,7 +327,7 @@ export default function LibraryView() {
           )}
         </div>
 
-        <div className="library-room">
+        <div className="library-room" data-ui="library.room">
           {results !== null ? (
             <div className="library-page">
               <div className="library-page-head">
@@ -418,7 +418,7 @@ export default function LibraryView() {
           )}
         </div>
 
-        <div className="library-right">
+        <div className="library-right" data-ui="library.history">
           <section className="library-section">
             <h3>History</h3>
             {!page && <p className="library-empty">No page is open.</p>}

@@ -85,7 +85,7 @@ export default function KeysPanel({ isOpen, onClose }: KeysPanelProps) {
   }
 
   return (
-    <div className="keys-panel" role="dialog" aria-label="Keybindings" onKeyDown={handleKeyDown}>
+    <div className="keys-panel" data-ui="keys.panel" role="dialog" aria-label="Keybindings" onKeyDown={handleKeyDown}>
       <div className="keys-panel-search-row">
         <input
           ref={searchRef}

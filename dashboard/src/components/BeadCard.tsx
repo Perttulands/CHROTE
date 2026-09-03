@@ -194,7 +194,7 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
 
   return (
     <Sheet open edge="right" extent={BEAD_CARD_WIDTH} label={`Bead ${request.id}`} onClose={dismiss} header={header}>
-      <div className="bead-card-body">
+      <div className="bead-card-body" data-ui="beads.card">
         {loading && !bead && <p className="bead-card-note">Reading {request.id}…</p>}
         {error && <p className="bead-card-error">{error}</p>}
         {bead && (
