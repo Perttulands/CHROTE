@@ -16,14 +16,14 @@ describe('fuzzy scoring', () => {
   })
 
   it('ranks best first and keeps the incoming order between equals', () => {
-    const paths = ['/srv/context-citadel', '/home/perttu/repos/VSK-Zone', '/srv/chrote', '/home/perttu/repos/vsk-notes']
+    const paths = ['/srv/context-citadel', '/home/operator/repos/VSK-Zone', '/srv/chrote', '/home/operator/repos/vsk-notes']
     expect(rankByFuzzy('rep VSK', paths, path => lastSegments(path)))
-      .toEqual(['/home/perttu/repos/VSK-Zone', '/home/perttu/repos/vsk-notes'])
+      .toEqual(['/home/operator/repos/VSK-Zone', '/home/operator/repos/vsk-notes'])
     expect(rankByFuzzy('', paths, path => path)).toEqual(paths)
   })
 
   it('reads the last two segments of a path', () => {
-    expect(lastSegments('/home/perttu/repos/VSK-Zone')).toBe('repos/VSK-Zone')
+    expect(lastSegments('/home/operator/repos/VSK-Zone')).toBe('repos/VSK-Zone')
     expect(lastSegments('/srv/')).toBe('srv')
     expect(lastSegments('/')).toBe('')
   })

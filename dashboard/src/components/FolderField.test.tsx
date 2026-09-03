@@ -10,7 +10,7 @@ vi.mock('../workspaces/workspacesApi', async () => {
     ...actual,
     fetchWorkspaces: () => Promise.resolve([
       { path: '/srv/chrote', sources: ['git'], sessions: [], instructions: 2 },
-      { path: '/home/perttu/repos/VSK-Zone', sources: ['git'], sessions: [], instructions: 0 },
+      { path: '/home/operator/repos/VSK-Zone', sources: ['git'], sessions: [], instructions: 0 },
       { path: '/srv/context-citadel', sources: ['git'], sessions: [], instructions: 1 },
     ]),
   }
@@ -55,10 +55,10 @@ describe('FolderField', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockedFetchDirectory.mockImplementation(async path => {
-      if (path === '/home/perttu/') {
-        return [entry('/home/perttu/.cache', true), entry('/home/perttu/notes.txt', false), entry('/home/perttu/research', true), entry('/home/perttu/repos', true)]
+      if (path === '/home/operator/') {
+        return [entry('/home/operator/.cache', true), entry('/home/operator/notes.txt', false), entry('/home/operator/research', true), entry('/home/operator/repos', true)]
       }
-      if (path === '/home/perttu/repos/') return [entry('/home/perttu/repos/VSK-Zone', true), entry('/home/perttu/repos/vsk-notes', true)]
+      if (path === '/home/operator/repos/') return [entry('/home/operator/repos/VSK-Zone', true), entry('/home/operator/repos/vsk-notes', true)]
       return []
     })
   })
@@ -80,36 +80,36 @@ describe('FolderField', () => {
 
     fireEvent.change(field, { target: { value: 'rep VSK' } })
 
-    await waitFor(() => expect(options()).toEqual(['/home/perttu/repos/VSK-Zone']))
-    expect(highlighted()).toBe('/home/perttu/repos/VSK-Zone')
+    await waitFor(() => expect(options()).toEqual(['/home/operator/repos/VSK-Zone']))
+    expect(highlighted()).toBe('/home/operator/repos/VSK-Zone')
 
     fireEvent.keyDown(field, { key: 'Enter' })
-    expect(onChange).toHaveBeenLastCalledWith('/home/perttu/repos/VSK-Zone')
-    expect(onSubmit).toHaveBeenCalledWith('/home/perttu/repos/VSK-Zone')
+    expect(onChange).toHaveBeenLastCalledWith('/home/operator/repos/VSK-Zone')
+    expect(onSubmit).toHaveBeenCalledWith('/home/operator/repos/VSK-Zone')
   })
 
   it('completes the directories under a typed path with Tab, dot-folders last', async () => {
     render(<Harness />)
     const field = screen.getByLabelText('Folder')
 
-    fireEvent.change(field, { target: { value: '/home/perttu/' } })
-    await waitFor(() => expect(options()).toEqual(['/home/perttu/research', '/home/perttu/repos', '/home/perttu/.cache']))
+    fireEvent.change(field, { target: { value: '/home/operator/' } })
+    await waitFor(() => expect(options()).toEqual(['/home/operator/research', '/home/operator/repos', '/home/operator/.cache']))
     expect(highlighted()).toBeNull()
 
-    fireEvent.change(field, { target: { value: '/home/perttu/re' } })
-    await waitFor(() => expect(options()).toEqual(['/home/perttu/research', '/home/perttu/repos']))
+    fireEvent.change(field, { target: { value: '/home/operator/re' } })
+    await waitFor(() => expect(options()).toEqual(['/home/operator/research', '/home/operator/repos']))
 
     fireEvent.keyDown(field, { key: 'ArrowDown' })
     fireEvent.keyDown(field, { key: 'ArrowDown' })
-    expect(highlighted()).toBe('/home/perttu/repos')
+    expect(highlighted()).toBe('/home/operator/repos')
 
     fireEvent.keyDown(field, { key: 'Tab' })
-    expect(onChange).toHaveBeenLastCalledWith('/home/perttu/repos/')
-    await waitFor(() => expect(options()).toEqual(['/home/perttu/repos/VSK-Zone', '/home/perttu/repos/vsk-notes']))
+    expect(onChange).toHaveBeenLastCalledWith('/home/operator/repos/')
+    await waitFor(() => expect(options()).toEqual(['/home/operator/repos/VSK-Zone', '/home/operator/repos/vsk-notes']))
 
     // Nothing highlighted: Enter means the typed folder itself.
     fireEvent.keyDown(field, { key: 'Enter' })
-    expect(onSubmit).toHaveBeenCalledWith('/home/perttu/repos/')
+    expect(onSubmit).toHaveBeenCalledWith('/home/operator/repos/')
   })
 
   it('says so when a typed folder cannot be listed, and still takes the path', async () => {
