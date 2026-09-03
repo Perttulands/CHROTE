@@ -76,11 +76,14 @@ export default function TableColumn() {
     if (event.button !== 0 || !column) return
     event.preventDefault()
     const handle = event.currentTarget
-    const right = column.getBoundingClientRect().right
+    // The edge follows the pointer from where it was grabbed, so the handle
+    // does not jump under the finger by however far into it the press landed.
+    const grabbedAt = event.clientX
+    const grabbedWidth = column.getBoundingClientRect().width
     const max = widest()
     handle.setPointerCapture(event.pointerId)
     const move = (moveEvent: PointerEvent) => {
-      const next = Math.min(max, Math.max(TABLE_WIDTH_MIN, Math.round(right - moveEvent.clientX)))
+      const next = Math.min(max, Math.max(TABLE_WIDTH_MIN, Math.round(grabbedWidth + grabbedAt - moveEvent.clientX)))
       dragRef.current = next
       setDragWidth(next)
     }

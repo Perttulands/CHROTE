@@ -102,30 +102,28 @@ async function openWorkspace(page: Page, sends: SendRecord[]) {
 }
 
 test.describe('the Send to Session drawer', () => {
-  // One page for both layouts the drawer has: it takes a column from the grid
-  // when the workspace has one to give, and overlays the grid when it does not.
-  test('takes its column from the grid with room, and overlays the grid without', async ({ page }) => {
+  // The drawer is a surface over the right edge of the workspace: it takes
+  // nothing from the grid, so nothing moves under the pointer while a message
+  // is written, and the tile it was opened from is still the target it offers.
+  test('overlays the right edge at 380px, leaves the grid where it was, and sends on Enter', async ({ page }) => {
     const sends: SendRecord[] = []
     await openWorkspace(page, sends)
 
-    const tile = page.locator('.terminal-window:visible').first()
-    const before = await box(tile)
+    const tiles = page.locator('.terminal-window:visible')
+    const before = [await box(tiles.nth(0)), await box(tiles.nth(1))]
 
     await page.getByRole('button', { name: `Send to session ${TARGET}` }).click()
 
     const drawer = page.getByRole('dialog', { name: 'Send to session' })
     await expect(drawer).toBeVisible()
 
-    // The grid gave the drawer its room rather than being covered by it: the
-    // tile is narrower, still on screen, and ends before the drawer begins.
-    const after = await box(tile)
+    expect(await box(tiles.nth(0))).toEqual(before[0])
+    expect(await box(tiles.nth(1))).toEqual(before[1])
     const drawerBox = await box(drawer)
-    expect(after.width).toBeLessThan(before.width)
-    await expect(tile).toBeVisible()
-    expect(after.x + after.width).toBeLessThanOrEqual(drawerBox.x + 1)
+    const content = await box(page.locator('.dashboard-content'))
     expect(Math.round(drawerBox.width)).toBe(380)
+    expect(Math.round(drawerBox.x + drawerBox.width)).toBe(Math.round(content.x + content.width))
 
-    // The tile it was opened from is the target it offers.
     await expect(drawer.getByRole('option', { name: new RegExp(TARGET) }))
       .toHaveAttribute('aria-selected', 'true')
 
@@ -137,16 +135,5 @@ test.describe('the Send to Session drawer', () => {
     await expect(drawer).toHaveCount(0)
     expect(sends).toEqual([{ text: 'status please', submit: 'true' }])
     await expect(page.locator('.status-line')).toContainText(`Pasted to '${TARGET}'`)
-
-    // Narrow the workspace until there is no column to give, and the same
-    // drawer overlays the grid instead of docking beside it.
-    await page.setViewportSize({ width: 800, height: 900 })
-    await page.getByRole('button', { name: `Send to session ${TARGET}` }).click()
-    await expect(drawer).toBeVisible()
-
-    expect(await page.locator('.send-drawer-gutter').count()).toBe(0)
-    const overlaid = await box(drawer)
-    expect(Math.round(overlaid.width)).toBe(400)
   })
 })
-
