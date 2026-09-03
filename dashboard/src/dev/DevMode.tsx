@@ -15,9 +15,8 @@
  * by pointer events alone, and dev mode is a fact about this browsing session
  * that no reload carries over.
  *
- * The chord has no Alt form. Chrome owns Alt+D, so dev mode is reached the way
- * every chord without a direct form is reached: the leader opens the keys
- * panel, "dev" finds the row, and Enter runs it.
+ * Chrome owns Alt+D, so the direct chord is Alt+Shift+D; the leader's keys
+ * panel reaches it too, as it reaches every chord.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -65,6 +64,7 @@ export default function DevMode({ activeTab }: { activeTab: string }) {
     id: 'keys.dev',
     key: 'd',
     label: 'Dev mode',
+    direct: { alt: true, shift: true, key: 'd' },
     scope: 'global',
     run: () => applyRef.current(!onRef.current),
   }]), [])
