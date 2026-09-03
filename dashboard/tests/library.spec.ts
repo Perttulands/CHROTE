@@ -111,6 +111,45 @@ test.describe('The Library', () => {
     await expect(page.locator('.desk-ask')).toHaveValue('')
   })
 
+  // Real layout is the only way to see one section painting over another;
+  // the rule these boxes prove is that every section takes a fixed or a
+  // scrolling extent (chrote-5grx.35).
+  test('keeps every rail section inside its own extent at a short window', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 700 })
+    await mockApiRoutes(page)
+    await mockBeadsApiRoutes(page)
+    await mockLibraryApiRoutes(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+
+    await page.click('.tab:has-text("Library")')
+    await page.waitForSelector('.library-proposal')
+
+    const box = async (selector: string) => {
+      const found = await page.locator(selector).boundingBox()
+      if (!found) throw new Error(`${selector} has no box`)
+      return found
+    }
+    const shelves = await box('.library-shelves')
+    const arrivals = await box('.library-arrivals')
+    const proposals = await box('.library-proposals')
+
+    expect(shelves.y + shelves.height).toBeLessThanOrEqual(arrivals.y + 0.5)
+    expect(arrivals.y + arrivals.height).toBeLessThanOrEqual(proposals.y + 0.5)
+    expect(proposals.height).toBeGreaterThan(40)
+
+    for (const row of await page.locator('.library-shelf').all()) {
+      const rowBox = await row.boundingBox()
+      expect(rowBox).not.toBeNull()
+      expect(rowBox!.y).toBeGreaterThanOrEqual(shelves.y - 0.5)
+      expect(rowBox!.y + rowBox!.height).toBeLessThanOrEqual(shelves.y + shelves.height + 0.5)
+    }
+
+    const arrivalsScroll = page.locator('.library-arrivals .library-scroll')
+    expect(await arrivalsScroll.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+    await expect(page.locator('.library-arrival').last()).not.toBeInViewport()
+  })
+
   test('says so when the host has no library', async ({ page }) => {
     await mockApiRoutes(page)
     await mockBeadsApiRoutes(page)
