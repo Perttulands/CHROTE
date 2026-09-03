@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -51,6 +52,47 @@ func findIgnoresDirectory(name string) bool {
 	return strings.HasPrefix(name, ".") || findIgnoredDirectories[name]
 }
 
+// mountInfoPath is the kernel's table of the mounts this process can see. Its
+// fifth field is the mount point.
+const mountInfoPath = "/proc/self/mountinfo"
+
+// mountFieldUnescaper decodes the octal escapes the kernel writes for the
+// characters that would otherwise break the space-separated fields.
+var mountFieldUnescaper = strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
+
+// readMountPoints returns the set of paths that are mount points. A system
+// that does not publish the table yields no set at all, and the walk then
+// descends exactly as it did before.
+func readMountPoints(path string) map[string]bool {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return parseMountPoints(string(content))
+}
+
+func parseMountPoints(content string) map[string]bool {
+	points := make(map[string]bool)
+	for _, line := range strings.Split(content, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		points[filepath.Clean(mountFieldUnescaper.Replace(fields[4]))] = true
+	}
+	return points
+}
+
+// findLeavesMount reports whether descending into path would take the walk out
+// of the mount its root sits in. A mount point is a second filesystem, and a
+// bind mount presents a tree that is already reachable elsewhere, so entering
+// one returns the same file twice and can walk into kernel filesystems that
+// hold no operator files. The root itself is always entered: a root that is
+// its own mount point is exactly the tree the operator configured.
+func findLeavesMount(path string, root string, mountPoints map[string]bool) bool {
+	return path != root && mountPoints[path]
+}
+
 // FindFiles handles GET /api/files/find?q= - files under the configured roots
 // whose name or root-relative path contains the query.
 func (h *FilesHandler) FindFiles(w http.ResponseWriter, r *http.Request) {
@@ -82,10 +124,14 @@ func (h *FilesHandler) FindFiles(w http.ResponseWriter, r *http.Request) {
 // The path match is taken against the path relative to its root. The root's
 // own name is shared by everything beneath it, so matching it would turn a
 // query like the root's directory name into a match for every file.
+//
+// The mount table is read once here rather than per root, so a request sees
+// one consistent view of where the walk has to stop.
 func (h *FilesHandler) collectFindCandidates(ctx context.Context, query string) ([]findCandidate, bool) {
 	needle := strings.ToLower(query)
 	candidates := make([]findCandidate, 0)
 	stopped := false
+	mountPoints := readMountPoints(mountInfoPath)
 
 	for _, root := range h.allowedRoots {
 		if stopped {
@@ -111,6 +157,9 @@ func (h *FilesHandler) collectFindCandidates(ctx context.Context, query string) 
 			}
 			if entry.IsDir() {
 				if path != absoluteRoot && findIgnoresDirectory(entry.Name()) {
+					return fs.SkipDir
+				}
+				if findLeavesMount(path, absoluteRoot, mountPoints) {
 					return fs.SkipDir
 				}
 				return nil

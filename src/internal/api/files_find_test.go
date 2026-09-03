@@ -266,3 +266,63 @@ func TestFilesHandlerFindStopsWhenRequestContextEnds(t *testing.T) {
 		t.Fatalf("response = %+v, want no matches and truncated after cancellation", response)
 	}
 }
+
+func TestFindLeavesMountStopsAtAMountPointBelowTheRoot(t *testing.T) {
+	mountPoints := map[string]bool{"/a/b": true, "/c": true}
+
+	tests := []struct {
+		name string
+		path string
+		root string
+		want bool
+	}{
+		{name: "a mount point below the root is left", path: "/a/b", root: "/a", want: true},
+		{name: "an ordinary directory below the root is walked", path: "/a/c", root: "/a", want: false},
+		{name: "a root that is itself a mount point is walked", path: "/c", root: "/c", want: false},
+		{name: "a directory below a mounted root is walked", path: "/c/d", root: "/c", want: false},
+		{name: "a mount point outside the walking root is left", path: "/c", root: "/a", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := findLeavesMount(tt.path, tt.root, mountPoints); got != tt.want {
+				t.Fatalf("findLeavesMount(%q, %q) = %v, want %v", tt.path, tt.root, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFindLeavesMountWalksEverythingWithoutAMountTable(t *testing.T) {
+	missing := readMountPoints(filepath.Join(t.TempDir(), "absent"))
+	if missing != nil {
+		t.Fatalf("mount points from a missing table = %v, want none", missing)
+	}
+	for _, path := range []string{"/a/b", "/c", "/proc"} {
+		if findLeavesMount(path, "/a", missing) {
+			t.Fatalf("%q was skipped without a mount table, want the walk to descend", path)
+		}
+	}
+}
+
+func TestReadMountPointsParsesTheMountTable(t *testing.T) {
+	table := strings.Join([]string{
+		"21 28 0:20 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw",
+		"25 28 0:23 / /run rw,nosuid,nodev - tmpfs tmpfs rw,mode=755",
+		`31 28 8:1 /srv /mnt/copy\040of ro,relatime - ext4 /dev/sda1 ro`,
+		"32 28 8:1 / /opt/trailing/ rw,relatime - ext4 /dev/sda1 rw",
+		"truncated line",
+		"",
+	}, "\n")
+	path := filepath.Join(t.TempDir(), "mountinfo")
+	writeFileFixture(t, path, table)
+
+	got := readMountPoints(path)
+	want := map[string]bool{"/proc": true, "/run": true, "/mnt/copy of": true, "/opt/trailing": true}
+	if len(got) != len(want) {
+		t.Fatalf("mount points = %v, want %v", got, want)
+	}
+	for point := range want {
+		if !got[point] {
+			t.Fatalf("mount points = %v, want %q among them", got, point)
+		}
+	}
+}
