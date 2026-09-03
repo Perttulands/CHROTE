@@ -214,6 +214,7 @@ func (h *LibraryHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/library/page", h.Page)
 	mux.HandleFunc("GET /api/library/search", h.Search)
 	mux.HandleFunc("GET /api/library/changes", h.Changes)
+	mux.HandleFunc("GET /api/library/graph", h.Graph)
 	mux.HandleFunc("PUT /api/library/page", h.SavePage)
 }
 

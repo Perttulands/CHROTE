@@ -1,7 +1,7 @@
-/* The Library: three columns and a desk.
+/* The Library: a rail, a room and a desk.
    Character comes from the names and the layout — Shelves, New arrivals,
-   Proposals, the Reading room, the Front desk — not from decoration. Nothing
-   here takes colour it has not earned. */
+   Proposals, the map, the reading room, the Front desk — not from
+   decoration. Nothing here takes colour it has not earned. */
 
 .library-view {
   flex: 1;
@@ -18,41 +18,43 @@
   display: flex;
 }
 
-.library-left,
-.library-right {
+/* ---- the rail ---- */
+
+.library-left {
   flex: none;
+  width: 240px;
   display: flex;
   flex-direction: column;
   padding: 8px;
   background: var(--surface-primary);
+  border-right: 1px solid var(--divider);
   overflow: hidden;
 }
 
-.library-left {
-  width: 240px;
-  border-right: 1px solid var(--divider);
-}
-
-.library-right {
-  width: 300px;
-  border-left: 1px solid var(--divider);
-}
-
+/*
+ * Nothing moves under the pointer. A section takes a fixed extent or scrolls
+ * inside a bounded one, and clips rather than painting over its neighbour.
+ * Shelves keep their rows; New arrivals takes what is left and scrolls;
+ * Proposals takes its rows up to a share of the rail, then scrolls.
+ */
 .library-section {
+  flex: none;
   margin-top: 15px;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
-.library-section:first-of-type {
-  margin-top: 0;
+.library-arrivals {
+  flex: 1 1 0;
+  min-height: 52px;
 }
 
-/* The search field is not a section, so the shelves under it keep the gap that
-   separates every other section from what precedes it. */
-.library-search + .library-section {
-  margin-top: 15px;
+.library-proposals {
+  flex: 0 1 auto;
+  min-height: 52px;
+  max-height: 35%;
 }
 
 .library-section > h3 {
@@ -66,23 +68,8 @@
   color: var(--text-dim);
 }
 
-/*
- * A section that yields first when the desk opens: it shrinks and clips like
- * the scroll region it is, and never grows to push its neighbours down.
- */
-.library-yields {
-  flex: 0 1 auto;
-  min-height: 0;
-}
-
-/* A hairline closes a section that clipped, so the cut reads as a boundary
-   rather than as a row that failed to draw. */
-.library-yields + .library-section {
-  border-top: 1px solid var(--divider);
-  padding-top: 13px;
-}
-
 .library-scroll {
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
 }
@@ -109,8 +96,6 @@
   outline: none;
   border-color: var(--accent);
 }
-
-/* ---- left column ---- */
 
 .library-shelf {
   display: flex;
@@ -187,7 +172,7 @@
   color: var(--text-primary);
 }
 
-/* ---- middle: the reading room ---- */
+/* ---- the room ---- */
 
 .library-room {
   flex: 1;
@@ -196,6 +181,157 @@
   flex-direction: column;
   overflow: hidden;
 }
+
+/* ---- the map, full and as the strip ---- */
+
+.library-map-frame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.library-map-bar {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  height: 40px;
+  padding: 12px 14px 0;
+  border-bottom: 1px solid var(--divider);
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.library-map-title {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.library-map-count {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.library-map-toggle {
+  margin-left: auto;
+}
+
+.library-map-toggle:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.library-map {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.library-map svg {
+  display: block;
+}
+
+/* The strip is the same drawing at a fixed height, with its own head laid
+   over the top-left corner and the toggle over the top-right, as the mock has
+   them. */
+.library-strip {
+  flex: none;
+  position: relative;
+  height: 150px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.library-strip .library-map-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: auto;
+  padding: 10px 14px 0;
+  border: none;
+  pointer-events: none;
+}
+
+.library-strip .library-map-toggle {
+  pointer-events: auto;
+}
+
+.library-map-strip {
+  flex: none;
+  height: 150px;
+}
+
+.library-map-edge {
+  stroke: var(--divider);
+  stroke-width: 1;
+}
+
+.library-map-edge.tag {
+  stroke-dasharray: 2 3;
+}
+
+.library-map-edge.hot {
+  stroke: var(--accent);
+  stroke-opacity: 0.8;
+}
+
+.library-map-node {
+  cursor: pointer;
+  outline: none;
+}
+
+/* A hit area a pointer can find, around a dot that may be three pixels. */
+.library-map-hit {
+  fill: transparent;
+}
+
+.library-map-dot {
+  fill: var(--text-secondary);
+}
+
+.library-map-node.candidate .library-map-dot {
+  fill: var(--text-dim);
+}
+
+.library-map-node.hot .library-map-dot {
+  fill: var(--accent);
+}
+
+.library-map-node:focus-visible .library-map-dot {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.library-map-cluster {
+  fill: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+/* A name is drawn over a halo of the background, so a line passing beneath
+   it never runs through the letters. */
+.library-map-label {
+  fill: var(--text-dim);
+  font-size: 11px;
+  paint-order: stroke;
+  stroke: var(--background);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.library-map-label.primary {
+  fill: var(--text-primary);
+  font-size: 12px;
+}
+
+/* ---- a page ---- */
 
 /*
  * One measure carries the running head and the prose alike, so the path and
@@ -276,6 +412,49 @@
   text-overflow: ellipsis;
 }
 
+/* The page's history, three commits deep, beneath its running head. The strip
+   reserves three lines whatever a page carries, so the prose beneath starts at
+   the same height on every page. */
+.library-history-strip {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 16px;
+  margin-top: 10px;
+  min-height: 60px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text-dim);
+}
+
+.library-history {
+  display: inline-flex;
+  gap: 8px;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.library-history-hash {
+  color: var(--text-secondary);
+}
+
+.library-history-message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.library-history-more {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.library-history-more:hover {
+  color: var(--text-primary);
+}
+
 .library-rule {
   height: 1px;
   margin: 13px 0 18px;
@@ -291,6 +470,44 @@
   color: var(--text-secondary);
 }
 
+/* What links here, beneath the prose. */
+.library-linked-from {
+  margin-top: 28px;
+}
+
+.library-linked-from h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-primary);
+}
+
+.library-linked-from p {
+  margin: 0;
+}
+
+/* A backlink reads like a link in the prose above it: text, underlined, no
+   colour it has not earned. */
+.library-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-decoration-color: var(--text-dim);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.library-link:hover {
+  text-decoration-color: var(--accent);
+}
+
+.library-linked-sep {
+  color: var(--text-dim);
+}
+
 .library-editor {
   flex: 1;
   min-height: 0;
@@ -298,52 +515,6 @@
   flex-direction: column;
   gap: 8px;
   padding-bottom: 12px;
-}
-
-/* ---- the empty state: the shelves as cards ---- */
-
-.library-cards {
-  min-height: 0;
-  overflow-y: auto;
-  padding-bottom: 24px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px;
-  align-content: start;
-}
-
-.library-card {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  background: var(--surface-primary);
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.library-card-name {
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.library-card-count {
-  margin-top: 3px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.library-card-last {
-  margin-top: 9px;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* ---- a list of pages: a shelf's contents, or what a search found ---- */
@@ -390,70 +561,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* ---- right column: the page's history, then its shelf ---- */
-
-.library-history {
-  display: flex;
-  flex-direction: column;
-  padding: 0 6px;
-  margin-bottom: 10px;
-}
-
-.library-history-head {
-  display: flex;
-  gap: 10px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.library-history-when,
-.library-history-author {
-  color: var(--text-dim);
-}
-
-.library-history-message {
-  margin-top: 2px;
-  font-size: 12px;
-  line-height: 1.35;
-  color: var(--text-secondary);
-}
-
-.library-sibling {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  width: 100%;
-  height: 23px;
-  padding: 0 6px;
-  border: none;
-  border-left: 2px solid transparent;
-  background: transparent;
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.library-sibling.active {
-  background: var(--surface-secondary);
-  border-left-color: var(--accent);
-}
-
-.library-sibling-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.library-sibling-when {
-  margin-left: auto;
-  flex: none;
-  font-size: 11px;
-  color: var(--text-dim);
 }
 
 .library-empty,

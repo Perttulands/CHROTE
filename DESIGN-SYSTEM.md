@@ -187,6 +187,7 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | `Alt+R` | The Library's map or its reading room |
 | `Alt+Enter` | Focus the resident's column |
 | `Alt+K` | Keybindings panel |
+| `Alt+R` | The map or the reading room, while the Library tab is active |
 
 `Plus` and `Minus` are matched by the character the layout produces, not by
 `Shift`, so `Alt++` and `Alt+=` are the same chord.
