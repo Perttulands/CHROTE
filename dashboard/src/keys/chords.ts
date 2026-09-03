@@ -75,7 +75,7 @@ export const SCOPE_TITLES: Record<ChordScope, string> = {
 // belongs here: the keys panel must read the same however many surfaces
 // registered the chords. Case matters, so `w` and `W` can both appear.
 const KEY_ORDER = [
-  '1', '2', '3', '4', '5', '6', 'b', 'l', 'g', 'i', 'd', '?', 'k', 'Escape',
+  '1', '2', '3', '4', '5', '6', 'b', 'l', 'g', 'i', 'Enter', 'd', '?', 'k', 'Escape',
   'w', 'W', '=', '-', '/', 'n', 'Tab', 'f', 'p', 's',
 ]
 

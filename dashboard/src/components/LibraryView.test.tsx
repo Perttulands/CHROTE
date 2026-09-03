@@ -39,9 +39,9 @@ vi.mock('../beads/beadsApi', () => ({
   fetchBeadWork: () => Promise.resolve(mockState.beadWork),
 }))
 
-vi.mock('./Desk', () => ({
-  default: ({ label, sessionName, reference }: { label: string; sessionName?: string; reference: string }) => (
-    <div data-testid="desk" data-session={sessionName ?? ''} data-reference={reference}>{label}</div>
+vi.mock('./ResidentColumn', () => ({
+  default: ({ tab, reference }: { tab: string; reference: string | null }) => (
+    <div data-testid="resident" data-tab={tab} data-reference={reference ?? ''} />
   ),
 }))
 
@@ -151,7 +151,6 @@ describe('LibraryView', () => {
     render(<LibraryView />)
 
     expect(await screen.findByText('No library is configured')).toBeInTheDocument()
-    expect(screen.queryByTestId('desk')).not.toBeInTheDocument()
   })
 
   it('says what refused rather than showing a blank tab', async () => {
@@ -214,11 +213,11 @@ describe('LibraryView', () => {
     expect(screen.getByText('On preferences')).toBeInTheDocument()
   })
 
-  it('carries the open page as the reference to the desk and the drawer', async () => {
+  it('carries the open page as the reference to the Librarian and the drawer', async () => {
     await openLibrary()
     await openWorkflowPage()
 
-    expect(screen.getByTestId('desk')).toHaveAttribute('data-reference', 'library preferences/workflow.md')
+    expect(screen.getByTestId('resident')).toHaveAttribute('data-reference', 'library preferences/workflow.md')
 
     fireEvent.click(screen.getByRole('button', { name: /^Send/ }))
     expect(mockState.openSendToSession).toHaveBeenCalledWith({ reference: 'library preferences/workflow.md' })

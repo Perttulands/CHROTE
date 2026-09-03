@@ -7,8 +7,10 @@
   display: flex;
   flex-direction: column;
   /* The remembered width, until the content beside it would drop under 480px;
-     then the column gives way, but never past its minimum. */
-  width: clamp(320px, calc(100% - 480px), var(--table-width, 400px));
+     then the column gives way, but never past its minimum. A resident's column
+     in the same row says how much it takes, so the content is kept before the
+     table starts to give. */
+  width: clamp(320px, calc(100% - 480px - var(--resident-width, 0px)), var(--table-width, 400px));
   min-width: 0;
   background-color: var(--surface-primary);
   border-left: 1px solid var(--divider);

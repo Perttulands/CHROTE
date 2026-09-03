@@ -241,6 +241,11 @@ interface LauncherProps {
    */
   initialHarness?: string
   /**
+   * The session name to start with, when the surface is launching a session
+   * the host already names: a resident's column relaunches its own session.
+   */
+  initialName?: string
+  /**
    * Called once a session was created, with what it was created as. A popover
    * uses it to close itself; the Send drawer uses it to reach the session it
    * just launched.
@@ -248,7 +253,7 @@ interface LauncherProps {
   onLaunched?: (created: { name: string; unixUser: LaunchUser }) => void
 }
 
-export default function Launcher({ workspaceId, attachTo, initialFolder, initialHarness, onLaunched }: LauncherProps) {
+export default function Launcher({ workspaceId, attachTo, initialFolder, initialHarness, initialName, onLaunched }: LauncherProps) {
   const { sessions, settings, terminalUsers, createSession } = useSession()
   const theme = useTheme()
   const options = useLaunchOptions()
@@ -286,7 +291,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
     () => derivedSessionName(harness.id, folder, sessions, user),
     [harness.id, folder, sessions, user],
   )
-  const name = typedName ?? derivedName
+  const name = typedName ?? initialName ?? derivedName
 
   const short = launchShortName(harness.id)
   const launchLabel = harness.id === SHELL_HARNESS

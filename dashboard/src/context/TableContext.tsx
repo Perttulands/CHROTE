@@ -17,6 +17,7 @@
 import { createContext, useContext, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type { AgentHarness } from '../agents/agentContextApi'
+import { beadReference } from '../beads/beadReference'
 import { getSessionNameFromKey } from '../types'
 
 export interface BeadOnTable {
@@ -24,6 +25,8 @@ export interface BeadOnTable {
   id: string
   /** The store the id belongs to, when the caller already knows it. */
   projectPath?: string
+  /** The Bead's title, from the row that put it down or the card that read it. */
+  title?: string
   /** The ids read before this one in the same sitting, oldest first. */
   trail: readonly string[]
   /** Each request is its own, so the same id can be asked for twice. */
@@ -89,6 +92,17 @@ export function clearTable(): void {
   publish()
 }
 
+/**
+ * Give the Bead on the table its title once the card has read it. A Bead put
+ * down from a terminal link or an id in another Bead's text arrives with its
+ * id alone, and the reference an agent is handed should carry the title too.
+ */
+export function nameBeadOnTable(id: string, title: string): void {
+  if (selected?.kind !== 'bead' || selected.id !== id || selected.title === title) return
+  selected = { ...selected, title }
+  publish()
+}
+
 /** Back along a Bead's trail. False when there is nothing behind to go to. */
 export function stepBackOnTable(): boolean {
   if (selected?.kind !== 'bead' || selected.trail.length === 0) return false
@@ -130,6 +144,19 @@ export function tableLabel(object: TableObject): string {
     case 'bead': return `Bead ${object.id}`
     case 'agent-context': return `What ${getSessionNameFromKey(object.sessionKey)} sees`
     case 'file': return object.path
+  }
+}
+
+/**
+ * The one line that names what is on the table to an agent: the same words
+ * the drawer puts first in a message, so a resident handed the table's object
+ * reads it the way any other session would.
+ */
+export function tableReference(object: TableObject): string {
+  switch (object.kind) {
+    case 'bead': return beadReference(object)
+    case 'agent-context': return `agents ${object.folder} ${object.harness}`
+    case 'file': return `path ${object.path}`
   }
 }
 

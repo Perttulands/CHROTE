@@ -3,6 +3,9 @@
 .beads-view {
   display: flex;
   flex: 1;
+  /* The row shrinks to the workspace rather than to the sum of its columns:
+     with the table and the Clerk beside the map, the map is what gives. */
+  min-width: 0;
   min-height: 0;
   background-color: var(--background);
   color: var(--text-primary);

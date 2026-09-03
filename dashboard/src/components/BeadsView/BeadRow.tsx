@@ -38,7 +38,7 @@ export default function BeadRow({ row, depth = 0, fold, trailing }: BeadRowProps
       ) : (
         <span className="bead-row-glyph" title={state}>{glyph}</span>
       )}
-      <button type="button" className="bead-row-open" onClick={() => openBeadCard(row.id, row.projectPath)}>
+      <button type="button" className="bead-row-open" onClick={() => openBeadCard(row.id, row.projectPath, row.title)}>
         <span className="bead-row-type">{row.type || 'task'}</span>
         <span className="bead-row-id">{row.id}</span>
         <span className="bead-row-title">{row.title}</span>

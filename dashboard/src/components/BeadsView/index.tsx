@@ -11,9 +11,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import MapView from './MapView'
 import ReadyView from './ReadyView'
 import StaleView from './StaleView'
+import ResidentColumn from '../ResidentColumn'
 import TableColumn from '../TableColumn'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
+import { tableReference, useTableObject } from '../../context/TableContext'
 import { setBeadProjects } from '../../beads/beadIds'
 import { fetchBeadProjects, fetchBeadWork, type BeadProject } from '../../beads/beadsApi'
 import {
@@ -70,6 +72,8 @@ export default function BeadsView({ reveal }: BeadsViewProps = {}) {
   const [rows, setRows] = useState<WorkRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // What the Clerk is handed on Alt+S: whatever is on the table.
+  const table = useTableObject()
 
   const manualPaths = useMemo(() => settings.beadsProjectPaths || [], [settings.beadsProjectPaths])
 
@@ -216,6 +220,7 @@ export default function BeadsView({ reveal }: BeadsViewProps = {}) {
       </div>
 
       <TableColumn />
+      <ResidentColumn tab="beads" reference={table ? tableReference(table) : null} />
     </div>
   )
 }

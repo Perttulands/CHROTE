@@ -1,17 +1,16 @@
 /**
  * The Library: a reading room over the operator's own context corpus.
  *
- * Three columns and a desk. The shelves, what arrived lately and the proposals
- * in flight down the left; the page itself in the middle at a reading measure;
- * its history and the rest of its shelf at the right; the Librarian on duty at
- * the foot. The corpus is a Markdown tree under git, so every fact here — a
+ * Three columns and the Librarian. The shelves, what arrived lately and the
+ * proposals in flight down the left; the page itself in the middle at a reading
+ * measure; its history and the rest of its shelf at the right; the Librarian
+ * live in a column at the far edge. The corpus is a Markdown tree under git, so every fact here — a
  * title, a date, an author, a history — is read out of that tree rather than
  * kept anywhere in CHROTE. The one thing written back is the operator's own
  * correction, and it is a commit signed as him.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import Desk from '../Desk'
 import Editor from '../Editor'
 import Markdown from '../Markdown'
 import ReadingRoom from './ReadingRoom'
@@ -20,7 +19,7 @@ import { useStatus } from '../../context/StatusContext'
 import { openBeadCard } from '../../beads/beadCard'
 import { fetchBeadWork, type BeadRow } from '../../beads/beadsApi'
 import { isBeadClosed } from '../../beads/beadStatus'
-import { registerChords } from '../../keys/chords'
+import ResidentColumn from '../ResidentColumn'
 import TableColumn from '../TableColumn'
 import {
   fetchChanges,
@@ -46,7 +45,7 @@ const ARRIVALS = 30
 /** What a corpus calls its own front matter, in the order the room tries. */
 const LIBRARY_FRONT_MATTER = ['README.md', 'CLAUDE.md']
 
-/** The one line the desk and the drawer carry: which page is on the table. */
+/** The one line the Librarian and the drawer are handed: which page is open. */
 export function libraryReference(path: string | null): string {
   return path ? `library ${path}` : 'library'
 }
@@ -194,20 +193,11 @@ export default function LibraryView() {
       })
   }, [announce, query])
 
+  // The page's Send is the drawer, for any other session; Alt+S is the
+  // Librarian's, and pastes the same reference into the column at the right.
   const send = useCallback(() => {
     openSendToSession({ reference: libraryReference(page?.path ?? shelf) })
   }, [openSendToSession, page, shelf])
-
-  // Alt+S sends what is on the table. It is registered only while the tab is
-  // mounted, so it never shadows the tile chord it borrows the key from.
-  useEffect(() => registerChords([{
-    id: 'library.send',
-    key: 's',
-    direct: { alt: true, shift: false, key: 's' },
-    label: 'Send this page',
-    scope: 'global',
-    run: send,
-  }]), [send])
 
   const save = useCallback(async () => {
     if (!page || draft === null) return
@@ -367,7 +357,7 @@ export default function LibraryView() {
                       </>
                     )}
                     <button type="button" className="library-action" onClick={send}>
-                      Send<span className="library-chord">Alt+S</span>
+                      Send
                     </button>
                   </div>
                 </div>
@@ -456,15 +446,8 @@ export default function LibraryView() {
         </div>
 
         <TableColumn />
+        <ResidentColumn tab="library" reference={libraryReference(page?.path ?? shelf)} />
       </div>
-
-      <Desk
-        label="Front desk"
-        sessionName={shelves.librarianSession || undefined}
-        reference={libraryReference(page?.path ?? shelf)}
-        placeholder={page ? 'Ask the Librarian about this page…' : 'Ask the Librarian…'}
-        launchFolder={shelves.root}
-      />
     </div>
   )
 }

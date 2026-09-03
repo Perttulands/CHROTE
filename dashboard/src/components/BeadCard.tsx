@@ -18,13 +18,12 @@ import { copyTextToClipboard } from '../utils/clipboard'
 import { registerChords, type Chord } from '../keys/chords'
 import { backInBeadCard, closeBeadCard, followBeadFromCard, useBeadCardRequest } from '../beads/beadCard'
 import { beadIdPattern, beadProjectPath, ensureBeadProjects } from '../beads/beadIds'
+import { beadReference } from '../beads/beadReference'
 import { fetchBead, type BeadDetail, type BeadLink } from '../beads/beadsApi'
 import { beadGlyph, beadStatusLabel, formatBeadTime } from '../beads/beadStatus'
+import { nameBeadOnTable } from '../context/TableContext'
+import { useResidentPresent } from '../residents/residentPresence'
 import './BeadCard.css'
-
-export function beadReference(bead: { id: string; title: string }): string {
-  return `bead ${bead.id}: ${bead.title}`
-}
 
 interface BeadCardProps {
   /** Show this Bead in the Beads tab, where its project and its map are. */
@@ -62,6 +61,9 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
   const { settings, openSendToSession } = useSession()
   const { announce } = useStatus()
   const request = useBeadCardRequest()
+  // In a tab with a resident, Alt+S is the resident's: it pastes the Bead into
+  // that prompt. The card's Send stays a word for every other session.
+  const residentPresent = useResidentPresent()
   const [bead, setBead] = useState<BeadDetail | null>(null)
   const [projectPath, setProjectPath] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -91,7 +93,9 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
         if (!path) throw new Error(`No configured Beads project owns ${id}`)
         if (current) setProjectPath(path)
         const detail = await fetchBead(path, id)
-        if (current) setBead(detail)
+        if (!current) return
+        setBead(detail)
+        nameBeadOnTable(detail.id, detail.title)
       })
       .catch((cause: unknown) => {
         if (!current) return
@@ -118,7 +122,7 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
   // chords first — and retired with the card, so the tile's own Send comes
   // back the moment there is no Bead in hand.
   useEffect(() => {
-    if (!bead) return
+    if (!bead || residentPresent) return
     const run = () => openSendToSession({ reference: beadReference(bead) })
     const chords: Chord[] = (['global', 'tile'] as const).map(scope => ({
       id: `beads.card.send.${scope}`,
@@ -129,7 +133,7 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
       run,
     }))
     return registerChords(chords)
-  }, [bead, openSendToSession])
+  }, [bead, openSendToSession, residentPresent])
 
   if (!request) return null
 
@@ -150,8 +154,14 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
             Open in Beads
           </button>
         )}
-        <button type="button" className="table-action" aria-keyshortcuts="Alt+S" disabled={!bead} onClick={send}>
-          Send<span className="table-chord" aria-hidden="true">Alt+S</span>
+        <button
+          type="button"
+          className="table-action"
+          aria-keyshortcuts={residentPresent ? undefined : 'Alt+S'}
+          disabled={!bead}
+          onClick={send}
+        >
+          Send{!residentPresent && <span className="table-chord" aria-hidden="true">Alt+S</span>}
         </button>
         <button
           type="button"

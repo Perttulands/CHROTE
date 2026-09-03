@@ -5,7 +5,9 @@
 .send-drawer {
   position: absolute;
   top: 0;
-  right: 0;
+  /* Over the table, never over a resident's column: the drawer serves every
+     other session, and the resident stays in view beyond it. */
+  right: var(--resident-width, 0px);
   bottom: 0;
   width: 380px;
   max-width: 100%;
