@@ -8,7 +8,7 @@ import { useSession } from '../context/SessionContext'
 import { useTheme } from '../theme/ThemeContext'
 import { identityColorFor } from '../theme/theme'
 import { HarnessMark, harnessShortName, type HarnessId } from './harnessMarks'
-import FolderPickerModal from './FolderPickerModal'
+import FolderField from './FolderField'
 import FlagPanel from './FlagPanel'
 import type { LaunchFlag } from './launchFlags'
 import { getTerminalUserInitial, resolveLaunchUser } from '../types'
@@ -243,7 +243,6 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
   const [chosenFolder, setChosenFolder] = useState<string | null>(null)
   const [chosenUser, setChosenUser] = useState<LaunchUser | null>(null)
   const [typedName, setTypedName] = useState<string | null>(null)
-  const [browsing, setBrowsing] = useState(false)
   const [launching, setLaunching] = useState(false)
   // A flags line the operator edited, kept per harness so switching to Codex
   // and back does not throw away what he wrote for Claude Code. It lives as
@@ -251,6 +250,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
   const [flagEdits, setFlagEdits] = useState<Record<string, string>>({})
   const [flagsOpen, setFlagsOpen] = useState(false)
   const flagsFieldId = useId()
+  const folderFieldId = useId()
 
   const harness = options.harnesses.find(entry => entry.id === chosenHarness) ??
     options.harnesses.find(entry => entry.id === initialHarness) ??
@@ -259,8 +259,10 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
   const defaultUser = resolveLaunchUser(settings, workspaceId, terminalUsers)
   const user = chosenUser ?? defaultUser
 
-  const recents = useMemo(
-    () => recentFolders(sessions, user, options.folders),
+  // What the Folder field offers before anything is typed: the pinned
+  // folders, then where this user's sessions already are.
+  const folderSuggestions = useMemo(
+    () => [...options.folders, ...recentFolders(sessions, user, options.folders)],
     [sessions, user, options.folders],
   )
   const derivedName = useMemo(
@@ -293,15 +295,18 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
     })
   }, [harness.id])
 
-  const launch = useCallback(async () => {
+  // The Folder field's Enter launches with what it just chose, which the
+  // state has not caught up with yet; everything else launches where it is.
+  const launch = useCallback(async (inFolder: string = folder) => {
     const sessionName = name.trim()
-    if (!sessionName || launching) return
+    const cwd = inFolder.trim()
+    if (!sessionName || !cwd || launching) return
     setLaunching(true)
     try {
       const created = await createSession({
         name: sessionName,
         unixUser: user,
-        cwd: folder,
+        cwd,
         harness: harness.id,
         workspaceId,
         ...(flagsOffered ? { flags: flagLine } : {}),
@@ -313,18 +318,6 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
     }
   }, [attachTo, createSession, flagLine, flagsOffered, folder, harness.id, launching, name, onLaunched, user, workspaceId])
 
-  const folderOption = (path: string, className: string) => (
-    <button
-      key={path}
-      type="button"
-      className={`${className}${path === folder ? ' selected' : ''}`}
-      aria-pressed={path === folder}
-      onClick={() => setChosenFolder(path)}
-    >
-      {path}
-    </button>
-  )
-
   return (
     <div
       className={`launcher${flagsOpen && flagsOffered ? ' flags-open' : ''}`}
@@ -333,8 +326,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
     >
       {/* The frame is the container the flags panel measures: it docks beside
           the body when the launcher has the room and stacks under it when it
-          does not. The folder picker stays outside it, because a container
-          would become the containing block of its fixed overlay. */}
+          does not. */}
       <div className="launcher-frame">
         <div className="launcher-body">
           <div className="launcher-title">Launch</div>
@@ -359,21 +351,18 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
             )
           })}
 
-          <div className="launcher-label">Folder</div>
-          <div className="launcher-pick" data-ui="launcher.folder">
-            {options.folders.map(path => folderOption(path, 'launcher-option'))}
-            <button type="button" className="launcher-quiet launcher-browse" onClick={() => setBrowsing(true)}>
-              Browse…
-            </button>
+          <label className="launcher-label" htmlFor={folderFieldId}>Folder</label>
+          <div className="launcher-folder" data-ui="launcher.folder">
+            <FolderField
+              id={folderFieldId}
+              value={folder}
+              onChange={setChosenFolder}
+              onSubmit={path => { void launch(path) }}
+              recents={folderSuggestions}
+              ariaLabel="Folder"
+              inputClassName="launcher-name"
+            />
           </div>
-          {recents.length > 0 && (
-            <div className="launcher-recent">
-              <span className="launcher-recent-label">Recent</span>
-              <div className="launcher-recent-paths">
-                {recents.map(path => folderOption(path, 'launcher-recent-path'))}
-              </div>
-            </div>
-          )}
 
           {/* A server with no configured Unix users has no user to choose: the
               session runs as the one account CHROTE was given. */}
@@ -457,7 +446,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
               type="button"
               className="launcher-quiet launcher-launch"
               onClick={() => { void launch() }}
-              disabled={launching || name.trim() === ''}
+              disabled={launching || name.trim() === '' || folder.trim() === ''}
             >
               {launchLabel}
             </button>
@@ -474,14 +463,6 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
           />
         )}
       </div>
-
-      {browsing && (
-        <FolderPickerModal
-          initialPath={folder.startsWith('/') ? folder : '/'}
-          onSelect={path => { setChosenFolder(path); setBrowsing(false) }}
-          onClose={() => setBrowsing(false)}
-        />
-      )}
     </div>
   )
 }

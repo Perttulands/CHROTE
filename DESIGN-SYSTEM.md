@@ -151,8 +151,12 @@ The Sessions panel's plus opens the same launcher.
   Flags are an editable line prefilled with the harness's defaults, a preview
   shows the exact line that will be typed, and a panel lists every flag the
   harness's own `--help` describes, searchable, click to add or remove.
-- Folders are the configured pinned list, the working directories of live
-  sessions as recents, and a browse control.
+- The folder is one field over a list of six rows that keeps its height
+  whatever it holds. Empty, the list is the pinned folders and the working
+  directories of live sessions; a fragment ranks the host's workspaces by fuzzy
+  match on the tail of their paths; an absolute path lists the directories
+  under the typed prefix, dot-directories last. Tab completes the highlighted
+  row, the arrows move, Enter takes the highlighted row or the typed path.
 - The name is derived from folder and harness, suffixed on collision, and
   editable before launching.
 - One quiet button states what will happen, and the new session binds to the

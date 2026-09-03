@@ -36,6 +36,36 @@ test.describe('Launcher', () => {
     await expect(window.locator('.session-tag')).toHaveCount(1)
   })
 
+  test('the Folder field finds a workspace by a fragment and launches in a typed path', async ({ page }) => {
+    await mockApiRoutes(page)
+
+    const created: Array<Record<string, unknown>> = []
+    page.on('request', request => {
+      if (request.method() === 'POST' && request.url().includes('/api/tmux/sessions')) {
+        created.push(JSON.parse(request.postData() || '{}'))
+      }
+    })
+
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    const launcher = page.locator('.terminal-window').first().locator('.launcher')
+    const field = launcher.getByLabel('Folder', { exact: true })
+    const before = await launcher.boundingBox()
+
+    await field.fill('VSK')
+    await expect(launcher.getByRole('option', { name: '/home/operator/repos/VSK-Zone' })).toHaveAttribute('aria-selected', 'true')
+
+    await field.fill('/srv/other')
+    await expect(launcher.getByLabel('Session name')).toHaveValue('claude-other')
+    // Suggestions came and went; the launcher is exactly where and how big it was.
+    expect(await launcher.boundingBox()).toEqual(before)
+
+    await field.press('Enter')
+
+    await expect.poll(() => created).toHaveLength(1)
+    expect(created[0]).toMatchObject({ name: 'claude-other', cwd: '/srv/other', harness: 'claude-code' })
+  })
+
   test('the catalogue docks beside the launcher with room, and stacks under it without', async ({ page }) => {
     await mockApiRoutes(page)
     await page.goto('/')
