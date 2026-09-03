@@ -7,6 +7,8 @@ import TabBar, { Tab } from './components/TabBar'
 import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
 import FloatingModal from './components/FloatingModal'
 import SendDrawer from './components/SendDrawer'
+import BeadCard from './components/BeadCard'
+import type { BeadsRevealRequest } from './components/BeadsView'
 import ErrorBoundary from './components/ErrorBoundary'
 import Skeleton from './components/LoadingSkeleton'
 import StatusLine from './components/StatusLine'
@@ -181,6 +183,7 @@ function DashboardContent() {
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null)
   const [keysPanelOpen, setKeysPanelOpen] = useState(false)
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
+  const [beadsRevealRequest, setBeadsRevealRequest] = useState<BeadsRevealRequest | null>(null)
   const {
     addSessionToWindow,
     setWindowCount,
@@ -253,6 +256,12 @@ function DashboardContent() {
     setActiveTab(tab)
     if (isTerminalWorkspaceId(tab, mountedWorkspaceIds)) setLastActiveWorkspaceId(tab)
   }, [mountedWorkspaceIds])
+  // A Bead read in the card is a Bead in a project: Open in Beads puts the tab
+  // on that project with the id already searched for.
+  const handleOpenInBeads = useCallback((projectPath: string, id: string) => {
+    setBeadsRevealRequest({ projectPath, id, nonce: Date.now() })
+    setActiveTab('beads')
+  }, [])
   const handleOpenProjectInFiles = useCallback((path: string) => {
     setFilesNavigateRequest({ path, nonce: Date.now() })
     setActiveTab('files')
@@ -409,7 +418,7 @@ function DashboardContent() {
           {activeTab === 'beads' && (
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
-                <BeadsView onOpenProjectInFiles={handleOpenProjectInFiles} />
+                <BeadsView reveal={beadsRevealRequest} />
               </Suspense>
             </ErrorBoundary>
           )}
@@ -462,6 +471,7 @@ function DashboardContent() {
               line stays whole beneath both of them. */}
           <FloatingModal />
           <SendDrawer />
+          <BeadCard onOpenInBeads={handleOpenInBeads} />
           <KeyEcho />
         </div>
 

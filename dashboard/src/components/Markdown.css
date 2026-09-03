@@ -1,0 +1,122 @@
+/* Written text, in the theme. Monospace like everything else, with size and
+   space carrying the structure rather than colour. */
+
+.markdown {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.markdown > *:first-child {
+  margin-top: 0;
+}
+
+.markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 16px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.markdown h1 {
+  font-size: 14px;
+}
+
+.markdown h2 {
+  font-size: 13px;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown blockquote,
+.markdown pre,
+.markdown table {
+  margin: 0 0 8px;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 18px;
+}
+
+.markdown li {
+  margin: 2px 0;
+}
+
+.markdown blockquote {
+  padding-left: 10px;
+  border-left: 2px solid var(--divider);
+  color: var(--text-secondary);
+}
+
+.markdown code {
+  padding: 0 3px;
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.markdown pre {
+  padding: 8px 10px;
+  background-color: var(--surface-secondary);
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  padding: 0;
+  background: none;
+}
+
+.markdown table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.markdown th,
+.markdown td {
+  padding: 3px 8px;
+  border: 1px solid var(--divider);
+  text-align: left;
+}
+
+.markdown th {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.markdown hr {
+  height: 0;
+  margin: 12px 0;
+  border: none;
+  border-top: 1px solid var(--divider);
+}
+
+.markdown a,
+.markdown .markdown-token {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+/* A token the host opens — a Bead id, a path — is a control, not a URL. */
+.markdown .markdown-token {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.markdown a:hover,
+.markdown .markdown-token:hover {
+  color: var(--accent);
+}

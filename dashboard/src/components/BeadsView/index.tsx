@@ -1,238 +1,218 @@
-// Main BeadsView component with sub-tab navigation
+/**
+ * The Beads tab: the open work of every configured store, read three ways.
+ *
+ * A rail of projects at the left, "All" first; the map, the ready lists and the
+ * stale list as a segmented control; one search across all three. Nothing here
+ * writes: creating, editing and closing Beads stays with `bd` and the agents,
+ * and the hand-off out of this tab is the Send drawer.
+ */
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
-import type { MouseEvent as ReactMouseEvent } from 'react'
-import type { BeadsIssue, BeadsSubTab } from './types'
-import { useProjects, useIssues, useTriage, useInsights } from './hooks'
-import { isFeatureEnabled } from '../../featureFlags'
-import { copyTextToClipboard } from '../../utils/clipboard'
-import ProjectSelector from './ProjectSelector'
-import KanbanView from './KanbanView'
-import TriageView from './TriageView'
-import InsightsView from './InsightsView'
-import IssueDetailModal from './IssueDetailModal'
-import DismissiblePanel from '../DismissiblePanel'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import MapView from './MapView'
+import ReadyView from './ReadyView'
+import StaleView from './StaleView'
+import { useSession } from '../../context/SessionContext'
+import { useStatus } from '../../context/StatusContext'
+import { setBeadProjects } from '../../beads/beadIds'
+import { fetchBeadProjects, fetchBeadWork, type BeadProject } from '../../beads/beadsApi'
+import {
+  buildBeadMap,
+  filterBeadRows,
+  filterBeadTree,
+  inProgressRows,
+  readyRows,
+  staleRows,
+  type WorkRow,
+} from '../../beads/beadsTree'
+import { isBeadClosed } from '../../beads/beadStatus'
+import './BeadsView.css'
 
-const SUB_TABS: { id: BeadsSubTab; label: string }[] = [
-  { id: 'kanban', label: 'Kanban' },
-  { id: 'triage', label: 'Triage' },
-  { id: 'insights', label: 'Insights' },
+type BeadsTabView = 'map' | 'ready' | 'stale'
+
+const VIEWS: { id: BeadsTabView; label: string }[] = [
+  { id: 'map', label: 'Map' },
+  { id: 'ready', label: 'Ready and in progress' },
+  { id: 'stale', label: 'Stale' },
 ]
 
-type BeadsContextMenu =
-  | { type: 'issue'; issue: BeadsIssue; x: number; y: number }
-  | { type: 'surface'; x: number; y: number }
+/** What counts as stale until the operator says otherwise. */
+export const DEFAULT_STALE_DAYS = 14
+
+const ALL_PROJECTS = 'all'
+
+export interface BeadsRevealRequest {
+  projectPath: string
+  id: string
+  nonce: number
+}
 
 interface BeadsViewProps {
-  onOpenProjectInFiles?: (path: string) => void
+  /** A Bead the card asked to be shown here, in its own project. */
+  reveal?: BeadsRevealRequest | null
 }
 
-function copyText(text: string): void {
-  void copyTextToClipboard(text)
+/** What one project's load says on the status line. */
+function projectTally(name: string, rows: { status: string }[]): string {
+  const open = rows.filter(row => !isBeadClosed(row.status) && row.status !== 'in_progress').length
+  const active = rows.filter(row => row.status === 'in_progress').length
+  return active > 0 ? `${name} ${open} open, ${active} in progress` : `${name} ${open} open`
 }
 
-function issueReference(issue: BeadsIssue): string {
-  return `${issue.id} — ${issue.title}`
-}
+export default function BeadsView({ reveal }: BeadsViewProps = {}) {
+  const { settings } = useSession()
+  const { announce } = useStatus()
+  const [projects, setProjects] = useState<BeadProject[]>([])
+  const [selected, setSelected] = useState<string>(ALL_PROJECTS)
+  const [view, setView] = useState<BeadsTabView>('map')
+  const [query, setQuery] = useState('')
+  const [staleDays, setStaleDays] = useState(DEFAULT_STALE_DAYS)
+  const [rows, setRows] = useState<WorkRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-export default function BeadsView({ onOpenProjectInFiles }: BeadsViewProps = {}) {
-  const [activeSubTab, setActiveSubTab] = useState<BeadsSubTab>('kanban')
-  const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null)
-  const [contextMenu, setContextMenu] = useState<BeadsContextMenu | null>(null)
-  const [selectedIssue, setSelectedIssue] = useState<BeadsIssue | null>(null)
-  const includeAllStatuses = isFeatureEnabled('beadsAllStatuses')
-  const enableDetailModal = isFeatureEnabled('beadsDetailModal')
-
-  const { projects, loading: projectsLoading } = useProjects()
-  const { issues, loading: issuesLoading, error: issuesError, refresh: refreshIssues } = useIssues(
-    selectedProjectPath,
-    false,
-    { includeAllStatuses }
-  )
-  const { triage, loading: triageLoading, error: triageError, refresh: refreshTriage } = useTriage(selectedProjectPath)
-  const { insights, loading: insightsLoading, error: insightsError, refresh: refreshInsights } = useInsights(
-    selectedProjectPath,
-    { includeAllStatuses }
-  )
-  const selectedProject = useMemo(
-    () => projects.find(project => project.path === selectedProjectPath) || null,
-    [projects, selectedProjectPath]
-  )
-
-  const handleProjectSelect = useCallback((path: string) => {
-    setSelectedProjectPath(path || null)
-  }, [])
-
-  const handleRefresh = useCallback(() => {
-    refreshIssues()
-    refreshTriage()
-    refreshInsights()
-    setContextMenu(null)
-  }, [refreshIssues, refreshTriage, refreshInsights])
-
-  const openIssueDetails = useCallback((issue: BeadsIssue) => {
-    if (!enableDetailModal) return
-    setSelectedIssue(issue)
-    setContextMenu(null)
-  }, [enableDetailModal])
-
-  const handleIssueContextMenu = useCallback((issue: BeadsIssue, event: ReactMouseEvent) => {
-    event.preventDefault()
-    setContextMenu({ type: 'issue', issue, x: event.clientX, y: event.clientY })
-  }, [])
-
-  const handleSurfaceContextMenu = useCallback((event: ReactMouseEvent) => {
-    if (!selectedProjectPath) return
-    event.preventDefault()
-    setContextMenu({ type: 'surface', x: event.clientX, y: event.clientY })
-  }, [selectedProjectPath])
-
-  const handleOpenProjectInFiles = useCallback(() => {
-    if (!selectedProjectPath || !onOpenProjectInFiles) return
-    onOpenProjectInFiles(selectedProjectPath)
-    setContextMenu(null)
-  }, [onOpenProjectInFiles, selectedProjectPath])
-
-  const isLoading = issuesLoading || triageLoading || insightsLoading
-
+  const manualPaths = useMemo(() => settings.beadsProjectPaths || [], [settings.beadsProjectPaths])
 
   useEffect(() => {
-    if (projectsLoading) return
-    if (projects.length === 0) {
-      if (selectedProjectPath !== null) setSelectedProjectPath(null)
-      return
-    }
-    if (!selectedProjectPath || !projects.some(project => project.path === selectedProjectPath)) {
-      setSelectedProjectPath(projects[0].path)
-    }
-  }, [projects, projectsLoading, selectedProjectPath])
+    let current = true
+    fetchBeadProjects(manualPaths)
+      .then(found => {
+        if (!current) return
+        setProjects(found)
+        // The terminal's link provider matches the prefixes of the projects
+        // that actually exist; this is where it learns them.
+        setBeadProjects(found)
+        if (found.length === 0) setLoading(false)
+      })
+      .catch((cause: unknown) => {
+        if (!current) return
+        setProjects([])
+        setError(cause instanceof Error ? cause.message : 'Could not list Beads projects')
+        setLoading(false)
+      })
+    return () => { current = false }
+  }, [manualPaths])
+
+  const chosen = useMemo(
+    () => (selected === ALL_PROJECTS ? projects : projects.filter(project => project.path === selected)),
+    [projects, selected],
+  )
+
+  useEffect(() => {
+    if (projects.length === 0) return
+    let current = true
+    setLoading(true)
+    setError(null)
+    Promise.all(chosen.map(async project => ({
+      project,
+      work: await fetchBeadWork(project.path),
+    })))
+      .then(loaded => {
+        if (!current) return
+        const all = loaded.flatMap(({ project, work }) => work.beads.map(bead => ({
+          ...bead,
+          projectPath: project.path,
+          projectName: project.name,
+        })))
+        setRows(all)
+        setLoading(false)
+        const tally = loaded.map(({ project, work }) => projectTally(project.prefix || project.name, work.beads))
+        announce(`Beads loaded · ${tally.join(' · ')}`, 'info')
+      })
+      .catch((cause: unknown) => {
+        if (!current) return
+        setRows([])
+        setLoading(false)
+        setError(cause instanceof Error ? cause.message : 'Could not read open work')
+      })
+    return () => { current = false }
+  }, [chosen, projects.length, announce])
+
+  useEffect(() => {
+    if (!reveal) return
+    setSelected(reveal.projectPath)
+    setQuery(reveal.id)
+    setView('map')
+  }, [reveal])
+
+  const map = useMemo(() => filterBeadTree(buildBeadMap(rows), query), [rows, query])
+  const matching = useMemo(() => filterBeadRows(rows, query), [rows, query])
+  const selectProject = useCallback((path: string) => {
+    setSelected(path)
+  }, [])
 
   return (
     <div className="beads-view">
-      <div className="beads-status-strip" onContextMenu={handleSurfaceContextMenu}>
-        <ProjectSelector
-          projects={projects}
-          selectedPath={selectedProjectPath}
-          onSelect={handleProjectSelect}
-          loading={projectsLoading}
-        />
-        <span className="beads-status-pill">
-          <span>projects</span>
-          <strong>{projectsLoading ? '--' : projects.length}</strong>
-        </span>
-        {selectedProject && (
-          <span className="beads-status-pill">
-            <span>active</span>
-            <strong>{selectedProject.name}</strong>
-          </span>
-        )}
-        {selectedProjectPath && (
+      <nav className="beads-rail" aria-label="Beads projects">
+        <button
+          type="button"
+          className={`beads-rail-item ${selected === ALL_PROJECTS ? 'active' : ''}`}
+          onClick={() => selectProject(ALL_PROJECTS)}
+        >
+          All
+        </button>
+        {projects.map(project => (
           <button
-            className="beads-refresh-btn"
-            onClick={handleRefresh}
-            disabled={isLoading}
-            title="Refresh data"
+            key={project.path}
+            type="button"
+            className={`beads-rail-item ${selected === project.path ? 'active' : ''}`}
+            onClick={() => selectProject(project.path)}
+            title={project.path}
           >
-            {isLoading ? 'Loading' : 'Refresh'}
+            {project.prefix || project.name}
           </button>
-        )}
-      </div>
+        ))}
+      </nav>
 
-      {selectedProjectPath ? (
-        <>
-          <div className="beads-subtabs">
-            {SUB_TABS.map(tab => (
+      <div className="beads-main">
+        <div className="beads-controls">
+          <div className="beads-views" role="tablist" aria-label="Beads views">
+            {VIEWS.map(item => (
               <button
-                key={tab.id}
-                className={`beads-subtab ${activeSubTab === tab.id ? 'active' : ''}`}
-                onClick={() => setActiveSubTab(tab.id)}
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={view === item.id}
+                className={`beads-view-tab ${view === item.id ? 'active' : ''}`}
+                onClick={() => setView(item.id)}
               >
-                {tab.label}
+                {item.label}
               </button>
             ))}
           </div>
-
-          <div className="beads-content">
-            {activeSubTab === 'kanban' && (
-              <KanbanView
-                issues={issues}
-                loading={issuesLoading}
-                error={issuesError}
-                projectPath={selectedProjectPath}
-                enableDetailModal={enableDetailModal}
-                onIssueUpdated={refreshIssues}
-                onIssueOpen={openIssueDetails}
-                onIssueContextMenu={handleIssueContextMenu}
+          <input
+            className="beads-search"
+            type="search"
+            value={query}
+            placeholder="Search Beads…"
+            aria-label="Search Beads"
+            onChange={event => setQuery(event.target.value)}
+          />
+          {view === 'stale' && (
+            <label className="beads-stale-days">
+              No update in
+              <input
+                type="number"
+                min={1}
+                max={365}
+                value={staleDays}
+                aria-label="Days without an update"
+                onChange={event => setStaleDays(Math.max(1, Number(event.target.value) || DEFAULT_STALE_DAYS))}
               />
-            )}
-            {activeSubTab === 'triage' && (
-              <TriageView
-                triage={triage}
-                issues={issues}
-                loading={triageLoading}
-                error={triageError}
-                onIssueOpen={openIssueDetails}
-                onIssueContextMenu={handleIssueContextMenu}
-              />
-            )}
-            {activeSubTab === 'insights' && (
-              <InsightsView insights={insights} loading={insightsLoading} error={insightsError} />
-            )}
-          </div>
-        </>
-      ) : (
-        <div className="beads-empty-state">
-          <div className="empty-icon">BD</div>
-          <h2>{projectsLoading ? 'Loading Projects' : projects.length === 0 ? 'No Beads Projects' : 'Select a Project'}</h2>
-          <p>{projectsLoading ? 'Scanning configured workspaces.' : 'No modern .beads workspace is available to display.'}</p>
-          {projects.length === 0 && !projectsLoading && (
-            <p className="empty-hint">
-              Check CHROTE_BEADS_WORKSPACES or add a project path in Settings.
-            </p>
+              days
+            </label>
           )}
         </div>
-      )}
 
-      {selectedIssue && selectedProjectPath && enableDetailModal && (
-        <IssueDetailModal
-          projectPath={selectedProjectPath}
-          issue={selectedIssue}
-          onClose={() => setSelectedIssue(null)}
-          onIssueUpdated={refreshIssues}
-        />
-      )}
-
-      {contextMenu && (
-        <DismissiblePanel onDismiss={() => setContextMenu(null)} panelPosition="fixed">
-          <div className="beads-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-          {contextMenu.type === 'issue' ? (
-            <>
-              {enableDetailModal && (
-                <button className="beads-context-item" type="button" onClick={() => openIssueDetails(contextMenu.issue)}>Open Details</button>
-              )}
-              <button className="beads-context-item" type="button" onClick={() => { copyText(contextMenu.issue.id); setContextMenu(null) }}>Copy Bead ID</button>
-              <button className="beads-context-item" type="button" onClick={() => { copyText(issueReference(contextMenu.issue)); setContextMenu(null) }}>Copy Bead Reference</button>
-              <button className="beads-context-item" type="button" onClick={() => { copyText(`bd show ${contextMenu.issue.id}`); setContextMenu(null) }}>Copy bd show Command</button>
-              {selectedProjectPath && (
-                <button className="beads-context-item" type="button" onClick={() => { copyText(selectedProjectPath); setContextMenu(null) }}>Copy Active Project Path</button>
-              )}
-              <button className="beads-context-item" type="button" onClick={handleRefresh}>Refresh</button>
-            </>
-          ) : (
-            <>
-              {selectedProjectPath && (
-                <button className="beads-context-item" type="button" onClick={() => { copyText(selectedProjectPath); setContextMenu(null) }}>Copy Active Project Path</button>
-              )}
-              {selectedProjectPath && onOpenProjectInFiles && (
-                <button className="beads-context-item" type="button" onClick={handleOpenProjectInFiles}>Open Project in Files</button>
-              )}
-              <button className="beads-context-item" type="button" onClick={handleRefresh}>Refresh</button>
-            </>
+        <div className="beads-content">
+          {error && <p className="beads-error">{error}</p>}
+          {!error && loading && <p className="beads-empty">Reading Beads…</p>}
+          {!error && !loading && view === 'map' && <MapView roots={map} expandAll={query.trim() !== ''} />}
+          {!error && !loading && view === 'ready' && (
+            <ReadyView ready={readyRows(matching)} inProgress={inProgressRows(matching)} />
           )}
-          </div>
-        </DismissiblePanel>
-      )}
+          {!error && !loading && view === 'stale' && <StaleView rows={staleRows(matching, staleDays)} />}
+        </div>
+      </div>
     </div>
   )
 }
-import './BeadsView.css'

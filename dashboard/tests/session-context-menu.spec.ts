@@ -1,5 +1,5 @@
 import { test, expect, Page } from './fixtures'
-import { mockFileApiRoutes, mockLaunchApiRoute, mockSessions, mockTerminalSocket, mockThemeApiRoute } from './mock-api'
+import { mockBeadsProjectsRoute, mockFileApiRoutes, mockLaunchApiRoute, mockSessions, mockTerminalSocket, mockThemeApiRoute } from './mock-api'
 import { openSessionsSidecar } from './helpers'
 
 /**
@@ -14,6 +14,8 @@ async function mockApiRoutesWithMutations(page: Page) {
   await mockLaunchApiRoute(page)
 
   await mockFileApiRoutes(page)
+  // A terminal asks which Beads projects exist, to link the ids in its output.
+  await mockBeadsProjectsRoute(page)
 
   // Mutable copy of session list so delete/rename are reflected on refresh
   let sessions = structuredClone(mockSessions.sessions)

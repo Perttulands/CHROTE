@@ -58,7 +58,7 @@ func TestAPIEnvelopeContract_FlatHealthEndpointsDoNotUseDataEnvelope(t *testing.
 
 func TestAPIEnvelopeContract_BeadsHealthUsesSuccessDataEnvelope(t *testing.T) {
 	resetBeadsTestEnv(t)
-	makeFakeBdCommand(t, "bd version 1.2.3\n")
+	makeSequencedBdCommand(t, "bd version 1.2.3\n")
 
 	handler := NewBeadsHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/beads/health", nil)

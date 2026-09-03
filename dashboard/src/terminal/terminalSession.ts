@@ -11,6 +11,8 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { connectTtyd, type TtydConnection } from './ttydProtocol'
+import { createBeadLinkProvider } from './beadLinks'
+import { ensureBeadProjects } from '../beads/beadIds'
 import { terminalKeyEvent } from '../keys/chords'
 import { copyTextToClipboard } from '../utils/clipboard'
 import type { TerminalTheme } from '../theme/theme'
@@ -132,6 +134,14 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   // Activation is a plain click, as it was under ttyd: under tmux mouse mode
   // that click also reaches tmux, where CHROTE's settings make it harmless.
   terminal.loadAddon(new WebLinksAddon())
+
+  // The other thing agents print that the operator wants to open: the Bead id
+  // of the work in hand. It is not a URL, so it gets its own provider, and
+  // activation opens the card rather than a tab. The prefixes it matches are
+  // the configured projects', which is why they are asked for as soon as there
+  // is a terminal to print them in.
+  terminal.registerLinkProvider(createBeadLinkProvider(terminal))
+  void ensureBeadProjects()
 
   // The leader is the one keystroke a focused terminal does not own. Returning
   // false here is what keeps it out of the pty: xterm neither writes it nor
