@@ -31,6 +31,11 @@ type TmuxHandler struct {
 	// launch is the only place the harness ids accepted on session creation
 	// are defined, and the only place their commands live.
 	launch LaunchConfig
+	// hooks is how a launched harness is told to report its completion. Its
+	// zero value installs nothing.
+	hooks AgentHooks
+	// events holds the last event each session's harness reported.
+	events *agentEventStore
 }
 
 // SessionsResponse is the response for listing sessions
@@ -61,6 +66,9 @@ type CreateSessionRequest struct {
 	// Flags is the line typed after the harness's binary. Absent means the
 	// harness's configured default flags; an empty string means none.
 	Flags *string `json:"flags,omitempty"`
+	// Notify asks for the harness's completion hooks to be installed, so the
+	// session reports when its agent finishes or needs input. Absent means yes.
+	Notify *bool `json:"notify,omitempty"`
 }
 
 // RenameSessionRequest is the request body for renaming a session
@@ -81,11 +89,19 @@ func NewTmuxHandler() *TmuxHandler {
 }
 
 // NewTmuxHandlerWithLaunchConfig creates a tmux handler that can start the
-// harnesses the operator configured.
+// harnesses the operator configured, without completion hooks.
 func NewTmuxHandlerWithLaunchConfig(launch LaunchConfig) *TmuxHandler {
+	return NewTmuxHandlerWithLaunch(launch, AgentHooks{})
+}
+
+// NewTmuxHandlerWithLaunch creates a tmux handler that can start the
+// configured harnesses and wire their completion hooks to this server.
+func NewTmuxHandlerWithLaunch(launch LaunchConfig, hooks AgentHooks) *TmuxHandler {
 	return &TmuxHandler{
 		proc:   systemProcSource(os.Getpid()),
 		launch: withLaunchDefaults(launch),
+		hooks:  hooks,
+		events: newAgentEventStore(),
 	}
 }
 
@@ -508,7 +524,9 @@ func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget, ownedPTYs map[str
 		}
 		return []core.Session{}, publicTmuxSourceError(err)
 	}
-	return parseSessionsOutput(output, target.unixUser, ownedPTYs), ""
+	sessions := parseSessionsOutput(output, target.unixUser, ownedPTYs)
+	h.events.attach(target.unixUser, sessions)
+	return sessions, ""
 }
 
 // ListSessions handles GET /api/tmux/sessions
@@ -661,11 +679,13 @@ func (h *TmuxHandler) cleanupOwnedTmuxSessionAfterError(socket string, session o
 	return cause
 }
 
-func (h *TmuxHandler) createOwnedTmuxSession(parent context.Context, socket, name, workDir string) (ownedTmuxSession, error) {
-	return h.createOwnedTmuxSessionWithWindow(parent, socket, name, workDir, "")
+func (h *TmuxHandler) createOwnedTmuxSession(parent context.Context, socket, name, workDir string, env []string) (ownedTmuxSession, error) {
+	return h.createOwnedTmuxSessionWithWindow(parent, socket, name, workDir, "", env)
 }
 
-func (h *TmuxHandler) createOwnedTmuxSessionWithWindow(parent context.Context, socket, name, workDir, windowName string) (ownedTmuxSession, error) {
+// createOwnedTmuxSessionWithWindow creates the session with each KEY=VALUE in
+// env set in it, alongside the creation token.
+func (h *TmuxHandler) createOwnedTmuxSessionWithWindow(parent context.Context, socket, name, workDir, windowName string, env []string) (ownedTmuxSession, error) {
 	token, err := newTmuxCreationToken()
 	if err != nil {
 		return ownedTmuxSession{}, fmt.Errorf("generate tmux creation token: %w", err)
@@ -674,8 +694,11 @@ func (h *TmuxHandler) createOwnedTmuxSessionWithWindow(parent context.Context, s
 	args := []string{
 		"new-session", "-d", "-P", "-F", "#{session_id}",
 		"-e", tmuxCreationTokenEnv + "=" + token,
-		"-s", name, "-c", workDir,
 	}
+	for _, entry := range env {
+		args = append(args, "-e", entry)
+	}
+	args = append(args, "-s", name, "-c", workDir)
 	if strings.TrimSpace(windowName) != "" {
 		args = append(args, "-n", strings.TrimSpace(windowName))
 	}
@@ -743,9 +766,17 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", launchErr.Error())
 		return
 	}
+	// The hooks are settled before the session exists too: the command that
+	// will be typed is final by the time anything is created.
+	notify := req.Notify == nil || *req.Notify
+	command, hookWarning := launch.command, ""
+	if notify {
+		command, hookWarning = h.hooks.commandFor(launch.harnessID, launch.command, target.unixUser, name)
+	}
+	notified := notify && hookWarning == "" && command != launch.command
 
 	// Create the session (detached) with an ownership marker and immutable ID.
-	session, err := h.createOwnedTmuxSession(r.Context(), target.socket, name, workDir)
+	session, err := h.createOwnedTmuxSession(r.Context(), target.socket, name, workDir, h.hooks.sessionEnv())
 	if err != nil {
 		if isTmuxDuplicateSessionError(err) {
 			core.WriteError(w, http.StatusConflict, "SESSION_NAME_CONFLICT", fmt.Sprintf("tmux session name %q is already in use", name))
@@ -776,10 +807,14 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		"cwd":       workDir,
 		"harness":   launch.harnessID,
 		"flags":     launch.flags,
+		"notify":    notified,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	}
-	if launch.command != "" {
-		if err := h.sendLaunchCommand(r.Context(), target.socket, session.ID, launch.command); err != nil {
+	if hookWarning != "" {
+		response["warning"] = hookWarning
+	}
+	if command != "" {
+		if err := h.sendLaunchCommand(r.Context(), target.socket, session.ID, command); err != nil {
 			// The session is a working login shell in the requested folder,
 			// so it stays and the operator is told what did not start.
 			response["warning"] = fmt.Sprintf("session created, but the %q command could not be started: %s", launch.harnessID, tmuxErrorDiagnostic(err))

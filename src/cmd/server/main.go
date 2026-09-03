@@ -47,6 +47,9 @@ type Config struct {
 	// Library is the corpus the Library tab reads. Its zero value is a host
 	// with no library, and the tab says so.
 	Library api.LibraryConfig
+	// AgentHooks is how a launched harness reports its completion back to
+	// this server. Its zero value installs no hooks.
+	AgentHooks api.AgentHooks
 }
 
 func main() {
@@ -82,6 +85,14 @@ func main() {
 		log.Fatalf("invalid library configuration: %v", err)
 	}
 	config.Library = libraryConfig
+	// The hook script is looked for beside this binary. Without it, launches
+	// still work and the server says so once, here, rather than on every
+	// launch.
+	agentHooks, hooksWarning := api.LoadAgentHooks(config.Host, config.Port)
+	if hooksWarning != "" {
+		log.Printf("Warning: %s", hooksWarning)
+	}
+	config.AgentHooks = agentHooks
 	if origins := os.Getenv("CORS_ORIGINS"); origins != "" {
 		config.CORSOrigins = strings.Split(origins, ",")
 		for i := range config.CORSOrigins {
@@ -155,8 +166,11 @@ func main() {
 }
 
 func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Context) (*api.ScheduledHandler, context.CancelFunc) {
-	tmuxHandler := api.NewTmuxHandlerWithLaunchConfig(config.Launch)
+	tmuxHandler := api.NewTmuxHandlerWithLaunch(config.Launch, config.AgentHooks)
 	tmuxHandler.RegisterRoutes(mux)
+
+	agentEventHandler := api.NewAgentEventHandler(tmuxHandler)
+	agentEventHandler.RegisterRoutes(mux)
 
 	scheduledHandler := api.NewScheduledHandler(tmuxHandler)
 	scheduledHandler.RegisterRoutes(mux)

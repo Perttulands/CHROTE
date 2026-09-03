@@ -1,0 +1,68 @@
+#!/bin/sh
+# chrote-agent-event: tell CHROTE that the agent in this tmux pane finished a
+# turn or is waiting on the operator.
+#
+#   chrote-agent-event finished|needs-input [hook-payload-json]
+#
+# The launcher wires it in per launch: Claude Code runs it from the Stop and
+# Notification hooks of a generated settings file and hands the hook payload
+# on stdin; Codex runs it as its notify program and appends the payload as the
+# last argument. The session name is asked of tmux at the moment of the
+# report, so a renamed session reports under its current name. Where to post
+# comes from CHROTE_AGENT_EVENT_URL, which the launcher sets in every session
+# it creates; without it, or outside tmux, there is nothing to do.
+#
+# It exits 0 whatever happens, and bounds its request to two seconds: no
+# notification is worth failing or stalling the harness for.
+
+event="${1:-}"
+url="${CHROTE_AGENT_EVENT_URL:-}"
+case "$event" in
+  finished|needs-input) ;;
+  *) exit 0 ;;
+esac
+[ -n "$url" ] && [ -n "${TMUX:-}" ] || exit 0
+command -v tmux >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 || exit 0
+
+# TMUX is "socket,server pid,session index". The socket is named explicitly
+# so the question goes to the server this pane belongs to, whatever a tmux
+# wrapper on PATH would otherwise choose, and the pane is named so the answer
+# is this pane's session rather than the client's current one.
+socket="${TMUX%%,*}"
+if [ -n "${TMUX_PANE:-}" ]; then
+  session="$(tmux -S "$socket" display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null)" || exit 0
+else
+  session="$(tmux -S "$socket" display-message -p '#S' 2>/dev/null)" || exit 0
+fi
+[ -n "$session" ] || exit 0
+unix_user="$(id -un 2>/dev/null)" || unix_user=""
+
+# The summary is a hint for a toast, not the transcript: the one message
+# field either harness carries, reduced to plain characters and cut short, so
+# that no quoting in it can break the report.
+payload="${2:-}"
+if [ -z "$payload" ] && [ ! -t 0 ]; then
+  payload="$(head -c 16384 2>/dev/null)"
+fi
+summary=""
+if [ -n "$payload" ]; then
+  summary="$(printf '%s' "$payload" \
+    | tr -d '\n\r' \
+    | sed -E -n 's/.*"(message|last-assistant-message)":[[:space:]]*"(([^"\\]|\\.)*)".*/\2/p' \
+    | tr -cd 'A-Za-z0-9 .,:;!?()/_-' \
+    | cut -c1-200)"
+fi
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+body="{\"session\":\"$(json_escape "$session")\",\"event\":\"$event\""
+[ -n "$unix_user" ] && body="$body,\"unixUser\":\"$(json_escape "$unix_user")\""
+[ -n "$summary" ] && body="$body,\"summary\":\"$(json_escape "$summary")\""
+body="$body}"
+
+curl --silent --show-error --output /dev/null --max-time 2 \
+  --request POST --header 'Content-Type: application/json' \
+  --data "$body" "$url" >/dev/null 2>&1 || :
+exit 0
