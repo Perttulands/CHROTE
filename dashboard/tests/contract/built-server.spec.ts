@@ -29,8 +29,8 @@ test('built server serves embedded assets and preserves terminal and Files workf
   await expect(sessionItem).toBeVisible()
 
   await sessionItem.getByRole('button', { name: `Session actions for ${contractSession}` }).click()
-  await page.getByRole('button', { name: 'Attach to Window' }).click()
-  await page.getByRole('button', { name: 'Window 1', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Attach to window' }).click()
+  await page.getByRole('menuitem', { name: 'Window 1', exact: true }).click()
 
   // The dashboard renders the terminal itself, in this document (ADR-0018).
   await expect(terminal1Dock.locator('.terminal-window-body .terminal-surface')).toBeVisible()
