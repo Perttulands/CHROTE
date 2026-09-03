@@ -27,7 +27,9 @@ export default defineConfig({
   retries: 0,
   // Undefined workers means half the host's cores; on a shared 16-core host two
   // overlapping runs (each 8 Chromes) starve each other into beforeEach timeouts.
-  workers: process.env.CI ? 1 : 4,
+  // CI is not shared: the runner is this run's alone, and one worker there
+  // serialised 282s of measured CPU into a single lane for no reason.
+  workers: process.env.CI ? '100%' : 4,
   // Key artifacts on CHROTE_PLAYWRIGHT_PORT so concurrent runs in one checkout do
   // not wipe each other's outputDir (Playwright removes it at every run start).
   // The external-server modes start no Vite server but still key on the same var.
