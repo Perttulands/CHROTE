@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,21 +53,6 @@ func TestRuntimeRoutesCanDisableSystemHistorySampler(t *testing.T) {
 	}
 }
 
-func TestCORSMiddlewareDefaultDoesNotSetAllowOrigin(t *testing.T) {
-	handler := corsMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/services", nil)
-	req.Header.Set("Origin", "https://evil.example")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
-		t.Fatalf("Access-Control-Allow-Origin = %q, want no CORS header by default", got)
-	}
-}
-
 func TestCORSMiddlewareAllowsOnlyExactConfiguredOrigins(t *testing.T) {
 	handler := corsMiddleware([]string{"https://app.example", "https://admin.example"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -90,6 +78,43 @@ func TestCORSMiddlewareAllowsOnlyExactConfiguredOrigins(t *testing.T) {
 	}
 	if got := disallowedRec.Header().Get("Access-Control-Allow-Methods"); got != "" {
 		t.Fatalf("disallowed preflight Access-Control-Allow-Methods = %q, want no CORS grant", got)
+	}
+
+	t.Run("configuring no origins grants none", func(t *testing.T) {
+		defaultHandler := corsMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}))
+
+		req := httptest.NewRequest(http.MethodGet, "/api/services", nil)
+		req.Header.Set("Origin", "https://evil.example")
+		rec := httptest.NewRecorder()
+		defaultHandler.ServeHTTP(rec, req)
+
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Fatalf("Access-Control-Allow-Origin = %q, want no CORS header by default", got)
+		}
+	})
+}
+
+// The removed access-token setting is still read, so an operator who kept it in
+// a unit file learns it does nothing rather than believing CHROTE is protected.
+func TestRemovedAPIAuthTokenEmitsMigrationWarningWithoutLeakingValue(t *testing.T) {
+	const staleValue = "stale-owner-value"
+	t.Setenv("API_AUTH_TOKEN", staleValue)
+
+	var output bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previousOutput) })
+
+	warnRemovedAccessTokenSetting()
+
+	message := output.String()
+	if !strings.Contains(message, "API_AUTH_TOKEN is no longer supported") || !strings.Contains(message, "does not protect CHROTE") {
+		t.Fatalf("migration warning was not explicit: %q", message)
+	}
+	if strings.Contains(message, staleValue) {
+		t.Fatal("migration warning leaked the removed token value")
 	}
 }
 

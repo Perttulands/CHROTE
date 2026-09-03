@@ -227,35 +227,41 @@ func TestThemeHandler_EmbeddedDefaultIsAValidSchemaOneTheme(t *testing.T) {
 	}
 }
 
-func TestThemeHandler_ServesEmbeddedDefaultWithoutAThemeDirectory(t *testing.T) {
-	handler := newThemeHandlerForDir(t, "")
+// A host with no theme, and a host whose theme directory holds no theme file,
+// both get the embedded default: a missing theme is not a broken CHROTE. Art is
+// the other way round, because there is no embedded art to fall back to, so the
+// same absence is a plain refusal.
+func TestThemeHandler_ServesTheEmbeddedDefaultWhenTheHostHasNoTheme(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		themeDir string
+	}{
+		{name: "no theme directory at all", themeDir: ""},
+		{name: "a theme directory holding no theme file", themeDir: t.TempDir()},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			handler := newThemeHandlerForDir(t, testCase.themeDir)
 
-	rec := getTheme(t, handler)
+			rec := getTheme(t, handler)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-	if !bytes.Equal(rec.Body.Bytes(), themeDefaultJSON) {
-		t.Fatalf("body = %s, want the embedded default", rec.Body.String())
-	}
-	if got := rec.Header().Get("Content-Type"); got != "application/json" {
-		t.Fatalf("Content-Type = %q, want application/json", got)
-	}
-	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
-		t.Fatalf("Cache-Control = %q, want no-cache", got)
-	}
-}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			if !bytes.Equal(rec.Body.Bytes(), themeDefaultJSON) {
+				t.Fatalf("body = %s, want the embedded default", rec.Body.String())
+			}
+			if got := rec.Header().Get("Content-Type"); got != "application/json" {
+				t.Fatalf("Content-Type = %q, want application/json", got)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+				t.Fatalf("Cache-Control = %q, want no-cache", got)
+			}
 
-func TestThemeHandler_ServesEmbeddedDefaultWhenTheThemeFileIsAbsent(t *testing.T) {
-	handler := newThemeHandlerForDir(t, t.TempDir())
-
-	rec := getTheme(t, handler)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-	if !bytes.Equal(rec.Body.Bytes(), themeDefaultJSON) {
-		t.Fatalf("body = %s, want the embedded default", rec.Body.String())
+			art := getArt(t, handler, "town.webp")
+			if art.Code != http.StatusNotFound {
+				t.Fatalf("art status = %d, want %d: %s", art.Code, http.StatusNotFound, art.Body.String())
+			}
+		})
 	}
 }
 
@@ -366,65 +372,17 @@ func TestThemeHandler_ArtServesTheNamedFileWithItsContentType(t *testing.T) {
 	}
 }
 
-func TestThemeHandler_ArtRefusesEverythingOutsideTheArtDirectory(t *testing.T) {
-	tests := []string{
-		"absent.webp",
-		"../theme.json",
-		"..%2Ftheme.json",
-		"../../secret.webp",
-		"..",
-		".",
-		"nested/town.webp",
-		"/etc/passwd",
-		"town.exe",
-		"town",
-		"sub",
-	}
-
-	for _, name := range tests {
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			writeThemeFile(t, dir, validThemeJSON)
-			writeArtFile(t, dir, "town.webp", []byte("art bytes"))
-			if err := os.MkdirAll(filepath.Join(dir, "art", "sub"), 0o755); err != nil {
-				t.Fatalf("create art subdirectory: %v", err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, "secret.webp"), []byte("secret bytes"), 0o644); err != nil {
-				t.Fatalf("write secret file: %v", err)
-			}
-			handler := newThemeHandlerForDir(t, dir)
-
-			rec := getArt(t, handler, name)
-
-			if rec.Code != http.StatusNotFound {
-				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
-			}
-			for _, leak := range []string{"secret bytes", `"schema"`} {
-				if strings.Contains(rec.Body.String(), leak) {
-					t.Fatalf("body = %s, want no file outside the art directory", rec.Body.String())
-				}
-			}
-		})
-	}
-}
-
-func TestThemeHandler_ArtIsAbsentWithoutAThemeDirectory(t *testing.T) {
-	handler := newThemeHandlerForDir(t, "")
-
-	rec := getArt(t, handler, "town.webp")
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
-	}
-}
-
-// TestThemeHandler_RoutedArtTraversalIsRefused drives the registered routes so
-// that an escaped separator is unescaped the way the mux unescapes it before
-// the handler sees the name.
+// The art route serves the art directory and nothing else. The requests run
+// through the registered routes, because the mux unescapes a separator before
+// the handler ever sees the name, and that unescaped form is what a traversal
+// attempt actually looks like on the wire.
 func TestThemeHandler_RoutedArtTraversalIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	writeThemeFile(t, dir, validThemeJSON)
 	writeArtFile(t, dir, "town.webp", []byte("art bytes"))
+	if err := os.MkdirAll(filepath.Join(dir, "art", "sub"), 0o755); err != nil {
+		t.Fatalf("create art subdirectory: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "secret.webp"), []byte("secret bytes"), 0o644); err != nil {
 		t.Fatalf("write secret file: %v", err)
 	}
@@ -439,8 +397,14 @@ func TestThemeHandler_RoutedArtTraversalIsRefused(t *testing.T) {
 	}{
 		{name: "art", path: "/api/theme/art/town.webp", want: http.StatusOK},
 		{name: "escaped parent", path: "/api/theme/art/..%2Fsecret.webp", want: http.StatusNotFound},
+		{name: "escaped grandparent", path: "/api/theme/art/..%2F..%2Fsecret.webp", want: http.StatusNotFound},
 		{name: "escaped absolute", path: "/api/theme/art/%2Fetc%2Fpasswd", want: http.StatusNotFound},
 		{name: "theme file", path: "/api/theme/art/theme.json", want: http.StatusNotFound},
+		{name: "escaped parent theme file", path: "/api/theme/art/..%2Ftheme.json", want: http.StatusNotFound},
+		{name: "absent file", path: "/api/theme/art/absent.webp", want: http.StatusNotFound},
+		{name: "unservable extension", path: "/api/theme/art/town.exe", want: http.StatusNotFound},
+		{name: "no extension", path: "/api/theme/art/town", want: http.StatusNotFound},
+		{name: "a directory inside the art directory", path: "/api/theme/art/sub", want: http.StatusNotFound},
 	}
 
 	for _, tt := range tests {
@@ -453,8 +417,10 @@ func TestThemeHandler_RoutedArtTraversalIsRefused(t *testing.T) {
 			if rec.Code != tt.want {
 				t.Fatalf("status = %d, want %d: %s", rec.Code, tt.want, rec.Body.String())
 			}
-			if strings.Contains(rec.Body.String(), "secret bytes") {
-				t.Fatalf("body = %s, want no file outside the art directory", rec.Body.String())
+			for _, leak := range []string{"secret bytes", `"schema"`} {
+				if strings.Contains(rec.Body.String(), leak) {
+					t.Fatalf("body = %s, want no file outside the art directory", rec.Body.String())
+				}
 			}
 		})
 	}

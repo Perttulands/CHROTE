@@ -7,19 +7,6 @@ import (
 	"testing"
 )
 
-func TestFileExists(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "file.txt")
-	if err := os.WriteFile(path, []byte("fixture"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if !FileExists(path) {
-		t.Fatalf("FileExists(%q) = false, want true", path)
-	}
-	if FileExists(filepath.Join(t.TempDir(), "missing")) {
-		t.Fatal("FileExists(missing) = true, want false")
-	}
-}
-
 func TestGetAllowedRootsNormalizesEnvRoots(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "workspace")

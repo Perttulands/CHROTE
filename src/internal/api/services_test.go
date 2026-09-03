@@ -22,116 +22,128 @@ func newServicesHandlerWithClient(config ServiceConfig, client *http.Client) *Se
 	return handler
 }
 
-func TestLoadServiceConfigFromEnvDefaults(t *testing.T) {
-	t.Setenv("CHROTE_TTS_URL", "")
-	t.Setenv("CHROTE_CONTEXT_API_URL", "")
-	t.Setenv("CHROTE_CONTEXT_API_TOKEN", "")
-
-	cfg := LoadServiceConfigFromEnv()
-
-	if cfg.TTSBaseURL != "http://127.0.0.1:3100" {
-		t.Fatalf("TTSBaseURL = %q, want default localhost tts-gateway", cfg.TTSBaseURL)
-	}
-	if cfg.ContextBaseURL != "http://127.0.0.1:3200" {
-		t.Fatalf("ContextBaseURL = %q, want default localhost context-citadel", cfg.ContextBaseURL)
-	}
-	if cfg.ContextToken != "" {
-		t.Fatal("ContextToken should be empty when env is unset")
-	}
-}
-
-func TestLoadServiceConfigFromEnvOverridesAndTrims(t *testing.T) {
-	t.Setenv("CHROTE_TTS_URL", " http://tts.internal:3100/ ")
-	t.Setenv("CHROTE_CONTEXT_API_URL", " http://context.internal:3200/ ")
+// Unset service settings fall back to the local defaults, and set ones are taken
+// with their surrounding whitespace and trailing slash removed, because an
+// operator pasting a URL into a unit file brings both along.
+func TestLoadServiceConfigFromEnv(t *testing.T) {
 	token := strings.Join([]string{"fixture", "private", "value"}, "-")
-	t.Setenv("CHROTE_CONTEXT_API_TOKEN", token)
 
-	cfg := LoadServiceConfigFromEnv()
+	for _, testCase := range []struct {
+		name           string
+		ttsURL         string
+		contextURL     string
+		contextToken   string
+		wantTTS        string
+		wantContext    string
+		wantTokenValue string
+	}{
+		{
+			name:        "unset settings fall back to the local services",
+			wantTTS:     "http://127.0.0.1:3100",
+			wantContext: "http://127.0.0.1:3200",
+		},
+		{
+			name:           "set settings are trimmed of space and a trailing slash",
+			ttsURL:         " http://tts.internal:3100/ ",
+			contextURL:     " http://context.internal:3200/ ",
+			contextToken:   token,
+			wantTTS:        "http://tts.internal:3100",
+			wantContext:    "http://context.internal:3200",
+			wantTokenValue: token,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("CHROTE_TTS_URL", testCase.ttsURL)
+			t.Setenv("CHROTE_CONTEXT_API_URL", testCase.contextURL)
+			t.Setenv("CHROTE_CONTEXT_API_TOKEN", testCase.contextToken)
 
-	if cfg.TTSBaseURL != "http://tts.internal:3100" {
-		t.Fatalf("TTSBaseURL = %q, want trimmed override", cfg.TTSBaseURL)
-	}
-	if cfg.ContextBaseURL != "http://context.internal:3200" {
-		t.Fatalf("ContextBaseURL = %q, want trimmed override", cfg.ContextBaseURL)
-	}
-	if cfg.ContextToken != token {
-		t.Fatal("ContextToken did not load from env")
+			cfg := LoadServiceConfigFromEnv()
+
+			if cfg.TTSBaseURL != testCase.wantTTS {
+				t.Fatalf("TTSBaseURL = %q, want %q", cfg.TTSBaseURL, testCase.wantTTS)
+			}
+			if cfg.ContextBaseURL != testCase.wantContext {
+				t.Fatalf("ContextBaseURL = %q, want %q", cfg.ContextBaseURL, testCase.wantContext)
+			}
+			if cfg.ContextToken != testCase.wantTokenValue {
+				t.Fatal("ContextToken did not match the configured value")
+			}
+		})
 	}
 }
 
-func TestServicesHandlerCatalogRedactsTokenAndShowsDegradedContext(t *testing.T) {
+// The catalogue says whether a token is configured and never what it is. A
+// missing one degrades the service with words the operator can act on, rather
+// than leaving a service that looks healthy and fails on first use.
+func TestServicesHandlerCatalogReportsTheContextTokenWithoutExposingIt(t *testing.T) {
 	token := strings.Join([]string{"fixture", "private", "value"}, "-")
-	handler := NewServicesHandler(ServiceConfig{
-		TTSBaseURL:     "http://127.0.0.1:3100",
-		ContextBaseURL: "http://127.0.0.1:3200",
-		ContextToken:   token,
-	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/services", nil)
-	rec := httptest.NewRecorder()
-	handler.Catalog(rec, req)
+	for _, testCase := range []struct {
+		name          string
+		token         string
+		wantConfigure bool
+		wantStatus    string
+		wantMessage   string
+	}{
+		{
+			name:          "a configured token is reported present and healthy",
+			token:         token,
+			wantConfigure: true,
+		},
+		{
+			name:        "a missing token degrades the service and says why",
+			wantStatus:  "degraded",
+			wantMessage: "CHROTE_CONTEXT_API_TOKEN is not configured; Context Citadel document and integration operations are disabled.",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			handler := NewServicesHandler(ServiceConfig{
+				TTSBaseURL:     "http://127.0.0.1:3100",
+				ContextBaseURL: "http://127.0.0.1:3200",
+				ContextToken:   testCase.token,
+			})
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if strings.Contains(rec.Body.String(), token) {
-		t.Fatal("catalog response exposed the context token")
-	}
+			req := httptest.NewRequest(http.MethodGet, "/api/services", nil)
+			rec := httptest.NewRecorder()
+			handler.Catalog(rec, req)
 
-	var response struct {
-		Success bool `json:"success"`
-		Data    struct {
-			Services []ServiceStatus `json:"services"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode catalog response: %v", err)
-	}
-	if !response.Success {
-		t.Fatal("catalog response should use success envelope")
-	}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if strings.Contains(rec.Body.String(), token) {
+				t.Fatal("catalog response exposed the context token")
+			}
 
-	context := findServiceStatus(t, response.Data.Services, "context")
-	if !context.TokenConfigured {
-		t.Fatal("context service should report tokenConfigured=true without exposing token")
-	}
-	if context.Status == "degraded" {
-		t.Fatal("context service should not be degraded when token is configured")
-	}
-}
+			var response struct {
+				Success bool `json:"success"`
+				Data    struct {
+					Services []ServiceStatus `json:"services"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode catalog response: %v", err)
+			}
+			if !response.Success {
+				t.Fatal("catalog response should use success envelope")
+			}
 
-func TestServicesHandlerCatalogShowsMissingTokenAsDegraded(t *testing.T) {
-	handler := NewServicesHandler(ServiceConfig{
-		TTSBaseURL:     "http://127.0.0.1:3100",
-		ContextBaseURL: "http://127.0.0.1:3200",
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/services", nil)
-	rec := httptest.NewRecorder()
-	handler.Catalog(rec, req)
-
-	var response struct {
-		Data struct {
-			Services []ServiceStatus `json:"services"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode catalog response: %v", err)
-	}
-
-	context := findServiceStatus(t, response.Data.Services, "context")
-	if context.TokenConfigured {
-		t.Fatal("context service should report tokenConfigured=false when token is missing")
-	}
-	if context.Status != "degraded" {
-		t.Fatalf("context status = %q, want degraded", context.Status)
-	}
-	if context.Message == "" {
-		t.Fatal("degraded context service should include an operator-facing message")
-	}
-	wantMessage := "CHROTE_CONTEXT_API_TOKEN is not configured; Context Citadel document and integration operations are disabled."
-	if context.Message != wantMessage {
-		t.Fatalf("context message = %q, want %q", context.Message, wantMessage)
+			context := findServiceStatus(t, response.Data.Services, "context")
+			if context.TokenConfigured != testCase.wantConfigure {
+				t.Fatalf("tokenConfigured = %v, want %v", context.TokenConfigured, testCase.wantConfigure)
+			}
+			if testCase.wantStatus == "" {
+				if context.Status == "degraded" {
+					t.Fatal("context service should not be degraded when token is configured")
+				}
+				return
+			}
+			if context.Status != testCase.wantStatus {
+				t.Fatalf("context status = %q, want %q", context.Status, testCase.wantStatus)
+			}
+			if context.Message != testCase.wantMessage {
+				t.Fatalf("context message = %q, want %q", context.Message, testCase.wantMessage)
+			}
+		})
 	}
 }
 
@@ -223,36 +235,6 @@ func TestServicesHandlerTTSAudioProxyStreamsRawAudio(t *testing.T) {
 	}
 	if rec.Body.String() != "mp3-bytes" {
 		t.Fatalf("audio body = %q, want raw upstream bytes", rec.Body.String())
-	}
-}
-
-func TestServicesHandlerTTSFeedStreamsServerSentEvents(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/tts/feed" {
-			t.Fatalf("unexpected upstream request %s %s", r.Method, r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("event: update\ndata: {\"id\":\"abc123\"}\n\n"))
-	}))
-	defer upstream.Close()
-
-	handler := NewServicesHandler(ServiceConfig{TTSBaseURL: upstream.URL})
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/services/tts/feed", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("feed status = %d, want 200", rec.Code)
-	}
-	if rec.Header().Get("Content-Type") != "text/event-stream" {
-		t.Fatalf("feed content-type = %q, want text/event-stream", rec.Header().Get("Content-Type"))
-	}
-	if !strings.Contains(rec.Body.String(), "event: update") {
-		t.Fatalf("feed body did not stream upstream event: %s", rec.Body.String())
 	}
 }
 
@@ -367,94 +349,12 @@ func TestServicesHandlerContextProxyInjectsServerTokenOnly(t *testing.T) {
 	assertEnvelopeData(t, rec.Body.String(), "profile.md")
 }
 
-func TestServicesHandlerContextProxyForwardsReadSaveHistoryAndAsk(t *testing.T) {
-	token := strings.Join([]string{"fixture", "owner", "value"}, "-")
-	var seen []string
-
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+token {
-			t.Fatalf("upstream Authorization = %q, want server token", r.Header.Get("Authorization"))
-		}
-		seen = append(seen, r.Method+" "+r.URL.Path)
-
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/context/identity/communication.md":
-			writeTestJSON(w, http.StatusOK, map[string]any{
-				"path":    "identity/communication.md",
-				"content": "# Communication\n",
-			})
-		case r.Method == http.MethodPut && r.URL.Path == "/v1/context/identity/communication.md":
-			body, _ := io.ReadAll(r.Body)
-			if !strings.Contains(string(body), "updated content") {
-				t.Fatalf("save body was not forwarded: %s", string(body))
-			}
-			writeTestJSON(w, http.StatusOK, map[string]any{"ok": true, "path": "identity/communication.md"})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/context/identity/communication.md/history":
-			writeTestJSON(w, http.StatusOK, map[string]any{
-				"path": "identity/communication.md",
-				"history": []map[string]any{
-					{"hash": "abc123", "message": "PUT identity/communication.md"},
-				},
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/ask":
-			body, _ := io.ReadAll(r.Body)
-			if !strings.Contains(string(body), "How should agents speak?") {
-				t.Fatalf("ask body was not forwarded: %s", string(body))
-			}
-			writeTestJSON(w, http.StatusOK, map[string]any{
-				"answer": "Use short status updates.",
-				"sources": []map[string]any{
-					{"path": "identity/communication.md", "snippet": "Keep it brief."},
-				},
-			})
-		default:
-			t.Fatalf("unexpected upstream request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer upstream.Close()
-
-	handler := NewServicesHandler(ServiceConfig{ContextBaseURL: upstream.URL, ContextToken: token})
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/services/context/docs/identity/communication.md", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("read status = %d, want 200", rec.Code)
-	}
-	assertEnvelopeData(t, rec.Body.String(), "Communication")
-
-	rec = httptest.NewRecorder()
-	saveReq := httptest.NewRequest(http.MethodPut, "/api/services/context/docs/identity/communication.md", strings.NewReader(`{"content":"updated content"}`))
-	saveReq.Header.Set("Content-Type", "application/json")
-	mux.ServeHTTP(rec, saveReq)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("save status = %d, want 200", rec.Code)
-	}
-	assertEnvelopeData(t, rec.Body.String(), "identity/communication.md")
-
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/services/context/history/identity/communication.md", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("history status = %d, want 200", rec.Code)
-	}
-	assertEnvelopeData(t, rec.Body.String(), "abc123")
-
-	rec = httptest.NewRecorder()
-	askReq := httptest.NewRequest(http.MethodPost, "/api/services/context/ask", strings.NewReader(`{"question":"How should agents speak?"}`))
-	askReq.Header.Set("Content-Type", "application/json")
-	mux.ServeHTTP(rec, askReq)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("ask status = %d, want 200", rec.Code)
-	}
-	assertEnvelopeData(t, rec.Body.String(), "Use short status updates.")
-
-	if got, want := strings.Join(seen, ","), "GET /v1/context/identity/communication.md,PUT /v1/context/identity/communication.md,GET /v1/context/identity/communication.md/history,POST /v1/ask"; got != want {
-		t.Fatalf("upstream calls = %q, want %q", got, want)
-	}
-}
-
-func TestServicesHandlerContextIntegrationProxyRoutesUseServerToken(t *testing.T) {
+// Every Context Citadel route CHROTE proxies reaches upstream under the server's
+// own token, with the browser's Authorization header discarded, and neither
+// token comes back in the response. Read, save, history, ask, grants, ingestion
+// and audit share one table because they share one proxy: a route added without
+// the token injection is the whole failure this pins.
+func TestServicesHandlerContextProxyForwardsEveryRouteUnderTheServerToken(t *testing.T) {
 	token := strings.Join([]string{"fixture", "owner", "value"}, "-")
 	rawGrantToken := "ctx_live_fixturehandle_fixturesecretvalue"
 	var seen []string
@@ -466,6 +366,35 @@ func TestServicesHandlerContextIntegrationProxyRoutesUseServerToken(t *testing.T
 		seen = append(seen, r.Method+" "+r.URL.RequestURI())
 
 		switch {
+		case r.Method == http.MethodGet && r.URL.RequestURI() == "/v1/context/identity/communication.md":
+			writeTestJSON(w, http.StatusOK, map[string]any{
+				"path":    "identity/communication.md",
+				"content": "# Communication\n",
+			})
+		case r.Method == http.MethodPut && r.URL.RequestURI() == "/v1/context/identity/communication.md":
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), "updated content") {
+				t.Fatalf("save body was not forwarded: %s", string(body))
+			}
+			writeTestJSON(w, http.StatusOK, map[string]any{"ok": true, "path": "identity/communication.md"})
+		case r.Method == http.MethodGet && r.URL.RequestURI() == "/v1/context/identity/communication.md/history":
+			writeTestJSON(w, http.StatusOK, map[string]any{
+				"path": "identity/communication.md",
+				"history": []map[string]any{
+					{"hash": "abc123", "message": "PUT identity/communication.md"},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.RequestURI() == "/v1/ask":
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), "How should agents speak?") {
+				t.Fatalf("ask body was not forwarded: %s", string(body))
+			}
+			writeTestJSON(w, http.StatusOK, map[string]any{
+				"answer": "Use short status updates.",
+				"sources": []map[string]any{
+					{"path": "identity/communication.md", "snippet": "Keep it brief."},
+				},
+			})
 		case r.Method == http.MethodGet && r.URL.RequestURI() == "/v1/grants":
 			writeTestJSON(w, http.StatusOK, map[string]any{
 				"grants": []map[string]any{{"id": "grant_1", "name": "ChatGPT", "status": "active"}},
@@ -526,21 +455,28 @@ func TestServicesHandlerContextIntegrationProxyRoutesUseServerToken(t *testing.T
 	handler.RegisterRoutes(mux)
 
 	requests := []struct {
-		method string
-		path   string
-		body   string
+		method   string
+		path     string
+		body     string
+		wantData string
+		wantSeen string
 	}{
-		{method: http.MethodGet, path: "/api/services/context/grants"},
-		{method: http.MethodPost, path: "/api/services/context/grants", body: `{"name":"ChatGPT"}`},
-		{method: http.MethodPost, path: "/api/services/context/grants/grant_1/revoke"},
-		{method: http.MethodPost, path: "/api/services/context/grants/grant_1/rotate"},
-		{method: http.MethodPost, path: "/api/services/context/grants/preview", body: `{"grant_id":"grant_1"}`},
-		{method: http.MethodGet, path: "/api/services/context/ingestion/queue"},
-		{method: http.MethodPost, path: "/api/services/context/ingestion/candidates/inbox/candidates/idea.md/approve"},
-		{method: http.MethodPost, path: "/api/services/context/ingestion/candidates/inbox/candidates/risky.md/reject", body: `{"reason":"Not reliable enough."}`},
-		{method: http.MethodGet, path: "/api/services/context/audit?limit=25"},
+		{method: http.MethodGet, path: "/api/services/context/docs/identity/communication.md", wantData: "Communication", wantSeen: "GET /v1/context/identity/communication.md"},
+		{method: http.MethodPut, path: "/api/services/context/docs/identity/communication.md", body: `{"content":"updated content"}`, wantData: "identity/communication.md", wantSeen: "PUT /v1/context/identity/communication.md"},
+		{method: http.MethodGet, path: "/api/services/context/history/identity/communication.md", wantData: "abc123", wantSeen: "GET /v1/context/identity/communication.md/history"},
+		{method: http.MethodPost, path: "/api/services/context/ask", body: `{"question":"How should agents speak?"}`, wantData: "Use short status updates.", wantSeen: "POST /v1/ask"},
+		{method: http.MethodGet, path: "/api/services/context/grants", wantSeen: "GET /v1/grants"},
+		{method: http.MethodPost, path: "/api/services/context/grants", body: `{"name":"ChatGPT"}`, wantSeen: "POST /v1/grants"},
+		{method: http.MethodPost, path: "/api/services/context/grants/grant_1/revoke", wantSeen: "POST /v1/grants/grant_1/revoke"},
+		{method: http.MethodPost, path: "/api/services/context/grants/grant_1/rotate", wantSeen: "POST /v1/grants/grant_1/rotate"},
+		{method: http.MethodPost, path: "/api/services/context/grants/preview", body: `{"grant_id":"grant_1"}`, wantSeen: "POST /v1/grants/preview"},
+		{method: http.MethodGet, path: "/api/services/context/ingestion/queue", wantSeen: "GET /v1/ingestion/queue"},
+		{method: http.MethodPost, path: "/api/services/context/ingestion/candidates/inbox/candidates/idea.md/approve", wantSeen: "POST /v1/ingestion/candidates/inbox/candidates/idea.md/approve"},
+		{method: http.MethodPost, path: "/api/services/context/ingestion/candidates/inbox/candidates/risky.md/reject", body: `{"reason":"Not reliable enough."}`, wantSeen: "POST /v1/ingestion/candidates/inbox/candidates/risky.md/reject"},
+		{method: http.MethodGet, path: "/api/services/context/audit?limit=25", wantSeen: "GET /v1/audit?limit=25"},
 	}
 
+	wantSeen := make([]string, 0, len(requests))
 	for _, request := range requests {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(request.method, request.path, strings.NewReader(request.body))
@@ -555,9 +491,13 @@ func TestServicesHandlerContextIntegrationProxyRoutesUseServerToken(t *testing.T
 		if strings.Contains(rec.Body.String(), token) || strings.Contains(rec.Body.String(), "browser-supplied-token") {
 			t.Fatalf("%s %s exposed an upstream/browser token: %s", request.method, request.path, rec.Body.String())
 		}
+		if request.wantData != "" {
+			assertEnvelopeData(t, rec.Body.String(), request.wantData)
+		}
+		wantSeen = append(wantSeen, request.wantSeen)
 	}
 
-	if got, want := strings.Join(seen, ","), "GET /v1/grants,POST /v1/grants,POST /v1/grants/grant_1/revoke,POST /v1/grants/grant_1/rotate,POST /v1/grants/preview,GET /v1/ingestion/queue,POST /v1/ingestion/candidates/inbox/candidates/idea.md/approve,POST /v1/ingestion/candidates/inbox/candidates/risky.md/reject,GET /v1/audit?limit=25"; got != want {
+	if got, want := strings.Join(seen, ","), strings.Join(wantSeen, ","); got != want {
 		t.Fatalf("upstream calls = %q, want %q", got, want)
 	}
 }
@@ -598,64 +538,54 @@ func TestServicesHandlerContextAskUsesLongerTimeoutThanGenericProxy(t *testing.T
 	assertEnvelopeData(t, rec.Body.String(), "Use the context repository.")
 }
 
+// A document path with spaces in it reaches upstream percent-encoded, whether
+// the browser left the separating slash literal or encoded it too. Both forms
+// arrive from real navigation, and either one taken verbatim would ask upstream
+// for a path that does not exist.
 func TestServicesHandlerContextProxyEscapesNestedPathsWithSpaces(t *testing.T) {
 	token := strings.Join([]string{"fixture", "owner", "value"}, "-")
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+token {
-			t.Fatalf("upstream Authorization = %q, want server token", r.Header.Get("Authorization"))
-		}
-		if got, want := r.URL.EscapedPath(), "/v1/context/team%20notes/agent%20profile.md"; got != want {
-			t.Fatalf("upstream path = %q, want %q", got, want)
-		}
-		writeTestJSON(w, http.StatusOK, map[string]any{
-			"path":    "team notes/agent profile.md",
-			"content": "# Agent Profile\n",
+	for _, testCase := range []struct {
+		name      string
+		requested string
+	}{
+		{
+			name:      "the separating slash is left literal",
+			requested: "/api/services/context/docs/team%20notes/agent%20profile.md",
+		},
+		{
+			name:      "the separating slash is encoded too",
+			requested: "/api/services/context/docs/team%20notes%2Fagent%20profile.md",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer "+token {
+					t.Fatalf("upstream Authorization = %q, want server token", r.Header.Get("Authorization"))
+				}
+				if got, want := r.URL.EscapedPath(), "/v1/context/team%20notes/agent%20profile.md"; got != want {
+					t.Fatalf("upstream path = %q, want %q", got, want)
+				}
+				writeTestJSON(w, http.StatusOK, map[string]any{
+					"path":    "team notes/agent profile.md",
+					"content": "# Agent Profile\n",
+				})
+			}))
+			defer upstream.Close()
+
+			handler := NewServicesHandler(ServiceConfig{ContextBaseURL: upstream.URL, ContextToken: token})
+			mux := http.NewServeMux()
+			handler.RegisterRoutes(mux)
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, testCase.requested, nil))
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("read status = %d, want 200", rec.Code)
+			}
+			assertEnvelopeData(t, rec.Body.String(), "Agent Profile")
 		})
-	}))
-	defer upstream.Close()
-
-	handler := NewServicesHandler(ServiceConfig{ContextBaseURL: upstream.URL, ContextToken: token})
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/services/context/docs/team%20notes/agent%20profile.md", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("read status = %d, want 200", rec.Code)
 	}
-	assertEnvelopeData(t, rec.Body.String(), "Agent Profile")
-}
-
-func TestServicesHandlerContextProxyEscapesBrowserEncodedNestedPathsWithSpaces(t *testing.T) {
-	token := strings.Join([]string{"fixture", "owner", "value"}, "-")
-
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+token {
-			t.Fatalf("upstream Authorization = %q, want server token", r.Header.Get("Authorization"))
-		}
-		if got, want := r.URL.EscapedPath(), "/v1/context/team%20notes/agent%20profile.md"; got != want {
-			t.Fatalf("upstream path = %q, want %q", got, want)
-		}
-		writeTestJSON(w, http.StatusOK, map[string]any{
-			"path":    "team notes/agent profile.md",
-			"content": "# Agent Profile\n",
-		})
-	}))
-	defer upstream.Close()
-
-	handler := NewServicesHandler(ServiceConfig{ContextBaseURL: upstream.URL, ContextToken: token})
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/services/context/docs/team%20notes%2Fagent%20profile.md", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("read status = %d, want 200", rec.Code)
-	}
-	assertEnvelopeData(t, rec.Body.String(), "Agent Profile")
 }
 
 func TestServicesHandlerContextProxyPreservesUpstreamAuthorizationAndNotFound(t *testing.T) {

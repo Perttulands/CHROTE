@@ -34,6 +34,11 @@ func makePartialBeadsDirectory(t *testing.T, projectPath string) {
 
 const beadsPermissionHelperEnv = "CHROTE_BEADS_PERMISSION_HELPER"
 
+// raceExitPromptly cancels the race runtime's exit delay in a re-exec'd child.
+// Every permission probe re-execs this binary, and the child inherits the race
+// instrumentation, whose default one-second drain dominated the whole Go suite.
+const raceExitPromptly = "GORACE=atexit_sleep_ms=0"
+
 func makeBeadsPermissionProject(t *testing.T) string {
 	t.Helper()
 	project, err := os.MkdirTemp("", "chrote-beads-permission-")
@@ -68,6 +73,11 @@ func runBeadsPermissionSubprocess(t *testing.T, project string) bool {
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$")
 	cmd.Env = append(os.Environ(),
+		// The child is race-instrumented, and the race runtime sleeps a full
+		// second before exiting so late reports are not lost. This probe reads
+		// the child's exit status, not a trailing report, so that second is
+		// pure waiting.
+		raceExitPromptly,
 		beadsPermissionHelperEnv+"=1",
 		"CHROTE_BEADS_PERMISSION_PROJECT="+project,
 		"CHROTE_ROOTS="+project,
@@ -153,48 +163,9 @@ func TestBeadsHandler_ListProjectsSkipsPartialBeadsDirectories(t *testing.T) {
 	}
 }
 
-func TestBeadsHandler_ListProjectsAllowsConfiguredWorkspaceOutsideRoots(t *testing.T) {
-	rootDir := t.TempDir()
-	serviceWorkspace := filepath.Join(t.TempDir(), "srv")
-	makeValidBeadsWorkspace(t, serviceWorkspace)
-
-	t.Setenv("CHROTE_ROOTS", rootDir)
-	t.Setenv("CHROTE_BEADS_WORKSPACES", serviceWorkspace)
-
-	// The projects route asks bd for each project's prefix; no test reaches
-	// for the real store to answer that.
-	makeSequencedBdCommand(t, "[]")
-	handler := NewBeadsHandler()
-	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects", nil)
-	rec := httptest.NewRecorder()
-	handler.ListProjects(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("ListProjects status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-
-	var response struct {
-		Data struct {
-			Projects []struct {
-				Path   string `json:"path"`
-				Source string `json:"source"`
-			} `json:"projects"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if len(response.Data.Projects) != 1 {
-		t.Fatalf("project count = %d, want 1", len(response.Data.Projects))
-	}
-	if response.Data.Projects[0].Path != serviceWorkspace {
-		t.Fatalf("project path = %q, want %q", response.Data.Projects[0].Path, serviceWorkspace)
-	}
-	if response.Data.Projects[0].Source != "configured" {
-		t.Fatalf("project source = %q, want configured", response.Data.Projects[0].Source)
-	}
-}
-
+// A configured workspace is listed even though it sits outside every allowed
+// root, and a workspace found under a root is listed as discovered. The source
+// is part of the answer, because the operator can remove one and not the other.
 func TestBeadsHandler_ListProjectsIncludesConfiguredAndAllowedRootWorkspaces(t *testing.T) {
 	rootDir := t.TempDir()
 	rootWorkspace := filepath.Join(rootDir, "home-project")
@@ -238,6 +209,9 @@ func TestBeadsHandler_ListProjectsIncludesConfiguredAndAllowedRootWorkspaces(t *
 	}
 	if projectsByPath[rootWorkspace] != "auto" {
 		t.Fatalf("allowed root workspace source = %q, want auto", projectsByPath[rootWorkspace])
+	}
+	if len(response.Data.Projects) != 2 {
+		t.Fatalf("projects = %#v, want exactly the configured and the discovered workspace", projectsByPath)
 	}
 }
 
@@ -420,21 +394,35 @@ func TestBeadPrefixReadsTheProjectOutOfAnID(t *testing.T) {
 	}
 }
 
-func TestBeadsHandler_WorkRejectsInvalidWorkspaceBeforeRunningBd(t *testing.T) {
+// Neither read route runs bd against a directory that is not a workspace. No
+// fake bd is installed on purpose: if either route reached for a command, it
+// would find the operator's real bd and read a store the request never named.
+func TestBeadsHandler_ReadRoutesRejectAnInvalidWorkspaceBeforeRunningBd(t *testing.T) {
 	rootDir := t.TempDir()
 	partialProject := filepath.Join(rootDir, "partial")
 	makePartialBeadsDirectory(t, partialProject)
 
 	t.Setenv("CHROTE_ROOTS", rootDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	t.Setenv("CHROTE_BD_COMMAND", filepath.Join(rootDir, "bd-that-does-not-exist"))
 
 	handler := NewBeadsHandler()
-	req := httptest.NewRequest(http.MethodGet, "/api/beads/work?path="+partialProject, nil)
-	rec := httptest.NewRecorder()
-	handler.Work(rec, req)
+	for _, testCase := range []struct {
+		name string
+		path string
+		call func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "work", path: "/api/beads/work?path=" + partialProject, call: handler.Work},
+		{name: "issue detail", path: "/api/beads/issue?path=" + partialProject + "&id=test-1", call: handler.IssueDetail},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			testCase.call(rec, httptest.NewRequest(http.MethodGet, testCase.path, nil))
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("Work status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -545,24 +533,6 @@ func TestBeadsHandler_ListProjectsCarriesTheBeadPrefix(t *testing.T) {
 	}
 }
 
-func TestBeadsHandler_IssueDetailRejectsInvalidWorkspaceBeforeRunningBd(t *testing.T) {
-	rootDir := t.TempDir()
-	partialProject := filepath.Join(rootDir, "partial")
-	makePartialBeadsDirectory(t, partialProject)
-
-	t.Setenv("CHROTE_ROOTS", rootDir)
-	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
-
-	handler := NewBeadsHandler()
-	req := httptest.NewRequest(http.MethodGet, "/api/beads/issue?path="+partialProject+"&id=test-1", nil)
-	rec := httptest.NewRecorder()
-	handler.IssueDetail(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("IssueDetail status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
-	}
-}
-
 func TestBeadsHandler_IssueDetailReadsBothDirectionsAndTheParentChain(t *testing.T) {
 	rootDir := t.TempDir()
 	projectPath := filepath.Join(rootDir, "project")
@@ -618,40 +588,6 @@ func TestBeadsHandler_IssueDetailReadsBothDirectionsAndTheParentChain(t *testing
 	}
 }
 
-func TestBeadsHandler_CheckBeadsDirectoryUnreadableReportsPermissionError(t *testing.T) {
-	project := os.Getenv("CHROTE_BEADS_PERMISSION_PROJECT")
-	if project == "" {
-		project = makeBeadsPermissionProject(t)
-		beadsPath := filepath.Join(project, ".beads")
-		if err := os.Chmod(beadsPath, 0); err != nil {
-			t.Fatalf("chmod .beads: %v", err)
-		}
-		t.Cleanup(func() { _ = os.Chmod(beadsPath, 0o700) })
-	}
-	beadsPath := filepath.Join(project, ".beads")
-	if !runBeadsPermissionSubprocess(t, project) {
-		return
-	}
-
-	_, err := NewBeadsHandler().checkBeadsDirectory(project)
-	if err == nil {
-		t.Fatal("unreadable .beads was accepted as a workspace")
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, beadsPath) {
-		t.Errorf("error does not name the workspace path %q: %q", beadsPath, msg)
-	}
-	if !strings.Contains(msg, effectiveUsername()) {
-		t.Errorf("error does not name the effective user %q: %q", effectiveUsername(), msg)
-	}
-	if !strings.Contains(msg, "permission denied") {
-		t.Errorf("error does not state the permission cause: %q", msg)
-	}
-	if strings.Contains(msg, "bd init") {
-		t.Errorf("error suggests destructive re-init for possibly intact data: %q", msg)
-	}
-}
-
 func TestBeadsHandler_CheckBeadsDirectoryUnsearchableParentReportsPermissionError(t *testing.T) {
 	project := os.Getenv("CHROTE_BEADS_PERMISSION_PROJECT")
 	if project == "" {
@@ -694,7 +630,12 @@ func TestBeadsHandler_CheckBeadsDirectoryAbsentStillSuggestsBdInit(t *testing.T)
 	}
 }
 
-func TestBeadsHandler_ListProjectsReportsPermissionErrorForUnreadableWorkspace(t *testing.T) {
+// An unreadable workspace is reported as a permission problem, in the check and
+// on the wire, and never as a missing one: telling an operator to run `bd init`
+// over a store whose data is intact is how the data gets destroyed. The check
+// and the route share one fixture and one unprivileged child, because a `chmod
+// 0` directory denies root nothing and the re-exec is what makes it deny.
+func TestBeadsHandler_UnreadableWorkspaceReportsPermissionRatherThanAbsence(t *testing.T) {
 	project := os.Getenv("CHROTE_BEADS_PERMISSION_PROJECT")
 	if project == "" {
 		project = makeBeadsPermissionProject(t)
@@ -704,11 +645,31 @@ func TestBeadsHandler_ListProjectsReportsPermissionErrorForUnreadableWorkspace(t
 		}
 		t.Cleanup(func() { _ = os.Chmod(beadsPath, 0o700) })
 	}
+	beadsPath := filepath.Join(project, ".beads")
 	if !runBeadsPermissionSubprocess(t, project) {
 		return
 	}
 
 	handler := NewBeadsHandler()
+
+	_, err := handler.checkBeadsDirectory(project)
+	if err == nil {
+		t.Fatal("unreadable .beads was accepted as a workspace")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, beadsPath) {
+		t.Errorf("error does not name the workspace path %q: %q", beadsPath, msg)
+	}
+	if !strings.Contains(msg, effectiveUsername()) {
+		t.Errorf("error does not name the effective user %q: %q", effectiveUsername(), msg)
+	}
+	if !strings.Contains(msg, "permission denied") {
+		t.Errorf("error does not state the permission cause: %q", msg)
+	}
+	if strings.Contains(msg, "bd init") {
+		t.Errorf("error suggests destructive re-init for possibly intact data: %q", msg)
+	}
+
 	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+project, nil)
 	rec := httptest.NewRecorder()
 	handler.ListProjects(rec, req)
@@ -726,4 +687,33 @@ func TestBeadsHandler_ListProjectsReportsPermissionErrorForUnreadableWorkspace(t
 	if strings.Contains(body, "bd init") {
 		t.Errorf("response suggests destructive re-init for possibly intact data: %s", body)
 	}
+}
+
+// The Beads routes use the success/data envelope, unlike the flat health and
+// tmux endpoints. The dashboard unwraps `data` for these and does not for those,
+// so which shape an endpoint serves is a contract, not a detail.
+func TestBeadsHandler_HealthUsesTheSuccessDataEnvelope(t *testing.T) {
+	resetBeadsTestEnv(t)
+	makeSequencedBdCommand(t, "bd version 1.2.3\n")
+
+	handler := NewBeadsHandler()
+	req := httptest.NewRequest(http.MethodGet, "/api/beads/health", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Health(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	response := decodeJSONMap(t, rec)
+	assertTopLevelKeys(t, response, []string{"data", "success", "timestamp"})
+	if response["success"] != true {
+		t.Fatalf("success = %v, want true", response["success"])
+	}
+
+	data, ok := response["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("data = %T, want object", response["data"])
+	}
+	assertTopLevelKeys(t, data, []string{"allowedRoots", "bdVersion", "configuredWorkspaces", "status"})
 }

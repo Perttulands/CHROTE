@@ -58,7 +58,17 @@ func installAlwaysFailingTmux(t *testing.T, stderr string) {
 // The production path on a multi-user host is the CHROTE_TMUX_SOCKET loop, and
 // it is the only place a socket error is prefixed with the Unix user. This test
 // drives the partial-inventory branch where one explicit source is unavailable.
-func TestTmuxHandler_ListSessionsNamesTheUnixUserWhoseSocketFailed(t *testing.T) {
+// A broken socket for one user must not hide another user's live sessions. The API
+// deliberately returns partial success -- healthy sessions plus an error naming the
+// failures -- because cross-user ACL breakage is the headline failure mode here, and
+// an empty list is indistinguishable from "no sessions". Which user is broken has to
+// be identifiable too: an unattributed permission error on a host with several users
+// is not actionable, and blaming the healthy one sends the operator to the wrong
+// socket.
+//
+// Fake users are paired with fake workdirs so targetForUnixUser can exercise the
+// configured multi-user branch without relying on host accounts.
+func TestTmuxHandler_ListSessionsStillReturnsHealthyUsersSessionsWhenOneSocketFails(t *testing.T) {
 	installSelectiveTmux(t, "denied", "error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)")
 	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/denied.sock")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
@@ -76,42 +86,6 @@ func TestTmuxHandler_ListSessionsNamesTheUnixUserWhoseSocketFailed(t *testing.T)
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-
-	if !strings.Contains(response.Error, "build: tmux source permission denied") {
-		t.Fatalf("error = %q, want the redacted permission failure to be visible", response.Error)
-	}
-	// The whole point: which user is broken must be identifiable. An unattributed
-	// permission error on a host with several users is not actionable.
-	//
-	// Fake users are paired with fake workdirs so targetForUnixUser can exercise the
-	// configured multi-user branch without relying on host accounts.
-	if !strings.Contains(response.Error, "build") {
-		t.Fatalf("error = %q, want it to name the unix user whose socket failed", response.Error)
-	}
-	if strings.Contains(response.Error, "alice") {
-		t.Fatalf("error = %q, want the healthy user not to be blamed", response.Error)
-	}
-}
-
-// A broken socket for one user must not hide another user's live sessions. The API
-// deliberately returns partial success -- healthy sessions plus an error naming the
-// failures -- because cross-user ACL breakage is the headline failure mode here, and
-// an empty list is indistinguishable from "no sessions".
-func TestTmuxHandler_ListSessionsStillReturnsHealthyUsersSessionsWhenOneSocketFails(t *testing.T) {
-	installSelectiveTmux(t, "denied", "error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)")
-	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/denied.sock")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
-
-	handler := NewTmuxHandler()
-	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
-	rec := httptest.NewRecorder()
-
-	handler.ListSessions(rec, req)
-
-	var response SessionsResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
 	if len(response.Sessions) == 0 {
 		t.Fatalf("sessions = empty, want the healthy user's sessions preserved alongside the error %q", response.Error)
 	}
@@ -119,6 +93,12 @@ func TestTmuxHandler_ListSessionsStillReturnsHealthyUsersSessionsWhenOneSocketFa
 		if session.UnixUser == "build" {
 			t.Fatalf("sessions contain the failed user %q: %+v", session.UnixUser, session)
 		}
+	}
+	if !strings.Contains(response.Error, "build: tmux source permission denied") {
+		t.Fatalf("error = %q, want the redacted permission failure named against its user", response.Error)
+	}
+	if strings.Contains(response.Error, "alice") {
+		t.Fatalf("error = %q, want the healthy user not to be blamed", response.Error)
 	}
 	payload := decodeJSONMap(t, rec)
 	if partial, ok := payload["partial"].(bool); !ok || !partial {

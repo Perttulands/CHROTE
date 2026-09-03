@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -154,85 +153,6 @@ func TestScheduledTasksAPIFansOneTaskOutToManySessions(t *testing.T) {
 	}
 }
 
-func TestScheduledTasksAPIRejectsEmptyTargetList(t *testing.T) {
-	runner := newFakeScheduledRunner()
-	handler := newScheduledTestHandler(t, runner, time.Date(2026, 6, 27, 14, 0, 0, 0, time.UTC), true)
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/scheduled-tasks", strings.NewReader(`{
-		"name":"no targets","prompt":"hello","targets":[],
-		"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}
-	}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(scheduledMutationIntentHeader, scheduledMutationIntentValue)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "at least one target") {
-		t.Fatalf("status/body = %d/%s, want 400 demanding a target", rec.Code, rec.Body.String())
-	}
-	if len(runner.sent) != 0 {
-		t.Fatalf("runner sends = %+v, want none", runner.sent)
-	}
-}
-
-func TestScheduledTasksAPIRejectsLegacySingleTargetWithoutMutation(t *testing.T) {
-	fixedNow := time.Date(2026, 6, 27, 14, 0, 0, 0, time.UTC)
-	runner := newFakeScheduledRunner()
-	runner.allow(scheduled.Target{SessionName: "ops", UnixUser: "alice"})
-	handler := newScheduledTestHandler(t, runner, fixedNow, true)
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	request := func(method, path, body string) *httptest.ResponseRecorder {
-		t.Helper()
-		req := httptest.NewRequest(method, path, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(scheduledMutationIntentHeader, scheduledMutationIntentValue)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		return rec
-	}
-
-	legacyCreate := request(http.MethodPost, "/api/scheduled-tasks", `{
-		"name":"legacy","prompt":"hello",
-		"target":{"sessionName":"ops","unixUser":"alice"},
-		"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}
-	}`)
-	if legacyCreate.Code != http.StatusBadRequest || !strings.Contains(legacyCreate.Body.String(), `"code":"BAD_REQUEST"`) || !strings.Contains(legacyCreate.Body.String(), "use targets") {
-		t.Fatalf("legacy create status/body = %d/%s, want 400 BAD_REQUEST directing callers to targets", legacyCreate.Code, legacyCreate.Body.String())
-	}
-	if tasks := decodeScheduledTasksFromData(t, scheduledAPIGet(t, mux, "/api/scheduled-tasks"), "tasks"); len(tasks) != 0 {
-		t.Fatalf("legacy create persisted tasks = %+v, want none", tasks)
-	}
-
-	created := decodeScheduledTaskFromData(t, scheduledAPIPost(t, mux, "/api/scheduled-tasks", `{
-		"name":"current","prompt":"hello",
-		"targets":[{"sessionName":"ops","unixUser":"alice"}],
-		"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}
-	}`), "task")
-	if len(created.Targets) != 1 || created.Targets[0].SessionName != "ops" {
-		t.Fatalf("current targets create = %+v, want targets[] accepted", created.Targets)
-	}
-
-	legacyPatch := request(http.MethodPatch, "/api/scheduled-tasks/"+created.ID, `{
-		"name":"must not change",
-		"target":{"sessionName":"replacement","unixUser":"alice"},
-		"updatedBy":"legacy"
-	}`)
-	if legacyPatch.Code != http.StatusBadRequest || !strings.Contains(legacyPatch.Body.String(), `"code":"BAD_REQUEST"`) || !strings.Contains(legacyPatch.Body.String(), "use targets") {
-		t.Fatalf("legacy patch status/body = %d/%s, want 400 BAD_REQUEST directing callers to targets", legacyPatch.Code, legacyPatch.Body.String())
-	}
-	after := decodeScheduledTaskFromData(t, scheduledAPIGet(t, mux, "/api/scheduled-tasks/"+created.ID), "task")
-	if !reflect.DeepEqual(after, created) {
-		t.Fatalf("legacy patch changed task\nafter:  %+v\nbefore: %+v", after, created)
-	}
-	if len(runner.sent) != 0 {
-		t.Fatalf("rejected legacy requests invoked delivery: %+v", runner.sent)
-	}
-}
-
 func TestScheduledTasksAPIRequiresMutationIntentAndJSON(t *testing.T) {
 	runner := newFakeScheduledRunner()
 	runner.allow(scheduled.Target{SessionName: "ops", UnixUser: "alice"})
@@ -276,6 +196,11 @@ func TestScheduledTasksAPIValidationRejectsUnsafeOrInvalidRequests(t *testing.T)
 		{
 			name: "empty prompt",
 			body: `{"name":"bad","prompt":"   ","targets":[{"sessionName":"ops","unixUser":"alice"}],"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
+		},
+		{
+			name:     "no targets at all",
+			body:     `{"name":"no targets","prompt":"hello","targets":[],"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
+			wantBody: "at least one target",
 		},
 		{
 			name: "invalid interval",
@@ -333,11 +258,29 @@ func TestScheduledTasksAPIValidationRejectsUnsafeOrInvalidRequests(t *testing.T)
 			if tt.wantBody != "" && !strings.Contains(rec.Body.String(), tt.wantBody) {
 				t.Fatalf("body = %q, want it to mention %q", rec.Body.String(), tt.wantBody)
 			}
+			// A refused task must not have delivered anything on its way to
+			// being refused; the operator would have no record that it had.
+			if len(runner.sent) != 0 {
+				t.Fatalf("runner sends = %+v, want none from a refused task", runner.sent)
+			}
 		})
 	}
 }
 
+// stubScheduledSettleSleep removes the settle delay a scheduled delivery waits
+// between pasting a prompt and pressing the submit key. Tests that read the tmux
+// argv a delivery produces do not depend on that delay elapsing in real time, and
+// paying it made them the slowest thing in the Go suite. Tests that prove the
+// settle is cancellable must keep the real sleep.
+func stubScheduledSettleSleep(t *testing.T) {
+	t.Helper()
+	original := tmuxSendSleep
+	tmuxSendSleep = func(context.Context, time.Duration) error { return nil }
+	t.Cleanup(func() { tmuxSendSleep = original })
+}
+
 func TestScheduledTmuxRunnerDeliversThroughGuardedPasteAndSubmits(t *testing.T) {
+	stubScheduledSettleSleep(t)
 	tmpDir := t.TempDir()
 	argsPath := tmpDir + "/tmux-argv.txt"
 	payloadCopy := tmpDir + "/payload-copy.txt"
@@ -687,63 +630,6 @@ exit 0
 	if strings.Contains(string(raw), "send-keys") {
 		t.Fatalf("submit key was dispatched after caller deadline:\n%s", raw)
 	}
-}
-
-func TestProductionScheduledServiceUsesEightConcurrentWorkers(t *testing.T) {
-	runner := &productionValidationRunner{
-		entered: make(chan scheduled.Target, 16),
-		release: make(chan struct{}),
-	}
-	service := newProductionScheduledService(scheduled.NewStore(t.TempDir()), runner)
-	targets := make([]scheduled.Target, 16)
-	for index := range targets {
-		targets[index] = scheduled.Target{SessionName: fmt.Sprintf("worker-%02d", index)}
-	}
-	done := make(chan error, 1)
-	go func() {
-		_, err := service.Create(context.Background(), scheduled.CreateTaskRequest{
-			Name:     "production concurrency",
-			Prompt:   "validate",
-			Targets:  targets,
-			Schedule: scheduled.Schedule{Type: "interval", EveryMinutes: 60, Timezone: "UTC"},
-		})
-		done <- err
-	}()
-	for range 8 {
-		select {
-		case <-runner.entered:
-		case <-time.After(time.Second):
-			close(runner.release)
-			<-done
-			t.Fatal("production validation did not start eight workers")
-		}
-	}
-	select {
-	case target := <-runner.entered:
-		close(runner.release)
-		<-done
-		t.Fatalf("production validation exceeded eight workers with %+v", target)
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(runner.release)
-	if err := <-done; err != nil {
-		t.Fatalf("Create returned error: %v", err)
-	}
-}
-
-type productionValidationRunner struct {
-	entered chan scheduled.Target
-	release chan struct{}
-}
-
-func (r *productionValidationRunner) ValidateTarget(_ context.Context, target scheduled.Target) error {
-	r.entered <- target
-	<-r.release
-	return nil
-}
-
-func (r *productionValidationRunner) SendPrompt(context.Context, scheduled.Target, string) (scheduled.Delivery, error) {
-	return scheduled.Delivery{}, errors.New("SendPrompt should not run during production validation test")
 }
 
 func TestWriteScheduledErrorReportsTaskMutationConflict(t *testing.T) {

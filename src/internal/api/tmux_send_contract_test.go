@@ -200,15 +200,12 @@ func TestSendToSessionRequiresExplicitUnixUserWhenMultipleAreConfigured(t *testi
 		t.Fatalf("bare send response = %d %s", send.Code, send.Body.String())
 	}
 	assertNoSendSideEffects(t, h)
-}
 
-func TestSendToSessionRejectsConflictingQueryAndBodyUnixUsers(t *testing.T) {
-	h := newSendHarness(t, "$7	one	%41	111	9001	@3	work	/home/alice	bash	1\n")
-	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a,bob=/tmp/tmux-b")
-
-	recorder := h.sendWithQuery(t, "one", "unixUser=alice", map[string]string{"text": "must not route", "unixUser": "bob"})
-	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "conflicting Unix users") {
-		t.Fatalf("conflicting send response = %d %s", recorder.Code, recorder.Body.String())
+	// Two answers are worse than none: naming one user in the query and another
+	// in the body must not be resolved by preferring either.
+	conflicting := h.sendWithQuery(t, "one", "unixUser=alice", map[string]string{"text": "must not route", "unixUser": "bob"})
+	if conflicting.Code != http.StatusBadRequest || !strings.Contains(conflicting.Body.String(), "conflicting Unix users") {
+		t.Fatalf("conflicting send response = %d %s", conflicting.Code, conflicting.Body.String())
 	}
 	assertNoSendSideEffects(t, h)
 }
@@ -227,25 +224,54 @@ func TestSendToSessionRejectsTmuxPrefixMatchBeforePersisting(t *testing.T) {
 	}
 }
 
-func TestSendToSessionRequiresPaneForMultiPaneSession(t *testing.T) {
-	h := newSendHarness(t, "$7	multi	%41	111	9001\n$7	multi	%42	222	9001\n")
-	recorder := h.send(t, "multi", map[string]string{"text": "ambiguous"})
-	if recorder.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
-	}
-	if got := dropDirectoryCount(t, h.dropsDir); got != 0 {
-		t.Fatalf("drop directories = %d, want 0", got)
-	}
-}
-
-func TestSendToSessionRejectsStalePaneBeforeCreatingDrop(t *testing.T) {
-	h := newSendHarness(t, "$7	one	%41	111	9001\n")
-	recorder := h.send(t, "one", map[string]string{"text": "stale pane", "pane": "%99"})
-	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "PANE_NOT_IN_SESSION") {
-		t.Fatalf("status/body = %d %s, want PANE_NOT_IN_SESSION conflict", recorder.Code, recorder.Body.String())
-	}
-	if got := dropDirectoryCount(t, h.dropsDir); got != 0 {
-		t.Fatalf("drop directories = %d, want 0", got)
+// A send CHROTE cannot address exactly is refused before anything is written.
+// Each of these would otherwise land keystrokes in a pane the operator did not
+// choose, so the empty drops directory is as much of the contract as the status.
+func TestSendToSessionRefusesASendItCannotAddressExactly(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		panes      string
+		session    string
+		fields     map[string]string
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "a session with more than one pane needs the pane named",
+			panes:      "$7\tmulti\t%41\t111\t9001\n$7\tmulti\t%42\t222\t9001\n",
+			session:    "multi",
+			fields:     map[string]string{"text": "ambiguous"},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "a pane that has left the session is not sent to",
+			panes:      "$7\tone\t%41\t111\t9001\n",
+			session:    "one",
+			fields:     map[string]string{"text": "stale pane", "pane": "%99"},
+			wantStatus: http.StatusConflict,
+			wantBody:   "PANE_NOT_IN_SESSION",
+		},
+		{
+			name:       "a send with nothing in it is not a send",
+			panes:      "$7\tone\t%41\t111\t9001\n",
+			session:    "one",
+			fields:     map[string]string{},
+			wantStatus: http.StatusBadRequest,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			h := newSendHarness(t, testCase.panes)
+			recorder := h.send(t, testCase.session, testCase.fields)
+			if recorder.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, testCase.wantStatus, recorder.Body.String())
+			}
+			if testCase.wantBody != "" && !strings.Contains(recorder.Body.String(), testCase.wantBody) {
+				t.Fatalf("body = %s, want it to name %q", recorder.Body.String(), testCase.wantBody)
+			}
+			if got := dropDirectoryCount(t, h.dropsDir); got != 0 {
+				t.Fatalf("drop directories = %d, want 0", got)
+			}
+		})
 	}
 }
 
@@ -291,17 +317,6 @@ func TestSendToSessionRejectsChooserGenerationReuseBeforeCreatingDrop(t *testing
 	})
 	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "TARGET_CHANGED") {
 		t.Fatalf("status/body = %d %s, want TARGET_CHANGED conflict", recorder.Code, recorder.Body.String())
-	}
-	if got := dropDirectoryCount(t, h.dropsDir); got != 0 {
-		t.Fatalf("drop directories = %d, want 0", got)
-	}
-}
-
-func TestSendToSessionRejectsEmptyPayloadAsBadRequest(t *testing.T) {
-	h := newSendHarness(t, "$7	one	%41	111	9001\n")
-	recorder := h.send(t, "one", map[string]string{})
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
 	}
 	if got := dropDirectoryCount(t, h.dropsDir); got != 0 {
 		t.Fatalf("drop directories = %d, want 0", got)
@@ -471,5 +486,114 @@ func TestSendToSessionACLFailureRemovesPartialDrop(t *testing.T) {
 	}
 	if got := dropDirectoryCount(t, h.dropsDir); got != 0 {
 		t.Fatalf("drop directories = %d after ACL failure, want 0", got)
+	}
+}
+
+// A send routed through the mux stores its own drop and reaches the pane through
+// a tmux buffer, never through argv. Text on the command line would be visible
+// to every process on the host and would break on any shell metacharacter, so
+// the absence of the prompt text in the recorded argv is the point.
+func TestSendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
+	h := newSendHarness(t, "$7\talice-shell\t%42\t111\t9001\n")
+	dropsDir := h.dropsDir
+	argsPath := h.tmuxLog
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("text", "Please inspect this screenshot."); err != nil {
+		t.Fatalf("write text field: %v", err)
+	}
+	if err := writer.WriteField("submit", "true"); err != nil {
+		t.Fatalf("write submit field: %v", err)
+	}
+	if err := writer.WriteField("unixUser", "alice"); err != nil {
+		t.Fatalf("write unixUser field: %v", err)
+	}
+	fileWriter, err := writer.CreateFormFile("files", "../clipboard image.png")
+	if err != nil {
+		t.Fatalf("create file field: %v", err)
+	}
+	if _, err := fileWriter.Write([]byte("fake png")); err != nil {
+		t.Fatalf("write file payload: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/alice-shell/send", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["success"] != true || response["session"] != "alice-shell" || response["unixUser"] != "alice" || response["pane"] != "%42" || response["submitKeyDispatched"] != true {
+		t.Fatalf("send response = %#v", response)
+	}
+	dropPath, _ := response["dropPath"].(string)
+	if dropPath == "" || !strings.HasPrefix(dropPath, dropsDir) {
+		t.Fatalf("dropPath = %q, want under %q", dropPath, dropsDir)
+	}
+	for _, rel := range []string{"manifest.json", "text.txt", "payload.txt", filepath.Join("files", "clipboard-image.png")} {
+		if _, err := os.Stat(filepath.Join(dropPath, rel)); err != nil {
+			t.Fatalf("expected drop file %s: %v", rel, err)
+		}
+	}
+	payload, err := os.ReadFile(filepath.Join(dropPath, "payload.txt"))
+	if err != nil {
+		t.Fatalf("read payload: %v", err)
+	}
+	filePath := filepath.Join(dropPath, "files", "clipboard-image.png")
+	payloadText := string(payload)
+	if !strings.Contains(payloadText, "Please inspect this screenshot.") || !strings.Contains(payloadText, "CHROTE stored this send at:") || !strings.Contains(payloadText, dropPath) || !strings.Contains(payloadText, "Files:") || !strings.Contains(payloadText, filePath) {
+		t.Fatalf("payload = %q, want text, drop path %q, and stored file path %q", payloadText, dropPath, filePath)
+	}
+	if strings.HasSuffix(payloadText, "\n") {
+		t.Fatalf("payload has trailing newline; submit=false must not press Enter implicitly: %q", payloadText)
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat stored file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("stored file owner-only base mode = %o, want 600 with fake ACL", info.Mode().Perm())
+	}
+
+	calls := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath))
+	joined := make([]string, 0, len(calls))
+	for _, call := range calls {
+		joined = append(joined, strings.Join(call, "\x00"))
+	}
+	wantSnippets := []string{
+		strings.Join([]string{"-S", "/tmp/tmux-a", "load-buffer"}, "\x00"),
+		strings.Join([]string{"-S", "/tmp/tmux-a", "if-shell", "-F", "-t", "%42"}, "\x00"),
+		"paste-buffer -p -d -b chrote-send-",
+		"send-keys -t %42 Enter",
+		atomicSendSubmitKeyMarker,
+	}
+	for _, snippet := range wantSnippets {
+		found := false
+		for _, call := range joined {
+			if strings.Contains(call, snippet) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("tmux calls = %#v, missing %q", calls, snippet)
+		}
+	}
+	for _, call := range joined {
+		if strings.Contains(call, "Please inspect this screenshot") {
+			t.Fatalf("bulk text leaked into tmux argv instead of buffer file: %#v", calls)
+		}
 	}
 }

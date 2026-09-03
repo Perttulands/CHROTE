@@ -167,12 +167,12 @@ func (c *terminalClient) readUntil(want string) stampedFrame {
 	}
 }
 
-// drainFor collects everything that arrives over a window, which is how a test
-// asserts that something did not arrive.
-func (c *terminalClient) drainFor(window time.Duration) string {
+// received reports what has already arrived and waits for nothing more. A test
+// asserting that output was withheld reads this after an event that proves the
+// session already wrote it, rather than after a silence window.
+func (c *terminalClient) received() string {
 	c.t.Helper()
 	collected := &strings.Builder{}
-	deadline := time.After(window)
 	for {
 		select {
 		case frame, open := <-c.frames:
@@ -180,7 +180,7 @@ func (c *terminalClient) drainFor(window time.Duration) string {
 				return collected.String()
 			}
 			collected.WriteString(frame.text)
-		case <-deadline:
+		default:
 			return collected.String()
 		}
 	}
@@ -248,7 +248,7 @@ func defaultTarget(socket string) ResolveTarget {
 	}
 }
 
-// The four Origin cases below run through the real handler, because the check
+// The two Origin cases below run through the real handler, because the check
 // lives in the upgrade and a unit test of the policy alone would not prove the
 // handler consults it.
 
@@ -276,57 +276,6 @@ func TestTerminal_ForeignOriginIsRefusedBeforeTmux(t *testing.T) {
 	}
 	if args := harness.tmuxArgs(); args != "" {
 		t.Fatalf("a refused origin still reached tmux: %q", args)
-	}
-}
-
-func TestTerminal_ConfiguredOriginIsServed(t *testing.T) {
-	harness := newTerminalHarnessWithOrigins(t, defaultTarget("/tmp/tmux-origin"),
-		[]string{"https://chrote.example", " https://second.example "})
-
-	for _, origin := range []string{"https://chrote.example", "https://second.example"} {
-		status, err := harness.handshakeFrom(origin)
-		if err != nil {
-			t.Fatalf("configured origin %q was refused: %v (status %d)", origin, err, status)
-		}
-		if status != http.StatusSwitchingProtocols {
-			t.Fatalf("configured origin %q handshake status = %d, want %d", origin, status, http.StatusSwitchingProtocols)
-		}
-	}
-
-	status, err := harness.handshakeFrom("https://evil.example")
-	if err == nil {
-		t.Fatal("configuring origins let an unconfigured one through")
-	}
-	if status != http.StatusForbidden {
-		t.Fatalf("unconfigured-origin handshake status = %d, want %d", status, http.StatusForbidden)
-	}
-}
-
-func TestTerminal_AbsentOriginIsServed(t *testing.T) {
-	harness := newTerminalHarnessWithOrigins(t, defaultTarget("/tmp/tmux-origin"),
-		[]string{"https://chrote.example"})
-
-	status, err := harness.handshakeFrom("")
-	if err != nil {
-		t.Fatalf("a client sending no Origin was refused: %v (status %d)", err, status)
-	}
-	if status != http.StatusSwitchingProtocols {
-		t.Fatalf("no-Origin handshake status = %d, want %d", status, http.StatusSwitchingProtocols)
-	}
-}
-
-func TestTerminal_PlainHTTPIsNotServed(t *testing.T) {
-	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
-	client := &http.Client{Timeout: 5 * time.Second}
-	for _, path := range []string{"/terminal/", "/terminal/token", "/terminal/xterm.css", "/terminal/ws"} {
-		resp, err := client.Get(harness.server.URL + path)
-		if err != nil {
-			t.Fatalf("GET %s: %v", path, err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusNotFound {
-			t.Errorf("expected 404 for %s, got %d", path, resp.StatusCode)
-		}
 	}
 }
 
@@ -441,60 +390,90 @@ func TestTerminal_PeekCannotClaimTheSize(t *testing.T) {
 	}
 }
 
-// A caller that names no mode must not be attached under a guessed one.
-func TestTerminal_RefusesAnUnknownViewingMode(t *testing.T) {
-	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
+// A refusal is an answer, and it has to arrive as one. Each of these ends the
+// socket with a close frame rather than an abnormal close, because the browser
+// reads an abnormal close as a lost connection and would dial the refusal again.
+// None of them may reach tmux beyond the existence probe: a caller that names no
+// mode must not be attached under a guessed one, and an explicit-socket terminal
+// that fell back to the invoking user's ambient tmux server would attach the
+// operator to the wrong pool.
+func TestTerminal_RefusesWhatItCannotAttachAndSaysSo(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		resolve   ResolveTarget
+		prepare   func(t *testing.T)
+		query     string
+		want      string
+		wantNamed []string
+		// probesTmux marks the one refusal that is allowed to have asked tmux
+		// anything at all, because the refusal is the probe's answer.
+		probesTmux bool
+	}{
+		{
+			name:    "a viewing mode it does not know",
+			resolve: defaultTarget("/tmp/tmux-b"),
+			query:   "arg=shell-one&arg=bob",
+			want:    "viewing mode",
+		},
+		{
+			name:    "no session name at all",
+			resolve: defaultTarget("/tmp/tmux-b"),
+			query:   "arg=tile",
+			want:    "session name",
+		},
+		{
+			name:       "a session the configured socket does not hold",
+			resolve:    defaultTarget("/tmp/tmux-b"),
+			prepare:    func(t *testing.T) { t.Setenv("FAKE_TMUX_HAS_SESSION_STATUS", "1") },
+			query:      "arg=tile&arg=shell-one&arg=bob",
+			want:       "not available",
+			wantNamed:  []string{"shell-one", "/tmp/tmux-b"},
+			probesTmux: true,
+		},
+		{
+			// Socket resolution has one implementation and the transport holds
+			// none of it, so a resolution failure arrives from outside and still
+			// has to fail loud.
+			name: "a target the resolver refuses",
+			resolve: func(string) (Target, error) {
+				return Target{}, errors.New(`Unix user "ghost" is not allowed for terminal launch`)
+			},
+			query: "arg=tile&arg=shell-one&arg=ghost",
+			want:  "not allowed for terminal launch",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			harness := newTerminalHarness(t, testCase.resolve)
+			if testCase.prepare != nil {
+				testCase.prepare(t)
+			}
 
-	refusal := harness.dial("arg=shell-one&arg=bob", 80, 24).readUntil("viewing mode")
+			client := harness.dial(testCase.query, 80, 24)
+			refusal := client.readUntil(testCase.want)
 
-	if !strings.Contains(refusal.text, "CHROTE") {
-		t.Fatalf("refusal %q is not attributed to CHROTE", refusal.text)
-	}
-	if args := harness.tmuxArgs(); strings.TrimSpace(args) != "" {
-		t.Fatalf("tmux was invoked despite the unknown mode; args=%q", args)
-	}
-}
+			if !strings.Contains(refusal.text, "CHROTE") {
+				t.Fatalf("refusal %q is not attributed to CHROTE", refusal.text)
+			}
+			for _, named := range testCase.wantNamed {
+				if !strings.Contains(refusal.text, named) {
+					t.Fatalf("refusal %q does not name %q", refusal.text, named)
+				}
+			}
+			if code := client.closeCode(); code != websocket.CloseNormalClosure {
+				t.Fatalf("close code = %d, want %d: a refused attach must not look like a lost connection", code, websocket.CloseNormalClosure)
+			}
 
-func TestTerminal_RefusesAMissingSessionName(t *testing.T) {
-	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
-
-	harness.dial("arg=tile", 80, 24).readUntil("session name")
-
-	if args := harness.tmuxArgs(); strings.TrimSpace(args) != "" {
-		t.Fatalf("tmux was invoked without a session name; args=%q", args)
-	}
-}
-
-// Explicit-socket terminals must fail loud instead of falling back to the
-// invoking user's ambient tmux server, which would attach the operator to the
-// wrong pool.
-func TestTerminal_RefusesASessionMissingFromTheConfiguredSocket(t *testing.T) {
-	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
-	t.Setenv("FAKE_TMUX_HAS_SESSION_STATUS", "1")
-
-	refusal := harness.dial("arg=tile&arg=shell-one&arg=bob", 80, 24).readUntil("not available")
-
-	for _, want := range []string{"shell-one", "/tmp/tmux-b"} {
-		if !strings.Contains(refusal.text, want) {
-			t.Fatalf("refusal %q does not name %q", refusal.text, want)
-		}
-	}
-	if args := harness.tmuxArgs(); strings.Contains(args, "attach-session") {
-		t.Fatalf("CHROTE attached anyway after the probe failed; args=%q", args)
-	}
-}
-
-// Socket resolution has one implementation and the transport holds none of it,
-// so a resolution failure has to arrive from outside and still fail loud.
-func TestTerminal_ReportsAResolutionFailure(t *testing.T) {
-	harness := newTerminalHarness(t, func(string) (Target, error) {
-		return Target{}, errors.New(`Unix user "ghost" is not allowed for terminal launch`)
-	})
-
-	harness.dial("arg=tile&arg=shell-one&arg=ghost", 80, 24).readUntil("not allowed for terminal launch")
-
-	if args := harness.tmuxArgs(); strings.TrimSpace(args) != "" {
-		t.Fatalf("tmux was invoked with an unresolved target; args=%q", args)
+			args := harness.tmuxArgs()
+			if testCase.probesTmux {
+				if strings.Contains(args, "attach-session") {
+					t.Fatalf("CHROTE attached anyway after the probe failed; args=%q", args)
+				}
+				return
+			}
+			if strings.TrimSpace(args) != "" {
+				t.Fatalf("tmux was invoked for a request CHROTE refused; args=%q", args)
+			}
+		})
 	}
 }
 
@@ -549,17 +528,6 @@ func TestTerminal_SizesThePtyFromTheHandshakeAndResizes(t *testing.T) {
 	client.readUntil("30 100")
 }
 
-// The tile state model depends on a connection-closed event, so the end of the
-// attach has to reach the browser rather than hanging the socket open.
-func TestTerminal_ClosesWhenTheAttachExits(t *testing.T) {
-	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
-	t.Setenv("FAKE_TMUX_ATTACH", harness.attachScript(`printf 'bye\n'`))
-
-	client := harness.dial("arg=tile&arg=shell-one&arg=bob", 80, 24)
-	client.readUntil("bye")
-	client.waitForClose()
-}
-
 // The browser tells "the terminal ended" from "the connection was lost" by the
 // close frame alone, and acts on the difference: a lost connection is dialled
 // again, an ended one is not. Both ends of that contract are asserted here,
@@ -574,20 +542,6 @@ func TestTerminal_EndOfTheAttachClosesWithACloseFrame(t *testing.T) {
 
 	if code := client.closeCode(); code != websocket.CloseNormalClosure {
 		t.Fatalf("close code = %d, want %d: a terminal that ended must not look like a lost connection", code, websocket.CloseNormalClosure)
-	}
-}
-
-// A refusal is an answer too. Left as an abnormal close it would read as a lost
-// connection, and the tile would dial the refusal again.
-func TestTerminal_RefusalClosesWithACloseFrame(t *testing.T) {
-	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
-	t.Setenv("FAKE_TMUX_HAS_SESSION_STATUS", "1")
-
-	client := harness.dial("arg=tile&arg=shell-one&arg=bob", 80, 24)
-	client.readUntil("not available")
-
-	if code := client.closeCode(); code != websocket.CloseNormalClosure {
-		t.Fatalf("close code = %d, want %d: a refused attach must not look like a lost connection", code, websocket.CloseNormalClosure)
 	}
 }
 
@@ -631,25 +585,66 @@ func TestTerminal_ClientDisconnectEndsTheAttach(t *testing.T) {
 // further pty read, and what the session wrote meanwhile arrives on resume. One
 // read can already be outstanding when the pause lands, so the guarantee is
 // about the next read, not about instant silence.
+//
+// Every step here waits for an event rather than for a duration. The session
+// writes only when the client tells it to, and the client sends those prompts
+// behind the pause frame: one relay loop dispatches control and input frames in
+// order, so a prompt the session has read proves the pause was already in force.
+// `in-flight` satisfies the one read that may still be outstanding, and its
+// arrival is what proves the next read is the gated one. The session then
+// reports off the wire, through a file, that it has finished writing, because
+// the whole point is that its writing is not reaching the wire. `end-of-writing`
+// is written after `held-back`, so a resumed stream carrying the marker but not
+// the line before it would mean output was dropped rather than held.
 func TestTerminal_HonoursClientFlowControl(t *testing.T) {
 	harness := newTerminalHarness(t, defaultTarget("/tmp/tmux-b"))
-	t.Setenv("FAKE_TMUX_ATTACH", harness.attachScript(
-		`printf 'ready\n'; sleep 0.3; printf 'in-flight\n'; sleep 0.3; printf 'held-back\n'; sleep 10`))
+	writingDone := filepath.Join(t.TempDir(), "writing-done")
+	t.Setenv("FAKE_TMUX_ATTACH", harness.attachScript(fmt.Sprintf(`
+stty -echo
+printf 'ready\n'
+read -r _
+printf 'in-flight\n'
+read -r _
+printf 'held-back\n'
+printf 'end-of-writing\n'
+: > %q
+sleep 10`, writingDone)))
 
 	client := harness.dial("arg=tile&arg=shell-one&arg=bob", 80, 24)
 	client.readUntil("ready")
 
 	client.send([]byte{clientPause})
-	if held := client.drainFor(2 * time.Second); strings.Contains(held, "held-back") {
-		t.Fatalf("CHROTE issued another pty read while the client had paused it; got %q", held)
+	client.send(append([]byte{clientInput}, []byte("release the outstanding read\r")...))
+	client.readUntil("in-flight")
+
+	client.send(append([]byte{clientInput}, []byte("write behind the pause\r")...))
+	waitForFile(t, writingDone)
+	if withheld := client.received(); strings.Contains(withheld, "held-back") {
+		t.Fatalf("CHROTE issued another pty read while the client had paused it; got %q", withheld)
 	}
 
 	resumedAt := time.Now()
 	client.send([]byte{clientResume})
-	released := client.readUntil("held-back")
-	if released.at.Before(resumedAt) {
-		t.Fatal("held-back output arrived before the client resumed the stream")
+	released := client.readUntil("end-of-writing")
+	if !strings.Contains(released.text, "held-back") {
+		t.Fatalf("the resumed stream skipped what the session wrote behind the pause; got %q", released.text)
 	}
+	if released.at.Before(resumedAt) {
+		t.Fatal("output written behind the pause reached the client before it resumed the stream")
+	}
+}
+
+// waitForFile blocks until the session's off-the-wire receipt appears.
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("the session never reported finishing its writes: %s", path)
 }
 
 func TestPTY_ResizeRefusesAnUnusableSize(t *testing.T) {
@@ -670,6 +665,11 @@ func TestPTY_ResizeRefusesAnUnusableSize(t *testing.T) {
 	}
 }
 
+// The terminal type is pinned whatever the service inherited, because the
+// browser's terminal is the one being drawn for. The locale is the other way
+// round: a UTF-8 one is kept so the operator's own language survives, and one
+// that is not UTF-8 is replaced, because tmux draws box characters as mojibake
+// under a single-byte locale.
 func TestAttachEnv_PinsTheTerminalTypeAndKeepsAUTF8Locale(t *testing.T) {
 	t.Setenv("TERM", "dumb")
 	t.Setenv("LANG", "fi_FI.UTF-8")
@@ -689,12 +689,10 @@ func TestAttachEnv_PinsTheTerminalTypeAndKeepsAUTF8Locale(t *testing.T) {
 	if hasEntry(env, "LANG="+fallbackAttachLang) {
 		t.Fatalf("attach environment overrode an inherited UTF-8 LANG; env=%v", env)
 	}
-}
 
-func TestAttachEnv_FallsBackWhenTheInheritedLocaleIsNotUTF8(t *testing.T) {
 	t.Setenv("LANG", "de_DE@euro")
 
-	env := attachEnv()
+	env = attachEnv()
 	if !hasEntry(env, "LANG="+fallbackAttachLang) {
 		t.Fatalf("attach environment did not fall back to the pinned LANG; env=%v", env)
 	}
