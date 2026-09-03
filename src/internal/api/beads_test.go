@@ -317,9 +317,8 @@ func TestBeadsHandler_ListProjectsValidatesManualNestedWorkspace(t *testing.T) {
 	}
 }
 
-// makeSequencedBdCommand fakes a bd that answers a series of calls: the card
-// asks bd more than once, and the order of those questions is part of what the
-// handler promises.
+// makeSequencedBdCommand fakes a bd that answers a series of calls: how many
+// times a handler asks bd, and what it asks, is part of what it promises.
 func makeSequencedBdCommand(t *testing.T, outputs ...string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -533,22 +532,30 @@ func TestBeadsHandler_ListProjectsCarriesTheBeadPrefix(t *testing.T) {
 	}
 }
 
-func TestBeadsHandler_IssueDetailReadsBothDirectionsAndTheParentChain(t *testing.T) {
+func TestBeadsHandler_IssueDetailReadsTheWholeCardFromOneList(t *testing.T) {
 	rootDir := t.TempDir()
 	projectPath := filepath.Join(rootDir, "project")
 	makeValidBeadsWorkspace(t, projectPath)
 
 	t.Setenv("CHROTE_ROOTS", rootDir)
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
-	shown := `[{"_type":"issue","id":"test-ep1.1","title":"Shown","status":"open","issue_type":"task","priority":1,
-		"parent":"test-ep1","description":"What it is","design":"How","acceptance_criteria":"Done when","notes":"Later",
-		"updated_at":"2026-09-02T00:00:00Z",
-		"dependencies":[{"id":"test-ep1","title":"Epic","status":"open","dependency_type":"parent-child"},
-		                {"id":"test-blk","title":"Blocker","status":"open","dependency_type":"blocks"}]}]`
-	dependents := `[{"id":"test-ep1.1.1","title":"Child","status":"open","issue_type":"task","priority":2,"dependency_type":"parent-child"},
-		{"id":"test-waits","title":"Waiting","status":"open","issue_type":"task","priority":1,"dependency_type":"blocks"}]`
-	parent := `[{"_type":"issue","id":"test-ep1","title":"Epic","status":"open","issue_type":"epic","priority":1}]`
-	_, argsPath := makeSequencedBdCommand(t, shown, parent, dependents)
+	list := `[
+		{"_type":"issue","id":"test-root","title":"Root","status":"open","issue_type":"epic","priority":0},
+		{"_type":"issue","id":"test-ep1","title":"Epic","status":"open","issue_type":"epic","priority":1,"parent":"test-root",
+		 "dependencies":[{"depends_on_id":"test-root","type":"parent-child"}]},
+		{"_type":"issue","id":"test-ep1.1","title":"Shown","status":"open","issue_type":"task","priority":1,
+		 "parent":"test-ep1","description":"What it is","design":"How","acceptance_criteria":"Done when","notes":"Later",
+		 "updated_at":"2026-09-02T00:00:00Z",
+		 "dependencies":[{"depends_on_id":"test-ep1","type":"parent-child"},
+		                 {"depends_on_id":"test-blk","type":"blocks"},
+		                 {"depends_on_id":"other-far","type":"blocks"}]},
+		{"_type":"issue","id":"test-ep1.1.2","title":"Later child","status":"open","issue_type":"task","priority":2,"parent":"test-ep1.1"},
+		{"_type":"issue","id":"test-ep1.1.1","title":"Child","status":"open","issue_type":"task","priority":2,"parent":"test-ep1.1"},
+		{"_type":"issue","id":"test-blk","title":"Blocker","status":"open","issue_type":"task","priority":1},
+		{"_type":"issue","id":"test-waits","title":"Waiting","status":"open","issue_type":"task","priority":1,
+		 "dependencies":[{"depends_on_id":"test-ep1.1","type":"blocks"}]}
+	]`
+	_, argsPath := makeSequencedBdCommand(t, list, list)
 
 	handler := NewBeadsHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/beads/issue?path="+projectPath+"&id=test-ep1.1", nil)
@@ -558,11 +565,8 @@ func TestBeadsHandler_IssueDetailReadsBothDirectionsAndTheParentChain(t *testing
 	if rec.Code != http.StatusOK {
 		t.Fatalf("IssueDetail status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	wantCalls := []string{
-		"--json show test-ep1.1",
-		"--json show test-ep1",
-		"--json dep list test-ep1.1 --direction up",
-	}
+	// The whole card, whatever the depth of its chain, is one bd process.
+	wantCalls := []string{"--json list --status all --limit 0"}
 	if calls := readSequencedBdCalls(t, argsPath); !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("bd calls = %#v, want %#v", calls, wantCalls)
 	}
@@ -576,15 +580,34 @@ func TestBeadsHandler_IssueDetailReadsBothDirectionsAndTheParentChain(t *testing
 		bead["acceptance"] != "Done when" || bead["notes"] != "Later" {
 		t.Errorf("the card is missing the Bead's own text: %s", rec.Body.String())
 	}
-	links := map[string]string{"parents": "test-ep1", "children": "test-ep1.1.1", "blockedBy": "test-blk", "blocks": "test-waits"}
-	for field, wantID := range links {
+	links := map[string][]string{
+		"parents":   {"test-ep1", "test-root"},
+		"children":  {"test-ep1.1.1", "test-ep1.1.2"},
+		"blockedBy": {"test-blk", "other-far"},
+		"blocks":    {"test-waits"},
+	}
+	for field, wantIDs := range links {
 		items, ok := bead[field].([]interface{})
-		if !ok || len(items) != 1 {
-			t.Fatalf("%s = %v, want exactly one link: %s", field, bead[field], rec.Body.String())
+		if !ok {
+			t.Fatalf("%s = %v, want links: %s", field, bead[field], rec.Body.String())
 		}
-		if got := items[0].(map[string]interface{})["id"]; got != wantID {
-			t.Errorf("%s links to %v, want %s", field, got, wantID)
+		gotIDs := make([]string, 0, len(items))
+		for _, item := range items {
+			gotIDs = append(gotIDs, item.(map[string]interface{})["id"].(string))
 		}
+		if !reflect.DeepEqual(gotIDs, wantIDs) {
+			t.Errorf("%s links to %v, want %v", field, gotIDs, wantIDs)
+		}
+	}
+	if got := bead["parents"].([]interface{})[0].(map[string]interface{})["title"]; got != "Epic" {
+		t.Errorf("the nearest parent is named %v, want its title from the list", got)
+	}
+
+	// An id the store does not hold is a plain not-found, not a bd failure.
+	rec = httptest.NewRecorder()
+	handler.IssueDetail(rec, httptest.NewRequest(http.MethodGet, "/api/beads/issue?path="+projectPath+"&id=test-none", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("IssueDetail status for a missing id = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
 }
 

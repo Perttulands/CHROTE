@@ -2,10 +2,11 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import BeadCard from './BeadCard'
 import { DEFAULT_SETTINGS } from '../types'
-import { openBeadCard, resetBeadCardForTest } from '../beads/beadCard'
+import { closeBeadCard, openBeadCard, resetBeadCardForTest } from '../beads/beadCard'
 import { resetBeadProjectsForTest, setBeadProjects } from '../beads/beadIds'
+import { rememberBeadRows, resetKnownBeadsForTest } from '../beads/knownBeads'
 import { resetChordsForTest } from '../keys/chords'
-import type { BeadDetail } from '../beads/beadsApi'
+import type { BeadDetail, BeadRow } from '../beads/beadsApi'
 
 const mockState = vi.hoisted(() => ({
   openSendToSession: vi.fn(),
@@ -64,9 +65,29 @@ beforeEach(() => {
   setBeadProjects([{ name: 'chrote', path: '/srv/chrote', beadsPath: '/srv/chrote/.beads', prefix: 'chrote' }])
 })
 
+function row(overrides: Partial<BeadRow> & { id: string }): BeadRow {
+  return { title: `Title of ${overrides.id}`, status: 'open', type: 'task', priority: 1, blocked: false, ...overrides }
+}
+
+/** A fetch that answers only when the test says so. */
+function holdFetch() {
+  let release: (detail: BeadDetail) => void = () => {}
+  const asked = new Promise<void>(resolveAsked => {
+    mockState.fetchBead.mockImplementation(() => {
+      resolveAsked()
+      return new Promise<BeadDetail>(resolve => { release = resolve })
+    })
+  })
+  return async (detail: BeadDetail) => {
+    await asked
+    await act(async () => { release(detail) })
+  }
+}
+
 afterEach(() => {
   resetBeadCardForTest()
   resetBeadProjectsForTest()
+  resetKnownBeadsForTest()
   resetChordsForTest()
 })
 
@@ -155,6 +176,68 @@ describe('the Bead card', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy id' }))
 
     expect(mockState.copy).toHaveBeenCalledWith('chrote-5grx.15', 'chrote-5grx.15', mockState.announce)
+  })
+
+  it('opens at once from what the map holds and fills the text in beneath', async () => {
+    rememberBeadRows('/srv/chrote', [
+      row({ id: 'chrote-5grx', title: 'The epic', type: 'epic' }),
+      row({ id: 'chrote-5grx.15', parent: 'chrote-5grx', blocked: true, blockedBy: ['chrote-5grx.11'] }),
+      row({ id: 'chrote-5grx.11', title: 'Journeys' }),
+      row({ id: 'chrote-5grx.15.1', parent: 'chrote-5grx.15', title: 'A child' }),
+    ])
+    const settle = holdFetch()
+    render(<BeadCard />)
+
+    act(() => openBeadCard('chrote-5grx.15', '/srv/chrote'))
+
+    // The header and every relation are on screen in the same frame as the request.
+    expect(screen.getByText('Title of chrote-5grx.15')).toBeInTheDocument()
+    expect(screen.getByText('blocked')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /chrote-5grx$/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /chrote-5grx\.15\.1$/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /chrote-5grx\.11$/ })).toBeInTheDocument()
+    expect(screen.getByText('Reading…')).toBeInTheDocument()
+    expect(screen.queryByText('The card opens from a terminal id.')).toBeNull()
+
+    // What the row said is enough to hand the Bead on before the server answers.
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(mockState.openSendToSession).toHaveBeenCalledWith({
+      reference: 'bead chrote-5grx.15: Title of chrote-5grx.15',
+    })
+
+    await settle(CARD)
+
+    expect(await screen.findByText('The card opens from a terminal id.')).toBeInTheDocument()
+    expect(screen.queryByText('Reading…')).toBeNull()
+  })
+
+  it('never shows the previous Bead while the next one is read', async () => {
+    render(<BeadCard />)
+    act(() => openBeadCard('chrote-5grx.15'))
+    await screen.findByText('The card opens from a terminal id.')
+
+    holdFetch()
+    fireEvent.click(screen.getByRole('button', { name: 'chrote-5grx.6' }))
+
+    expect(screen.getByText('Reading chrote-5grx.6…')).toBeInTheDocument()
+    expect(screen.queryByText('Title of chrote-5grx.15')).toBeNull()
+    expect(screen.queryByText('The card opens from a terminal id.')).toBeNull()
+  })
+
+  it('reopens from what the session remembers and refreshes it behind', async () => {
+    render(<BeadCard />)
+    act(() => openBeadCard('chrote-5grx.15'))
+    await screen.findByText('The card opens from a terminal id.')
+    act(() => closeBeadCard())
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    mockState.fetchBead.mockClear()
+    holdFetch()
+    act(() => openBeadCard('chrote-5grx.15'))
+
+    expect(screen.getByText('The card opens from a terminal id.')).toBeInTheDocument()
+    expect(screen.queryByText('Reading…')).toBeNull()
+    await waitFor(() => expect(mockState.fetchBead).toHaveBeenCalledWith('/srv/chrote', 'chrote-5grx.15'))
   })
 
   it('offers the Bead to the tab that maps its project', async () => {
