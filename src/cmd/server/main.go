@@ -193,6 +193,11 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	libraryHandler := api.NewLibraryHandler(config.Library)
 	libraryHandler.RegisterRoutes(mux)
 
+	// The residents share the Library's configuration for the Librarian, so
+	// they are read once the Library is.
+	residentsHandler := api.NewResidentsHandler(api.LoadResidents(config.Library))
+	residentsHandler.RegisterRoutes(mux)
+
 	systemHandler := api.NewSystemHandler()
 	var stopSystemHistory context.CancelFunc = func() {}
 	if config.StartSystemHistory {
