@@ -1,13 +1,14 @@
 /**
- * Journey 7, keep the library (bead: chrote-5grx.17).
+ * Journey 7, keep the library (beads: chrote-5grx.17, chrote-5grx.55).
  *
- * One pass through the surface the browser is the point of: step into the
- * library, take a page off a shelf, read it, and ask the Librarian about it
- * from the front desk. Everything narrower — a date, a title, a state word —
- * is a unit test.
+ * One pass through the surface the browser is the point of: land on the map,
+ * take a page off a shelf, read it with its neighbours above it, turn the map
+ * over and back, open a neighbour from it, and ask the Librarian from the
+ * front desk. Everything narrower — a date, a title, where a label sits — is
+ * a unit test.
  */
 
-import { test, expect, allowBrowserConsoleMessage, type Page } from './fixtures'
+import { test, expect, type Page } from './fixtures'
 import { mockApiRoutes, mockBeadsApiRoutes, mockLibraryApiRoutes } from './mock-api'
 
 /** The Librarian's own session, answering a paste the way tmux would. */
@@ -43,12 +44,13 @@ async function mockLibrarianSend(page: Page, sends: string[]) {
   })
 }
 
+/** A page on the map, by the name it carries. */
+function node(page: Page, title: string) {
+  return page.locator(`.library-map [role="button"][aria-label="${title}"]`)
+}
+
 test.describe('The Library', () => {
-  test('steps into the library, opens a page from a shelf, and asks the desk', async ({ page }) => {
-    // The room asks the corpus for its own README and CLAUDE.md before it
-    // falls back to the shelves as cards. This corpus has neither, and a
-    // browser logs the misses.
-    allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 404')
+  test('lands on the map, reads a page with its neighbours, turns the map over, and asks the desk', async ({ page }) => {
     const sends: string[] = []
     await mockApiRoutes(page)
     await mockBeadsApiRoutes(page)
@@ -60,9 +62,15 @@ test.describe('The Library', () => {
     await page.click('.tab:has-text("Library")')
     await page.waitForSelector('.library-view')
 
-    // The reading room opens on the shelves themselves.
-    await expect(page.locator('.library-page-meta')).toContainText('3 pages on 2 shelves')
-    await expect(page.locator('.library-card', { hasText: 'preferences' })).toBeVisible()
+    // The library lands on the map: every shelf labelled, every link counted.
+    await expect(page.locator('.library-map-count')).toHaveText('3 pages · 2 shelves · 2 links · 1 shared tag')
+    await expect(page.locator('.library-map-cluster', { hasText: 'preferences · 2' })).toBeVisible()
+
+    // Pointing at a page lights what it touches; the lit dot is drawn by
+    // class, and the class is the only thing to read off an SVG.
+    await node(page, 'Test isolation').hover()
+    await expect(node(page, 'Workflow Preferences')).toHaveClass(/hot/)
+    await expect(node(page, 'Tool Preferences')).not.toHaveClass(/hot/)
 
     // A shelf, then a page off it.
     await page.click('.library-left .library-shelf:has-text("preferences")')
@@ -72,14 +80,33 @@ test.describe('The Library', () => {
     await expect(page.locator('.library-body')).toContainText('Prefer small, verifiable changes.')
     await expect(page.locator('.library-page-meta')).toContainText('preferences/workflow.md')
     await expect(page.locator('.library-history-message')).toHaveText('Record a workflow preference')
-    await expect(page.locator('.library-right')).toContainText('On preferences')
+    await expect(page.locator('.library-linked-from')).toContainText('Test isolation')
+
+    // The strip above the page holds its neighbours, and one of them opens.
+    const strip = page.locator('.library-strip')
+    await expect(strip).toContainText('Near this page')
+    await expect(strip.locator('[aria-label="Tool Preferences"]')).toBeVisible()
+
+    // Alt+R turns the map over with the page still on the table, and back.
+    await page.keyboard.press('Alt+r')
+    await expect(page.locator('.library-map-frame')).toBeVisible()
+    await expect(page.locator('.library-page')).toHaveCount(0)
+    await expect(node(page, 'Workflow Preferences')).toHaveClass(/hot/)
+
+    await node(page, 'Tool Preferences').click()
+    await expect(page.locator('.library-page-title-row h1')).toHaveText('Tool Preferences')
+
+    await page.keyboard.press('Alt+r')
+    await expect(page.locator('.library-map-frame')).toBeVisible()
+    await page.keyboard.press('Alt+r')
+    await expect(page.locator('.library-page-title-row h1')).toHaveText('Tool Preferences')
 
     // The front desk sends the question with the page as its first line, and
     // the status line is the receipt.
     await page.fill('.desk-ask', 'What else says this?')
     await page.press('.desk-ask', 'Enter')
 
-    await expect.poll(() => sends).toEqual(['library preferences/workflow.md\nWhat else says this?'])
+    await expect.poll(() => sends).toEqual(['library preferences/tools.md\nWhat else says this?'])
     await expect(page.locator('.status-line')).toContainText('Asked hq-deacon')
     await expect(page.locator('.desk-ask')).toHaveValue('')
   })

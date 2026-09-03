@@ -161,7 +161,8 @@ filesystem."
 
 **Steps.**
 
-1. Step into the library: shelves, and pages rendered from their Markdown.
+1. Step into the library: the map of its shelves and links, and pages rendered
+   from their Markdown with their neighbours above them.
 2. Search across everything, and read what changed recently.
 3. Fix an odd wording where you find it; each save is a commit attributed to the
    operator.
@@ -173,4 +174,5 @@ and the Send drawer (4).
 
 **End action.** A small manual edit, or Send to Session pointed at the page.
 
-**Chords.** `Alt+L` opens the Library tab; `Alt+S` sends the page on the table.
+**Chords.** `Alt+L` opens the Library tab; `Alt+S` sends the page on the table;
+`Alt+R` turns the map over.

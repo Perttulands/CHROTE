@@ -76,7 +76,7 @@ export const SCOPE_TITLES: Record<ChordScope, string> = {
 // registered the chords. Case matters, so `w` and `W` can both appear.
 const KEY_ORDER = [
   '1', '2', '3', '4', '5', '6', 'b', 'l', 'g', 'd', '?', 'k', 'Escape',
-  'w', 'W', '=', '-', '/', 'n', 'Tab', 'f', 'p', 's',
+  'w', 'W', '=', '-', '/', 'n', 'Tab', 'f', 'p', 's', 'r',
 ]
 
 /** How a key reads once it is a chord: `Alt+Plus`, never `Alt++`. */

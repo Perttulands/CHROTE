@@ -112,6 +112,33 @@ export function savePage(path: string, content: string, summary: string): Promis
   })
 }
 
+/** One page as the map draws it. */
+export interface LibraryGraphPage {
+  path: string
+  /** The top-level directory, or '' for a page at the root. */
+  shelf: string
+  title: string
+  words: number
+  /** When git last touched it; '' for a page git has never seen. */
+  updated: string
+  /** Still a proposal rather than an accepted page. */
+  candidate: boolean
+}
+
+/** The corpus as a graph: pages, the wiki links between them, the tags two pages share. */
+export interface LibraryGraph {
+  pages: LibraryGraphPage[]
+  /** [from, to] page paths. */
+  links: [string, string][]
+  /** [from, to, tag]. */
+  tags: [string, string, string][]
+  error?: string
+}
+
+export function fetchGraph(): Promise<LibraryGraph> {
+  return request<LibraryGraph>('/graph')
+}
+
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR

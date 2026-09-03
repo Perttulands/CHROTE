@@ -249,8 +249,9 @@ CHROTE_LIBRARY_BEADS=/absolute/path/to/corpus
 ```
 
 `GET /api/library/shelves` reports the root, the shelves and their page counts,
-and the two names above; `pages`, `page`, `search` and `changes` read the tree
-and its git log; `PUT /api/library/page` writes one page and commits it as the
+and the two names above; `pages`, `page`, `search`, `changes` and `graph` read
+the tree and its git log; `PUT /api/library/page` writes one page and commits it
+as the
 configured author, refusing a page that already carries somebody else's
 uncommitted change. Every path is validated inside the root, and CHROTE writes
 nowhere else in the corpus.

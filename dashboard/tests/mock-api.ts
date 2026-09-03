@@ -484,23 +484,44 @@ const mockLibraryPageContents: Record<string, { path: string; title: string; upd
   },
 }
 
+/** The same corpus as the map reads it: three pages, two links, one shared tag. */
+const mockLibraryGraph = {
+  pages: [
+    { path: 'knowledge/testing.md', shelf: 'knowledge', title: 'Test isolation', words: 60, updated: libraryChangedAt, candidate: false },
+    { path: 'preferences/tools.md', shelf: 'preferences', title: 'Tool Preferences', words: 30, updated: libraryChangedAt, candidate: false },
+    { path: 'preferences/workflow.md', shelf: 'preferences', title: 'Workflow Preferences', words: 200, updated: libraryChangedAt, candidate: false },
+  ],
+  links: [['knowledge/testing.md', 'preferences/workflow.md'], ['preferences/workflow.md', 'preferences/tools.md']],
+  tags: [['preferences/tools.md', 'preferences/workflow.md', 'tooling']],
+}
+
+/** Enough arrivals to overflow the rail at a short window. */
+const mockLibraryChanges = [
+  {
+    hash: 'c79783abc',
+    time: libraryChangedAt,
+    author: 'The Operator',
+    message: 'Record a workflow preference',
+    files: ['preferences/workflow.md'],
+  },
+  ...Array.from({ length: 14 }, (_, index) => ({
+    hash: `a${index.toString().padStart(6, '0')}`,
+    time: new Date(Date.now() - (index + 4) * 3600_000).toISOString(),
+    author: 'The Operator',
+    message: `Curate the knowledge shelf, pass ${index + 1}`,
+    files: ['knowledge/testing.md'],
+  })),
+]
+
 export async function mockLibraryApiRoutes(page: Page, options?: { shelves?: object }) {
   const flat = (route: Route, data: unknown) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) })
 
   await page.route('**/api/library/shelves**', route => flat(route, options?.shelves ?? mockLibraryShelves))
 
-  await page.route('**/api/library/changes**', route => flat(route, {
-    changes: [
-      {
-        hash: 'c79783abc',
-        time: libraryChangedAt,
-        author: 'The Operator',
-        message: 'Record a workflow preference',
-        files: ['preferences/workflow.md'],
-      },
-    ],
-  }))
+  await page.route('**/api/library/changes**', route => flat(route, { changes: mockLibraryChanges }))
+
+  await page.route('**/api/library/graph**', route => flat(route, mockLibraryGraph))
 
   await page.route('**/api/library/pages**', route => {
     const shelf = new URL(route.request().url()).searchParams.get('shelf') ?? ''
