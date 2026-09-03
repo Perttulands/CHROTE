@@ -9,6 +9,7 @@ import SessionPanel from './SessionPanel'
 import ScheduleEditor from './ScheduleEditor'
 import { CONFIRM_WINDOW_MS, useConfirmInPlace } from './confirmInPlace'
 import type { SessionsDockState } from './workspaceFilesState'
+import TableColumn from './TableColumn'
 import {
   describeSchedule,
   emptyScheduleForm,
@@ -702,6 +703,10 @@ function TaskDetail({
           </ul>
         )}
       </div>
+
+      {/* The Sessions panel here has the same row menu as anywhere, so what it
+          puts on the table is shown here too. */}
+      <TableColumn />
     </div>
   )
 }
