@@ -189,6 +189,7 @@ CHROTE_TMUX_SOCKET=$(quote_env_value "$tmux_mapping")
 CHROTE_BEADS_WORKSPACES=$(quote_env_value "$WORKSPACE")
 CHROTE_SESSION_DROPS_DIR=$(quote_env_value "$state_dir/session-drops")
 CHROTE_SCHEDULED_TASKS_DIR=$(quote_env_value "$state_dir/scheduled-tasks")
+CHROTE_AGENT_HOOKS_DIR=$(quote_env_value "$state_dir/agent-hooks")
 PATH=$(quote_env_value "$service_path")
 EOF
   chmod 0600 "$env_file"
@@ -351,7 +352,8 @@ main() {
   install -d -m 0700 "$config_dir" "$state_dir"
   install -d -m 0700 \
     "$state_dir/session-drops" \
-    "$state_dir/scheduled-tasks"
+    "$state_dir/scheduled-tasks" \
+    "$state_dir/agent-hooks"
 
   build_tmp="$(mktemp "$bin_dir/.chrote-server.XXXXXX")"
   trap 'rm -f "$build_tmp"' EXIT
@@ -359,6 +361,9 @@ main() {
   chmod 0755 "$build_tmp"
   mv -f "$build_tmp" "$binary"
   trap - EXIT
+  # The hook a launched agent reports through lives beside the server, which
+  # is where the server looks for it.
+  install -m 0755 "$SCRIPT_DIR/scripts/chrote-agent-event" "$bin_dir/chrote-agent-event"
 
   write_environment "$env_file" "$state_dir"
   [ -e "$secrets_file" ] || { : > "$secrets_file"; chmod 0600 "$secrets_file"; }

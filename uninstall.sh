@@ -77,6 +77,7 @@ fi
 
 rm -f \
   "$PREFIX/bin/chrote-server" \
+  "$PREFIX/bin/chrote-agent-event" \
   "$SERVICE_DIR/chrote.service" \
   "$CONFIG_HOME/chrote/chrote.env"
 

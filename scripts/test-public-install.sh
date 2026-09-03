@@ -281,13 +281,18 @@ TMUX_TMPDIR="$runtime_dir" \
   "$installer" "${install_args[@]}"
 
 installed_binary="$prefix/bin/chrote-server"
+installed_hook="$prefix/bin/chrote-agent-event"
 env_file="$config_home/chrote/chrote.env"
 unit_file="$service_dir/chrote.service"
 
-for path in "$installed_binary" "$env_file" "$unit_file"; do
+for path in "$installed_binary" "$installed_hook" "$env_file" "$unit_file"; do
   [ -f "$path" ] || { echo "missing installed path: $path" >&2; exit 1; }
 done
 [ -x "$installed_binary" ]
+# The hook a launched agent reports through is installed beside the server,
+# where the server looks for it, and is a script the pane's shell can run.
+[ -x "$installed_hook" ]
+sh -n "$installed_hook"
 # The terminal is served by chrote-server itself, so nothing else is installed
 # alongside it (ADR-0018).
 [ ! -e "$prefix/bin/ttyd" ]
@@ -296,6 +301,7 @@ done
 grep -F 'CHROTE_ROOTS=' "$env_file" | grep -Fq "$workspace"
 grep -F 'CHROTE_TMUX_SOCKET=' "$env_file" | grep -Fq "$(id -un)=$tmux_socket"
 grep -F 'CHROTE_SCHEDULED_TASKS_DIR=' "$env_file" | grep -Fq "$state_home/chrote/scheduled-tasks"
+grep -F 'CHROTE_AGENT_HOOKS_DIR=' "$env_file" | grep -Fq "$state_home/chrote/agent-hooks"
 grep -Fq "ExecStart=$installed_binary" "$unit_file"
 grep -Fq 'KillMode=process' "$unit_file"
 ! grep -Fq 'Environment=TMUX_TMPDIR=' "$unit_file"
@@ -372,7 +378,7 @@ CHROTE_INSTALL_PREFIX="$prefix" \
 CHROTE_SERVICE_DIR="$service_dir" \
   "$uninstaller" --yes --no-systemd
 
-for path in "$installed_binary" "$env_file" "$unit_file"; do
+for path in "$installed_binary" "$installed_hook" "$env_file" "$unit_file"; do
   [ ! -e "$path" ] || { echo "uninstaller left managed path: $path" >&2; exit 1; }
 done
 [ -d "$workspace" ]
