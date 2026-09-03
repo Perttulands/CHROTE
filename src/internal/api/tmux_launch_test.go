@@ -66,6 +66,9 @@ func TestCreateSessionStartsHarnessInRequestedFolder(t *testing.T) {
 	if response["cwd"] != "/srv/work/one" || response["harness"] != "claude-code" {
 		t.Fatalf("response = %#v, want cwd /srv/work/one and harness claude-code", response)
 	}
+	if response["flags"] != "--harness-flag" {
+		t.Fatalf("response = %#v, want the harness's default flags reported back", response)
+	}
 	if _, warned := response["warning"]; warned {
 		t.Fatalf("response warned about a command that was sent: %#v", response)
 	}
@@ -93,6 +96,65 @@ func TestCreateSessionWithoutHarnessSendsNoKeysAndReportsTheShell(t *testing.T) 
 	}
 	if response["cwd"] != "/srv/default-work" || response["harness"] != "shell" {
 		t.Fatalf("response = %#v, want the configured workdir and the shell harness", response)
+	}
+	if response["flags"] != "" {
+		t.Fatalf("response = %#v, want no flags for the bare shell", response)
+	}
+}
+
+func TestCreateSessionTypesTheRequestedFlagsLine(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		wantTyped string
+		wantFlags string
+	}{
+		{
+			name:      "a requested line replaces the harness defaults",
+			body:      `{"name":"claude-3","harness":"claude-code","flags":"--model fast --verbose"}`,
+			wantTyped: "claude --model fast --verbose",
+			wantFlags: "--model fast --verbose",
+		},
+		{
+			name:      "an empty line types the binary alone",
+			body:      `{"name":"claude-4","harness":"claude-code","flags":""}`,
+			wantTyped: "claude",
+			wantFlags: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, argsPath := installFakeTmux(t)
+			t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
+			t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/srv/default-work")
+
+			handler := NewTmuxHandlerWithLaunchConfig(launchTestConfig(t))
+			recorder := postCreateSession(t, handler, tt.body)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+			wantCall := "-S /tmp/tmux-a send-keys -t $42 -l " + tt.wantTyped
+			calls := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath))
+			typed := false
+			for _, call := range calls {
+				if call == wantCall {
+					typed = true
+				}
+			}
+			if !typed {
+				t.Fatalf("tmux calls = %#v, want one typing %q", calls, wantCall)
+			}
+
+			var response map[string]any
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode create response: %v; body=%s", err, recorder.Body.String())
+			}
+			if response["flags"] != tt.wantFlags {
+				t.Fatalf("response = %#v, want flags %q reported back", response, tt.wantFlags)
+			}
+		})
 	}
 }
 
@@ -125,10 +187,21 @@ func TestCreateSessionRefusesUnusableLaunchRequestsWithoutTouchingTmux(t *testin
 	tests := []struct {
 		name string
 		body string
+		// wantMessage, when set, is the message the operator must be given.
+		wantMessage string
 	}{
 		{name: "unknown harness", body: `{"name":"refused-1","harness":"emacs"}`},
 		{name: "relative cwd", body: `{"name":"refused-2","cwd":"work/one"}`},
 		{name: "single tilde cwd", body: `{"name":"refused-3","cwd":"~/work"}`},
+		{
+			name:        "a flags line with a control character",
+			body:        `{"name":"refused-4","harness":"claude-code","flags":"--model fast\nrm -rf /"}`,
+			wantMessage: "flags must be one line",
+		},
+		{
+			name: "flags for the harness that starts nothing",
+			body: `{"name":"refused-5","harness":"shell","flags":"--model fast"}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -144,6 +217,20 @@ func TestCreateSessionRefusesUnusableLaunchRequestsWithoutTouchingTmux(t *testin
 			}
 			if calls := readFakeCommandCalls(t, argsPath); len(calls) != 0 {
 				t.Fatalf("a refused launch still ran tmux: %#v", calls)
+			}
+			if tt.wantMessage == "" {
+				return
+			}
+			var refusal struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &refusal); err != nil {
+				t.Fatalf("decode refusal: %v; body=%s", err, recorder.Body.String())
+			}
+			if refusal.Error.Message != tt.wantMessage {
+				t.Fatalf("refusal message = %q, want %q", refusal.Error.Message, tt.wantMessage)
 			}
 		})
 	}

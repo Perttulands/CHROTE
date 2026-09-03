@@ -12,10 +12,17 @@ import (
 	"testing"
 )
 
+// testLaunchConfigJSON holds both shapes an operator can have written:
+// claude-code is a legacy entry with its flags inside the command, codex is a
+// split entry with a refreshed catalogue.
 const testLaunchConfigJSON = `{
   "harnesses": [
     {"id": "claude-code", "label": "Claude Code", "command": "claude --harness-flag"},
-    {"id": "codex", "label": "Codex", "command": "codex --harness-flag"},
+    {"id": "codex", "label": "Codex", "command": "codex", "defaultFlags": "--harness-flag",
+     "flags": [
+       {"name": "--model", "short": "-m", "value": "<model>", "description": "Model for the current session", "values": ["fast", "slow"]},
+       {"name": "--search", "description": "Enable web search"}
+     ]},
     {"id": "shell", "label": "Shell", "command": ""}
   ],
   "folders": ["/srv/work", "/srv", "~"]
@@ -50,12 +57,15 @@ func TestLoadLaunchConfig(t *testing.T) {
 			},
 		},
 		{
-			name:     "valid file is taken as written",
+			name:     "a command carrying flags is split into a binary and defaults",
 			contents: testLaunchConfigJSON,
 			want: LaunchConfig{
 				Harnesses: []LaunchHarness{
-					{ID: "claude-code", Label: "Claude Code", Command: "claude --harness-flag"},
-					{ID: "codex", Label: "Codex", Command: "codex --harness-flag"},
+					{ID: "claude-code", Label: "Claude Code", Command: "claude", DefaultFlags: "--harness-flag"},
+					{ID: "codex", Label: "Codex", Command: "codex", DefaultFlags: "--harness-flag", Flags: []LaunchFlag{
+						{Name: "--model", Short: "-m", Value: "<model>", Description: "Model for the current session", Values: []string{"fast", "slow"}},
+						{Name: "--search", Description: "Enable web search"},
+					}},
 					{ID: "shell", Label: "Shell"},
 				},
 				Folders: []string{"/srv/work", "/srv", "~"},
@@ -98,6 +108,26 @@ func TestLoadLaunchConfig(t *testing.T) {
 		{
 			name:     "a shell harness with a command fails",
 			contents: `{"harnesses":[{"id":"shell","label":"Shell","command":"claude"}],"folders":["/srv/work"]}`,
+			wantErr:  true,
+		},
+		{
+			name:     "a shell harness with default flags fails",
+			contents: `{"harnesses":[{"id":"shell","label":"Shell","command":"","defaultFlags":"--model fast"}],"folders":["/srv/work"]}`,
+			wantErr:  true,
+		},
+		{
+			name:     "a shell harness with a flag catalogue fails",
+			contents: `{"harnesses":[{"id":"shell","label":"Shell","command":"","flags":[{"name":"--model","description":"Model"}]}],"folders":["/srv/work"]}`,
+			wantErr:  true,
+		},
+		{
+			name:     "a catalogue flag that is not a flag fails",
+			contents: `{"harnesses":[{"id":"codex","label":"Codex","command":"codex","flags":[{"name":"model","description":"Model"}]}],"folders":["/srv/work"]}`,
+			wantErr:  true,
+		},
+		{
+			name:     "a catalogue flag without a description fails",
+			contents: `{"harnesses":[{"id":"codex","label":"Codex","command":"codex","flags":[{"name":"--model","description":"  "}]}],"folders":["/srv/work"]}`,
 			wantErr:  true,
 		},
 		{
@@ -146,7 +176,7 @@ func TestLoadLaunchConfig(t *testing.T) {
 	}
 }
 
-func TestLaunchHandlerServesIdsAndLabelsWithoutCommands(t *testing.T) {
+func TestLaunchHandlerServesTheBinaryDefaultFlagsAndCatalogue(t *testing.T) {
 	config, err := LoadLaunchConfig(writeLaunchConfigFile(t, testLaunchConfigJSON))
 	if err != nil {
 		t.Fatalf("load launch config: %v", err)
@@ -162,7 +192,7 @@ func TestLaunchHandlerServesIdsAndLabelsWithoutCommands(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
 	body := recorder.Body.String()
-	if strings.Contains(body, "--harness-flag") {
+	if strings.Contains(body, `"command"`) {
 		t.Fatalf("GET /api/launch leaked a harness command: %s", body)
 	}
 
@@ -173,10 +203,18 @@ func TestLaunchHandlerServesIdsAndLabelsWithoutCommands(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &response); err != nil {
 		t.Fatalf("decode /api/launch: %v; body=%s", err, body)
 	}
-	wantHarnesses := []map[string]any{
-		{"id": "claude-code", "label": "Claude Code"},
-		{"id": "codex", "label": "Codex"},
-		{"id": "shell", "label": "Shell"},
+	// Comparing whole objects keeps the browser's view exact: an added field
+	// is a leak and a missing one is a launcher that cannot offer flags.
+	var wantHarnesses []map[string]any
+	if err := json.Unmarshal([]byte(`[
+	  {"id": "claude-code", "label": "Claude Code", "binary": "claude", "defaultFlags": "--harness-flag", "flags": []},
+	  {"id": "codex", "label": "Codex", "binary": "codex", "defaultFlags": "--harness-flag", "flags": [
+	    {"name": "--model", "short": "-m", "value": "<model>", "description": "Model for the current session", "values": ["fast", "slow"]},
+	    {"name": "--search", "description": "Enable web search"}
+	  ]},
+	  {"id": "shell", "label": "Shell", "binary": "", "defaultFlags": "", "flags": []}
+	]`), &wantHarnesses); err != nil {
+		t.Fatalf("decode the expected harnesses: %v", err)
 	}
 	if !reflect.DeepEqual(response.Harnesses, wantHarnesses) {
 		t.Fatalf("harnesses = %#v, want %#v", response.Harnesses, wantHarnesses)
@@ -274,33 +312,77 @@ func TestResolveHarness(t *testing.T) {
 		t.Fatalf("load launch config: %v", err)
 	}
 
+	flagsLine := func(line string) *string { return &line }
+
 	tests := []struct {
-		name        string
-		requested   string
-		wantID      string
-		wantCommand string
+		name      string
+		requested string
+		// flags is nil when the request carried no flags field at all.
+		flags       *string
+		want        resolvedLaunch
 		wantErr     bool
+		wantErrText string
 	}{
-		{name: "absent means the bare shell", requested: "", wantID: "shell"},
-		{name: "the shell starts nothing", requested: "shell", wantID: "shell"},
-		{name: "a configured harness carries its command", requested: "claude-code", wantID: "claude-code", wantCommand: "claude --harness-flag"},
+		{name: "absent means the bare shell", requested: "", want: resolvedLaunch{harnessID: "shell"}},
+		{name: "the shell starts nothing", requested: "shell", want: resolvedLaunch{harnessID: "shell"}},
+		{
+			name:      "absent flags mean the harness defaults",
+			requested: "claude-code",
+			want:      resolvedLaunch{harnessID: "claude-code", command: "claude --harness-flag", flags: "--harness-flag"},
+		},
+		{
+			name:      "an empty line means the binary alone",
+			requested: "claude-code",
+			flags:     flagsLine(""),
+			want:      resolvedLaunch{harnessID: "claude-code", command: "claude"},
+		},
+		{
+			name:      "a requested line replaces the defaults",
+			requested: "claude-code",
+			flags:     flagsLine("--model fast --verbose"),
+			want:      resolvedLaunch{harnessID: "claude-code", command: "claude --model fast --verbose", flags: "--model fast --verbose"},
+		},
+		{
+			name:      "surrounding whitespace is not a flag",
+			requested: "codex",
+			flags:     flagsLine("  -m fast  "),
+			want:      resolvedLaunch{harnessID: "codex", command: "codex -m fast", flags: "-m fast"},
+		},
+		{
+			name:        "a control character is refused",
+			requested:   "claude-code",
+			flags:       flagsLine("--model fast\nrm -rf /"),
+			wantErr:     true,
+			wantErrText: flagsNotOneLineMessage,
+		},
+		{
+			name:        "a line past the bound is refused",
+			requested:   "claude-code",
+			flags:       flagsLine(strings.Repeat("-", maxLaunchFlagsBytes+1)),
+			wantErr:     true,
+			wantErrText: flagsNotOneLineMessage,
+		},
+		{name: "the shell takes no flags", requested: "shell", flags: flagsLine("--model fast"), wantErr: true},
 		{name: "an unknown id is refused", requested: "emacs", wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotID, gotCommand, err := config.resolveHarness(tt.requested)
+			got, err := config.resolveHarness(tt.requested, tt.flags)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("resolveHarness(%q) = %q/%q, want an error", tt.requested, gotID, gotCommand)
+					t.Fatalf("resolveHarness(%q) = %#v, want an error", tt.requested, got)
+				}
+				if tt.wantErrText != "" && err.Error() != tt.wantErrText {
+					t.Fatalf("resolveHarness(%q) failed with %q, want %q", tt.requested, err, tt.wantErrText)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("resolveHarness(%q): %v", tt.requested, err)
 			}
-			if gotID != tt.wantID || gotCommand != tt.wantCommand {
-				t.Fatalf("resolveHarness(%q) = %q/%q, want %q/%q", tt.requested, gotID, gotCommand, tt.wantID, tt.wantCommand)
+			if got != tt.want {
+				t.Fatalf("resolveHarness(%q) = %#v, want %#v", tt.requested, got, tt.want)
 			}
 		})
 	}

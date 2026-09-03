@@ -58,6 +58,9 @@ type CreateSessionRequest struct {
 	// Harness names a command from the launch configuration to start in the
 	// new session. Empty and "shell" start nothing.
 	Harness string `json:"harness,omitempty"`
+	// Flags is the line typed after the harness's binary. Absent means the
+	// harness's configured default flags; an empty string means none.
+	Flags *string `json:"flags,omitempty"`
 }
 
 // RenameSessionRequest is the request body for renaming a session
@@ -742,9 +745,9 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", cwdErr.Error())
 		return
 	}
-	harnessID, harnessCommand, harnessErr := h.launch.resolveHarness(req.Harness)
-	if harnessErr != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", harnessErr.Error())
+	launch, launchErr := h.launch.resolveHarness(req.Harness, req.Flags)
+	if launchErr != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", launchErr.Error())
 		return
 	}
 
@@ -778,14 +781,15 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		"success":   true,
 		"session":   name,
 		"cwd":       workDir,
-		"harness":   harnessID,
+		"harness":   launch.harnessID,
+		"flags":     launch.flags,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	}
-	if harnessCommand != "" {
-		if err := h.sendLaunchCommand(r.Context(), target.socket, session.ID, harnessCommand); err != nil {
+	if launch.command != "" {
+		if err := h.sendLaunchCommand(r.Context(), target.socket, session.ID, launch.command); err != nil {
 			// The session is a working login shell in the requested folder,
 			// so it stays and the operator is told what did not start.
-			response["warning"] = fmt.Sprintf("session created, but the %q command could not be started: %s", harnessID, tmuxErrorDiagnostic(err))
+			response["warning"] = fmt.Sprintf("session created, but the %q command could not be started: %s", launch.harnessID, tmuxErrorDiagnostic(err))
 		}
 	}
 	core.WriteJSON(w, http.StatusOK, response)

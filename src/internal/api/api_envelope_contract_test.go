@@ -111,7 +111,7 @@ func TestAPIEnvelopeContract_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.T)
 			path:     "/api/tmux/sessions",
 			body:     `{"name":"baseline-session"}`,
 			call:     handler.CreateSession,
-			wantKeys: []string{"cwd", "harness", "session", "success", "timestamp"},
+			wantKeys: []string{"cwd", "flags", "harness", "session", "success", "timestamp"},
 		},
 		{
 			name:     "delete session",
