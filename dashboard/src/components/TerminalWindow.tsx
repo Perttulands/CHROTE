@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
 import { Send } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
-import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { useTerminalPool } from './TerminalPool'
 import TerminalSurface from './TerminalSurface'
 import { getSessionBadges, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserInitial } from '../types'
@@ -12,7 +11,7 @@ import { useTheme } from '../theme/ThemeContext'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
 import { isDetached, tileStateFor, type TileState } from '../terminal/tileState'
 import { useSessionEvidence } from '../context/useSessionEvidence'
-import DismissiblePanel from './DismissiblePanel'
+import Menu, { type MenuGroup } from './Menu'
 import EmptyWindow from './EmptyWindow'
 
 interface SessionTagProps {
@@ -34,11 +33,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
-  const contextMenuPosition = useViewportMenuPosition<HTMLDivElement>(contextMenu, {
-    estimatedSize: { width: 240, height: 320 },
-  })
   const tagRef = useRef<HTMLDivElement | null>(null)
-  const firstActionRef = useRef<HTMLButtonElement | null>(null)
   const renameInputRef = useRef<HTMLInputElement | null>(null)
   const actualName = getSessionNameFromKey(sessionName)
   const unixUser = getSessionUserFromKey(sessionName)
@@ -110,10 +105,6 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   const openContextMenu = useCallback((x: number, y: number) => {
     setContextMenu({ x, y })
   }, [])
-  const runContextAction = (action: () => void, restoreFocus = true) => {
-    closeContextMenu(restoreFocus)
-    action()
-  }
   const startRename = () => {
     setRenameValue(actualName)
     setIsRenaming(true)
@@ -130,14 +121,60 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   }, [closeContextMenu, workspaceActive])
 
   useEffect(() => {
-    if (contextMenu) firstActionRef.current?.focus()
-  }, [contextMenu])
-
-  useEffect(() => {
     if (!isRenaming) return
     renameInputRef.current?.focus()
     renameInputRef.current?.select()
   }, [isRenaming])
+
+  const menuGroups: MenuGroup[] = [
+    {
+      id: 'work',
+      rows: [
+        { id: 'send', label: 'Send to session', chord: 'Alt+S', onSelect: () => openSendToSession(sessionKey) },
+        {
+          id: 'files',
+          label: 'Open files in working directory',
+          disabled: !workingDirectory || !onOpenFilesAtPath,
+          onSelect: () => {
+            if (workingDirectory && onOpenFilesAtPath) onOpenFilesAtPath(workingDirectory)
+          },
+        },
+      ],
+    },
+    {
+      id: 'frame',
+      rows: [
+        { id: 'reconnect', label: 'Reconnect frame', onSelect: () => pool.terminals.get(sessionName)?.reconnect() },
+        {
+          id: 'claim',
+          label: 'Claim session',
+          reason: pinnedSize?.detail ?? CLAIM_EXPLANATION,
+          disabled: !!pinnedSize,
+          onSelect: () => pool.terminals.get(sessionName)?.claim(),
+        },
+        {
+          id: 'refit',
+          label: 'Refit frame',
+          reason: pinnedSize?.detail,
+          disabled: !!pinnedSize,
+          onSelect: () => pool.terminals.get(sessionName)?.fit(),
+        },
+        { id: 'rename', label: 'Rename session', onSelect: startRename },
+      ],
+    },
+    {
+      id: 'end',
+      rows: [
+        {
+          id: 'kill',
+          label: 'Kill session',
+          danger: true,
+          confirmLabel: 'Confirm kill',
+          onSelect: () => { void deleteSession(actualName, resolvedUser) },
+        },
+      ],
+    },
+  ]
 
   return (
     <>
@@ -208,90 +245,13 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
       </div>
 
       {contextMenu && (
-        <DismissiblePanel onDismiss={() => closeContextMenu()} panelPosition="fixed">
-          <div
-            ref={contextMenuPosition.ref}
-            className="session-context-menu"
-            style={contextMenuPosition.style}
-            role="menu"
-            aria-label={`Session actions for ${displayName}`}
-            onClick={event => event.stopPropagation()}
-            onKeyDown={(event) => {
-              if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-              event.preventDefault()
-              const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
-              if (items.length === 0) return
-              const current = items.indexOf(document.activeElement as HTMLButtonElement)
-              const next = event.key === 'Home'
-                ? 0
-                : event.key === 'End'
-                  ? items.length - 1
-                  : event.key === 'ArrowDown'
-                    ? (current + 1) % items.length
-                    : (current - 1 + items.length) % items.length
-              items[next]?.focus()
-            }}
-          >
-            <button ref={firstActionRef} role="menuitem" className="session-context-item" onClick={() => runContextAction(() => openSendToSession(sessionKey))}>
-              <span className="session-context-icon" aria-hidden="true">↗</span>
-              Send to session
-            </button>
-            <button role="menuitem" className="session-context-item" onClick={() => runContextAction(() => pool.terminals.get(sessionName)?.reconnect())}>
-              <span className="session-context-icon" aria-hidden="true">↻</span>
-              Reconnect frame
-            </button>
-            <button
-              role="menuitem"
-              className="session-context-item"
-              disabled={!!pinnedSize}
-              title={pinnedSize?.detail ?? CLAIM_EXPLANATION}
-              onClick={() => runContextAction(() => pool.terminals.get(sessionName)?.claim())}
-            >
-              <span className="session-context-icon" aria-hidden="true">◎</span>
-              <span className="session-context-stack">
-                Claim session
-                <span className="session-context-reason">{pinnedSize?.detail ?? CLAIM_EXPLANATION}</span>
-              </span>
-            </button>
-            <button
-              role="menuitem"
-              className="session-context-item"
-              disabled={!!pinnedSize}
-              title={pinnedSize?.detail}
-              onClick={() => runContextAction(() => pool.terminals.get(sessionName)?.fit())}
-            >
-              <span className="session-context-icon" aria-hidden="true">↔</span>
-              <span className="session-context-stack">
-                Refit frame
-                {pinnedSize && <span className="session-context-reason">{pinnedSize.detail}</span>}
-              </span>
-            </button>
-            <button
-              className="session-context-item"
-              role="menuitem"
-              disabled={!workingDirectory || !onOpenFilesAtPath}
-              onClick={() => {
-                if (workingDirectory && onOpenFilesAtPath) runContextAction(() => onOpenFilesAtPath(workingDirectory))
-              }}
-            >
-              <span className="session-context-icon" aria-hidden="true">▣</span>
-              Open files in working directory
-            </button>
-            <button role="menuitem" className="session-context-item" onClick={() => runContextAction(startRename, false)}>
-              <span className="session-context-icon" aria-hidden="true">✎</span>
-              Rename session
-            </button>
-            <div className="session-context-divider" />
-            <button
-              className="session-context-item session-context-danger"
-              role="menuitem"
-              onClick={() => runContextAction(() => { void deleteSession(actualName, resolvedUser) })}
-            >
-              <span className="session-context-icon" aria-hidden="true">✕</span>
-              Kill session
-            </button>
-          </div>
-        </DismissiblePanel>
+        <Menu
+          at={contextMenu}
+          label={`Session actions for ${displayName}`}
+          estimatedSize={{ width: 240, height: 300 }}
+          onClose={() => closeContextMenu()}
+          groups={menuGroups}
+        />
       )}
     </>
   )

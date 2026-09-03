@@ -2,9 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { useSession } from '../context/SessionContext'
 import TerminalWindow, { CLAIM_EXPLANATION } from './TerminalWindow'
-import DismissiblePanel from './DismissiblePanel'
+import Menu, { type MenuGroup } from './Menu'
 import { useMediaQuery } from '../hooks/useMediaQuery'
-import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import type { WorkspaceId } from '../types'
 import { useTerminalPool } from './TerminalPool'
 
@@ -27,10 +26,6 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
   const lastConsumedRevealRequestId = useRef(0)
   const [refitNonce, setRefitNonce] = useState(0)
   const [controlsMenu, setControlsMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
-  const controlsMenuPosition = useViewportMenuPosition<HTMLDivElement>(
-    controlsMenu.show ? { x: controlsMenu.x, y: controlsMenu.y } : null,
-    { estimatedSize: { width: 220, height: 130 } },
-  )
   const visibleWindows = windows.slice(0, windowCount)
 
   // Ensure valid mobile index when configuration changes
@@ -62,7 +57,6 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
       if (sessionName) sessionNames.add(sessionName)
     }))
     sessionNames.forEach(sessionName => pool.terminals.get(sessionName)?.reconnect())
-    closeControlsMenu()
   }
 
   // The sessions this device is actually showing: the active binding of each
@@ -81,12 +75,10 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
 
   const claimSessionsInView = () => {
     sessionsInView().forEach(sessionName => pool.terminals.get(sessionName)?.claim())
-    closeControlsMenu()
   }
 
   const refitTerminalLayout = () => {
     setRefitNonce(n => n + 1)
-    closeControlsMenu()
   }
 
   // Get grid class based on window count
@@ -101,6 +93,28 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
       default: return 'grid-2'
     }
   }
+
+  const maintenanceGroups: MenuGroup[] = [
+    {
+      id: 'frames',
+      rows: [
+        {
+          id: 'reconnect',
+          label: 'Reconnect frames',
+          disabled: visibleWindows.every(window => window.boundSessions.length === 0),
+          onSelect: reconnectFrames,
+        },
+        {
+          id: 'claim',
+          label: 'Claim all sessions in view',
+          reason: CLAIM_EXPLANATION,
+          disabled: sessionsInView().size === 0,
+          onSelect: claimSessionsInView,
+        },
+        { id: 'refit', label: 'Refit terminal layout', onSelect: refitTerminalLayout },
+      ],
+    },
+  ]
 
   return (
     <div className="terminal-area">
@@ -163,7 +177,7 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
           title="Terminal maintenance actions"
           onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect()
-            setControlsMenu({ show: true, x: rect.right, y: rect.bottom + 4 })
+            setControlsMenu({ show: true, x: rect.right, y: rect.bottom })
           }}
         >
           ⋯
@@ -171,39 +185,13 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
       </div>
 
       {controlsMenu.show && (
-        <DismissiblePanel onDismiss={closeControlsMenu} panelPosition="fixed">
-          <div
-            ref={controlsMenuPosition.ref}
-            className="session-context-menu"
-            style={controlsMenuPosition.style}
-          >
-            <button className="session-context-item" onClick={reconnectFrames} disabled={visibleWindows.every(window => window.boundSessions.length === 0)}>
-              <span className="session-context-icon">↻</span>
-              Reconnect frames
-            </button>
-            <button
-              className="session-context-item"
-              onClick={claimSessionsInView}
-              disabled={sessionsInView().size === 0}
-              title={CLAIM_EXPLANATION}
-            >
-              <span className="session-context-icon" aria-hidden="true">◎</span>
-              <span className="session-context-stack">
-                Claim all sessions in view
-                <span className="session-context-reason">{CLAIM_EXPLANATION}</span>
-              </span>
-            </button>
-            <button
-              className="session-context-item"
-              onClick={refitTerminalLayout}
-              aria-label="Refit terminal layout"
-              title="Refit terminal layout"
-            >
-              <span className="session-context-icon" aria-hidden="true">↔</span>
-              Refit
-            </button>
-          </div>
-        </DismissiblePanel>
+        <Menu
+          at={{ x: controlsMenu.x, y: controlsMenu.y }}
+          label="Terminal maintenance actions"
+          estimatedSize={{ width: 220, height: 130 }}
+          onClose={closeControlsMenu}
+          groups={maintenanceGroups}
+        />
       )}
 
       <div className={`terminal-grid ${getGridClass()}`} data-workspace={workspaceId}>

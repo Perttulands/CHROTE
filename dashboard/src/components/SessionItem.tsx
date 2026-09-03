@@ -6,8 +6,7 @@ import { getSessionBadges, getSessionKey, getTerminalLabel, getTerminalUserIniti
 import { SessionCommandMark, SessionLabel } from './sessionLabel'
 import { identityColorFor } from '../theme/theme'
 import { useTheme } from '../theme/ThemeContext'
-import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
-import DismissiblePanel from './DismissiblePanel'
+import Menu, { type MenuAction, type MenuGroup } from './Menu'
 
 interface SessionItemProps {
   session: TmuxSession
@@ -27,13 +26,8 @@ function SessionItem({ session }: SessionItemProps) {
   const assignment = assignedSessions.get(assignmentKey)
   const isAssigned = !!assignment
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ show: false, x: 0, y: 0 })
-  const contextMenuPosition = useViewportMenuPosition<HTMLDivElement>(
-    contextMenu.show ? { x: contextMenu.x, y: contextMenu.y } : null,
-    { estimatedSize: { width: 240, height: 360 } },
-  )
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
-  const [showAssignSubmenu, setShowAssignSubmenu] = useState(false)
   const renameInputRef = useRef<HTMLInputElement>(null)
 
 
@@ -108,7 +102,6 @@ function SessionItem({ session }: SessionItemProps) {
       longPressTimer.current = null
       cancelPendingTouchDrag()
       setContextMenu({ show: true, x: clientX, y: clientY })
-      setShowAssignSubmenu(false)
     }, 500)
   }, [cancelPendingTouchDrag, clearLongPressTimer])
 
@@ -125,25 +118,21 @@ function SessionItem({ session }: SessionItemProps) {
     e.preventDefault()
     e.stopPropagation()
     setContextMenu({ show: true, x: e.clientX, y: e.clientY })
-    setShowAssignSubmenu(false)
   }, [])
 
   const closeContextMenu = useCallback(() => {
     setContextMenu({ show: false, x: 0, y: 0 })
-    setShowAssignSubmenu(false)
   }, [])
 
-  const handleDelete = useCallback(async () => {
-    closeContextMenu()
-    await deleteSession(session.name, session.unixUser)
-  }, [deleteSession, session.name, session.unixUser, closeContextMenu])
+  const handleDelete = useCallback(() => {
+    void deleteSession(session.name, session.unixUser)
+  }, [deleteSession, session.name, session.unixUser])
 
 
   const handleStartRename = useCallback(() => {
     setRenameValue(session.name)
     setIsRenaming(true)
-    closeContextMenu()
-  }, [session.name, closeContextMenu])
+  }, [session.name])
 
   const handleRenameSubmit = useCallback(async () => {
     if (renameValue && renameValue !== session.name) {
@@ -166,25 +155,21 @@ function SessionItem({ session }: SessionItemProps) {
     )
     if (!workspaceId) return
     addSessionToWindow(workspaceId, windowId, session.name, session.unixUser)
-    closeContextMenu()
-  }, [addSessionToWindow, workspaces, workspaceIds, session.name, session.unixUser, closeContextMenu])
+  }, [addSessionToWindow, workspaces, workspaceIds, session.name, session.unixUser])
 
   const handleUnassign = useCallback(() => {
     if (assignment) {
       removeSessionFromWindow(assignment.workspaceId, assignment.windowId, sessionKey)
     }
-    closeContextMenu()
-  }, [assignment, removeSessionFromWindow, sessionKey, closeContextMenu])
+  }, [assignment, removeSessionFromWindow, sessionKey])
 
   const handlePeek = useCallback(() => {
     openFloatingModal(sessionKey)
-    closeContextMenu()
-  }, [openFloatingModal, sessionKey, closeContextMenu])
+  }, [openFloatingModal, sessionKey])
 
   const handleOpenSendToSession = useCallback(() => {
     openSendToSession(sessionKey)
-    closeContextMenu()
-  }, [openSendToSession, sessionKey, closeContextMenu])
+  }, [openSendToSession, sessionKey])
 
   const handleClick = useCallback(() => {
     handleSessionClick(sessionKey)
@@ -217,6 +202,40 @@ function SessionItem({ session }: SessionItemProps) {
 
   const dragLabel = `Drag ${session.name}${session.unixUser ? ` (Unix user ${session.unixUser})` : ''}`
   const badges = getSessionBadges(session)
+
+  const windowRows: MenuAction[] = workspaceIds.flatMap(wsId => {
+    const ws = workspaces[wsId]
+    return ws.windows.slice(0, ws.windowCount).map((w, index): MenuAction => ({
+      id: `${wsId}-${w.id}`,
+      label: `${wsId === 'terminal1' ? '' : `${getTerminalLabel(wsId)} - `}Window ${index + 1}`,
+      checked: assignment?.windowId === w.id,
+      onSelect: () => handleAssignToWindow(w.id),
+    }))
+  })
+
+  const menuGroups: MenuGroup[] = [
+    {
+      id: 'look',
+      rows: [
+        { id: 'peek', label: 'Peek', chord: 'Alt+P', onSelect: handlePeek },
+        { id: 'send', label: 'Send to session', chord: 'Alt+S', onSelect: handleOpenSendToSession },
+      ],
+    },
+    {
+      id: 'place',
+      rows: [
+        { id: 'attach', label: 'Attach to window', submenu: windowRows },
+        ...(isAssigned ? [{ id: 'unassign', label: 'Unassign', onSelect: handleUnassign }] : []),
+        { id: 'rename', label: 'Rename', onSelect: handleStartRename },
+      ],
+    },
+    {
+      id: 'end',
+      rows: [
+        { id: 'kill', label: 'Kill session', danger: true, confirmLabel: 'Confirm kill', onSelect: handleDelete },
+      ],
+    },
+  ]
 
   return (
     <>
@@ -288,7 +307,7 @@ function SessionItem({ session }: SessionItemProps) {
             event.preventDefault()
             event.stopPropagation()
             const rect = event.currentTarget.getBoundingClientRect()
-            setContextMenu({ show: true, x: rect.right, y: rect.bottom + 4 })
+            setContextMenu({ show: true, x: rect.right, y: rect.bottom })
           }}
         >
           ⋯
@@ -296,77 +315,13 @@ function SessionItem({ session }: SessionItemProps) {
       </div>
 
       {contextMenu.show && (
-        <DismissiblePanel onDismiss={closeContextMenu} panelPosition="fixed">
-          <div
-            ref={contextMenuPosition.ref}
-            className="session-context-menu"
-          style={contextMenuPosition.style}
-          onClick={e => e.stopPropagation()}
-        >
-          <button className="session-context-item" onClick={handleStartRename}>
-            <span className="session-context-icon">✎</span>
-            Rename
-          </button>
-          <button className="session-context-item" onClick={handlePeek}>
-            <span className="session-context-icon">◉</span>
-            Peek
-          </button>
-          <button className="session-context-item" onClick={handleOpenSendToSession}>
-            <span className="session-context-icon">↗</span>
-            Send to Session
-          </button>
-          <div
-            className="session-context-submenu-trigger"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              className="session-context-item"
-              aria-expanded={showAssignSubmenu}
-              onClick={() => setShowAssignSubmenu(open => !open)}
-            >
-              <span className="session-context-icon">◫</span>
-              Attach to Window
-              <span className="session-context-arrow">▶</span>
-            </button>
-
-            {showAssignSubmenu && (
-              <div className="session-context-submenu">
-                {workspaceIds.flatMap((wsId) => {
-                  const ws = workspaces[wsId]
-                  return ws.windows.slice(0, ws.windowCount).map((w, idx) => {
-                    const isCurrentWindow = assignment?.windowId === w.id
-                    const labelPrefix = wsId === 'terminal1' ? '' : `${getTerminalLabel(wsId)} - `
-                    return (
-                      <button
-                        key={w.id}
-                        className={`session-context-item ${isCurrentWindow ? 'active' : ''}`}
-                        onClick={() => handleAssignToWindow(w.id)}
-                      >
-                        {labelPrefix}Window {idx + 1}
-                        {isCurrentWindow && <span className="session-context-check">✓</span>}
-                      </button>
-                    )
-                  })
-                })}
-              </div>
-            )}
-          </div>
-
-          {isAssigned && (
-            <button className="session-context-item" onClick={handleUnassign}>
-              <span className="session-context-icon">⊘</span>
-              Unassign
-            </button>
-          )}
-
-          <div className="session-context-divider" />
-
-          <button className="session-context-item session-context-danger" onClick={handleDelete}>
-            <span className="session-context-icon">✕</span>
-            Kill Session
-          </button>
-          </div>
-        </DismissiblePanel>
+        <Menu
+          at={{ x: contextMenu.x, y: contextMenu.y }}
+          label={`Session actions for ${session.name}`}
+          estimatedSize={{ width: 240, height: 240 }}
+          onClose={closeContextMenu}
+          groups={menuGroups}
+        />
       )}
     </>
   )

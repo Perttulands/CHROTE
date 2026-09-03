@@ -64,8 +64,9 @@ The interface is monochrome except where colour carries meaning. Four uses live:
 | Unix-user identity | `--identity-0` … | Which account owns this session |
 
 Everything else is gone: per-window accent colours, hashed per-user hues, the
-tmux status bar hue, theme-button glows, and per-severity toast colours. A toast
-reporting a failure uses the error token; every other toast is plain.
+tmux status bar hue, theme-button glows, and per-severity notification colours.
+A status line reporting a failure uses the error token; every other line is
+plain.
 
 Identity colours come from the theme, assigned to the server's `terminalUsers`
 in order so a user is the same colour on every device. A user the server does
@@ -135,6 +136,8 @@ colour tokens and no glow tokens.
 - **Harness mark.** `claude` shows the Claude Code mark and `codex` the Codex
   mark. A shell shows nothing, because a shell is the resting state. Any other
   command shows its own name as dim text, no prefix and no border.
+- **Stability.** Panes stay put through session changes, and a control the
+  operator hits repeatedly does not move under him.
 
 ## Launcher
 
@@ -173,7 +176,7 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | `Alt+P` | Peek the focused tile's session |
 | `Alt+A` | Sessions panel |
 | `Alt+O` | Files panel |
-| `Alt+K` | Keys panel |
+| `Alt+K` | Keybindings panel |
 
 `Alt+L` opens the Library tab and is registered once that tab exists. `Plus` and
 `Minus` are matched by the character the layout produces, not by `Shift`, so
@@ -181,21 +184,16 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 
 - **Leader.** `Ctrl+Shift+Space` is discovery, not the daily path. It is taken
   before the key reaches the pty and again at document level, so it answers
-  inside a focused tile as well as outside one, and it opens a short window in
-  which the bare key runs the same action as the `Alt` chord.
+  inside a focused tile as well as outside one, and it opens the panel below.
 - **Toggle.** A text button at the right of the tab bar reads `Keys on` or
-  `Keys off`. It is a device-local setting, on by default, and while it is off
-  CHROTE intercepts nothing anywhere.
-- **Strip.** While the leader window is open — until the next key, `Escape`, or a
-  short timeout — a strip along the bottom of the workspace lists every chord in
-  scope, the `Alt` chord first and the bare key second and smaller, with the
-  keys pressed so far echoed at its left. Nothing echoes outside that window.
-- **Panel.** `Alt+K`, or leader then `?`, opens a searchable list of every
-  registered chord grouped by scope; the search reads both columns and clicking
-  an entry runs it.
-- **Scopes.** `global` chords are always listed, `workspace` chords when a
-  terminal tab is active, `tile` chords when a tile is focused. Scope decides
-  what the strip and the panel show, and what a chord can reach.
+  `Keys off`: device-local, on by default, and off means nothing is intercepted.
+- **Panel.** The leader and `Alt+K` open the same centred list of every chord in
+  scope, as `CHORD → action`. Typing filters it, `Enter` runs the current row.
+- **Echo.** A registered chord that fires shows its key caps at the foot of the
+  workspace for 800 ms. Nothing else echoes, because nothing else was taken.
+- **Scopes.** `global` chords list always, `workspace` chords while a terminal
+  tab is active, `tile` chords while a tile is focused. Scope decides what the
+  panel shows and what a chord can reach.
 - Plain `/` and `?` keep working outside a terminal, as they do today.
 
 ## Hand-off
@@ -204,34 +202,36 @@ Send to Session is the one way to hand work to an agent. Every object that can
 be handed over opens it: a tile, a session row, Peek, a file, a diff, a Bead, a
 library page, an annotated element.
 
-- **A drawer, not a modal.** It docks as a column at the right edge of the
-  workspace and the grid narrows to fit, so the tile it targets stays visible.
-  Only on a narrow viewport does it overlay.
+- **A drawer, not a modal.** It docks at the right and the grid narrows to fit,
+  so the tile it targets stays visible; only a narrow viewport makes it overlay.
 - **A reference, then the note.** Each entry point passes one line the agent can
   act on — a path, a Bead id and title, a library page, a component and its file.
   The drawer shows that line first, styled read-only, and puts the cursor in the
   note beneath it.
 - **A target.** The focused tile's session by default, a searchable picker
-  otherwise, and a "new agent" entry that opens the launcher carrying the
-  message.
+  otherwise, and a "new agent" entry that opens the launcher with the message.
 - **One primary action.** Send pastes and submits. Pasting without submitting is
   the secondary action, for a prompt the operator wants to read before it runs.
 - **A receipt.** The tile scrolls to the bottom and the drawer closes; a failure
   keeps the drawer open with the server's own message.
 
-## Effects
+## Floating surfaces
 
-No scanlines, no glow, no decorative motion. Modals keep a plain shadow. Motion
-survives only where it confirms an action.
-
-## Layout rules
-
-- Keep terminal panes stable during session changes.
-- Avoid layout shifts in controls that users hit repeatedly.
-- Preserve visible context around destructive actions.
-- Use sidebars/panels for persistent operational surfaces.
-- Use popovers/context menus for local edits.
-- Prefer progressive detail over wall-of-text help in the main workspace.
+A menu is a flat sheet of words attached flush to the edge of the control that
+opened it: the action with its chord at the right, hairlines between groups, no
+icons, no radius and no blur, and the highlighted row taking
+`--surface-secondary` and a 2px `--accent` bar. A sheet docks to an edge and
+takes a share of the workspace with no backdrop — Peek at the left, snapped to
+the nearest tile boundary at or below 60% so no tile is cut mid-glyph — so
+`Escape` closes it while a click outside still means what that click meant.
+Every announcement lands on the status line, a 28px footer across the full width
+of the window beneath both the Sessions panel and the workspace, carrying the
+last event with its time, where only a failure takes colour. Nothing asks a
+question in a dialog: a destructive control reads its own confirmation until a
+second press within three seconds runs it, a rename happens in the object's own
+place, and neither `window.prompt` nor `window.confirm` appears anywhere. No
+scanlines, no glow, no decorative motion: motion survives only where it confirms
+an action.
 
 ## Copy tone
 

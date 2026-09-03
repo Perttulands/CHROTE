@@ -1,31 +1,44 @@
 /**
- * Every chord CHROTE knows, searchable, grouped by the scope that offers it.
- * It replaces the static shortcuts overlay: this list is the registry itself,
- * so a chord that exists is listed and a chord that is listed can be run from
- * here by clicking it. The Alt chord is the first column and the bare leader
- * key the second; the search reads both.
+ * Every chord CHROTE knows, in one centred list.
+ *
+ * It is the registry itself rather than a written manual: a chord that exists
+ * is listed, and a chord that is listed runs from here. Typing filters, the
+ * arrows move the current row, Enter runs it and Escape closes. There is no
+ * backdrop — the panel is content-sized and the workspace behind it stays
+ * readable — which is the whole difference between a list and a dialog.
+ *
+ * The leader opens it and then closes its own window, because from here the
+ * next key is search text, not a chord.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { LEADER_LABEL, SCOPE_TITLES, directChordLabel, useLeader, type Chord, type ChordScope } from './chords'
+import { LEADER_LABEL, chordCaps, directChordLabel, useLeader, type Chord } from './chords'
 import './KeysPanel.css'
-
-const SCOPE_ORDER: ChordScope[] = ['global', 'workspace', 'tile']
 
 interface KeysPanelProps {
   isOpen: boolean
   onClose: () => void
 }
 
+/** How a chord reads on a row: `ALT + SHIFT + W`, the way a key cap is printed. */
+export function chordDisplay(chord: Chord): string {
+  if (chord.direct === undefined) return ''
+  return chordCaps(chord).map(cap => cap.label.toUpperCase()).join(' + ')
+}
+
 export default function KeysPanel({ isOpen, onClose }: KeysPanelProps) {
   const { allChords } = useLeader()
   const [query, setQuery] = useState('')
+  const [cursor, setCursor] = useState(0)
   const searchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!isOpen) return
     setQuery('')
+    setCursor(0)
     searchRef.current?.focus()
+    // Escape closes the panel from wherever the cursor happens to be, including
+    // the terminal the chord was pressed over.
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       event.preventDefault()
@@ -35,17 +48,19 @@ export default function KeysPanel({ isOpen, onClose }: KeysPanelProps) {
     return () => document.removeEventListener('keydown', closeOnEscape)
   }, [isOpen, onClose])
 
-  const groups = useMemo(() => {
+  const rows = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    // Both columns are searchable: "alt+s" and "s" find the same chord.
+    // Both columns are searchable: "alt+s", "alt + s" and "send" find one chord.
     const matches = (chord: Chord) => needle === '' ||
       chord.label.toLowerCase().includes(needle) ||
-      chord.key.toLowerCase().includes(needle) ||
+      chordDisplay(chord).toLowerCase().includes(needle) ||
       (chord.direct !== undefined && directChordLabel(chord.direct).toLowerCase().includes(needle))
-    return SCOPE_ORDER
-      .map(scope => ({ scope, chords: allChords.filter(chord => chord.scope === scope && matches(chord)) }))
-      .filter(group => group.chords.length > 0)
+    return allChords.filter(matches)
   }, [allChords, query])
+
+  useEffect(() => {
+    setCursor(current => (current < rows.length ? current : 0))
+  }, [rows.length])
 
   if (!isOpen) return null
 
@@ -54,45 +69,56 @@ export default function KeysPanel({ isOpen, onClose }: KeysPanelProps) {
     chord.run()
   }
 
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      if (rows.length === 0) return
+      const delta = event.key === 'ArrowDown' ? 1 : -1
+      setCursor(current => (current + delta + rows.length) % rows.length)
+      return
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      const chord = rows[cursor]
+      if (chord) run(chord)
+    }
+  }
+
   return (
-    <div className="keys-panel-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose() }}>
-      <div className="keys-panel" role="dialog" aria-modal="true" aria-label="Keys">
-        <div className="keys-panel-header">
-          <span className="keys-panel-title">Keys</span>
-          <span className="keys-panel-leader">Alt and a key, or {LEADER_LABEL} then the bare key</span>
-          <button type="button" className="keys-panel-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
+    <div className="keys-panel" role="dialog" aria-label="Keybindings" onKeyDown={handleKeyDown}>
+      <div className="keys-panel-search-row">
         <input
           ref={searchRef}
           className="keys-panel-search"
           type="text"
           value={query}
-          placeholder="Search chords"
-          aria-label="Search chords"
+          placeholder="Keybindings…"
+          aria-label="Search keybindings"
           onChange={event => setQuery(event.target.value)}
         />
-        <div className="keys-panel-body">
-          {groups.length === 0 && <p className="keys-panel-empty">No chord matches “{query}”.</p>}
-          {groups.map(group => (
-            <section key={group.scope} className="keys-panel-group">
-              <h3 className="keys-panel-group-title">{SCOPE_TITLES[group.scope]}</h3>
-              {group.chords.map(chord => (
-                <button
-                  key={chord.id}
-                  type="button"
-                  className="keys-panel-chord"
-                  onClick={() => run(chord)}
-                >
-                  <span className="keys-panel-key">
-                    {chord.direct ? directChordLabel(chord.direct) : chord.key}
-                  </span>
-                  <span className="keys-panel-leader-key">{chord.direct ? chord.key : ''}</span>
-                  <span className="keys-panel-label">{chord.label}</span>
-                </button>
-              ))}
-            </section>
-          ))}
-        </div>
+      </div>
+      <div className="keys-panel-body">
+        {rows.length === 0 && <p className="keys-panel-empty">No chord matches “{query}”.</p>}
+        {rows.map((chord, index) => (
+          <button
+            key={chord.id}
+            type="button"
+            className={index === cursor ? 'keys-panel-chord current' : 'keys-panel-chord'}
+            onMouseEnter={() => setCursor(index)}
+            onClick={() => run(chord)}
+          >
+            <span className="keys-panel-key">{chordDisplay(chord)}</span>
+            <span className="keys-panel-arrow" aria-hidden="true">→</span>
+            <span className="keys-panel-label">{chord.label}</span>
+          </button>
+        ))}
+        {query.trim() === '' && (
+          <div className="keys-panel-chord keys-panel-leader-row">
+            <span className="keys-panel-key">{LEADER_LABEL.toUpperCase().replace(/\+/g, ' + ')}</span>
+            <span className="keys-panel-arrow" aria-hidden="true">→</span>
+            <span className="keys-panel-label">Keybindings</span>
+          </div>
+        )}
       </div>
     </div>
   )

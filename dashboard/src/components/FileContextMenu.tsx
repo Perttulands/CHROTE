@@ -1,6 +1,5 @@
 import type { FileItem } from './FilesView/types'
-import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
-import DismissiblePanel from './DismissiblePanel'
+import Menu, { type MenuAction, type MenuGroup } from './Menu'
 
 interface FileContextMenuProps {
   x: number
@@ -49,55 +48,76 @@ export function FileContextMenu({
   onCopyCurrentPath,
   onToggleCurrentPathPin,
 }: FileContextMenuProps) {
-  const menuPosition = useViewportMenuPosition<HTMLDivElement>(
-    { x, y },
-    { estimatedSize: { width: 220, height: 320 } },
-  )
+  const selectedPaths: MenuAction[] = onCopySelectedPaths
+    ? [{ id: 'copy-selected', label: 'Copy selected paths', onSelect: onCopySelectedPaths }]
+    : []
+
+  const groups: MenuGroup[] = item === null
+    ? [
+      {
+        id: 'make',
+        rows: [
+          { id: 'new-file', label: 'New file', onSelect: onNewFile },
+          { id: 'new-folder', label: 'New folder', onSelect: onNewFolder },
+          { id: 'upload', label: 'Upload', onSelect: onUpload },
+          { id: 'refresh', label: 'Refresh', onSelect: onRefresh },
+        ],
+      },
+      {
+        id: 'folder',
+        rows: [
+          { id: 'copy-current', label: 'Copy current folder path', onSelect: onCopyCurrentPath },
+          ...selectedPaths,
+          {
+            id: 'pin-current',
+            label: currentPathPinned ? 'Unpin current folder' : 'Pin current folder',
+            onSelect: onToggleCurrentPathPin,
+          },
+        ],
+      },
+    ]
+    : [
+      {
+        id: 'open',
+        rows: item.isDir
+          ? [{ id: 'open-folder', label: 'Open folder', onSelect: () => onOpen(item) }]
+          : [
+            { id: 'open', label: 'Open', onSelect: () => onOpen(item) },
+            { id: 'download', label: 'Download', onSelect: () => onDownload(item) },
+          ],
+      },
+      {
+        id: 'item',
+        rows: [
+          { id: 'rename', label: 'Rename', onSelect: () => onRename(item) },
+          { id: 'pin', label: itemPinned ? 'Unpin' : 'Pin', onSelect: () => onTogglePin(item) },
+          { id: 'copy-path', label: 'Copy path', onSelect: () => onCopyPath(item.path) },
+          ...selectedPaths,
+          { id: 'copy-relative', label: 'Copy relative path', onSelect: () => onCopyRelativePath(item.path) },
+          { id: 'open-parent', label: 'Open parent folder', onSelect: () => onOpenParent(item.path) },
+        ],
+      },
+      {
+        id: 'end',
+        rows: [
+          {
+            id: 'delete',
+            label: 'Delete',
+            danger: true,
+            onSelect: () => onDelete(item),
+          },
+        ],
+      },
+    ]
 
   return (
-    <DismissiblePanel onDismiss={onClose} panelZIndex={2200} panelPosition="fixed">
-      <div ref={menuPosition.ref} className="fb-context-menu" style={menuPosition.style}>
-        {item?.isDir && (
-          <button className="fb-context-item" type="button" onClick={() => onOpen(item)}>Open Folder</button>
-        )}
-        {item && !item.isDir && (
-          <>
-            <button className="fb-context-item" type="button" onClick={() => onOpen(item)}>Open</button>
-            <button className="fb-context-item" type="button" onClick={() => onDownload(item)}>Download</button>
-          </>
-        )}
-        {!item && (
-          <>
-            <button className="fb-context-item" type="button" onClick={onNewFile}>New File</button>
-            <button className="fb-context-item" type="button" onClick={onNewFolder}>New Folder</button>
-            <button className="fb-context-item" type="button" onClick={onUpload}>Upload</button>
-            <button className="fb-context-item" type="button" onClick={onRefresh}>Refresh</button>
-            <div className="fb-context-divider" />
-            <button className="fb-context-item" type="button" onClick={onCopyCurrentPath}>Copy Current Folder Path</button>
-            {onCopySelectedPaths && (
-              <button className="fb-context-item" type="button" onClick={onCopySelectedPaths}>Copy Selected Path(s)</button>
-            )}
-            <button className="fb-context-item" type="button" onClick={onToggleCurrentPathPin}>
-              {currentPathPinned ? 'Unpin Current Folder' : 'Pin Current Folder'}
-            </button>
-          </>
-        )}
-        {item && (
-          <>
-            <div className="fb-context-divider" />
-            <button className="fb-context-item" type="button" onClick={() => onRename(item)}>Rename</button>
-            <button className="fb-context-item" type="button" onClick={() => onTogglePin(item)}>{itemPinned ? 'Unpin' : 'Pin'}</button>
-            <button className="fb-context-item" type="button" onClick={() => onCopyPath(item.path)}>Copy Path</button>
-            {onCopySelectedPaths && (
-              <button className="fb-context-item" type="button" onClick={onCopySelectedPaths}>Copy Selected Path(s)</button>
-            )}
-            <button className="fb-context-item" type="button" onClick={() => onCopyRelativePath(item.path)}>Copy Relative Path</button>
-            <button className="fb-context-item" type="button" onClick={() => onOpenParent(item.path)}>Open Parent Folder</button>
-            <div className="fb-context-divider" />
-            <button className="fb-context-item fb-context-danger" type="button" onClick={() => onDelete(item)}>Delete</button>
-          </>
-        )}
-      </div>
-    </DismissiblePanel>
+    <Menu
+      at={{ x, y }}
+      label={item ? `Actions for ${item.name}` : 'Folder actions'}
+      zIndex={2200}
+      estimatedSize={{ width: 220, height: 300 }}
+      onClose={onClose}
+      groups={groups}
+    />
   )
 }

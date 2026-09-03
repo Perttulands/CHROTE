@@ -171,7 +171,7 @@ test.describe('terminal drag lifecycle', () => {
     await expectTagAssignment(firstWindow, secondWindow, 1, 0)
 
     await row.click({ button: 'right' })
-    await page.getByRole('button', { name: /Unassign/i }).click()
+    await page.getByRole('menuitem', { name: /Unassign/i }).click()
     await expectTagAssignment(firstWindow, secondWindow, 0, 0)
     await expect(row).not.toHaveClass(/assigned/)
   })

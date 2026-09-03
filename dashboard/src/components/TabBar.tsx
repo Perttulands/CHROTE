@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { isFeatureEnabled } from '../featureFlags'
 import { useSession } from '../context/SessionContext'
-import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { getTerminalLabel, isTerminalWorkspaceId } from '../types'
 import type { WorkspaceId } from '../types'
 import DismissiblePanel from './DismissiblePanel'
+import Menu, { type MenuGroup } from './Menu'
 
 export type Tab = WorkspaceId | 'files' | 'beads' | 'services' | 'scheduled' | 'server' | 'settings' | 'help'
 
@@ -28,21 +28,32 @@ interface TabBarProps {
   activeTab: Tab
   onTabChange: (tab: Tab) => void
   onShowKeys?: () => void
-  onShowPresets?: () => void
 }
 
-function TabBar({ activeTab, onTabChange, onShowKeys, onShowPresets }: TabBarProps) {
-  const [keysMenuOpen, setKeysMenuOpen] = useState(false)
+interface TabMenuState {
+  x: number
+  y: number
+  workspaceId: WorkspaceId
+}
+
+function TabBar({ activeTab, onTabChange, onShowKeys }: TabBarProps) {
+  const [keysMenu, setKeysMenu] = useState<{ x: number; y: number } | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [tabMenu, setTabMenu] = useState<{ show: boolean; x: number; y: number; workspaceId: WorkspaceId | null; submenu: string | null }>({ show: false, x: 0, y: 0, workspaceId: null, submenu: null })
-  const tabMenuPosition = useViewportMenuPosition<HTMLDivElement>(
-    tabMenu.show ? { x: tabMenu.x, y: tabMenu.y } : null,
-    { estimatedSize: { width: 230, height: 210 } },
-  )
-  const { settings, updateSettings, saveCurrentLayout, loadPreset, layoutPresets, clearWorkspaceAssignments, workspaceIds } = useSession()
+  const [tabMenu, setTabMenu] = useState<TabMenuState | null>(null)
+  // Naming a preset happens in the menu, in the row the operator chose.
+  const [presetName, setPresetName] = useState<string | null>(null)
+  // Renaming a tab happens in the tab, in the tab bar, like a session tag.
+  const [renaming, setRenaming] = useState<{ workspaceId: WorkspaceId; value: string } | null>(null)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  const { settings, updateSettings, saveCurrentLayout, loadPreset, deletePreset, layoutPresets, clearWorkspaceAssignments, workspaceIds } = useSession()
 
   const isMobile = useMediaQuery('(max-width: 768px)')
 
+  useEffect(() => {
+    if (!renaming) return
+    renameInputRef.current?.focus()
+    renameInputRef.current?.select()
+  }, [renaming?.workspaceId])
 
   const tabs: TabConfig[] = [
     ...workspaceIds.map((id): InternalTab => ({ id, label: settings.terminalLabels[id]?.trim() || getTerminalLabel(id) })),
@@ -65,101 +76,161 @@ function TabBar({ activeTab, onTabChange, onShowKeys, onShowPresets }: TabBarPro
 
   const activeTabLabel = tabs.find(t => t.id === activeTab)?.label || 'Menu'
 
-  const closeTabMenu = () => setTabMenu({ show: false, x: 0, y: 0, workspaceId: null, submenu: null })
+  const closeTabMenu = () => {
+    setTabMenu(null)
+    setPresetName(null)
+  }
   const toggleMobileMenu = () => {
     closeTabMenu()
-    setKeysMenuOpen(false)
+    setKeysMenu(null)
     setMobileMenuOpen(open => !open)
   }
-  const toggleKeysMenu = () => {
-    closeTabMenu()
-    setMobileMenuOpen(false)
-    setKeysMenuOpen(open => !open)
-  }
   // The toggle is device-local and states what it is, not what pressing it
-  // does: "Keys on" means chords are live. Leader then K turns them off, and
-  // this button is how they come back.
+  // does: "Keys on" means chords are live. The panel's own row turns them off,
+  // and this button is how they come back.
   const keysEnabled = settings.keysEnabled
   const toggleKeys = () => {
-    setKeysMenuOpen(false)
+    setKeysMenu(null)
     updateSettings({ keysEnabled: !keysEnabled })
   }
 
-  const renameTab = () => {
-    if (!tabMenu.workspaceId) return
-    const label = window.prompt('Terminal tab label', settings.terminalLabels[tabMenu.workspaceId] || getTerminalLabel(tabMenu.workspaceId))?.trim() ?? ''
+  const commitRename = () => {
+    if (!renaming) return
     updateSettings({
-      terminalLabels: {
-        ...settings.terminalLabels,
-        [tabMenu.workspaceId]: label,
-      },
+      terminalLabels: { ...settings.terminalLabels, [renaming.workspaceId]: renaming.value.trim() },
     })
-    closeTabMenu()
+    setRenaming(null)
   }
 
-  const saveLayoutFromTab = () => {
-    const name = window.prompt('Layout preset name')?.trim()
+  const commitPresetName = () => {
+    const name = (presetName ?? '').trim()
     if (name) saveCurrentLayout(name)
     closeTabMenu()
   }
 
-  const terminalTabMenu = tabMenu.workspaceId
-  const activeTerminalWorkspace = isTerminalWorkspaceId(activeTab, workspaceIds)
-    ? activeTab
-    : null
-  const openActiveTabMenu = (button: HTMLButtonElement) => {
+  const activeTerminalWorkspace = isTerminalWorkspaceId(activeTab, workspaceIds) ? activeTab : null
+  const openActiveTabMenu = (anchor: HTMLElement) => {
     if (!activeTerminalWorkspace) return
-    const rect = button.getBoundingClientRect()
-    setKeysMenuOpen(false)
+    const rect = anchor.getBoundingClientRect()
+    setKeysMenu(null)
     setMobileMenuOpen(false)
-    setTabMenu({ show: true, x: rect.left, y: rect.bottom + 4, workspaceId: activeTerminalWorkspace, submenu: null })
+    setPresetName(null)
+    setTabMenu({ x: rect.left, y: rect.bottom, workspaceId: activeTerminalWorkspace })
   }
-  const tabOptionsMenu = terminalTabMenu && tabMenu.show ? (
-    <DismissiblePanel onDismiss={closeTabMenu} panelPosition="fixed">
-      <div ref={tabMenuPosition.ref} className="session-context-menu" style={tabMenuPosition.style}>
-      <button className="session-context-item" onClick={renameTab}>
-        <span className="session-context-icon">✎</span>
-        Rename tab label
-      </button>
-      <button className="session-context-item" onClick={saveLayoutFromTab}>
-        <span className="session-context-icon">▣</span>
-        Save layout as preset
-      </button>
-      <div className="session-context-submenu-trigger">
-        <button
-          className="session-context-item"
-          aria-expanded={tabMenu.submenu === 'preset'}
-          onClick={() => setTabMenu(prev => ({ ...prev, submenu: prev.submenu === 'preset' ? null : 'preset' }))}
-        >
-          <span className="session-context-icon">⊞</span>
-          Restore layout preset
-          <span className="session-context-arrow">▶</span>
-        </button>
-        {tabMenu.submenu === 'preset' && (
-          <div className="session-context-submenu">
-            {layoutPresets.length === 0 ? (
-              <button className="session-context-item" disabled>No presets</button>
-            ) : layoutPresets.map(preset => (
-              <button key={preset.id} className="session-context-item" onClick={() => { loadPreset(preset.id); closeTabMenu() }}>
-                {preset.name}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+
+  const presetRows = layoutPresets.length === 0
+    ? [{ id: 'preset-none', label: 'No presets', disabled: true }]
+    : layoutPresets.map(preset => ({
+      id: `restore-${preset.id}`,
+      label: preset.name,
+      onSelect: () => loadPreset(preset.id),
+    }))
+
+  const tabMenuGroups: MenuGroup[] = tabMenu === null ? [] : [
+    {
+      id: 'tab',
+      rows: [
+        {
+          id: 'rename',
+          label: 'Rename tab',
+          onSelect: () => setRenaming({
+            workspaceId: tabMenu.workspaceId,
+            value: settings.terminalLabels[tabMenu.workspaceId] || getTerminalLabel(tabMenu.workspaceId),
+          }),
+        },
+      ],
+    },
+    {
+      id: 'layout',
+      rows: presetName === null
+        ? [
+          { id: 'save-preset', label: 'Save layout as preset', keepOpen: true, onSelect: () => setPresetName('') },
+          { id: 'restore-preset', label: 'Restore preset', submenu: presetRows },
+          ...(layoutPresets.length > 0
+            ? [{
+              id: 'delete-preset',
+              label: 'Delete preset',
+              danger: true,
+              submenu: layoutPresets.map(preset => ({
+                id: `delete-${preset.id}`,
+                label: preset.name,
+                danger: true,
+                confirmLabel: `Confirm delete ${preset.name}`,
+                onSelect: () => deletePreset(preset.id),
+              })),
+            }]
+            : []),
+        ]
+        : [
+          {
+            id: 'preset-name',
+            node: (
+              <input
+                className="menu-inline-input"
+                autoFocus
+                placeholder="Preset name"
+                maxLength={30}
+                value={presetName}
+                onChange={event => setPresetName(event.target.value)}
+                onKeyDown={event => {
+                  event.stopPropagation()
+                  if (event.key === 'Enter') commitPresetName()
+                  if (event.key === 'Escape') setPresetName(null)
+                }}
+              />
+            ),
+          },
+        ],
+    },
+    {
+      id: 'assignments',
+      rows: [
+        {
+          id: 'clear',
+          label: 'Clear tab assignments',
+          danger: true,
+          confirmLabel: 'Confirm clear',
+          onSelect: () => clearWorkspaceAssignments(tabMenu.workspaceId),
+        },
+      ],
+    },
+  ]
+
+  const renderTab = (tab: TabConfig) => {
+    if (!tab.external && renaming?.workspaceId === tab.id) {
+      return (
+        <input
+          key={tab.id}
+          ref={renameInputRef}
+          className="tab-rename-input"
+          aria-label={`Rename ${tab.label}`}
+          value={renaming.value}
+          onChange={event => setRenaming({ workspaceId: renaming.workspaceId, value: event.target.value })}
+          onKeyDown={event => {
+            event.stopPropagation()
+            if (event.key === 'Enter') commitRename()
+            if (event.key === 'Escape') setRenaming(null)
+          }}
+          onBlur={commitRename}
+        />
+      )
+    }
+    return (
       <button
-        className="session-context-item"
-        onClick={() => {
-          clearWorkspaceAssignments(terminalTabMenu)
-          closeTabMenu()
+        key={tab.id}
+        className={`tab ${!tab.external && activeTab === tab.id ? 'active' : ''} ${tab.external ? 'external' : ''}`}
+        onClick={() => handleClick(tab)}
+        onContextMenu={event => {
+          if (tab.external || tab.id !== activeTab || activeTerminalWorkspace === null) return
+          event.preventDefault()
+          openActiveTabMenu(event.currentTarget)
         }}
+        title={tab.external ? `Open ${tab.label.replace(' ↗', '')} in new tab` : undefined}
       >
-        <span className="session-context-icon">⌫</span>
-        Clear tab assignments
+        {tab.label}
       </button>
-      </div>
-    </DismissiblePanel>
-  ) : null
+    )
+  }
 
   return (
     <div className={`tab-bar ${isMobile ? 'mobile-mode' : ''}`}>
@@ -191,17 +262,6 @@ function TabBar({ activeTab, onTabChange, onShowKeys, onShowPresets }: TabBarPro
 
               <div className="mobile-nav-divider"></div>
 
-              {onShowPresets && (
-                <button
-                  className="mobile-nav-item"
-                  onClick={() => {
-                    onShowPresets()
-                    setMobileMenuOpen(false)
-                  }}
-                >
-                 ⊞ Layouts
-                </button>
-              )}
               {activeTerminalWorkspace && (
                 <button
                   className="mobile-nav-item"
@@ -229,7 +289,7 @@ function TabBar({ activeTab, onTabChange, onShowKeys, onShowPresets }: TabBarPro
                   setMobileMenuOpen(false)
                 }}
               >
-                Keys panel
+                Keybindings
               </button>
               <button
                 className="mobile-nav-item"
@@ -247,76 +307,59 @@ function TabBar({ activeTab, onTabChange, onShowKeys, onShowPresets }: TabBarPro
       ) : (
         <>
           <div className="tab-bar-tabs">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                className={`tab ${!tab.external && activeTab === tab.id ? 'active' : ''} ${tab.external ? 'external' : ''}`}
-                onClick={() => handleClick(tab)}
-                title={tab.external ? `Open ${tab.label.replace(' ↗', '')} in new tab` : undefined}
-              >
-                {tab.label}
-              </button>
-            ))}
+            {tabs.map(renderTab)}
           </div>
           <div className="tab-bar-actions">
             {activeTerminalWorkspace && (
-              <button className={`tab ${tabMenu.show ? 'dismissible-trigger-active' : ''}`} onClick={(event) => openActiveTabMenu(event.currentTarget)}>
+              <button className={`tab ${tabMenu ? 'dismissible-trigger-active' : ''}`} onClick={(event) => openActiveTabMenu(event.currentTarget)}>
                 ⋯ Tab
-              </button>
-            )}
-            {onShowPresets && (
-              <button
-                className="tab"
-                onClick={onShowPresets}
-                title="Layout Presets"
-              >
-                ⊞ Layouts
               </button>
             )}
             <div className="keys-menu-container">
               <button
-                className={`tab keys-toggle ${keysMenuOpen ? 'active dismissible-trigger-active' : ''}`}
+                className={`tab keys-toggle ${keysMenu ? 'active dismissible-trigger-active' : ''}`}
                 onClick={toggleKeys}
                 onContextMenu={(event) => {
                   event.preventDefault()
-                  toggleKeysMenu()
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  closeTabMenu()
+                  setMobileMenuOpen(false)
+                  setKeysMenu({ x: rect.left, y: rect.bottom })
                 }}
                 aria-pressed={keysEnabled}
-                title={keysEnabled ? 'Chords are live. Click to turn keys off; right-click for the keys panel.' : 'Chords are off. Click to turn keys on; right-click for the keys panel.'}
+                title={keysEnabled ? 'Chords are live. Click to turn keys off; right-click for the keybindings.' : 'Chords are off. Click to turn keys on; right-click for the keybindings.'}
               >
                 {keysEnabled ? 'Keys on' : 'Keys off'}
               </button>
-              {keysMenuOpen && (
-                <DismissiblePanel onDismiss={() => setKeysMenuOpen(false)} panelZIndex={1000} panelPosition="absolute">
-                  <div className="help-dropdown">
-                  {onShowKeys && (
-                    <button
-                      className="help-dropdown-item"
-                      onClick={() => {
-                        onShowKeys()
-                        setKeysMenuOpen(false)
-                      }}
-                    >
-                      Keys panel
-                    </button>
-                  )}
-                  <button
-                    className="help-dropdown-item"
-                    onClick={() => {
-                      onTabChange('help')
-                      setKeysMenuOpen(false)
-                    }}
-                  >
-                    Dashboard Help
-                  </button>
-                  </div>
-                </DismissiblePanel>
-              )}
             </div>
           </div>
         </>
       )}
-      {tabOptionsMenu}
+      {keysMenu && (
+        <Menu
+          at={keysMenu}
+          label="Keys"
+          zIndex={2300}
+          estimatedSize={{ width: 220, height: 80 }}
+          onClose={() => setKeysMenu(null)}
+          groups={[{
+            id: 'keys',
+            rows: [
+              ...(onShowKeys ? [{ id: 'panel', label: 'Keybindings', chord: 'Alt+K', onSelect: onShowKeys }] : []),
+              { id: 'help', label: 'Dashboard Help', onSelect: () => onTabChange('help') },
+            ],
+          }]}
+        />
+      )}
+      {tabMenu && (
+        <Menu
+          at={{ x: tabMenu.x, y: tabMenu.y }}
+          label="Terminal tab actions"
+          estimatedSize={{ width: 230, height: 180 }}
+          onClose={closeTabMenu}
+          groups={tabMenuGroups}
+        />
+      )}
     </div>
   )
 }

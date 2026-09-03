@@ -100,10 +100,10 @@ test.describe('Rename Propagation (pol-ace3)', () => {
     await sessionItem.click({ button: 'right' })
 
     // Context menu should appear
-    await expect(page.locator('.session-context-menu')).toBeVisible()
+    await expect(page.locator('.menu-sheet')).toBeVisible()
 
     // Click "Rename"
-    await page.locator('.session-context-item:has-text("Rename")').click()
+    await page.locator('.menu-row:has-text("Rename")').click()
 
     // Rename input should appear
     const renameInput = page.locator('.session-rename-input')

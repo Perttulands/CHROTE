@@ -2,7 +2,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { FileItem } from './types'
 import type { SavedPath } from './pinnedPaths'
 import FileTree from '../FileTree'
-import DismissiblePanel from '../DismissiblePanel'
+import Menu from '../Menu'
 import FileViewer, { getFileBadge, getPreviewKind, makeFileItemFromPath } from '../FileViewer'
 import { DEFAULT_FILE_VIEW_STATE, type FileViewState } from '../workspaceFilesState'
 import { FileContextMenu } from '../FileContextMenu'
@@ -22,7 +22,7 @@ export default function FilesViewContent({
   openFiles, activeFilePath, setActiveFilePath, fileViewStates, setFileViewStates,
   pinnedPaths, recentPaths, savedGroupsCollapsed, editingPath, setEditingPath,
   pathDraft, setPathDraft, setDraggingPaths, dropTargetPath, setDropTargetPath,
-  operationLabel, currentPathPinned, workbenchStyle, setExplorerWidth, tabContextMenuPosition,
+  operationLabel, currentPathPinned, workbenchStyle, setExplorerWidth,
   loadDirectory, navigateTo, refreshCurrentPath, startExplorerResize, updateOpenFile,
   openFile, openSavedPath, closeOpenFile, closeAllOpenFiles, closeOtherOpenFiles,
   activeFile, selectedItems, visibleItems, toggleSort, goBack, goForward, goUp,
@@ -561,16 +561,20 @@ export default function FilesViewContent({
       </div>
 
       {tabContextMenu && openFiles.length > 1 && (
-        <DismissiblePanel onDismiss={() => setTabContextMenu(null)} panelZIndex={2200} panelPosition="fixed">
-          <div
-            ref={tabContextMenuPosition.ref}
-            className="fb-context-menu fb-tab-context-menu"
-            style={tabContextMenuPosition.style}
-          >
-            <button className="fb-context-item" type="button" onClick={() => closeOtherOpenFiles(tabContextMenu.path)}>Close Others</button>
-            <button className="fb-context-item" type="button" onClick={closeAllOpenFiles}>Close All</button>
-          </div>
-        </DismissiblePanel>
+        <Menu
+          at={{ x: tabContextMenu.x, y: tabContextMenu.y }}
+          label="Open file actions"
+          zIndex={2200}
+          estimatedSize={{ width: 200, height: 70 }}
+          onClose={() => setTabContextMenu(null)}
+          groups={[{
+            id: 'tabs',
+            rows: [
+              { id: 'close-others', label: 'Close others', onSelect: () => closeOtherOpenFiles(tabContextMenu.path) },
+              { id: 'close-all', label: 'Close all', onSelect: closeAllOpenFiles },
+            ],
+          }]}
+        />
       )}
 
       {contextMenu && (

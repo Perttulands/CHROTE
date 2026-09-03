@@ -103,7 +103,7 @@ describe('useKeyboardShortcuts', () => {
     mockUseSession.mockReturnValue({ floatingSession: 'alice:shell', closeFloatingModal })
     mount()
     const peekBody = document.createElement('div')
-    peekBody.className = 'floating-modal-body'
+    peekBody.className = 'peek-body'
     const terminalInput = document.createElement('textarea')
     terminalInput.className = 'xterm-helper-textarea'
     peekBody.appendChild(terminalInput)

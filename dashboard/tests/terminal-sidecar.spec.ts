@@ -118,18 +118,18 @@ test.describe('terminal workspace sidecars', () => {
     const row = page.locator('.session-item').filter({ hasText: 'hq-mayor' })
     await expect(row).toBeVisible()
     await row.click({ button: 'right' })
-    await page.getByRole('button', { name: /Attach to Window/ }).click()
-    await page.locator('.session-context-submenu .session-context-item').filter({ hasText: 'Terminal 2 - Window 1' }).click()
+    await page.getByRole('menuitem', { name: /Attach to window/ }).click()
+    await page.locator('.menu-submenu .menu-row').filter({ hasText: 'Terminal 2 - Window 1' }).click()
 
     const location = row.getByRole('button', { name: 'Focus assigned window T2 W1' })
     await expect(location).toBeVisible()
     await row.locator('.session-name').click()
-    await expect(page.locator('.floating-modal')).toBeVisible()
+    await expect(page.locator('.sheet-left')).toBeVisible()
     await expect(page.locator('.tab.active')).toContainText(/^Terminal$/)
     await expect(location).toBeVisible()
 
     await page.keyboard.press('Escape')
-    await expect(page.locator('.floating-modal')).toHaveCount(0)
+    await expect(page.locator('.sheet-left')).toHaveCount(0)
     await expect(row).toBeVisible()
 
     await location.click()

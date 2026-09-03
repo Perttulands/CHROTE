@@ -12,7 +12,7 @@ test.describe('Error States', () => {
   }
 
   test.describe('API 500 on session creation', () => {
-    test('should show error toast when POST /api/tmux/sessions returns 500', async ({ page }) => {
+    test('states the failure on the status line when POST /api/tmux/sessions returns 500', async ({ page }) => {
       allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 500')
       // Set up normal GET mock first, then override POST to fail
       await mockApiRoutes(page)
@@ -40,10 +40,12 @@ test.describe('Error States', () => {
       // Click it
       await createBtn.click()
 
-      // Error toast should appear
-      const toast = page.locator('.toast-item.toast-error')
-      await expect(toast).toBeVisible({ timeout: 5000 })
-      await expect(toast.locator('.toast-message')).toContainText('Failed to create session')
+      // Every announcement lands on the one status line, and nothing pops up
+      // over the work: a failure is the only thing on it that takes colour.
+      const status = page.locator('.status-line')
+      await expect(status).toContainText('Failed to create session', { timeout: 5000 })
+      await expect(status.locator('.status-line-failure')).toBeVisible()
+      await expect(page.locator('.toast-item')).toHaveCount(0)
     })
   })
 

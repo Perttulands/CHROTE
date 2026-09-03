@@ -6,7 +6,7 @@ import type { TmuxSession } from '../types'
 
 const refreshSessions = vi.fn()
 const createSession = vi.fn()
-const addToast = vi.fn()
+const announce = vi.fn()
 const fetchMock = vi.fn()
 
 const mockState = vi.hoisted(() => ({
@@ -47,8 +47,8 @@ vi.mock('../context/SessionContext', () => ({
   }),
 }))
 
-vi.mock('../context/ToastContext', () => ({
-  useToast: () => ({ addToast }),
+vi.mock('../context/StatusContext', () => ({
+  useStatus: () => ({ announce }),
 }))
 
 vi.mock('./NukeConfirmModal', () => ({

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TerminalWorkspace, UserSettings, WindowRevealRequest, WorkspaceId } from '../types'
 import { DEFAULT_SETTINGS, MAX_PRESETS, normalizeTerminalTabCount } from '../types'
-import { useToast } from './ToastContext'
+import { useStatus } from './StatusContext'
 import {
   CANONICAL_WINDOW_COUNT,
   clampWindowCount,
@@ -34,7 +34,7 @@ async function applyTmuxMouse(enabled: boolean): Promise<void> {
 }
 
 export function useWorkspaceLayouts() {
-  const { addToast } = useToast()
+  const { announce } = useStatus()
   const [viewportBucket, setViewportBucket] = useState<ViewportBucket>(() => getCurrentViewportBucket())
   const stored = useMemo(() => loadStoredState(viewportBucket), [])
   const [workspaces, setWorkspaces] = useState<Record<WorkspaceId, TerminalWorkspace>>(
@@ -218,7 +218,7 @@ export function useWorkspaceLayouts() {
 
   const saveCurrentLayout = useCallback((name: string): boolean => {
     if (layoutPresets.length >= MAX_PRESETS) {
-      addToast(`Maximum ${MAX_PRESETS} presets reached`, 'warning')
+      announce(`Maximum ${MAX_PRESETS} presets reached`, 'warning')
       return false
     }
     setLayoutPresets(previous => [...previous, {
@@ -227,30 +227,30 @@ export function useWorkspaceLayouts() {
       createdAt: Date.now(),
       workspaces: sanitizeWorkspaces(workspaces, []),
     }])
-    addToast(`Layout '${name}' saved`, 'success')
+    announce(`Layout '${name}' saved`, 'success')
     return true
-  }, [layoutPresets.length, workspaces, addToast])
+  }, [layoutPresets.length, workspaces, announce])
 
   const loadPreset = useCallback((presetId: string) => {
     const preset = layoutPresets.find(candidate => candidate.id === presetId)
     if (!preset) {
-      addToast('Preset not found', 'error')
+      announce('Preset not found', 'error')
       return
     }
     setWorkspaces(previous => deduplicateWorkspaceBindings({
       ...previous,
       ...sanitizeWorkspaces(cloneWorkspaces(preset.workspaces), []),
     }))
-    addToast(`Layout '${preset.name}' loaded`, 'info')
-  }, [layoutPresets, addToast])
+    announce(`Layout '${preset.name}' loaded`, 'info')
+  }, [layoutPresets, announce])
 
   const deletePreset = useCallback((presetId: string) => {
     const preset = layoutPresets.find(candidate => candidate.id === presetId)
     if (preset) {
       setLayoutPresets(previous => previous.filter(candidate => candidate.id !== presetId))
-      addToast(`Preset '${preset.name}' deleted`, 'info')
+      announce(`Preset '${preset.name}' deleted`, 'info')
     }
-  }, [layoutPresets, addToast])
+  }, [layoutPresets, announce])
 
   const renamePreset = useCallback((presetId: string, newName: string) => {
     setLayoutPresets(previous => previous.map(preset => preset.id === presetId ? { ...preset, name: newName } : preset))

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import { DEFAULT_SETTINGS, resolveLaunchUser } from '../types'
-import { renderSession, renderSessionWithToast } from './SessionContext.test.support'
+import { renderSession, renderSessionWithStatus } from './SessionContext.test.support'
 
 describe('resolveLaunchUser', () => {
   it('keeps default/no configured-users mode as bare tmux sessions even with stale stored launch user settings', () => {
@@ -153,7 +153,7 @@ describe('createSession', () => {
 
   it('shows the server\'s warning when the session was created but its harness was not', async () => {
     const fetchMock = stubSessionFetch()
-    const { result } = renderSessionWithToast()
+    const { result } = renderSessionWithStatus()
 
     await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice', 'build']))
     fetchMock.mockClear()
@@ -180,11 +180,12 @@ describe('createSession', () => {
     // The session exists, so it is still a success; the warning says what did
     // not start inside it.
     expect(created).toBe('claude-chrote')
-    const warning = result.current.toast.toasts.find(toast => toast.type === 'warning')
-    expect(warning?.message).toContain('could not be started')
+    const announced = result.current.status.status
+    expect(announced?.severity).toBe('warning')
+    expect(announced?.message).toContain('could not be started')
   })
 
-  it('handles expected create-session API failures with a toast and no console error', async () => {
+  it('handles expected create-session API failures with an announcement and no console error', async () => {
     const fetchMock = stubSessionFetch()
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { result } = renderSession()

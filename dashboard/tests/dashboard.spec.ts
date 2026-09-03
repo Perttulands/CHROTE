@@ -193,24 +193,24 @@ test.describe('Arena Dashboard', () => {
     })
   })
 
-  test.describe('Floating Modal', () => {
-    test('should open modal when clicking unassigned session', async ({ page }) => {
+  test.describe('Peek', () => {
+    test('opens as a left sheet on an unassigned session and closes from its header', async ({ page }) => {
       await page.waitForSelector('.session-item')
 
-      // Click on an unassigned session
       await page.click('.session-item:has-text("jack")')
 
-      // Modal should appear
-      await expect(page.locator('.floating-modal')).toBeVisible()
-      await expect(page.locator('.modal-title')).toContainText('jack')
+      const peek = page.locator('.sheet.sheet-left')
+      await expect(peek).toBeVisible()
+      await expect(peek.locator('.peek-name')).toContainText('jack')
 
-      await page.click('.modal-close')
-      await expect(page.locator('.floating-modal')).not.toBeVisible()
+      await peek.getByRole('button', { name: 'Close Peek' }).click()
+      await expect(peek).not.toBeVisible()
 
+      // No backdrop: a click outside is a click outside, and Escape is the way out.
       await page.click('.session-item:has-text("jack")')
-      await expect(page.locator('.floating-modal')).toBeVisible()
-      await page.click('.floating-modal-overlay', { position: { x: 10, y: 10 } })
-      await expect(page.locator('.floating-modal')).not.toBeVisible()
+      await expect(peek).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(peek).not.toBeVisible()
     })
 
   })

@@ -2,7 +2,7 @@ import { expect, vi, beforeEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
 import { createElement } from 'react'
 import { SessionProvider, useSession } from './SessionContext'
-import { ToastProvider, useToast } from './ToastContext'
+import { StatusProvider, useStatus } from './StatusContext'
 
 export function setViewportWidth(width: number) {
   Object.defineProperty(window, 'innerWidth', {
@@ -42,7 +42,7 @@ beforeEach(() => {
 })
 
 export function Wrapper({ children }: { children: React.ReactNode }) {
-  return createElement(ToastProvider, null,
+  return createElement(StatusProvider, null,
     createElement(SessionProvider, null, children))
 }
 
@@ -50,8 +50,8 @@ export function renderSession() {
   return renderHook(() => useSession(), { wrapper: Wrapper })
 }
 
-export function renderSessionWithToast() {
-  return renderHook(() => ({ session: useSession(), toast: useToast() }), { wrapper: Wrapper })
+export function renderSessionWithStatus() {
+  return renderHook(() => ({ session: useSession(), status: useStatus() }), { wrapper: Wrapper })
 }
 
 export function storedDashboardState() {

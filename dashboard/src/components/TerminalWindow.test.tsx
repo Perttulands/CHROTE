@@ -11,7 +11,7 @@ import { loadStoredState } from '../context/workspaceLayouts'
 const refreshSessions = vi.fn()
 const createSession = vi.fn()
 const addSessionToWindow = vi.fn()
-const addToast = vi.fn()
+const announce = vi.fn()
 const removeSessionFromWindow = vi.fn()
 const renameSession = vi.fn()
 const deleteSession = vi.fn()
@@ -99,8 +99,8 @@ vi.mock('../context/SessionContext', () => ({
   }),
 }))
 
-vi.mock('../context/ToastContext', () => ({
-  useToast: () => ({ addToast }),
+vi.mock('../context/StatusContext', () => ({
+  useStatus: () => ({ announce }),
 }))
 
 vi.mock('./TerminalPool', () => ({
@@ -240,7 +240,7 @@ describe('TerminalWindow launch user', () => {
     const event = dispatchContextMenu(launchButton)
 
     expect(event.defaultPrevented).toBe(false)
-    expect(document.querySelector('.session-context-menu')).toBeNull()
+    expect(document.querySelector('.menu-sheet')).toBeNull()
     fireEvent.click(launchButton)
     await waitFor(() => expect(createSession).toHaveBeenCalled())
   })
@@ -292,8 +292,11 @@ describe('TerminalWindow launch user', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Open files in working directory' }))
     expect(openFilesAtPath).toHaveBeenCalledWith('/srv/live-shell')
 
+    // Kill confirms in place: the first press arms the row, the second runs it.
     openInactiveMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Kill session' }))
+    expect(deleteSession).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Confirm kill' }))
     expect(deleteSession).toHaveBeenCalledWith('shell-existing', 'alice')
 
     expect(setActiveSession).not.toHaveBeenCalled()
@@ -429,7 +432,7 @@ describe('TerminalWindow launch user', () => {
     act(() => remove.dispatchEvent(event))
 
     expect(event.defaultPrevented).toBe(false)
-    expect(document.querySelector('.session-context-menu')).toBeNull()
+    expect(document.querySelector('.menu-sheet')).toBeNull()
   })
 
   it('clears an open tag menu when its keep-alive workspace becomes inactive', () => {
@@ -439,10 +442,10 @@ describe('TerminalWindow launch user', () => {
     }
     const { rerender } = render(<TerminalWindow {...props} {...({ workspaceActive: true } as any)} />)
     dispatchContextMenu(tagLabel('forge-existing'))
-    expect(document.querySelector('.session-context-menu')).toBeInTheDocument()
+    expect(document.querySelector('.menu-sheet')).toBeInTheDocument()
 
     rerender(<TerminalWindow {...props} {...({ workspaceActive: false } as any)} />)
-    expect(document.querySelector('.session-context-menu')).not.toBeInTheDocument()
+    expect(document.querySelector('.menu-sheet')).not.toBeInTheDocument()
   })
 
   it('opens the live session working directory', () => {
@@ -505,7 +508,7 @@ describe('TerminalWindow launch user', () => {
     const event = dispatchContextMenu(container.querySelector('.terminal-window-header') as HTMLElement)
 
     expect(event.defaultPrevented).toBe(false)
-    expect(document.querySelector('.session-context-menu')).toBeNull()
+    expect(document.querySelector('.menu-sheet')).toBeNull()
   })
 
   it('uses the whole mounted session tag as the drag surface and keeps a stationary invisible placeholder', () => {

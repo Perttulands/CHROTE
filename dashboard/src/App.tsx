@@ -2,16 +2,17 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react
 import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, useSensor, useSensors, PointerSensor } from '@dnd-kit/core'
 import './App.css'
 import { SessionProvider, useSession } from './context/SessionContext'
+import { StatusProvider } from './context/StatusContext'
 import TabBar, { Tab } from './components/TabBar'
 import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
 import FloatingModal from './components/FloatingModal'
 import SendToSessionModal from './components/SendToSessionModal'
 import ErrorBoundary from './components/ErrorBoundary'
 import Skeleton from './components/LoadingSkeleton'
-import { ToastContainer } from './components/ToastNotification'
+import StatusLine from './components/StatusLine'
 import KeysPanel from './keys/KeysPanel'
-import LeaderStrip from './keys/LeaderStrip'
-import LayoutPresetsPanel from './components/LayoutPresetsPanel'
+import KeyEcho from './keys/KeyEcho'
+import { closeLeaderWindow, useLeader } from './keys/chords'
 import { TerminalPoolProvider } from './components/TerminalPool'
 import { SessionCommandMark, SessionLabel } from './components/sessionLabel'
 import {
@@ -163,7 +164,6 @@ function DashboardContent() {
   const [openFilesWorkspaceIds, setOpenFilesWorkspaceIds] = useState<Set<WorkspaceId>>(() => new Set())
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null)
   const [keysPanelOpen, setKeysPanelOpen] = useState(false)
-  const [showPresets, setShowPresets] = useState(false)
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
   const {
     addSessionToWindow,
@@ -229,8 +229,6 @@ function DashboardContent() {
   const openSessionsPanel = useCallback(() => {
     setSessionsDockState(previous => previous.open ? previous : { ...previous, open: true })
   }, [])
-  const handleShowPresets = useCallback(() => setShowPresets(true), [])
-  const handleClosePresets = useCallback(() => setShowPresets(false), [])
   const handleTabChange = useCallback((tab: Tab) => {
     setActiveTab(tab)
     if (isTerminalWorkspaceId(tab, mountedWorkspaceIds)) setLastActiveWorkspaceId(tab)
@@ -245,6 +243,15 @@ function DashboardContent() {
       setLastActiveWorkspaceId(windowRevealRequest.workspaceId)
     }
   }, [windowRevealRequest])
+
+  // The leader is discovery: it opens the keys panel and shuts its own window,
+  // because from here the next key is search text rather than a chord.
+  const { leaderOpen } = useLeader()
+  useEffect(() => {
+    if (!leaderOpen) return
+    setKeysPanelOpen(true)
+    closeLeaderWindow()
+  }, [leaderOpen])
 
   // Plain keys outside a terminal; the leader model lives in the registry.
   useKeyboardShortcuts({
@@ -322,7 +329,6 @@ function DashboardContent() {
           activeTab={activeTab}
           onTabChange={handleTabChange}
           onShowKeys={handleShowKeys}
-          onShowPresets={handleShowPresets}
         />
 
         <div className="dashboard-content">
@@ -416,19 +422,16 @@ function DashboardContent() {
               </Suspense>
             </ErrorBoundary>
           )}
+          {/* Peek docks inside the workspace, so the status line stays whole. */}
+          <FloatingModal />
+          <KeyEcho />
         </div>
 
-        <FloatingModal />
+        <StatusLine />
+
         <SendToSessionModal />
-
-        {/* Overlays */}
-        <LeaderStrip />
         <KeysPanel isOpen={keysPanelOpen} onClose={handleCloseKeys} />
-        <LayoutPresetsPanel isOpen={showPresets} onClose={handleClosePresets} />
       </div>
-
-      {/* Toast notifications */}
-      <ToastContainer />
 
       <DragOverlay className="drag-overlay-wrapper">
         {activeDrag ? <DraggedSessionOverlay drag={activeDrag} /> : null}
@@ -440,11 +443,13 @@ function DashboardContent() {
 function App() {
   return (
     <ThemeProvider>
-      <SessionProvider>
-        <TerminalPoolProvider>
-          <DashboardContent />
-        </TerminalPoolProvider>
-      </SessionProvider>
+      <StatusProvider>
+        <SessionProvider>
+          <TerminalPoolProvider>
+            <DashboardContent />
+          </TerminalPoolProvider>
+        </SessionProvider>
+      </StatusProvider>
     </ThemeProvider>
   )
 }

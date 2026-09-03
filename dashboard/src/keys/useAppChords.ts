@@ -3,7 +3,7 @@
  *
  * Registration happens once, and once more whenever the number of terminal
  * tabs changes: every `run` reads the current actions through a ref, so a
- * re-render never churns the registry and the strip never flickers.
+ * re-render never churns the registry and the keys panel never flickers.
  * Two chords reach a control this hook cannot hold — the workspace Files panel
  * and the Sessions panel's launcher both live inside a dock — so they are run
  * by clicking the dock's own button, the way `/` has always reached the session
@@ -136,15 +136,13 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
     const chords: Chord[] = [
       // Alt+L opens the Library tab in the keyboard map, and is deliberately
       // not registered here: the Library does not exist yet. A chord with
-      // nothing behind it would list in the strip and do nothing.
+      // nothing behind it would list in the panel and do nothing.
       { id: 'keys.beads', key: 'b', direct: { alt: true, shift: false, key: 'b' }, label: 'Beads tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('beads') },
-      // Alt+K opens the panel; the bare leader key `k` turns keys off. The
-      // panel is what the operator reaches for, so it gets the direct chord.
-      { id: 'keys.panel', key: '?', direct: { alt: true, shift: false, key: 'k' }, label: 'Keys panel', scope: 'global', run: () => stateRef.current.surfaces.onOpenKeysPanel() },
+      // Alt+K opens the panel, which is also what the leader opens. Turning
+      // keys off has no chord of its own: the tab bar's own button says so and
+      // is how they come back, and the panel's row runs it from here.
+      { id: 'keys.panel', key: '?', direct: { alt: true, shift: false, key: 'k' }, label: 'Keybindings', scope: 'global', run: () => stateRef.current.surfaces.onOpenKeysPanel() },
       { id: 'keys.off', key: 'k', label: 'Keys off', scope: 'global', run: () => stateRef.current.session.updateSettings({ keysEnabled: false }) },
-      // The window is already shut by the time a chord runs, which is the whole
-      // action; listing it is how the strip says so.
-      { id: 'keys.cancel', key: 'Escape', label: 'Cancel', scope: 'global', run: () => {} },
 
       { id: 'keys.nextWindow', key: 'w', direct: { alt: true, shift: false, key: 'w' }, label: 'Next window', scope: 'workspace', run: () => cycleWindow(1) },
       { id: 'keys.prevWindow', key: 'W', direct: { alt: true, shift: true, key: 'w' }, label: 'Previous window', scope: 'workspace', run: () => cycleWindow(-1) },
@@ -154,7 +152,7 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
       { id: 'keys.addWindow', key: '=', direct: { alt: true, key: '+', layoutKeys: ['='] }, label: 'Add a window', scope: 'workspace', run: addWindow },
       { id: 'keys.removeWindow', key: '-', direct: { alt: true, key: '-' }, label: 'Remove the last empty window', scope: 'workspace', run: removeWindow },
       { id: 'keys.search', key: '/', label: 'Session search', scope: 'workspace', run: () => { focusSessionSearch() } },
-      { id: 'keys.launcher', key: 'n', direct: { alt: true, shift: false, key: 'n' }, label: 'Launcher', scope: 'workspace', run: openLauncher },
+      { id: 'keys.launcher', key: 'n', direct: { alt: true, shift: false, key: 'n' }, label: 'Launcher in the focused window', scope: 'workspace', run: openLauncher },
       { id: 'keys.sessions', key: 'Tab', direct: { alt: true, shift: false, key: 'a' }, label: 'Sessions panel', scope: 'workspace', run: () => stateRef.current.surfaces.onToggleSessionsPanel() },
       { id: 'keys.files', key: 'f', direct: { alt: true, shift: false, key: 'o' }, label: 'Files panel', scope: 'workspace', run: () => clickInActiveDock('button[aria-label="Files sidecar"]') },
 
@@ -162,7 +160,7 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
         id: 'keys.peek',
         key: 'p',
         direct: { alt: true, shift: false, key: 'p' },
-        label: 'Peek this session',
+        label: "Peek the tile's session",
         scope: 'tile',
         run: () => {
           const sessionKey = focusedSession()
@@ -173,7 +171,7 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
         id: 'keys.send',
         key: 's',
         direct: { alt: true, shift: false, key: 's' },
-        label: 'Send to this session',
+        label: "Send to the tile's session",
         scope: 'tile',
         run: () => {
           const sessionKey = focusedSession()
@@ -187,7 +185,7 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
 
   // The terminal tabs are their own registration because there are as many
   // chords as there are tabs: registering Alt+4 while three tabs exist would
-  // put a dead entry in the strip.
+  // put a dead entry in the panel.
   useEffect(() => {
     const chords: Chord[] = Array.from({ length: tabCount }, (_, index): Chord => ({
       id: `keys.tab${index + 1}`,

@@ -28,7 +28,7 @@ test.describe('Nuke All (pol-9783)', () => {
     await page.waitForSelector('.settings-view')
   })
 
-  test('Nuke All button opens confirmation modal', async ({ page }) => {
+  test('the Nuke All button confirms in place and names what is preserved', async ({ page }) => {
     let deleteCalled = false
     await page.route('**/api/tmux/sessions/all', async route => {
       deleteCalled = true
@@ -48,27 +48,17 @@ test.describe('Nuke All (pol-9783)', () => {
     const nukeBtn = page.locator('.nuke-trigger-btn')
     await expect(nukeBtn).toBeVisible()
     await expect(nukeBtn).toContainText('Nuke All')
+
+    // The first press arms the same button and states the count and the
+    // sessions the server will keep. Nothing opens over the work.
     await nukeBtn.click()
-    await expect(page.locator('.nuke-modal')).toBeVisible()
-    await expect(page.locator('.nuke-title')).toContainText('DESTROY ALL SESSIONS')
-
-    const protectedText = page.locator('.nuke-protected')
-    await expect(protectedText).toContainText('chrote-chat')
-    await expect(protectedText).toContainText('preserved')
-
-    const confirm = page.locator('.nuke-btn-confirm')
-    await expect(confirm).toBeDisabled()
-    await page.fill('.nuke-input', 'NUK')
-    await expect(confirm).toBeDisabled()
-    await page.fill('.nuke-input', 'NUKE')
-    await expect(confirm).toBeEnabled()
-
-    await page.locator('.nuke-btn-cancel').click()
-    await expect(page.locator('.nuke-modal')).not.toBeVisible()
+    await expect(nukeBtn).toContainText('Confirm: destroy')
+    await expect(page.locator('.settings-danger-zone')).toContainText('chrote-chat')
+    await expect(page.locator('.nuke-modal')).toHaveCount(0)
     expect(deleteCalled).toBe(false)
   })
 
-  test('confirm sends DELETE request with correct header', async ({ page }) => {
+  test('the second press sends DELETE with the confirmation header', async ({ page }) => {
     let deleteRequest: { method: string; headers: Record<string, string> } | null = null
 
     await page.route('**/api/tmux/sessions/all', async route => {
@@ -80,23 +70,19 @@ test.describe('Nuke All (pol-9783)', () => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
     })
 
-    // Open modal
-    await page.locator('.nuke-trigger-btn').click()
-    await expect(page.locator('.nuke-modal')).toBeVisible()
+    const nukeBtn = page.locator('.nuke-trigger-btn')
+    await nukeBtn.click()
+    await expect(nukeBtn).toContainText('Confirm: destroy')
+    await nukeBtn.click()
 
-    // Type NUKE and confirm
-    await page.fill('.nuke-input', 'NUKE')
-    await page.locator('.nuke-btn-confirm').click()
-
-    // Wait for the DELETE request to complete
     await expect(async () => {
       expect(deleteRequest).not.toBeNull()
     }).toPass({ timeout: 3000 })
 
-    // Verify DELETE was sent
     expect(deleteRequest).not.toBeNull()
     expect(deleteRequest!.method).toBe('DELETE')
     expect(deleteRequest!.headers['x-nuke-confirm']).toBe('DASHBOARD-NUKE-CONFIRMED')
+    await expect(page.locator('.status-line')).toContainText('All sessions destroyed')
   })
 
 })

@@ -3,7 +3,7 @@ import { act, waitFor } from '@testing-library/react'
 import type { SendToSessionOutcome } from '../types'
 import {
   renderSession,
-  renderSessionWithToast,
+  renderSessionWithStatus,
   sessionResponse,
 } from './SessionContext.test.support'
 
@@ -92,7 +92,7 @@ describe('sendToSession', () => {
       return Promise.resolve(sessionResponse({ sessions: [], terminalUsers: [] }))
     })
     vi.stubGlobal('fetch', fetchMock)
-    const { result } = renderSessionWithToast()
+    const { result } = renderSessionWithStatus()
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     fetchMock.mockClear()
 
@@ -102,7 +102,7 @@ describe('sendToSession', () => {
     })
 
     expect(delivered).toBe('unknown')
-    await waitFor(() => expect(result.current.toast.toasts[0]?.message).toContain('Unexpected send response'))
+    await waitFor(() => expect(result.current.status.status?.message).toContain('Unexpected send response'))
   })
 
   it('keeps a marker-confirmed send delivered when post-send verification observes target exit', async () => {
@@ -193,7 +193,7 @@ describe('sendToSession', () => {
       }))
     })
     vi.stubGlobal('fetch', fetchMock)
-    const { result } = renderSessionWithToast()
+    const { result } = renderSessionWithStatus()
     await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
     fetchMock.mockClear()
 
@@ -211,7 +211,7 @@ describe('sendToSession', () => {
     })
 
     expect(delivered).toBe('unknown')
-    await waitFor(() => expect(result.current.toast.toasts[0]?.message).toContain('submit key was not dispatched'))
+    await waitFor(() => expect(result.current.status.status?.message).toContain('submit key was not dispatched'))
   })
 
   it('treats an explicit unknown delivery outcome as non-retryable and tells the user to inspect', async () => {
@@ -245,7 +245,7 @@ describe('sendToSession', () => {
       }))
     })
     vi.stubGlobal('fetch', fetchMock)
-    const { result } = renderSessionWithToast()
+    const { result } = renderSessionWithStatus()
     await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
     fetchMock.mockClear()
 
@@ -263,7 +263,7 @@ describe('sendToSession', () => {
     })
 
     expect(delivered).toBe('unknown')
-    await waitFor(() => expect(result.current.toast.toasts[0]?.message).toContain('inspect the exact pane before retrying'))
+    await waitFor(() => expect(result.current.status.status?.message).toContain('inspect the exact pane before retrying'))
   })
 
   it('labels browser transport failures as unknown rather than safe-to-retry failures', async () => {
@@ -277,7 +277,7 @@ describe('sendToSession', () => {
       }))
     })
     vi.stubGlobal('fetch', fetchMock)
-    const { result } = renderSessionWithToast()
+    const { result } = renderSessionWithStatus()
     await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
 
     let delivered: SendToSessionOutcome = 'sent'
@@ -290,7 +290,7 @@ describe('sendToSession', () => {
     })
 
     expect(delivered).toBe('unknown')
-    await waitFor(() => expect(result.current.toast.toasts[0]?.message).toContain('inspect the exact pane before retrying'))
+    await waitFor(() => expect(result.current.status.status?.message).toContain('inspect the exact pane before retrying'))
   })
 
   it.each([
@@ -331,7 +331,7 @@ describe('sendToSession', () => {
       }))
     })
     vi.stubGlobal('fetch', fetchMock)
-    const { result } = renderSessionWithToast()
+    const { result } = renderSessionWithStatus()
     await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
 
     let delivered: SendToSessionOutcome = 'sent'
@@ -344,9 +344,9 @@ describe('sendToSession', () => {
     })
 
     expect(delivered).toBe(unknown ? 'unknown' : 'failed')
-    await waitFor(() => expect(result.current.toast.toasts[0]?.message).toContain(expected))
+    await waitFor(() => expect(result.current.status.status?.message).toContain(expected))
     if (!unknown) {
-      expect(result.current.toast.toasts[0]?.message).not.toContain('outcome is unknown')
+      expect(result.current.status.status?.message).not.toContain('outcome is unknown')
     }
   })
 

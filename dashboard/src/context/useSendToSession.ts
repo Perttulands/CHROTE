@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import type { LaunchUser, SendSessionPane, SendToSessionOutcome, SendToSessionPayload, SendToSessionResult } from '../types'
 import { apiErrorMessage } from '../apiErrors'
-import { useToast } from './ToastContext'
+import { useStatus } from './StatusContext'
 
 const definitiveSendErrorCodes = new Map<number, ReadonlySet<string>>([
   [400, new Set(['BAD_REQUEST'])],
@@ -31,7 +31,7 @@ function definitiveSendErrorMessage(status: number, raw: string): string | null 
 }
 
 export function useSendToSession() {
-  const { addToast } = useToast()
+  const { announce } = useStatus()
   const [sendToSessionTarget, setSendToSessionTarget] = useState<string | null>(null)
   const [sendToSessionPrefill, setSendToSessionPrefill] = useState('')
   const [sendToSessionRequestId, setSendToSessionRequestId] = useState(0)
@@ -55,13 +55,13 @@ export function useSendToSession() {
         signal: AbortSignal.timeout(10000),
       })
       if (!response.ok) {
-        addToast(apiErrorMessage(await response.text(), 'Failed to resolve session panes'), 'error')
+        announce(apiErrorMessage(await response.text(), 'Failed to resolve session panes'), 'error')
         return null
       }
       const result = await response.json().catch(() => null) as { success?: unknown; session?: unknown; unixUser?: unknown; panes?: unknown } | null
       if (!result || result.success !== true || result.session !== sessionName ||
           result.unixUser !== expectedUnixUser || !Array.isArray(result.panes)) {
-        addToast('Unexpected pane discovery response', 'error')
+        announce('Unexpected pane discovery response', 'error')
         return null
       }
       const panes = result.panes.filter((pane): pane is SendSessionPane => {
@@ -81,16 +81,16 @@ export function useSendToSession() {
           new Set(panes.map(pane => pane.pane)).size !== panes.length ||
           new Set(panes.map(pane => pane.sessionId)).size !== 1 ||
           new Set(panes.map(pane => pane.serverPid)).size !== 1) {
-        addToast('Unexpected pane discovery response', 'error')
+        announce('Unexpected pane discovery response', 'error')
         return null
       }
       return panes
     } catch (e) {
       console.error('Failed to resolve session panes:', e)
-      addToast('Failed to resolve session panes', 'error')
+      announce('Failed to resolve session panes', 'error')
       return null
     }
-  }, [addToast])
+  }, [announce])
 
   const sendToSession = useCallback(async (
     sessionName: string,
@@ -120,10 +120,10 @@ export function useSendToSession() {
         const definitiveMessage = definitiveSendErrorMessage(response.status, errorText)
         console.error('Failed to send to session:', errorText)
         if (definitiveMessage) {
-          addToast(definitiveMessage, 'error')
+          announce(definitiveMessage, 'error')
           return 'failed'
         }
-        addToast(`Delivery outcome is unknown for '${sessionName}'; inspect the exact pane before retrying`, 'error')
+        announce(`Delivery outcome is unknown for '${sessionName}'; inspect the exact pane before retrying`, 'error')
         return 'unknown'
       }
       const result = await response.json().catch(() => null) as SendToSessionResult | null
@@ -146,32 +146,32 @@ export function useSendToSession() {
       if (commonResultValid && result && result.success === false && result.transport === 'unknown' &&
           result.retryable === false && result.deliveryConfirmed === false &&
           result.submitKeyDispatched === false && result.targetVerified === false && result.warning.trim() !== '') {
-        addToast(`Delivery outcome is unknown for '${sessionName}' (${result.pane}); ${result.warning.trim()}`, 'error')
+        announce(`Delivery outcome is unknown for '${sessionName}' (${result.pane}); ${result.warning.trim()}`, 'error')
         return 'unknown'
       }
       if (commonResultValid && result && result.success === true && result.transport === 'pasted' &&
           payload.submit && result.submitKeyDispatched === false) {
         const warning = result.warning.trim()
-        addToast(`Pasted to '${sessionName}' (${result.pane}), but the submit key was not dispatched${warning ? `; ${warning}` : ''}`, 'error')
+        announce(`Pasted to '${sessionName}' (${result.pane}), but the submit key was not dispatched${warning ? `; ${warning}` : ''}`, 'error')
         return 'unknown'
       }
       if (!commonResultValid || !result || result.success !== true || result.transport !== 'pasted' ||
           result.submitKeyDispatched !== payload.submit || result.bufferCleaned !== true ||
           (result.targetVerified !== true && result.warning.trim() === '')) {
-        addToast('Unexpected send response; inspect the target pane before retrying', 'error')
+        announce('Unexpected send response; inspect the target pane before retrying', 'error')
         return 'unknown'
       }
       const paneLabel = ` (${result.pane})`
       const submitLabel = result.submitKeyDispatched ? '; submit key dispatched (application acceptance unconfirmed)' : ''
       const warning = result.warning?.trim() ?? ''
-      addToast(`Pasted to '${sessionName}'${paneLabel}${submitLabel}${warning ? `; ${warning}` : ''}`, warning ? 'info' : 'success')
+      announce(`Pasted to '${sessionName}'${paneLabel}${submitLabel}${warning ? `; ${warning}` : ''}`, warning ? 'info' : 'success')
       return 'sent'
     } catch (e) {
       console.error('Send-to-session delivery outcome is unknown:', e)
-      addToast(`Delivery outcome is unknown for '${sessionName}'; inspect the exact pane before retrying`, 'error')
+      announce(`Delivery outcome is unknown for '${sessionName}'; inspect the exact pane before retrying`, 'error')
       return 'unknown'
     }
-  }, [addToast])
+  }, [announce])
 
   return {
     sendToSessionTarget,
