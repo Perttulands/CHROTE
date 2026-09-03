@@ -24,7 +24,7 @@ interface TerminalWorkspaceDockProps {
   onOpenInFiles: (path: string) => void
 }
 
-const ESCAPE_BLOCKERS = '.floating-modal, .file-peek, .session-context-menu, .send-session-modal, [role="dialog"]'
+const ESCAPE_BLOCKERS = '.floating-modal, .session-context-menu, .send-session-modal, [role="dialog"]'
 
 function isVisibleEscapeBlocker(element: Element): boolean {
   if (!(element instanceof HTMLElement)) return false
@@ -89,9 +89,19 @@ function TerminalWorkspaceDock({
     onSessionsDockStateChange(previous => ({ ...previous, open: !previous.open }))
   }, [onSessionsDockStateChange])
 
+  // Alt+O and the Files button run through here, and opening the panel is what
+  // puts the cursor in its find field: mounting is not the same event, because
+  // the panel also mounts when the operator merely returns to this terminal tab
+  // and expects to keep typing where he was.
   const toggleFiles = useCallback(() => {
+    const opening = !filesDockState.open
     setFilesDockState(previous => ({ ...previous, open: !previous.open }))
-  }, [])
+    if (!opening) return
+    requestAnimationFrame(() => {
+      const field = document.getElementById(filesPanelId)?.querySelector('input[aria-label="Find files"]')
+      if (field instanceof HTMLInputElement) field.focus()
+    })
+  }, [filesDockState.open, filesPanelId])
 
   const closeSessions = useCallback(() => {
     onSessionsDockStateChange(previous => ({ ...previous, open: false }))

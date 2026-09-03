@@ -1,0 +1,196 @@
+/*
+ * Markdown in the theme. One stylesheet for every surface that renders a
+ * document: the Files panel, the Bead card, the Library. The surface sets
+ * --chrote-markdown-font-size and gives the block its padding; everything
+ * below is what the marks mean.
+ */
+
+.chrote-markdown {
+  color: var(--text-secondary);
+  font-size: var(--chrote-markdown-font-size, 12px);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.chrote-markdown > :first-child {
+  margin-top: 0;
+}
+
+.chrote-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.chrote-markdown h1,
+.chrote-markdown h2,
+.chrote-markdown h3,
+.chrote-markdown h4,
+.chrote-markdown h5,
+.chrote-markdown h6 {
+  margin: 20px 0 8px;
+  color: var(--text-primary);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.chrote-markdown h1 {
+  margin: 0 0 12px;
+  font-size: 1.5em;
+  line-height: 1.25;
+}
+
+.chrote-markdown h2 {
+  font-size: 1.17em;
+}
+
+.chrote-markdown h3,
+.chrote-markdown h4,
+.chrote-markdown h5,
+.chrote-markdown h6 {
+  font-size: 1em;
+}
+
+.chrote-markdown p {
+  margin: 0 0 10px;
+}
+
+.chrote-markdown strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.chrote-markdown em {
+  font-style: italic;
+}
+
+.chrote-markdown del {
+  color: var(--text-dim);
+}
+
+.chrote-markdown a {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-decoration-color: var(--text-dim);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.chrote-markdown a:hover {
+  text-decoration-color: var(--accent);
+}
+
+.chrote-markdown code {
+  background: var(--terminal-background);
+  color: var(--text-primary);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: inherit;
+}
+
+.chrote-markdown pre {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: var(--terminal-background);
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chrote-markdown pre code {
+  padding: 0;
+  background: none;
+  border-radius: 0;
+}
+
+.chrote-markdown ul,
+.chrote-markdown ol {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.chrote-markdown ol {
+  counter-reset: step;
+}
+
+.chrote-markdown li {
+  position: relative;
+  padding-left: 22px;
+  margin-bottom: 6px;
+}
+
+.chrote-markdown ol > li {
+  counter-increment: step;
+}
+
+.chrote-markdown ol > li::before {
+  content: counter(step) '.';
+  position: absolute;
+  left: 0;
+  color: var(--text-dim);
+}
+
+.chrote-markdown ul > li::before {
+  content: '\2013';
+  position: absolute;
+  left: 4px;
+  color: var(--text-dim);
+}
+
+.chrote-markdown li > ul,
+.chrote-markdown li > ol {
+  margin: 6px 0 0;
+}
+
+.chrote-markdown li input[type='checkbox'] {
+  position: absolute;
+  left: 2px;
+  top: 0.25em;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.chrote-markdown li:has(> input[type='checkbox'])::before {
+  content: none;
+}
+
+.chrote-markdown blockquote {
+  margin: 0 0 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--divider);
+  color: var(--text-dim);
+}
+
+.chrote-markdown hr {
+  margin: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--divider);
+}
+
+.chrote-markdown table {
+  margin: 0 0 10px;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.chrote-markdown th,
+.chrote-markdown td {
+  padding: 4px 8px;
+  border: 1px solid var(--divider);
+  text-align: left;
+  vertical-align: top;
+}
+
+.chrote-markdown th {
+  color: var(--text-primary);
+  font-weight: 700;
+  background: var(--surface-secondary);
+}
+
+.chrote-markdown img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 0 10px;
+}

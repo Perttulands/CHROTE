@@ -104,6 +104,93 @@ export function getErrorMessage(error: unknown, context: string): string {
 // API FUNCTIONS - No fallbacks, throw on any error
 // ============================================
 
+/** One path the server's walk matched. */
+export interface FileMatch {
+  path: string
+  name: string
+}
+
+/** What a find returned, and whether the roots held more than it will show. */
+export interface FindResult {
+  matches: FileMatch[]
+  truncated: boolean
+}
+
+/** A file's unified diff against its git HEAD, as the server read it. */
+export interface FileDiffResult {
+  path: string
+  /** The repository that contains the file, or '' when it is in none. */
+  repository: string
+  /** The unified diff, or '' when nothing changed and when there is no repository. */
+  diff: string
+  truncated: boolean
+}
+
+/**
+ * Find files by name across the configured roots.
+ *
+ * The server owns the walk, the ignore list and the result bound; the client
+ * only carries the query and the caller's abort signal, so a keystroke that has
+ * been overtaken stops costing anything.
+ */
+export async function findFiles(query: string, signal?: AbortSignal): Promise<FindResult> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}/find?q=${encodeURIComponent(query)}`, {
+      headers: { Accept: 'application/json' },
+      signal: signal ?? AbortSignal.timeout(10000),
+    })
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
+    throw new FileOperationError(error instanceof Error ? error.message : 'Network error', 'NETWORK')
+  }
+
+  throwForStatus(response, 'Failed to find files')
+  const data: unknown = await response.json()
+  if (!data || typeof data !== 'object') throw new FileOperationError('Malformed find response', 'SERVER')
+  const raw = (data as { matches?: unknown }).matches
+  const matches = Array.isArray(raw)
+    ? raw.flatMap((entry): FileMatch[] => {
+        if (!entry || typeof entry !== 'object') return []
+        const { path, name } = entry as { path?: unknown; name?: unknown }
+        if (typeof path !== 'string' || !path) return []
+        return [{ path, name: typeof name === 'string' && name ? name : path.split('/').pop() || path }]
+      })
+    : []
+  return { matches, truncated: (data as { truncated?: unknown }).truncated === true }
+}
+
+/**
+ * Read a file's unified diff against its git HEAD.
+ *
+ * A file outside any repository, and a file nobody has changed, both come back
+ * with an empty diff: the viewer says so rather than treating either as a
+ * failure.
+ */
+export async function fetchFileDiff(path: string, signal?: AbortSignal): Promise<FileDiffResult> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}/diff?path=${encodeURIComponent(path)}`, {
+      headers: { Accept: 'application/json' },
+      signal: signal ?? AbortSignal.timeout(20000),
+    })
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
+    throw new FileOperationError(error instanceof Error ? error.message : 'Network error', 'NETWORK')
+  }
+
+  throwForStatus(response, 'Failed to read diff')
+  const data: unknown = await response.json()
+  if (!data || typeof data !== 'object') throw new FileOperationError('Malformed diff response', 'SERVER')
+  const { repository, diff, truncated } = data as { repository?: unknown; diff?: unknown; truncated?: unknown }
+  return {
+    path,
+    repository: typeof repository === 'string' ? repository : '',
+    diff: typeof diff === 'string' ? diff : '',
+    truncated: truncated === true,
+  }
+}
+
 /**
  * Fetch directory contents
  * Throws on: non-200 response, non-directory, malformed response, network error

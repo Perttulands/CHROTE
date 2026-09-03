@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchDirectory, probeTextFile, readTextFile } from './fileService'
+import { fetchDirectory, fetchFileDiff, findFiles, probeTextFile, readTextFile } from './fileService'
 
 describe('probeTextFile', () => {
   afterEach(() => {
@@ -76,5 +76,79 @@ describe('fetchDirectory paths', () => {
       '/api/files/resources/',
       '/api/files/resources/code',
     ])
+  })
+})
+
+describe('findFiles', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('carries the query to the find route and reads the matches back', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ matches: [{ path: '/srv/chrote/docs/journeys.md', name: 'journeys.md' }], truncated: true }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(findFiles('journeys md')).resolves.toEqual({
+      matches: [{ path: '/srv/chrote/docs/journeys.md', name: 'journeys.md' }],
+      truncated: true,
+    })
+    expect(fetchMock).toHaveBeenCalledWith('/api/files/find?q=journeys%20md', expect.anything())
+  })
+
+  it('drops entries the server could not name a path for rather than rendering blanks', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ matches: [{ name: 'orphan' }, { path: '/srv/a.ts' }, 'nonsense'] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )))
+
+    await expect(findFiles('a')).resolves.toEqual({
+      matches: [{ path: '/srv/a.ts', name: 'a.ts' }],
+      truncated: false,
+    })
+  })
+
+  it('surfaces a refused find instead of showing an empty result', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 403 })))
+
+    await expect(findFiles('secret')).rejects.toThrow('Permission denied')
+  })
+})
+
+describe('fetchFileDiff', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reads a diff, its repository and its truncation flag', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ path: '/srv/chrote/a.ts', repository: '/srv/chrote', diff: '@@ -1 +1 @@\n-a\n+b\n', truncated: false }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(fetchFileDiff('/srv/chrote/a.ts')).resolves.toEqual({
+      path: '/srv/chrote/a.ts',
+      repository: '/srv/chrote',
+      diff: '@@ -1 +1 @@\n-a\n+b\n',
+      truncated: false,
+    })
+    expect(fetchMock).toHaveBeenCalledWith('/api/files/diff?path=%2Fsrv%2Fchrote%2Fa.ts', expect.anything())
+  })
+
+  it('reads a file in no repository as an empty diff rather than a failure', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ repository: '', diff: '' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )))
+
+    await expect(fetchFileDiff('/tmp/loose.txt')).resolves.toEqual({
+      path: '/tmp/loose.txt',
+      repository: '',
+      diff: '',
+      truncated: false,
+    })
   })
 })

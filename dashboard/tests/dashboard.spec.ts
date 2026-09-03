@@ -104,7 +104,7 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.session-group').filter({ hasText: groupName }).locator('.expand-icon')).toHaveText('▶')
     })
 
-    test('keeps Sessions open while Files opens and shows one non-modal file Peek', async ({ page }) => {
+    test('keeps Sessions open while Files opens the file in the panel', async ({ page }) => {
       await page.route(/.*\/api\/files\/resources(?:\/.*)?$/, async route => {
         await route.fulfill({
           status: 200,
@@ -115,6 +115,16 @@ test.describe('Arena Dashboard', () => {
           }),
         })
       })
+      await page.route('**/api/files/raw/**', route => route.fulfill({
+        status: 200,
+        contentType: 'text/plain',
+        body: '# Read me\n',
+      }))
+      await page.route('**/api/files/diff*', route => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ path: '/README.md', repository: '', diff: '', truncated: false }),
+      }))
       await page.evaluate(() => localStorage.setItem('chrote-files-persist-tab-state', '0'))
       await page.reload()
       await openSessionsSidecar(page)
@@ -132,12 +142,13 @@ test.describe('Arena Dashboard', () => {
       await expect(files).toHaveClass(/sidecar-pinned/)
 
       await page.getByRole('treeitem', { name: /File README\.md/ }).click()
-      const peek = page.getByRole('dialog', { name: /File Peek: README\.md/ })
-      await expect(peek).toBeVisible()
-      await expect(peek.getByRole('article', { name: 'Markdown preview for README.md' })).toHaveCSS('padding', '14px 18px')
-      await expect(page.locator('.file-peek-overlay')).toHaveCount(0)
-      await page.getByRole('button', { name: 'Close file Peek' }).click()
-      await expect(peek).toHaveCount(0)
+      // The viewer replaces the tree inside the panel: nothing floats over the
+      // terminals, and Back returns to where the operator was.
+      await expect(files.getByRole('heading', { name: 'Read me' })).toBeVisible()
+      await expect(files.getByRole('tree', { name: 'File tree' })).toHaveCount(0)
+      await expect(page.locator('.file-peek')).toHaveCount(0)
+      await files.getByRole('button', { name: 'Back' }).click()
+      await expect(files.getByRole('tree', { name: 'File tree' })).toBeVisible()
 
       await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
       await expect(files).toHaveCount(0)

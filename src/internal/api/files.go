@@ -585,6 +585,8 @@ func (h *FilesHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/files/resources/{path...}", h.RenameResource)
 	mux.HandleFunc("DELETE /api/files/resources/{path...}", h.DeleteResource)
 	mux.HandleFunc("GET /api/files/raw/{path...}", h.DownloadFile)
+	mux.HandleFunc("GET /api/files/find", h.FindFiles)
+	mux.HandleFunc("GET /api/files/diff", h.DiffFile)
 }
 
 // ListRoot handles GET /api/files/resources/ - root listing
