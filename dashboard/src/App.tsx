@@ -8,6 +8,7 @@ import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
 import FloatingModal from './components/FloatingModal'
 import SendDrawer from './components/SendDrawer'
 import BeadCard from './components/BeadCard'
+import AgentContextSheet from './components/AgentContextSheet'
 import type { BeadsRevealRequest } from './components/BeadsView'
 import ErrorBoundary from './components/ErrorBoundary'
 import Skeleton from './components/LoadingSkeleton'
@@ -41,6 +42,7 @@ const SettingsView = lazy(() => import('./components/SettingsView'))
 const HelpView = lazy(() => import('./components/HelpView'))
 const BeadsView = lazy(() => import('./components/BeadsView'))
 const LibraryView = lazy(() => import('./components/LibraryView'))
+const AgentsView = lazy(() => import('./components/AgentsView'))
 const SystemStatusView = lazy(() => import('./components/SystemStatusView'))
 const ScheduledTasksView = lazy(() => import('./components/ScheduledTasksView'))
 
@@ -422,6 +424,13 @@ function DashboardContent() {
               </Suspense>
             </ErrorBoundary>
           )}
+          {activeTab === 'agents' && (
+            <ErrorBoundary>
+              <Suspense fallback={<ViewFallback />}>
+                <AgentsView />
+              </Suspense>
+            </ErrorBoundary>
+          )}
           {activeTab === 'library' && (
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
@@ -472,6 +481,7 @@ function DashboardContent() {
           <FloatingModal />
           <SendDrawer />
           <BeadCard onOpenInBeads={handleOpenInBeads} />
+          <AgentContextSheet />
           <KeyEcho />
         </div>
 

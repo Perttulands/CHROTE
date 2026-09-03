@@ -1,0 +1,219 @@
+/* The Agents tab: a rail, the stack, the proposals, and the tender's desk. */
+
+.agents-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--background);
+  color: var(--text-primary);
+}
+
+.agents-columns {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.agents-rail {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  gap: 12px;
+  width: 240px;
+  padding: 8px;
+  overflow: hidden;
+  border-right: 1px solid var(--divider);
+  background-color: var(--surface-primary);
+}
+
+.agents-filter {
+  flex: none;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background-color: var(--background);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.agents-filter:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.agents-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agents-workspaces {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.agents-group h3,
+.agents-proposals h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.agents-rail-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: none;
+  border-left: 2px solid transparent;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.agents-rail-row:hover {
+  color: var(--text-primary);
+}
+
+.agents-rail-row.active {
+  border-left-color: var(--accent);
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+/* The tail of a path is what tells two workspaces apart; the row elides the
+   head in the text itself, and this is the backstop for a very long name. */
+.agents-workspace-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agents-count {
+  flex: none;
+  margin-left: auto;
+  padding-left: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.agents-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px 12px 0;
+}
+
+.agents-subject {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 10px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.agents-folder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agents-user {
+  color: var(--text-secondary);
+}
+
+.agents-purpose {
+  flex: none;
+  margin: 5px 0 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.agents-stack-scroll {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+.agents-proposals {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 300px;
+  min-height: 0;
+  padding: 10px 12px;
+  overflow-y: auto;
+  border-left: 1px solid var(--divider);
+  background-color: var(--surface-primary);
+}
+
+.agents-proposal {
+  display: flex;
+  flex-direction: column;
+  padding: 7px 6px;
+  border: none;
+  border-left: 2px solid transparent;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agents-proposal:hover {
+  border-left-color: var(--accent);
+  background-color: var(--surface-secondary);
+}
+
+.agents-proposal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.agents-proposal-glyph {
+  color: var(--text-secondary);
+}
+
+.agents-proposal-age {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.agents-proposal-title {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.agents-proposals-foot {
+  margin-top: auto;
+  padding-top: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}

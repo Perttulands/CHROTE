@@ -7,7 +7,7 @@
  * is a unit test.
  */
 
-import { test, expect, type Page } from './fixtures'
+import { test, expect, allowBrowserConsoleMessage, type Page } from './fixtures'
 import { mockApiRoutes, mockBeadsApiRoutes, mockLibraryApiRoutes } from './mock-api'
 
 /** The Librarian's own session, answering a paste the way tmux would. */
@@ -45,6 +45,10 @@ async function mockLibrarianSend(page: Page, sends: string[]) {
 
 test.describe('The Library', () => {
   test('steps into the library, opens a page from a shelf, and asks the desk', async ({ page }) => {
+    // The room asks the corpus for its own README and CLAUDE.md before it
+    // falls back to the shelves as cards. This corpus has neither, and a
+    // browser logs the misses.
+    allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 404')
     const sends: string[] = []
     await mockApiRoutes(page)
     await mockBeadsApiRoutes(page)

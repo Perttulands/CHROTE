@@ -167,6 +167,9 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	filesHandler := api.NewFilesHandler()
 	filesHandler.RegisterRoutes(mux)
 
+	agentContextHandler := api.NewAgentContextHandler()
+	agentContextHandler.RegisterRoutes(mux)
+
 	healthHandler := api.NewHealthHandlerWithBuildInfo(Version, BuildCommit)
 	healthHandler.RegisterRoutes(mux)
 

@@ -1,11 +1,14 @@
-/* The desk: one line at the foot of a tab, and the terminal it opens into. */
+/* A desk: one line at the foot of a tab, and the session's own terminal when
+   it is expanded. */
 
 .desk {
-  flex: none;
   display: flex;
   flex-direction: column;
-  background: var(--surface-primary);
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
   border-top: 1px solid var(--divider);
+  background-color: var(--surface-primary);
 }
 
 /* Expanded, the desk takes the share of the tab the terminal needs to be worth
@@ -17,25 +20,25 @@
 }
 
 .desk-line {
-  flex: none;
-  height: 36px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex: none;
+  gap: 14px;
+  height: 36px;
   padding: 0 12px;
+  font-size: 13px;
 }
 
 .desk-label {
   flex: none;
-  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  font-size: 12px;
   color: var(--text-dim);
 }
 
 .desk-session {
   flex: none;
-  font-size: 13px;
   color: var(--text-primary);
 }
 
@@ -43,6 +46,21 @@
   flex: none;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.desk-word {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.desk-word:hover {
+  color: var(--text-primary);
 }
 
 .desk-ask {
@@ -53,9 +71,9 @@
   padding: 0 8px;
   border: 1px solid var(--divider);
   border-radius: 4px;
-  background: var(--background);
+  background-color: var(--background);
   color: var(--text-primary);
-  font-family: inherit;
+  font: inherit;
   font-size: 12px;
 }
 
@@ -82,21 +100,6 @@
   color: var(--text-dim);
 }
 
-.desk-action {
-  flex: none;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.desk-action:hover {
-  color: var(--text-primary);
-}
-
 /* Launch and the Ask field are never on the line together — one means the
    session is running and the other means it is not — so both take the space
    between the identity at the left and Expand at the right. */
@@ -114,18 +117,44 @@
   margin-left: auto;
 }
 
-/* The terminal surface positions itself against the nearest positioned
-   ancestor, so the tile must be one: without this the desk's terminal escapes
-   and covers the whole tab. */
+.desk-launcher {
+  flex: none;
+  padding: 0 12px 8px;
+}
+
 .desk-tile {
-  position: relative;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
   margin: 0 8px 8px;
   border: 1px solid var(--divider);
   border-radius: 4px;
-  background: var(--terminal-background);
   overflow: hidden;
+  background-color: var(--terminal-background, var(--background));
+}
+
+.desk-tile-head {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  flex: none;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  background-color: var(--surface-secondary);
+  font-size: 13px;
+}
+
+.desk-tile-send {
+  margin-left: auto;
+}
+
+/* The terminal surface positions itself against the nearest positioned
+   ancestor, so the body it lives in must be one. Without this the terminal
+   escapes the desk and covers the whole tab, head and columns with it. */
+.desk-tile-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }

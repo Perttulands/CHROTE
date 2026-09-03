@@ -1,15 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import Desk, { resetDesksForTest } from './Desk'
-import { DEFAULT_SETTINGS } from '../types'
-import type { TmuxSession } from '../types'
+import Desk from './Desk'
+import { DEFAULT_SETTINGS, type TmuxSession } from '../types'
 
 const mockState = vi.hoisted(() => ({
-  sessions: [] as TmuxSession[],
-  openSendToSession: vi.fn(),
-  createSession: vi.fn(),
-  sendToSession: vi.fn(),
   announce: vi.fn(),
+  sendToSession: vi.fn(),
+  openSendToSession: vi.fn(),
+  refreshSessions: vi.fn(),
+  sessions: [] as TmuxSession[],
+  pooled: new Map<string, unknown>(),
 }))
 
 vi.mock('../context/SessionContext', () => ({
@@ -17,8 +17,8 @@ vi.mock('../context/SessionContext', () => ({
     sessions: mockState.sessions,
     settings: DEFAULT_SETTINGS,
     openSendToSession: mockState.openSendToSession,
-    createSession: mockState.createSession,
     sendToSession: mockState.sendToSession,
+    refreshSessions: mockState.refreshSessions,
   }),
 }))
 
@@ -26,140 +26,154 @@ vi.mock('../context/StatusContext', () => ({
   useStatus: () => ({ announce: mockState.announce }),
 }))
 
-vi.mock('./TerminalSurface', () => ({
-  default: () => <div data-testid="desk-terminal" />,
-  useTerminalSession: (url: string | null) => ({ session: url ? { url } : null, connectionState: 'idle' }),
+vi.mock('./TerminalPool', () => ({
+  useTerminalPool: () => ({ terminals: mockState.pooled, connectionStates: new Map() }),
 }))
 
-function session(overrides: Partial<TmuxSession> & { name: string }): TmuxSession {
-  return { windows: 1, attached: false, group: 'other', ...overrides }
-}
+vi.mock('./TerminalSurface', () => ({
+  default: ({ session }: { session: { url?: string } | null }) => (
+    <div data-testid="terminal-surface" data-url={session?.url ?? ''} />
+  ),
+  useTerminalSession: (url: string | null) => ({
+    session: url ? { url } : null,
+    connectionState: url ? 'open' : 'idle',
+  }),
+}))
 
-beforeEach(() => {
-  resetDesksForTest()
-  mockState.sessions = []
-  mockState.openSendToSession.mockReset()
-  mockState.createSession.mockReset()
-  mockState.sendToSession.mockReset()
-  mockState.sendToSession.mockResolvedValue({ outcome: 'sent', message: 'Pasted' })
-  mockState.announce.mockReset()
-})
+vi.mock('./Launcher', () => ({
+  default: ({ initialFolder }: { initialFolder?: string }) => <div data-testid="launcher">{initialFolder}</div>,
+}))
+
+function session(overrides: Partial<TmuxSession> = {}): TmuxSession {
+  return {
+    name: 'tender',
+    windows: 1,
+    attached: false,
+    group: 'default',
+    unixUser: 'operator',
+    currentCommand: 'claude',
+    ...overrides,
+  }
+}
 
 function renderDesk(props: Partial<React.ComponentProps<typeof Desk>> = {}) {
   return render(
     <Desk
-      label="Front desk"
-      sessionName="librarian"
-      reference="library preferences/workflow.md"
-      placeholder="Ask the Librarian…"
-      launchFolder="/corpus"
+      label="Tender"
+      sessionName="tender"
+      reference="agents /srv/chrote claude-code"
+      placeholder="Ask the tender…"
+      launchFolder="/srv/ops/tender"
       {...props}
     />,
   )
 }
 
 describe('Desk', () => {
-  const states: { name: string; sessions: TmuxSession[]; props: Partial<React.ComponentProps<typeof Desk>>; want: string }[] = [
-    { name: 'a session with a client attached is live', sessions: [session({ name: 'librarian', attached: true })], props: {}, want: 'live' },
-    { name: 'a session nobody is watching is idle', sessions: [session({ name: 'librarian' })], props: {}, want: 'idle' },
-    { name: 'a configured session that is gone is not running', sessions: [], props: {}, want: 'not running' },
-    { name: 'no configured session at all', sessions: [], props: { sessionName: undefined }, want: 'not configured' },
-  ]
-
-  states.forEach(({ name, sessions, props, want }) => {
-    it(name, () => {
-      mockState.sessions = sessions
-      renderDesk(props)
-
-      expect(screen.getByText('Front desk')).toBeInTheDocument()
-      expect(screen.getByText(want)).toBeInTheDocument()
-    })
+  beforeEach(() => {
+    mockState.announce.mockReset()
+    mockState.openSendToSession.mockReset()
+    mockState.refreshSessions.mockReset()
+    mockState.sendToSession.mockReset()
+    mockState.sendToSession.mockResolvedValue({ outcome: 'sent', message: 'sent' })
+    mockState.sessions = [session()]
+    mockState.pooled = new Map<string, unknown>()
+    window.localStorage.clear()
   })
 
-  it('offers no Ask field when nobody is on duty', () => {
+  it.each([
+    { name: 'a session with a client attached is live', sessions: [session({ attached: true })], word: 'live' },
+    { name: 'a session with none is idle', sessions: [session({ attached: false })], word: 'idle' },
+    { name: 'a session tmux does not have is not running', sessions: [], word: 'not running' },
+  ])('$name', ({ sessions, word }) => {
+    mockState.sessions = sessions
+    renderDesk()
+    expect(screen.getByText(word)).toBeInTheDocument()
+  })
+
+  it('says so when the host configured no session at all', () => {
     renderDesk({ sessionName: undefined })
-
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Expand' })).not.toBeInTheDocument()
+    expect(screen.getByText('not configured')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Ask tender')).not.toBeInTheDocument()
+    expect(screen.queryByText('Expand')).not.toBeInTheDocument()
   })
 
-  it('offers the launcher when the configured session is not running', () => {
+  it('sends the reference above the question and says who was asked', async () => {
     renderDesk()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Launch' }))
-
-    expect(mockState.createSession).toHaveBeenCalledWith({ name: 'librarian', cwd: '/corpus' })
-  })
-
-  it('sends the reference and the question, then says so and clears the field', async () => {
-    mockState.sessions = [session({ name: 'librarian', attached: true, unixUser: 'agent' })]
-    renderDesk()
-
-    const ask = screen.getByRole('textbox')
-    fireEvent.change(ask, { target: { value: 'What do we know about testing?' } })
-    fireEvent.keyDown(ask, { key: 'Enter' })
+    const field = screen.getByLabelText('Ask tender')
+    fireEvent.change(field, { target: { value: 'what changed in the doctrine?' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
 
     await waitFor(() => expect(mockState.sendToSession).toHaveBeenCalledWith(
-      'librarian',
-      {
-        text: 'library preferences/workflow.md\nWhat do we know about testing?',
-        submit: true,
-        files: [],
-      },
-      'agent',
+      'tender',
+      { text: 'agents /srv/chrote claude-code\nwhat changed in the doctrine?', files: [], submit: true },
+      'operator',
     ))
-    await waitFor(() => expect(mockState.announce).toHaveBeenCalledWith('Asked librarian', 'info'))
-    expect(ask).toHaveValue('')
+    await waitFor(() => expect(mockState.announce).toHaveBeenCalledWith('Asked tender', 'success'))
+    expect(field).toHaveValue('')
   })
 
-  it('keeps the question when the send did not land', async () => {
-    mockState.sessions = [session({ name: 'librarian', attached: true })]
+  it('keeps a question that did not land', async () => {
     mockState.sendToSession.mockResolvedValue({ outcome: 'failed', message: 'No such pane' })
     renderDesk()
-
-    const ask = screen.getByRole('textbox')
-    fireEvent.change(ask, { target: { value: 'Still worth asking' } })
-    fireEvent.keyDown(ask, { key: 'Enter' })
+    const field = screen.getByLabelText('Ask tender')
+    fireEvent.change(field, { target: { value: 'still worth asking' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
 
     await waitFor(() => expect(mockState.sendToSession).toHaveBeenCalled())
-    expect(ask).toHaveValue('Still worth asking')
+    expect(field).toHaveValue('still worth asking')
   })
 
-  it('opens the drawer on this session from Alt+S in the Ask field', () => {
-    mockState.sessions = [session({ name: 'librarian', attached: true, unixUser: 'agent' })]
+  it('hands Alt+S to the drawer with the same session and reference', () => {
     renderDesk()
-
-    const ask = screen.getByRole('textbox')
-    fireEvent.change(ask, { target: { value: 'a longer question' } })
-    fireEvent.keyDown(ask, { key: 's', altKey: true })
+    const field = screen.getByLabelText('Ask tender')
+    fireEvent.change(field, { target: { value: 'a longer note' } })
+    fireEvent.keyDown(field, { key: 's', altKey: true })
 
     expect(mockState.openSendToSession).toHaveBeenCalledWith({
-      targetSessionKey: 'agent:librarian',
-      reference: 'library preferences/workflow.md',
-      note: 'a longer question',
+      targetSessionKey: 'operator:tender',
+      reference: 'agents /srv/chrote claude-code',
+      note: 'a longer note',
     })
     expect(mockState.sendToSession).not.toHaveBeenCalled()
   })
 
-  it('expands into the session terminal and folds back', () => {
-    mockState.sessions = [session({ name: 'librarian', attached: true })]
+  it('expands into the session terminal and collapses again', () => {
     renderDesk()
+    fireEvent.click(screen.getByText('Expand'))
+    expect(screen.getByTestId('terminal-surface')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
-    expect(screen.getByTestId('desk-terminal')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }))
-    expect(screen.queryByTestId('desk-terminal')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('Collapse'))
+    expect(screen.queryByTestId('terminal-surface')).not.toBeInTheDocument()
   })
 
-  it('remembers the expansion when the operator comes back to the tab', () => {
-    mockState.sessions = [session({ name: 'librarian', attached: true })]
-    const first = renderDesk()
+  /*
+   * The pool's terminal belongs to the tile that bound it, and a terminal is
+   * attached in one place at a time. A desk that took the pooled one would
+   * empty that tile behind the operator's back, so it dials its own.
+   */
+  it('dials its own terminal rather than taking the one a tile is showing', () => {
+    mockState.pooled = new Map<string, unknown>([['operator:tender', { url: 'the tile own terminal' }]])
+    renderDesk()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
+    fireEvent.click(screen.getByText('Expand'))
+
+    expect(screen.getByTestId('terminal-surface')).not.toHaveAttribute('data-url', 'the tile own terminal')
+  })
+
+  it('remembers the expansion for that desk and session', () => {
+    const first = renderDesk()
+    fireEvent.click(screen.getByText('Expand'))
     first.unmount()
 
     renderDesk()
-    expect(screen.getByTestId('desk-terminal')).toBeInTheDocument()
+    expect(screen.getByTestId('terminal-surface')).toBeInTheDocument()
+  })
+
+  it('offers the launcher on the desk folder when the session is not running', () => {
+    mockState.sessions = []
+    renderDesk()
+    fireEvent.click(screen.getByText('Launch'))
+    expect(screen.getByTestId('launcher')).toHaveTextContent('/srv/ops/tender')
   })
 })

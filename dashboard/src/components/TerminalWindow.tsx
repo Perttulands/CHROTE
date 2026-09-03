@@ -12,6 +12,7 @@ import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types
 import { isDetached, tileStateFor, type TileState } from '../terminal/tileState'
 import { useSessionEvidence } from '../context/useSessionEvidence'
 import Menu, { type MenuGroup } from './Menu'
+import { harnessOfCommand, openAgentContext } from '../agents/agentContextPanel'
 import EmptyWindow from './EmptyWindow'
 
 interface SessionTagProps {
@@ -126,11 +127,25 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
     renameInputRef.current?.select()
   }, [isRenaming])
 
+  // The tag names a session, so the stack it opens is that session's own: the
+  // folder it runs in, and the harness its pane command is.
+  const showAgentContext = () => {
+    const { harness, shell } = harnessOfCommand(session?.currentCommand)
+    openAgentContext({
+      sessionKey,
+      folder: workingDirectory ?? '',
+      harness,
+      user: resolvedUser,
+      shell,
+    })
+  }
+
   const menuGroups: MenuGroup[] = [
     {
       id: 'work',
       rows: [
         { id: 'send', label: 'Send to session', chord: 'Alt+S', onSelect: () => openSendToSession({ targetSessionKey: sessionKey }) },
+        { id: 'agent-context', label: 'What this agent sees', onSelect: showAgentContext },
         {
           id: 'files',
           label: 'Open files in working directory',

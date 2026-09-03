@@ -139,6 +139,7 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
       // Alt+K opens the panel, which is also what the leader opens. Turning
       // keys off has no chord of its own: the tab bar's own button says so and
       // is how they come back, and the panel's row runs it from here.
+      { id: 'keys.agents', key: 'g', direct: { alt: true, shift: false, key: 'g' }, label: 'Agents tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('agents') },
       { id: 'keys.panel', key: '?', direct: { alt: true, shift: false, key: 'k' }, label: 'Keybindings', scope: 'global', run: () => stateRef.current.surfaces.onOpenKeysPanel() },
       { id: 'keys.off', key: 'k', label: 'Keys off', scope: 'global', run: () => stateRef.current.session.updateSettings({ keysEnabled: false }) },
 

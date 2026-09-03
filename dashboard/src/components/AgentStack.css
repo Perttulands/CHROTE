@@ -1,0 +1,204 @@
+/* The three layers: rows of words, a hairline under each heading, nothing else. */
+
+.agent-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agent-section {
+  flex: none;
+  margin-top: 12px;
+  min-width: 0;
+}
+
+.agent-section:first-child {
+  margin-top: 0;
+}
+
+.agent-section h3 {
+  margin: 0 0 3px;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.agent-rule {
+  height: 1px;
+  margin: 0 0 4px;
+  background-color: var(--divider);
+}
+
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  height: 23px;
+  padding: 0 6px;
+  border-left: 2px solid transparent;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.agent-instruction,
+.agent-memory[role='button'] {
+  cursor: pointer;
+}
+
+.agent-row.open {
+  background-color: var(--surface-secondary);
+  border-left-color: var(--accent);
+}
+
+.agent-scope {
+  flex: none;
+  width: 66px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.agent-path {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.agent-row.unreadable .agent-path,
+.agent-row.unreadable .agent-title {
+  color: var(--text-dim);
+}
+
+.agent-note-inline {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.agent-right {
+  margin-left: auto;
+  padding-left: 20px;
+}
+
+.agent-size {
+  flex: none;
+  margin-left: auto;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.agent-word {
+  flex: none;
+  padding: 0 0 0 20px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.agent-word:hover {
+  color: var(--text-primary);
+}
+
+.agent-name {
+  flex: none;
+  width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.agent-description {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.agent-source {
+  flex: none;
+  width: 200px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.agent-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.agent-updated {
+  flex: none;
+  width: 136px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.agent-kind {
+  flex: none;
+  width: 104px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.agent-more {
+  display: block;
+  padding: 3px 0 0 6px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.agent-more:hover {
+  color: var(--text-secondary);
+}
+
+.agent-note {
+  padding: 3px 0 0 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.agent-expansion {
+  margin: 3px 0 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background-color: var(--background);
+  max-height: 420px;
+  overflow: auto;
+}
+
+.agent-expansion-actions {
+  display: flex;
+  gap: 4px;
+  padding-top: 6px;
+}
+
+.agent-plain {
+  margin: 0;
+  font-family: inherit;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+}

@@ -75,7 +75,7 @@ test.describe('Beads', () => {
     await openBeadsTab(page)
     await page.click('.bead-row:has-text("Fix login bug") .bead-row-open')
 
-    await page.click('.bead-card-section .markdown-token')
+    await page.click('.bead-card-section .chrote-markdown-token')
 
     await expect(page.locator('.bead-card-id')).toHaveText('test-ep1.2')
     await page.click('.bead-card-action:has-text("Back")')
