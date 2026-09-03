@@ -2,16 +2,24 @@ import { test, expect, Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
 import { openSessionsSidecar } from './helpers'
 
-// Helper: open the presets panel via the tab bar button
-async function openPresetsPanel(page: Page) {
-  await page.click('.tab[title="Layout Presets"]')
-  await page.waitForSelector('.presets-panel')
+// Presets live in the active terminal tab's own menu; there is no panel.
+async function openTabMenu(page: Page) {
+  await page.locator('.tab-bar-actions .tab', { hasText: 'Tab' }).click()
+  await page.waitForSelector('.menu-sheet')
 }
 
-// Helper: save a preset with the given name (panel must already be open)
+// Helper: save a preset by naming it in the row that offered it.
 async function savePreset(page: Page, name: string) {
-  await page.fill('.preset-name-input', name)
-  await page.click('.preset-save-btn')
+  await openTabMenu(page)
+  await page.locator('.menu-row', { hasText: 'Save layout as preset' }).click()
+  await page.fill('.menu-inline-input', name)
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.menu-sheet')).toHaveCount(0)
+}
+
+// Helper: the presets the Restore submenu is currently offering.
+function restoreRows(page: Page) {
+  return page.locator('.menu-submenu .menu-row')
 }
 
 // Helper: drag a session into a window (simplified — uses mouse events for dnd-kit)
@@ -84,90 +92,73 @@ test.describe('Layout Presets', () => {
     await openSessionsSidecar(page)
   })
 
-  test('should save current layout as preset', async ({ page }) => {
-    // Open presets panel
-    await openPresetsPanel(page)
+  test('names a preset in the menu and keeps it across a reload', async ({ page }) => {
+    await openTabMenu(page)
+    await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
+    await expect(restoreRows(page)).toHaveText(['No presets'])
+    await page.keyboard.press('Escape')
 
-    // Should show empty state initially
-    await expect(page.locator('.preset-empty-message')).toBeVisible()
-
-    // Save a preset
     await savePreset(page, 'My Layout')
 
-    // Preset should appear in the list
-    await expect(page.locator('.preset-item')).toHaveCount(1)
-    await expect(page.locator('.preset-name')).toContainText('My Layout')
+    await openTabMenu(page)
+    await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
+    await expect(restoreRows(page)).toHaveText(['My Layout'])
+    await page.keyboard.press('Escape')
 
-    // Empty state should be gone
-    await expect(page.locator('.preset-empty-message')).not.toBeVisible()
-
-    // The input should be cleared after save
-    await expect(page.locator('.preset-name-input')).toHaveValue('')
-
-    await page.click('.preset-rename-btn')
-    await page.locator('.preset-edit-input').fill('Renamed Layout')
-    await page.click('.preset-edit-save')
-    await expect(page.locator('.preset-name')).toContainText('Renamed Layout')
-
-    await page.click('.presets-panel-close')
     await page.reload()
-    await openPresetsPanel(page)
-    await expect(page.locator('.preset-name')).toContainText('Renamed Layout')
+    await openTabMenu(page)
+    await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
+    await expect(restoreRows(page)).toHaveText(['My Layout'])
+    await page.keyboard.press('Escape')
 
+    // The limit is stated on the status line, where every announcement lands.
     await page.evaluate(json => localStorage.setItem('chrote-dashboard-presets', json), buildPresetJSON(10))
     await page.reload()
-    await openPresetsPanel(page)
-    await expect(page.locator('.preset-item')).toHaveCount(10)
-    await expect(page.locator('.preset-limit-warning')).toContainText('Maximum 10 presets reached')
-    await page.fill('.preset-name-input', 'One More')
-    await expect(page.locator('.preset-save-btn')).toBeDisabled()
+    await savePreset(page, 'One More')
+    await expect(page.locator('.status-line')).toContainText('Maximum 10 presets reached')
   })
 
-  test('should load preset and restore layout', async ({ page }) => {
+  test('restores a saved layout from the tab menu', async ({ page }) => {
     await page.waitForSelector('.session-item')
 
     // Bind a session to window 0
     await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window:visible >> nth=0')
     await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('jack')
 
-    // Save the layout
-    await openPresetsPanel(page)
     await savePreset(page, 'With Jack')
-    await page.click('.presets-panel-close')
 
     // Replace the saved binding before loading so the preset must cleanly restore it.
     await page.locator('.terminal-window:visible').nth(0).locator('.tag-remove').click()
     const joeRow = page.locator('.session-item:has-text("joe")').first()
     await joeRow.getByRole('button', { name: /Session actions/ }).click()
-    await page.getByRole('button', { name: /Attach to Window/ }).click()
-    await page.locator('.session-context-submenu').getByRole('button', { name: 'Window 1', exact: true }).click()
+    await page.getByRole('menuitem', { name: /Attach to window/ }).click()
+    await page.locator('.menu-submenu').getByRole('menuitem', { name: 'Window 1', exact: true }).click()
     await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('joe')
 
-    // Now load the saved preset
-    await openPresetsPanel(page)
-    await page.click('.preset-load-btn')
+    await openTabMenu(page)
+    await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
+    await restoreRows(page).filter({ hasText: 'With Jack' }).click()
 
-    // Panel should close after load
-    await expect(page.locator('.presets-panel')).not.toBeVisible()
-
-    // Jack should be restored in window 0
+    // The menu closes behind the action it ran.
+    await expect(page.locator('.menu-sheet')).toHaveCount(0)
     await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('jack')
     await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).not.toContainText('joe')
   })
 
-  test('should delete preset from list', async ({ page }) => {
-    // Save two presets
-    await openPresetsPanel(page)
+  test('deletes a preset from the tab menu, confirming in the row', async ({ page }) => {
     await savePreset(page, 'First')
     await savePreset(page, 'Second')
-    await expect(page.locator('.preset-item')).toHaveCount(2)
 
-    // Delete the first one
-    await page.locator('.preset-item').first().locator('.preset-delete-btn').click()
+    await openTabMenu(page)
+    await page.locator('.menu-row', { hasText: 'Delete preset' }).click()
+    await page.locator('.menu-submenu .menu-row', { hasText: 'First' }).click()
+    // The first press arms the row; nothing is gone until the second.
+    await page.locator('.menu-submenu .menu-row', { hasText: 'Confirm delete First' }).click()
+    await expect(page.locator('.menu-sheet')).toHaveCount(0)
 
-    // Only one should remain
-    await expect(page.locator('.preset-item')).toHaveCount(1)
-    await expect(page.locator('.preset-name')).toContainText('Second')
+    await openTabMenu(page)
+    await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
+    await expect(restoreRows(page)).toHaveText(['Second'])
   })
 
 })

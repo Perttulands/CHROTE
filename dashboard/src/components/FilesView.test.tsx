@@ -248,12 +248,12 @@ describe('FilesView editor tab bulk close', () => {
     await openRootFile('two.txt')
 
     fireEvent.contextMenu(within(editorTabs()).getByRole('button', { name: /one\.txt/ }), { clientX: 320, clientY: 180 })
-    const menu = document.querySelector('.fb-tab-context-menu') as HTMLElement
+    const menu = document.querySelector('.menu-sheet') as HTMLElement
 
-    expect(within(menu).getByRole('button', { name: 'Close Others' })).toBeInTheDocument()
-    expect(within(menu).getByRole('button', { name: 'Close All' })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Close others' })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Close all' })).toBeInTheDocument()
 
-    fireEvent.click(within(menu).getByRole('button', { name: 'Close Others' }))
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Close others' }))
 
     await waitFor(() => {
       expect(within(editorTabs()).getByRole('button', { name: /one\.txt/ })).toBeInTheDocument()
@@ -278,9 +278,8 @@ describe('FilesView dirty buffer safety', () => {
     expect(within(editorTabs()).getAllByRole('button', { name: /notes\.txt/ })).toHaveLength(1)
   })
 
-  it('asks before closing one dirty tab and keeps the buffer when cancelled', async () => {
+  it('keeps a dirty tab until its close is repeated', async () => {
     mockRootFiles({ 'notes.txt': 'from disk' })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     render(<FilesView />)
 
     await openRootFile('notes.txt')
@@ -290,16 +289,15 @@ describe('FilesView dirty buffer safety', () => {
       .getByRole('button', { name: 'x' })
     fireEvent.click(closeControl())
 
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/unsaved changes/i))
+    // The close asks where it stands and leaves the buffer exactly as it was.
+    expect(await screen.findByRole('alert')).toHaveTextContent(/close it again to discard them/i)
     expect(within(editorTabs()).getByRole('button', { name: /notes\.txt/ })).toBeInTheDocument()
     expect(screen.getByDisplayValue('unsaved work')).toBeInTheDocument()
 
-    // Confirming discards the buffer; the last tab closing drops back to Folder mode.
-    confirmSpy.mockReturnValue(true)
+    // Repeating it discards the buffer; the last tab closing drops back to Folder mode.
     fireEvent.click(closeControl())
     await waitFor(() => expect(screen.getByRole('button', { name: 'Folder' })).toHaveAttribute('aria-pressed', 'true'))
     expect(screen.queryByDisplayValue('unsaved work')).not.toBeInTheDocument()
-    confirmSpy.mockRestore()
   })
 
   it('refuses to delete a file whose open buffer has unsaved edits', async () => {
@@ -312,7 +310,7 @@ describe('FilesView dirty buffer safety', () => {
     // The file listing only renders in Folder mode.
     fireEvent.click(screen.getByRole('button', { name: 'Folder' }))
     fireEvent.contextMenu(await screen.findByRole('row', { name: /notes\.txt/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /^delete$/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^delete$/i }))
     fireEvent.click(await screen.findByRole('button', { name: /^delete$/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/save or close unsaved files before deleting/i)
@@ -331,7 +329,7 @@ describe('FilesView dirty buffer safety', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Folder' }))
     fireEvent.contextMenu(await screen.findByRole('row', { name: /notes\.txt/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /^rename$/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^rename$/i }))
     const renameInput = await screen.findByDisplayValue('notes.txt')
     fireEvent.change(renameInput, { target: { value: 'renamed.txt' } })
     fireEvent.keyDown(renameInput, { key: 'Enter' })
@@ -559,16 +557,16 @@ describe('FilesView context menu copy/open actions', () => {
     await screen.findByRole('row', { name: /hosts/ })
 
     fireEvent.contextMenu(document.querySelector('.fb-content') as HTMLElement)
-    const menu = document.querySelector('.fb-context-menu') as HTMLElement
+    const menu = document.querySelector('.menu-sheet') as HTMLElement
 
-    expect(within(menu).getByRole('button', { name: 'New File' })).not.toBeDisabled()
-    expect(within(menu).getByRole('button', { name: 'New Folder' })).not.toBeDisabled()
-    expect(within(menu).getByRole('button', { name: 'Upload' })).not.toBeDisabled()
-    expect(within(menu).getByRole('button', { name: 'Refresh' })).toBeInTheDocument()
-    expect(within(menu).getByRole('button', { name: 'Copy Current Folder Path' })).toBeInTheDocument()
-    expect(within(menu).getByRole('button', { name: 'Pin Current Folder' })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'New file' })).not.toBeDisabled()
+    expect(within(menu).getByRole('menuitem', { name: 'New folder' })).not.toBeDisabled()
+    expect(within(menu).getByRole('menuitem', { name: 'Upload' })).not.toBeDisabled()
+    expect(within(menu).getByRole('menuitem', { name: 'Refresh' })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Copy current folder path' })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Pin current folder' })).toBeInTheDocument()
 
-    fireEvent.click(within(menu).getByRole('button', { name: 'Copy Current Folder Path' }))
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy current folder path' }))
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/')
   })
 
@@ -581,8 +579,8 @@ describe('FilesView context menu copy/open actions', () => {
       await screen.findByRole('row', { name: /hosts/ })
 
       fireEvent.contextMenu(document.querySelector('.fb-content') as HTMLElement)
-      const menu = document.querySelector('.fb-context-menu') as HTMLElement
-      fireEvent.click(within(menu).getByRole('button', { name: 'Copy Current Folder Path' }))
+      const menu = document.querySelector('.menu-sheet') as HTMLElement
+      fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy current folder path' }))
 
       expect(execCopy.execCommand).toHaveBeenCalledWith('copy')
       expect(execCopy.copiedText()).toBe('/')
@@ -606,7 +604,7 @@ describe('FilesView context menu copy/open actions', () => {
       await screen.findByRole('row', { name: /hosts/ })
 
       fireEvent.contextMenu(document.querySelector('.fb-content') as HTMLElement, { clientX: 390, clientY: 290 })
-      const menu = document.querySelector('.fb-context-menu') as HTMLElement
+      const menu = document.querySelector('.menu-sheet') as HTMLElement
 
       await waitFor(() => {
         const left = Number.parseFloat(menu.style.left)
@@ -628,19 +626,19 @@ describe('FilesView context menu copy/open actions', () => {
     const hostsRow = await screen.findByRole('row', { name: /hosts/ })
 
     fireEvent.contextMenu(hostsRow)
-    const menu = document.querySelector('.fb-context-menu') as HTMLElement
+    const menu = document.querySelector('.menu-sheet') as HTMLElement
 
-    fireEvent.click(within(menu).getByRole('button', { name: 'Copy Selected Path(s)' }))
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy selected paths' }))
     expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith('/etc/hosts')
 
     fireEvent.contextMenu(hostsRow)
-    const secondMenu = document.querySelector('.fb-context-menu') as HTMLElement
-    fireEvent.click(within(secondMenu).getByRole('button', { name: 'Copy Relative Path' }))
+    const secondMenu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(secondMenu).getByRole('menuitem', { name: 'Copy relative path' }))
     expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith('etc/hosts')
 
     fireEvent.contextMenu(hostsRow)
-    const thirdMenu = document.querySelector('.fb-context-menu') as HTMLElement
-    fireEvent.click(within(thirdMenu).getByRole('button', { name: 'Open Parent Folder' }))
+    const thirdMenu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(thirdMenu).getByRole('menuitem', { name: 'Open parent folder' }))
     await waitFor(() => expect(mockFetchDirectory).toHaveBeenCalledWith('/etc'))
   })
 })

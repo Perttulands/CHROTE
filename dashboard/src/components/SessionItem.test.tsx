@@ -190,7 +190,7 @@ describe('SessionItem user badge and context actions', () => {
     )
 
     fireEvent.contextMenu(rowLabel('alice-shell'))
-    fireEvent.click(screen.getByRole('button', { name: /Rename/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Rename/ }))
     const cancelled = screen.getByRole('textbox')
     fireEvent.change(cancelled, { target: { value: 'discarded' } })
     fireEvent.keyDown(cancelled, { key: 'Escape' })
@@ -198,7 +198,7 @@ describe('SessionItem user badge and context actions', () => {
     expect(rowLabel('alice-shell')).toBeInTheDocument()
 
     fireEvent.contextMenu(rowLabel('alice-shell'))
-    fireEvent.click(screen.getByRole('button', { name: /Rename/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Rename/ }))
     const empty = screen.getByRole('textbox')
     fireEvent.change(empty, { target: { value: '' } })
     fireEvent.keyDown(empty, { key: 'Enter' })
@@ -250,14 +250,14 @@ describe('SessionItem user badge and context actions', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Session actions for alice-shell' }))
-    expect(screen.queryByRole('button', { name: /Unassign/i })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Peek/i }))
+    expect(screen.queryByRole('menuitem', { name: /Unassign/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: /Peek/i }))
     expect(mockState.openFloatingModal).toHaveBeenCalledWith('alice:alice-shell')
 
     fireEvent.click(screen.getByRole('button', { name: 'Session actions for alice-shell' }))
-    expect(screen.getByText(/Attach to Window/i)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Attach to Window/i }))
-    fireEvent.click(screen.getByRole('button', { name: /Window 1/i }))
+    expect(screen.getByText(/Attach to window/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: /Attach to window/i }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Window 1/i }))
     expect(mockState.addSessionToWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-0', 'alice-shell', 'alice')
   })
 
@@ -280,7 +280,7 @@ describe('SessionItem user badge and context actions', () => {
     expect(mockState.handleSessionClick).toHaveBeenCalledWith('alice:alice-shell')
 
     fireEvent.contextMenu(row)
-    fireEvent.click(screen.getByRole('button', { name: /Send to Session/i }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Send to session/i }))
     expect(mockState.openSendToSession).toHaveBeenCalledTimes(1)
     expect(mockState.openSendToSession).toHaveBeenLastCalledWith('alice:alice-shell')
   })
@@ -306,7 +306,7 @@ describe('SessionItem user badge and context actions', () => {
     )
 
     fireEvent.contextMenu(rowLabel('alice-shell'))
-    fireEvent.click(screen.getByRole('button', { name: /Unassign/i }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Unassign/i }))
 
     expect(mockState.removeSessionFromWindow).toHaveBeenCalledWith(
       'terminal1',
@@ -334,12 +334,12 @@ describe('SessionItem user badge and context actions', () => {
     expect(screen.queryByLabelText(/^Supervision:/)).toBeNull()
 
     fireEvent.contextMenu(rowLabel('codex-alpha'))
-    expect(screen.queryByRole('button', { name: /Make persistent|Make mortal|supervision/i })).toBeNull()
-    expect(screen.getByRole('button', { name: /Rename/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Peek/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Send to Session/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Attach to Window/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Kill Session/ })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /Make persistent|Make mortal|supervision/i })).toBeNull()
+    expect(screen.getByRole('menuitem', { name: /Rename/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Peek/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Send to session/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Attach to window/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Kill session/ })).toBeInTheDocument()
   })
 
   it('uses the whole session row as the drag surface without rendering a drag grip', () => {
@@ -394,22 +394,22 @@ describe('SessionItem user badge and context actions', () => {
       fireEvent.touchStart(row, { touches: [rowTouch], changedTouches: [rowTouch] })
       fireEvent.touchMove(row, { touches: [rowTouch], changedTouches: [rowTouch] })
       act(() => vi.advanceTimersByTime(600))
-      expect(document.querySelector('.session-context-menu')).toBeNull()
+      expect(document.querySelector('.menu-sheet')).toBeNull()
 
       fireEvent.touchStart(row, { touches: [rowTouch], changedTouches: [rowTouch] })
       fireEvent.touchEnd(row, { touches: [], changedTouches: [rowTouch] })
       act(() => vi.advanceTimersByTime(600))
-      expect(document.querySelector('.session-context-menu')).toBeNull()
+      expect(document.querySelector('.menu-sheet')).toBeNull()
 
       fireEvent.touchStart(row, { touches: [rowTouch], changedTouches: [rowTouch] })
       fireEvent.touchCancel(row, { touches: [], changedTouches: [rowTouch] })
       fireEvent.pointerDown(row, { pointerType: 'touch' })
       act(() => vi.advanceTimersByTime(600))
-      expect(document.querySelector('.session-context-menu')).toBeNull()
+      expect(document.querySelector('.menu-sheet')).toBeNull()
 
       fireEvent.touchStart(row, { touches: [rowTouch], changedTouches: [rowTouch] })
       act(() => vi.advanceTimersByTime(600))
-      expect(document.querySelector('.session-context-menu')).toBeInTheDocument()
+      expect(document.querySelector('.menu-sheet')).toBeInTheDocument()
     } finally {
       vi.clearAllTimers()
       vi.useRealTimers()
@@ -447,7 +447,7 @@ describe('SessionItem user badge and context actions', () => {
 
       act(() => vi.advanceTimersByTime(500))
 
-      expect(document.querySelector('.session-context-menu')).toBeInTheDocument()
+      expect(document.querySelector('.menu-sheet')).toBeInTheDocument()
       expect(pointerCancels).toHaveLength(1)
       expect((pointerCancels[0] as PointerEvent).pointerId).toBe(41)
       expect((pointerCancels[0] as PointerEvent).pointerType).toBe('touch')

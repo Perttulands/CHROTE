@@ -274,42 +274,42 @@ describe('TerminalFilesPanel', () => {
 
     let readmeRow = await screen.findByRole('treeitem', { name: /README\.md/ })
     fireEvent.contextMenu(readmeRow, { clientX: 80, clientY: 120 })
-    let menu = document.querySelector('.fb-context-menu') as HTMLElement
-    expect(within(menu).getAllByRole('button').map(button => button.textContent)).toEqual([
+    let menu = document.querySelector('.menu-sheet') as HTMLElement
+    expect(within(menu).getAllByRole('menuitem').map(button => button.textContent)).toEqual([
       'Open',
       'Download',
       'Rename',
       'Pin',
-      'Copy Path',
-      'Copy Relative Path',
-      'Open Parent Folder',
+      'Copy path',
+      'Copy relative path',
+      'Open parent folder',
       'Delete',
     ])
 
-    fireEvent.click(within(menu).getByRole('button', { name: 'Open' }))
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Open' }))
     expect(await screen.findByRole('dialog', { name: 'File Peek: README.md' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Close File Peek' }))
 
     readmeRow = screen.getByRole('treeitem', { name: /README\.md/ })
     fireEvent.contextMenu(readmeRow)
-    menu = document.querySelector('.fb-context-menu') as HTMLElement
-    fireEvent.click(within(menu).getByRole('button', { name: 'Open Parent Folder' }))
+    menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Open parent folder' }))
     expect(openInFiles).toHaveBeenCalledWith('/srv/chrote')
     expect(screen.getByLabelText('Files panel path')).toHaveValue('/srv/chrote')
 
     const docsRow = screen.getByRole('treeitem', { name: /Folder docs/ })
     fireEvent.contextMenu(docsRow)
-    menu = document.querySelector('.fb-context-menu') as HTMLElement
-    expect(within(menu).getAllByRole('button').map(button => button.textContent)).toEqual([
-      'Open Folder',
+    menu = document.querySelector('.menu-sheet') as HTMLElement
+    expect(within(menu).getAllByRole('menuitem').map(button => button.textContent)).toEqual([
+      'Open folder',
       'Rename',
       'Pin',
-      'Copy Path',
-      'Copy Relative Path',
-      'Open Parent Folder',
+      'Copy path',
+      'Copy relative path',
+      'Open parent folder',
       'Delete',
     ])
-    fireEvent.click(within(menu).getByRole('button', { name: 'Open Folder' }))
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Open folder' }))
     await waitFor(() => expect(screen.getByLabelText('Files panel path')).toHaveValue('/srv/chrote/docs'))
     expect(openInFiles).toHaveBeenCalledTimes(1)
   })
@@ -327,8 +327,8 @@ describe('TerminalFilesPanel', () => {
     renderPanel()
 
     fireEvent.contextMenu(await screen.findByRole('treeitem', { name: /README\.md/ }))
-    const menu = document.querySelector('.fb-context-menu') as HTMLElement
-    fireEvent.click(within(menu).getByRole('button', { name: 'Rename' }))
+    const menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Rename' }))
     fireEvent.change(screen.getByLabelText('New name'), { target: { value: 'GUIDE.md' } })
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }))
 
@@ -353,8 +353,8 @@ describe('TerminalFilesPanel', () => {
     renderPanel()
 
     fireEvent.contextMenu(await screen.findByRole('treeitem', { name: /README\.md/ }))
-    const menu = document.querySelector('.fb-context-menu') as HTMLElement
-    fireEvent.click(within(menu).getByRole('button', { name: 'Delete' }))
+    const menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Delete' }))
     const dialog = screen.getByRole('dialog', { name: 'Delete README.md' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
@@ -370,50 +370,50 @@ describe('TerminalFilesPanel', () => {
     await navigatePanel('/srv/chrote')
 
     fireEvent.contextMenu(screen.getByRole('tree', { name: 'File tree' }), { clientX: 40, clientY: 90 })
-    let menu = document.querySelector('.fb-context-menu') as HTMLElement
-    expect(within(menu).getAllByRole('button').map(button => button.textContent)).toEqual([
-      'New File',
-      'New Folder',
+    let menu = document.querySelector('.menu-sheet') as HTMLElement
+    expect(within(menu).getAllByRole('menuitem').map(button => button.textContent)).toEqual([
+      'New file',
+      'New folder',
       'Upload',
       'Refresh',
-      'Copy Current Folder Path',
-      'Pin Current Folder',
+      'Copy current folder path',
+      'Pin current folder',
     ])
 
-    fireEvent.click(within(menu).getByRole('button', { name: 'New File' }))
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'New file' }))
     fireEvent.change(screen.getByLabelText('File name'), { target: { value: 'notes.txt' } })
     fireEvent.click(screen.getByRole('button', { name: 'Create' }))
     await waitFor(() => expect(mockedCreateFile).toHaveBeenCalledWith('/srv/chrote', 'notes.txt'))
 
     fireEvent.contextMenu(screen.getByRole('treeitem', { name: /README\.md/ }))
-    menu = document.querySelector('.fb-context-menu') as HTMLElement
-    fireEvent.click(within(menu).getByRole('button', { name: 'Rename' }))
+    menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Rename' }))
     fireEvent.change(screen.getByLabelText('New name'), { target: { value: 'GUIDE.md' } })
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }))
     await waitFor(() => expect(mockedRenameItem).toHaveBeenCalledWith('/srv/chrote/README.md', '/srv/chrote/GUIDE.md'))
 
     fireEvent.contextMenu(screen.getByRole('treeitem', { name: /README\.md/ }))
-    menu = document.querySelector('.fb-context-menu') as HTMLElement
-    fireEvent.click(within(menu).getByRole('button', { name: 'Copy Relative Path' }))
+    menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy relative path' }))
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('README.md')
 
     fireEvent.contextMenu(screen.getByRole('treeitem', { name: /README\.md/ }))
-    menu = document.querySelector('.fb-context-menu') as HTMLElement
-    fireEvent.click(within(menu).getByRole('button', { name: 'Delete' }))
+    menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Delete' }))
     const deleteDialog = screen.getByRole('dialog', { name: 'Delete README.md' })
     fireEvent.click(within(deleteDialog).getByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(mockedDeleteItem).toHaveBeenCalledWith('/srv/chrote/README.md'))
 
     fireEvent.contextMenu(screen.getByRole('tree', { name: 'File tree' }))
-    menu = document.querySelector('.fb-context-menu') as HTMLElement
-    fireEvent.click(within(menu).getByRole('button', { name: 'Pin Current Folder' }))
+    menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Pin current folder' }))
     expect(JSON.parse(window.localStorage.getItem('chrote.files.pinnedPaths') || '[]')).toEqual([
       { path: '/srv/chrote', kind: 'directory' },
     ])
 
     fireEvent.contextMenu(screen.getByRole('tree', { name: 'File tree' }))
-    menu = document.querySelector('.fb-context-menu') as HTMLElement
-    fireEvent.click(within(menu).getByRole('button', { name: 'Upload' }))
+    menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Upload' }))
     const uploadInput = document.querySelector('.terminal-files-upload') as HTMLInputElement
     const upload = new File(['hello'], 'upload.txt', { type: 'text/plain' })
     fireEvent.change(uploadInput, { target: { files: [upload] } })
@@ -447,13 +447,13 @@ describe('TerminalFilesPanel', () => {
     await navigatePanel('/srv/chrote')
     const sidecarTree = screen.getAllByRole('tree', { name: 'File tree' })[0]
     fireEvent.contextMenu(sidecarTree)
-    let menu = document.querySelector('.fb-context-menu') as HTMLElement
-    fireEvent.click(within(menu).getByRole('button', { name: 'Unpin Current Folder' }))
+    let menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Unpin current folder' }))
     await waitFor(() => expect(screen.queryByRole('button', { name: /Pinned/ })).not.toBeInTheDocument())
 
     fireEvent.contextMenu(sidecarTree)
-    menu = document.querySelector('.fb-context-menu') as HTMLElement
-    fireEvent.click(within(menu).getByRole('button', { name: 'Pin Current Folder' }))
+    menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Pin current folder' }))
     expect(await screen.findByRole('button', { name: /Pinned.*1/ })).toBeInTheDocument()
     expect(JSON.parse(window.localStorage.getItem('chrote.files.pinnedPaths') || '[]')).toEqual([
       { path: '/srv/chrote', kind: 'directory' },

@@ -8,6 +8,7 @@ const mockState = vi.hoisted(() => ({
   saveCurrentLayout: vi.fn(),
   loadPreset: vi.fn(),
   clearWorkspaceAssignments: vi.fn(),
+  deletePreset: vi.fn(),
   workspaceIds: null as readonly string[] | null,
 }))
 
@@ -19,6 +20,7 @@ vi.mock('../context/SessionContext', () => ({
     loadPreset: mockState.loadPreset,
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout' }],
     clearWorkspaceAssignments: mockState.clearWorkspaceAssignments,
+    deletePreset: mockState.deletePreset,
     workspaceIds: mockState.workspaceIds ?? TERMINAL_WORKSPACE_IDS,
   }),
 }))
@@ -38,7 +40,7 @@ function mockMatchMedia(matches: boolean) {
 describe('TabBar Services navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('prompt', vi.fn(() => 'Ops'))
+    mockState.deletePreset = vi.fn()
   })
 
   it('shows Terminal 3 in desktop navigation and routes through tab change', () => {
@@ -117,13 +119,16 @@ describe('TabBar Services navigation', () => {
     render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: '⋯ Tab' }))
 
-    expect(screen.getByRole('button', { name: /Rename tab label/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Save layout as preset/i })).toBeInTheDocument()
-    expect(screen.getByText(/Restore layout preset/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Clear tab assignments/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Rename tab/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Save layout as preset/i })).toBeInTheDocument()
+    expect(screen.getByText(/Restore preset/i)).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Clear tab assignments/i })).toBeInTheDocument()
     expect(screen.queryByText(/defaults/i)).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /Clear tab assignments/i }))
+    // Clearing is destructive, so it confirms in the row it was chosen from.
+    fireEvent.click(screen.getByRole('menuitem', { name: /Clear tab assignments/i }))
+    expect(mockState.clearWorkspaceAssignments).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Confirm clear' }))
     expect(mockState.clearWorkspaceAssignments).toHaveBeenCalledWith('terminal1')
   })
 
@@ -132,9 +137,9 @@ describe('TabBar Services navigation', () => {
     render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
 
     fireEvent.click(screen.getByRole('button', { name: '⋯ Tab' }))
-    expect(screen.getByRole('button', { name: /Rename tab label/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Rename tab/i })).toBeInTheDocument()
     fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByRole('button', { name: /Rename tab label/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /Rename tab/i })).not.toBeInTheDocument()
   })
 
   it('toggles keys from the tab bar and offers the keys panel on its context menu', () => {
@@ -143,7 +148,54 @@ describe('TabBar Services navigation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Keys on' }))
     expect(mockState.updateSettings).toHaveBeenCalledWith({ keysEnabled: false })
-    expect(screen.queryByRole('button', { name: 'Keys panel' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Keybindings' })).not.toBeInTheDocument()
+  })
+
+  it('renames a tab in the tab, and abandons the rename on Escape', () => {
+    mockMatchMedia(false)
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '\u22ef Tab' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename tab' }))
+
+    // The input takes the tab's own place: nothing floats over the workspace.
+    const input = screen.getByRole('textbox', { name: 'Rename Terminal' })
+    expect(input).toHaveValue('Terminal')
+    fireEvent.change(input, { target: { value: 'Ops' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(mockState.updateSettings).toHaveBeenCalledWith({
+      terminalLabels: { ...DEFAULT_SETTINGS.terminalLabels, terminal1: 'Ops' },
+    })
+    expect(screen.getByRole('button', { name: 'Terminal' })).toBeInTheDocument()
+
+    mockState.updateSettings.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: '\u22ef Tab' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename tab' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rename Terminal' }), { target: { value: 'Discarded' } })
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Rename Terminal' }), { key: 'Escape' })
+
+    expect(mockState.updateSettings).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Terminal' })).toBeInTheDocument()
+  })
+
+  it('names a preset in the menu and restores one from its submenu', () => {
+    mockMatchMedia(false)
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '\u22ef Tab' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Save layout as preset' }))
+
+    // The menu becomes the editor rather than handing off to a dialog.
+    const input = screen.getByPlaceholderText('Preset name')
+    fireEvent.change(input, { target: { value: 'Focus' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(mockState.saveCurrentLayout).toHaveBeenCalledWith('Focus')
+
+    fireEvent.click(screen.getByRole('button', { name: '\u22ef Tab' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Restore preset' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Focus Layout' }))
+    expect(mockState.loadPreset).toHaveBeenCalledWith('preset-1')
   })
 
   it('keeps the keys menu and terminal tab menus mutually exclusive', () => {
@@ -151,14 +203,14 @@ describe('TabBar Services navigation', () => {
     render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} onShowKeys={vi.fn()} />)
 
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Keys on' }))
-    expect(screen.getByRole('button', { name: 'Dashboard Help' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Dashboard Help' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '⋯ Tab' }))
-    expect(screen.queryByRole('button', { name: 'Dashboard Help' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Rename tab label/i })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Dashboard Help' })).not.toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Rename tab/i })).toBeInTheDocument()
     expect(document.querySelectorAll('.floating-panel-dismiss-layer')).toHaveLength(1)
 
     fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByRole('button', { name: /Rename tab label/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /Rename tab/i })).not.toBeInTheDocument()
   })
 })

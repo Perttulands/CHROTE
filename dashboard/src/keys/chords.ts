@@ -1,7 +1,7 @@
 /**
  * The chord registry: one keyboard model for the whole dashboard.
  *
- * The operator presses the leader, a strip lists what the current scope
+ * The operator presses the leader, the keys panel lists what the current scope
  * offers, and the next key runs one of them. The state lives at module level
  * rather than in React because the terminal is the surface that has to give a
  * key up: `terminalSession.ts` builds an xterm outside React and hands its
@@ -15,9 +15,8 @@
  *
  * Alt is the CHROTE key. Most chords also carry a direct form the operator
  * reaches without the leader, and the leader is then discovery: it opens the
- * strip, which lists the same chords, and inside its window the bare key runs
- * the same action. Only a registered direct chord is swallowed; every other Alt
- * combination is the shell's.
+ * keys panel, which lists the same chords. Only a registered direct chord is
+ * swallowed; every other Alt combination is the shell's.
  */
 
 import { useSyncExternalStore } from 'react'
@@ -73,8 +72,8 @@ export const SCOPE_TITLES: Record<ChordScope, string> = {
 }
 
 // The order the keyboard map lists the chords in. It is presentation, but it
-// belongs here: the strip and the keys panel must read the same, however many
-// surfaces registered the chords. Case matters, so `w` and `W` can both appear.
+// belongs here: the keys panel must read the same however many surfaces
+// registered the chords. Case matters, so `w` and `W` can both appear.
 const KEY_ORDER = [
   '1', '2', '3', '4', '5', '6', 'b', '?', 'k', 'Escape',
   'w', 'W', '=', '-', '/', 'n', 'Tab', 'f', 'p', 's',
@@ -87,15 +86,30 @@ const KEY_NAMES: Record<string, string> = { '+': 'Plus', '-': 'Minus' }
 // would otherwise cancel the window before the chord ever arrived.
 const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'AltGraph', 'OS', 'Dead'])
 
+/** One key cap in the echo badge. A modifier cap is filled; a key cap is outlined. */
+export interface KeyCap {
+  label: string
+  modifier: boolean
+}
+
+/** The last registered chord to fire, for the badge that echoes it. */
+export interface KeyEcho {
+  /** Rises on every fire, so the same chord twice is two echoes. */
+  nonce: number
+  caps: readonly KeyCap[]
+}
+
 export interface KeysSnapshot {
   keysEnabled: boolean
   leaderOpen: boolean
-  /** Echoed at the strip's left while the window is open. */
+  /** The keys pressed so far in the leader window. */
   pressed: readonly string[]
   /** What the current scope offers, in contract order. */
   scopeChords: readonly Chord[]
   /** Everything registered, whatever the scope, for the keys panel. */
   allChords: readonly Chord[]
+  /** What to echo, or null before any chord has fired. */
+  echo: KeyEcho | null
 }
 
 const registrations = new Map<symbol, Chord>()
@@ -106,12 +120,32 @@ let activeScopes: Record<ChordScope, boolean> = { global: true, workspace: false
 let leaderOpen = false
 let pressed: readonly string[] = []
 let closeTimer: ReturnType<typeof setTimeout> | null = null
+let echo: KeyEcho | null = null
+let echoSeq = 0
+
+/** How a key reads on a cap or in a chord: `Plus`, `S`, `Escape`. */
+function keyName(key: string): string {
+  return KEY_NAMES[key] ?? (key.length === 1 ? key.toUpperCase() : key)
+}
 
 /** How the operator reads a direct chord: `Alt+S`, `Alt+Shift+W`, `Alt+Plus`. */
 export function directChordLabel(direct: DirectChord): string {
-  const name = KEY_NAMES[direct.key]
-    ?? (direct.key.length === 1 ? direct.key.toUpperCase() : direct.key)
-  return `Alt+${direct.shift ? 'Shift+' : ''}${name}`
+  return `Alt+${direct.shift ? 'Shift+' : ''}${keyName(direct.key)}`
+}
+
+/** The caps the badge shows for a chord: the modifiers it holds, then the key. */
+export function chordCaps(chord: Chord): readonly KeyCap[] {
+  if (chord.direct === undefined) return [{ label: keyName(chord.key), modifier: false }]
+  return [
+    { label: 'ALT', modifier: true },
+    ...(chord.direct.shift === true ? [{ label: 'SHIFT', modifier: true }] : []),
+    { label: keyName(chord.direct.key), modifier: false },
+  ]
+}
+
+function echoChord(chord: Chord) {
+  echoSeq += 1
+  echo = { nonce: echoSeq, caps: chordCaps(chord) }
 }
 
 function orderChords(chords: Chord[]): Chord[] {
@@ -135,6 +169,7 @@ function computeSnapshot(): KeysSnapshot {
     pressed,
     scopeChords: all.filter(chord => activeScopes[chord.scope]),
     allChords: all,
+    echo,
   }
 }
 
@@ -267,9 +302,20 @@ function directChordFor(event: KeyboardEvent): Chord | null {
   ))
 }
 
+/**
+ * Shut the leader window from outside the model. The keys panel needs it: the
+ * leader opens the panel, and the panel's search must get the next key rather
+ * than lose it to a window that is still listening.
+ */
+export function closeLeaderWindow(): void {
+  cancelLeader()
+}
+
 function resolveLeaderKey(event: KeyboardEvent) {
   const chord = chordFor(event)
-  cancelLeader()
+  cancelLeader(false)
+  if (chord) echoChord(chord)
+  publish()
   chord?.run()
 }
 
@@ -299,7 +345,9 @@ export function interceptKeyEvent(event: KeyboardEvent): boolean {
   const direct = directChordFor(event)
   if (direct !== null) {
     taken.add(event)
-    cancelLeader()
+    cancelLeader(false)
+    echoChord(direct)
+    publish()
     direct.run()
     return true
   }
@@ -336,6 +384,8 @@ export function resetChordsForTest(): void {
   registrations.clear()
   keysEnabled = true
   activeScopes = { global: true, workspace: false, tile: false }
+  echo = null
+  echoSeq = 0
   cancelLeader(false)
   publish()
 }

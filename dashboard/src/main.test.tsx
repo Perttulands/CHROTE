@@ -6,8 +6,8 @@ vi.mock('./App', () => ({
   default: () => <div>CHROTE dashboard mounted</div>,
 }))
 
-vi.mock('./context/ToastContext', () => ({
-  ToastProvider: ({ children }: { children: ReactNode }) => children,
+vi.mock('./context/StatusContext', () => ({
+  StatusProvider: ({ children }: { children: ReactNode }) => children,
 }))
 
 afterEach(() => {

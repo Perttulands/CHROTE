@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSession } from '../context/SessionContext'
-import { useToast } from '../context/ToastContext'
+import { useStatus } from '../context/StatusContext'
 import type { WorkspaceId, LaunchUser } from '../types'
 import { MAX_TERMINAL_TAB_COUNT, MIN_TERMINAL_TAB_COUNT, defaultSessionPrefixForUser, getSessionPrefixForUser, getTerminalLabel, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import FolderPickerModal from './FolderPickerModal'
-import NukeConfirmModal from './NukeConfirmModal'
+import { useConfirmInPlace } from './confirmInPlace'
 import { toDisplayPath } from './FilesView/types'
 
 function normalizeProjectPath(path: string): string {
@@ -14,12 +14,14 @@ function normalizeProjectPath(path: string): string {
   return trimmed.replace(/\/+$/, '')
 }
 
+// Sessions the server refuses to destroy, whatever the dashboard asks.
+const PROTECTED_SESSIONS = new Set(['chrote-chat'])
+
 function SettingsView() {
   const { settings, updateSettings, terminalUsers, sessions, refreshSessions, workspaceIds } = useSession()
-  const { addToast } = useToast()
+  const { announce } = useStatus()
   const [showFolderPicker, setShowFolderPicker] = useState(false)
   const [projectPathInput, setProjectPathInput] = useState('')
-  const [showNukeModal, setShowNukeModal] = useState(false)
   const [nuking, setNuking] = useState(false)
   const configuredUsers = normalizeTerminalUsers(terminalUsers.length > 0
     ? terminalUsers
@@ -100,16 +102,21 @@ function SettingsView() {
         signal: AbortSignal.timeout(10000),
       })
       if (!response.ok) throw new Error(await response.text())
-      addToast('All sessions destroyed', 'warning')
+      announce('All sessions destroyed', 'warning')
       refreshSessions()
     } catch (error) {
       console.error('Failed to destroy sessions:', error)
-      addToast('Failed to destroy sessions', 'error')
+      announce('Failed to destroy sessions', 'error')
     } finally {
       setNuking(false)
-      setShowNukeModal(false)
     }
   }
+
+  // The button that destroys is the button that asks. A first press arms it and
+  // names what is at stake; a second within three seconds runs it.
+  const nuke = useConfirmInPlace(() => { void nukeAllSessions() })
+  const protectedNames = sessions.map(session => session.name).filter(name => PROTECTED_SESSIONS.has(name))
+  const killableCount = sessions.length - protectedNames.length
 
   return (
     <div className="settings-view">
@@ -277,12 +284,19 @@ function SettingsView() {
         <h2 className="settings-section-title">Session cleanup</h2>
         <p className="settings-description">Bulk destruction is an emergency action. Individual session controls are safer.</p>
         <button
-          className="nuke-trigger-btn"
-          onClick={() => setShowNukeModal(true)}
+          className={nuke.armed ? 'nuke-trigger-btn armed' : 'nuke-trigger-btn'}
+          onClick={nuke.press}
           disabled={nuking || sessions.length === 0}
         >
-          ☢ {nuking ? 'Nuking…' : 'Nuke All sessions'}
+          {nuking
+            ? 'Nuking…'
+            : nuke.armed
+              ? `Confirm: destroy ${killableCount} session${killableCount === 1 ? '' : 's'}`
+              : 'Nuke All sessions'}
         </button>
+        {nuke.armed && protectedNames.length > 0 && (
+          <p className="settings-hint">Preserved: {protectedNames.join(', ')}</p>
+        )}
       </section>
 
       {/* Beads Projects Section */}
@@ -358,14 +372,6 @@ function SettingsView() {
         />
       )}
 
-      {showNukeModal && (
-        <NukeConfirmModal
-          sessionCount={sessions.length}
-          sessionNames={sessions.map(session => session.name)}
-          onConfirm={nukeAllSessions}
-          onCancel={() => setShowNukeModal(false)}
-        />
-      )}
     </div>
   )
 }

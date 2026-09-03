@@ -209,7 +209,9 @@ describe('ScheduledTasksView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
     await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/scheduled-tasks/tsk_existing/pause', expect.objectContaining({ method: 'POST' })))
 
+    // Delete confirms in place: the first press arms the button, the second runs it.
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }))
     await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/scheduled-tasks/tsk_existing', expect.objectContaining({ method: 'DELETE' })))
   })
 
@@ -224,15 +226,18 @@ describe('ScheduledTasksView', () => {
     expect(screen.getByLabelText('Timezone')).toHaveValue('Europe/Helsinki')
   })
 
-  it('protects unsaved edits before discarding the form', async () => {
-    vi.mocked(window.confirm).mockReturnValue(false)
+  it('protects unsaved edits until the discard is repeated', async () => {
     renderView()
 
     fireEvent.click(await screen.findByRole('button', { name: /New Task/i }))
     fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'unsaved draft' } })
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/discard unsaved/i))
+    // The first Cancel says what is at stake and keeps the draft where it is.
+    expect(screen.getByText(/Repeat within three seconds to discard/i)).toBeInTheDocument()
     expect(screen.getByLabelText('Prompt')).toHaveValue('unsaved draft')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByLabelText('Prompt')).not.toBeInTheDocument()
   })
 })

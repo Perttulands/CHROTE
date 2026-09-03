@@ -7,6 +7,7 @@ import { getSessionKey, getTerminalUserInitial } from '../types'
 import type { WorkspaceId } from '../types'
 import SessionPanel from './SessionPanel'
 import ScheduleEditor from './ScheduleEditor'
+import { CONFIRM_WINDOW_MS, useConfirmInPlace } from './confirmInPlace'
 import type { SessionsDockState } from './workspaceFilesState'
 import {
   describeSchedule,
@@ -227,10 +228,19 @@ function ScheduledTasksView({
 
   const { isOver, setNodeRef: setDropRef } = useDroppable({ id: DROPZONE_ID })
 
-  const canDiscardForm = useCallback(
-    () => !formRef.current || !formDirty || window.confirm('Discard unsaved scheduled task changes?'),
-    [formDirty],
-  )
+  // Leaving a dirty form confirms in place: the same gesture, repeated within
+  // three seconds, discards. Nothing is torn out of the way to ask.
+  const discardArmedAt = useRef(0)
+  const canDiscardForm = useCallback(() => {
+    if (!formRef.current || !formDirty) return true
+    if (Date.now() - discardArmedAt.current < CONFIRM_WINDOW_MS) {
+      discardArmedAt.current = 0
+      return true
+    }
+    discardArmedAt.current = Date.now()
+    setNotice('Unsaved scheduled task changes. Repeat within three seconds to discard them.')
+    return false
+  }, [formDirty])
 
   const startCreate = useCallback((targets: ScheduledTarget[] = []) => {
     if (!canDiscardForm()) return
@@ -350,7 +360,6 @@ function ScheduledTasksView({
   }, [load])
 
   const deleteTask = useCallback(async (task: ScheduledTask) => {
-    if (!window.confirm(`Delete scheduled task "${task.name}"?`)) return
     setBusy(true)
     try {
       await fetchJSON(`/api/scheduled-tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' })
@@ -592,6 +601,16 @@ function ScheduledTasksView({
   )
 }
 
+/** Delete, asking where it stands: a second press within three seconds runs it. */
+function ConfirmDeleteButton({ onDelete }: { onDelete: () => void }) {
+  const confirm = useConfirmInPlace(onDelete)
+  return (
+    <button type="button" className={confirm.armed ? 'danger armed' : 'danger'} onClick={confirm.press}>
+      {confirm.armed ? 'Confirm delete' : 'Delete'}
+    </button>
+  )
+}
+
 function TaskDetail({
   task,
   now,
@@ -628,7 +647,7 @@ function TaskDetail({
           <button type="button" onClick={onRunNow} disabled={busy}>Run now</button>
           <button type="button" onClick={onTogglePause} disabled={busy}>{task.paused ? 'Resume' : 'Pause'}</button>
           <button type="button" onClick={onDuplicate}>Duplicate</button>
-          <button type="button" className="danger" onClick={onDelete}>Delete</button>
+          <ConfirmDeleteButton onDelete={onDelete} />
         </div>
       </div>
 

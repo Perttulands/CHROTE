@@ -99,10 +99,10 @@ test.describe('Dual Workspace: Terminal 1 & Terminal 2', () => {
       // dedup behavior without depending on dragging an assigned sidebar item.
       const sessionItem = page.locator('.session-panel .session-item:has-text("jack")')
       await sessionItem.click({ button: 'right' })
-      const menu = page.locator('.session-context-menu')
+      const menu = page.locator('.menu-sheet')
       await expect(menu).toBeVisible()
-      await menu.getByRole('button', { name: /Attach to Window/ }).click()
-      await page.locator('.session-context-submenu .session-context-item:has-text("Terminal 2 - Window 1")').click()
+      await menu.getByRole('menuitem', { name: /Attach to window/ }).click()
+      await page.locator('.menu-submenu .menu-row:has-text("Terminal 2 - Window 1")').click()
 
       // jack should now be in terminal2
       await page.click('.tab:has-text("Terminal 2")')

@@ -10,7 +10,7 @@ interface KeyboardShortcutsConfig {
 // The terminal is rendered in this document now (ADR-0018), so its keystrokes
 // bubble here. Anything typed into a terminal belongs to the shell.
 function isTerminal(target: HTMLElement): boolean {
-  return Boolean(target.closest('.terminal-window-body, .floating-modal-body'))
+  return Boolean(target.closest('.terminal-window-body, .peek-body'))
 }
 
 function isDashboardChrome(target: HTMLElement): boolean {

@@ -25,7 +25,7 @@ import {
   uploadFiles,
   writeTextFile,
 } from './fileService'
-import { useViewportMenuPosition } from '../../hooks/useViewportMenuPosition'
+import { CONFIRM_WINDOW_MS } from '../confirmInPlace'
 import { copyTextToClipboard } from '../../utils/clipboard'
 import {
   MAX_TEXT_PREVIEW_BYTES,
@@ -134,13 +134,11 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
   const [operationLabel, setOperationLabel] = useState<string | null>(null)
   const [explorerWidth, setExplorerWidth] = useState(initialWorkbench.explorerWidth)
 
+  // Which dirty buffer was asked to close, and when, so a repeat discards it.
+  const discardArmed = useRef<{ path: string | null; at: number }>({ path: null, at: 0 })
+
   const currentPathPinned = pinnedPaths.some(item => item.path === currentPath)
   const workbenchStyle = { '--fb-explorer-width': `${explorerWidth}px` } as CSSProperties
-  const tabContextMenuPosition = useViewportMenuPosition<HTMLDivElement>(
-    tabContextMenu ? { x: tabContextMenu.x, y: tabContextMenu.y } : null,
-    { estimatedSize: { width: 180, height: 84 } },
-  )
-
   const showError = useCallback((message: string) => {
     setToast(message)
   }, [])
@@ -337,19 +335,26 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
     void openFile(makeFileItemFromPath(saved.path))
   }, [navigateTo, openFile])
 
-  // Closing one tab has an unambiguous target, so a dirty buffer asks for an
-  // explicit discard. Bulk closes cover many buffers at once and keep blocking
-  // instead, so the operator resolves them one by one.
+  // Closing one tab has an unambiguous target, so a dirty buffer confirms in
+  // place: the same close, pressed again within three seconds, discards. Bulk
+  // closes cover many buffers at once and keep blocking instead, so the
+  // operator resolves them one by one.
   const closeOpenFile = useCallback((path: string) => {
     const target = findBuffer(openFilesStateRef.current, path)
-    if (target?.dirty && !window.confirm(`${target.name} has unsaved changes. Discard them?`)) return
+    const armed = discardArmed.current.path === path && Date.now() - discardArmed.current.at < CONFIRM_WINDOW_MS
+    if (target?.dirty && !armed) {
+      discardArmed.current = { path, at: Date.now() }
+      showError(`${target.name} has unsaved changes. Close it again to discard them.`)
+      return
+    }
+    discardArmed.current = { path: null, at: 0 }
 
     setOpenFilesState(previous => {
       const next = closeBuffer(previous, path)
       if (next.files.length === 0) setContentMode('folder')
       return next
     })
-  }, [])
+  }, [showError])
 
   const closeAllOpenFiles = useCallback(() => {
     setTabContextMenu(null)
@@ -780,7 +785,7 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
     openFiles, activeFilePath, setActiveFilePath, fileViewStates, setFileViewStates,
     pinnedPaths, recentPaths, savedGroupsCollapsed, editingPath, setEditingPath,
     pathDraft, setPathDraft, setDraggingPaths, dropTargetPath, setDropTargetPath,
-    operationLabel, currentPathPinned, workbenchStyle, setExplorerWidth, tabContextMenuPosition,
+    operationLabel, currentPathPinned, workbenchStyle, setExplorerWidth,
     loadDirectory, navigateTo, refreshCurrentPath, startExplorerResize, updateOpenFile,
     openFile, openSavedPath, closeOpenFile, closeAllOpenFiles, closeOtherOpenFiles,
     activeFile, selectedItems, visibleItems, toggleSort, goBack, goForward, goUp,

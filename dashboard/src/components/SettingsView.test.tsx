@@ -9,14 +9,14 @@ import { DEFAULT_THEME } from '../theme/theme'
 
 const mockUseSession = vi.fn()
 const refreshSessions = vi.fn()
-const addToast = vi.fn()
+const announce = vi.fn()
 
 vi.mock('../context/SessionContext', () => ({
   useSession: () => mockUseSession(),
 }))
 
-vi.mock('../context/ToastContext', () => ({
-  useToast: () => ({ addToast }),
+vi.mock('../context/StatusContext', () => ({
+  useStatus: () => ({ announce }),
 }))
 
 vi.mock('./FolderPickerModal', () => ({

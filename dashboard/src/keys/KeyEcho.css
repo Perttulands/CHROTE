@@ -1,0 +1,45 @@
+/* The key echo. It appears and it is gone; it does not travel and does not grow. */
+
+.key-echo {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 2400;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background-color: var(--surface-primary);
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.key-echo-part {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.key-echo-plus {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.key-echo-cap {
+  padding: 2px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* The modifier is the filled cap, so a chord reads as one shape plus a key. */
+.key-echo-modifier {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: var(--background);
+}

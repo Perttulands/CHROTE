@@ -75,7 +75,7 @@ describe('TerminalArea layout controls', () => {
     render(<TerminalArea workspaceId="terminal1" />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
-    fireEvent.click(screen.getByRole('button', { name: /Reconnect frames/i }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Reconnect frames/i }))
 
     expect(reconnect.mock.calls.flat().sort()).toEqual(['alice:alpha', 'bare-session', 'bob:beta'])
   })
@@ -100,8 +100,8 @@ describe('TerminalArea layout controls', () => {
     expect(screen.queryByRole('button', { name: 'Refit terminal layout' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
-    const menu = document.querySelector('.session-context-menu') as HTMLElement
-    const refit = within(menu).getByRole('button', { name: 'Refit terminal layout' })
+    const menu = document.querySelector('.menu-sheet') as HTMLElement
+    const refit = within(menu).getByRole('menuitem', { name: 'Refit terminal layout' })
     fireEvent.click(refit)
 
     expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveAttribute('data-refit-nonce', '1')
@@ -112,7 +112,7 @@ describe('TerminalArea layout controls', () => {
     render(<TerminalArea workspaceId="terminal1" />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
-    const menu = document.querySelector('.session-context-menu') as HTMLElement
+    const menu = document.querySelector('.menu-sheet') as HTMLElement
     // Bindings are operator intent, so no control sweeps them wholesale.
     expect(within(menu).queryByRole('button', { name: /stale/i })).not.toBeInTheDocument()
   })
@@ -125,8 +125,8 @@ describe('TerminalArea layout controls', () => {
     render(<TerminalArea workspaceId="terminal1" />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
-    const menu = document.querySelector('.session-context-menu') as HTMLElement
-    const claimAll = within(menu).getByRole('button', { name: /Claim all sessions in view/ })
+    const menu = document.querySelector('.menu-sheet') as HTMLElement
+    const claimAll = within(menu).getByRole('menuitem', { name: /Claim all sessions in view/ })
     expect(claimAll).toHaveTextContent('Other devices keep watching')
     fireEvent.click(claimAll)
 
@@ -140,8 +140,8 @@ describe('TerminalArea layout controls', () => {
     render(<TerminalArea workspaceId="terminal1" />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
-    const menu = document.querySelector('.session-context-menu') as HTMLElement
-    fireEvent.click(within(menu).getByRole('button', { name: /Claim all sessions in view/ }))
+    const menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Claim all sessions in view/ }))
 
     expect(claim.mock.calls.flat()).toEqual(['alice:alpha'])
   })

@@ -15,7 +15,7 @@ import {
   sessionEvidenceFrom,
   type SessionEvidence,
 } from '../terminal/tileState'
-import { useToast } from './ToastContext'
+import { useStatus } from './StatusContext'
 import { useSendToSession } from './useSendToSession'
 import { useSessionsPoll } from './useSessionsPoll'
 import { useWorkspaceLayouts } from './useWorkspaceLayouts'
@@ -61,7 +61,7 @@ export type SessionContextValue = DashboardContextType & { sessionEvidence: Sess
 const SessionContext = createContext<SessionContextValue | null>(null)
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const { addToast } = useToast()
+  const { announce } = useStatus()
   const layouts = useWorkspaceLayouts()
   const send = useSendToSession()
   const [floatingSession, setFloatingSession] = useState<string | null>(null)
@@ -144,14 +144,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         signal: AbortSignal.timeout(10000),
       })
       if (!response.ok) {
-        addToast('Failed to create session', 'error')
+        announce('Failed to create session', 'error')
         return null
       }
-      addToast(`Session '${sessionName}' created`, 'success')
+      announce(`Session '${sessionName}' created`, 'success')
       // The session exists either way; a warning means the harness inside it
       // did not start, which is the operator's to see and act on.
       const warning = await readCreateSessionWarning(response)
-      if (warning) addToast(warning, 'warning')
+      if (warning) announce(warning, 'warning')
       if (options.attachTo) {
         addSessionToWindow(options.attachTo.workspaceId, options.attachTo.windowId, sessionName, unixUser)
       }
@@ -159,10 +159,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return sessionName
     } catch (e) {
       console.error('Failed to create session:', e)
-      addToast('Failed to create session', 'error')
+      announce('Failed to create session', 'error')
       return null
     }
-  }, [addSessionToWindow, addToast, layouts.settings, poll.refreshSessions, poll.sessions, poll.terminalUsers])
+  }, [addSessionToWindow, announce, layouts.settings, poll.refreshSessions, poll.sessions, poll.terminalUsers])
 
   // Restart an ended binding in place: same name, same Unix user, same tile.
   // The previous command is deliberately not re-run — the poll reports only
@@ -203,7 +203,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       })
       if (!response.ok) {
         console.error('Failed to delete session:', await response.text())
-        addToast('Failed to delete session', 'error')
+        announce('Failed to delete session', 'error')
         return false
       }
       const deletedKey = getSessionKey(sessionName, unixUser)
@@ -227,15 +227,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         })
         return next
       })
-      addToast(`Session '${sessionName}' deleted`, 'info')
+      announce(`Session '${sessionName}' deleted`, 'info')
       poll.refreshSessions()
       return true
     } catch (e) {
       console.error('Failed to delete session:', e)
-      addToast('Failed to delete session', 'error')
+      announce('Failed to delete session', 'error')
       return false
     }
-  }, [addToast, layouts.setWorkspaces, poll.refreshSessions])
+  }, [announce, layouts.setWorkspaces, poll.refreshSessions])
 
   const renameSession = useCallback(async (
     oldName: string,
@@ -255,7 +255,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       })
       if (!response.ok) {
         console.error('Failed to rename session:', await response.text())
-        addToast('Failed to rename session', 'error')
+        announce('Failed to rename session', 'error')
         return false
       }
       layouts.setWorkspaces(previous => {
@@ -273,15 +273,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         })
         return deduplicateWorkspaceBindings(next, newKey)
       })
-      addToast(`Session renamed to '${newName}'`, 'success')
+      announce(`Session renamed to '${newName}'`, 'success')
       poll.refreshSessions()
       return true
     } catch (e) {
       console.error('Failed to rename session:', e)
-      addToast('Failed to rename session', 'error')
+      announce('Failed to rename session', 'error')
       return false
     }
-  }, [addToast, layouts.setWorkspaces, layouts.workspaces, poll.refreshSessions])
+  }, [announce, layouts.setWorkspaces, layouts.workspaces, poll.refreshSessions])
 
   const contextValue: SessionContextValue = useMemo(() => ({
     sessions: poll.sessions,

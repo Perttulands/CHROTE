@@ -107,13 +107,13 @@ test.describe('Session Context Menu', () => {
     const session = page.locator('.session-item:has-text("hq-mayor")')
     await session.click({ button: 'right' })
 
-    const menu = page.locator('.session-context-menu')
+    const menu = page.locator('.menu-sheet')
     await expect(menu).toBeVisible()
 
     // Menu should contain standard items
-    await expect(menu.locator('.session-context-item:has-text("Rename")')).toBeVisible()
-    await expect(menu.locator('.session-context-item:has-text("Kill Session")')).toBeVisible()
-    await expect(menu.locator('.session-context-item:has-text("Attach to Window")')).toBeVisible()
+    await expect(menu.locator('.menu-row:has-text("Rename")')).toBeVisible()
+    await expect(menu.locator('.menu-row:has-text("Kill session")')).toBeVisible()
+    await expect(menu.locator('.menu-row:has-text("Attach to window")')).toBeVisible()
   })
 
   // -------------------------------------------------------
@@ -165,15 +165,16 @@ test.describe('Session Context Menu', () => {
     const session = page.locator('.session-item:has-text("hq-mayor")')
     await session.click({ button: 'right' })
 
-    // Click Kill
-    await page.locator('.session-context-menu .session-context-item:has-text("Kill Session")').click()
+    // Kill confirms where it was chosen: the row arms, then it runs.
+    await page.locator('.menu-sheet .menu-row:has-text("Kill session")').click()
+    await page.locator('.menu-sheet .menu-row:has-text("Confirm kill")').click()
 
     // Session should be removed after the API call + refresh
     await expect(page.locator('.session-item:has-text("hq-mayor")')).not.toBeVisible()
   })
 
   // -------------------------------------------------------
-  // 6. "Attach to Window" submenu shows correct windows
+  // 6. "Attach to window" submenu shows correct windows
   // -------------------------------------------------------
 
   // -------------------------------------------------------
@@ -246,7 +247,7 @@ test.describe('Session Context Menu', () => {
     }, { x: cx, y: cy })
 
     // Context menu should now be visible
-    const menu = page.locator('.session-context-menu')
+    const menu = page.locator('.menu-sheet')
     await expect(menu).toBeVisible()
   })
 })

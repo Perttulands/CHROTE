@@ -25,83 +25,73 @@ async function openPeek(page: Page) {
   await openSessionsSidecar(page, { pin: false })
   await page.waitForSelector('.session-item')
   await page.click('.session-item:has-text("jack")')
-  await expect(page.locator('.floating-modal')).toBeVisible()
+  await expect(page.locator('.sheet.sheet-left')).toBeVisible()
 }
 
-test.describe('Floating Modal (pol-9a4a)', () => {
-  test('drag modal header to reposition', async ({ page }) => {
-    await mockApiRoutes(page)
-    await page.goto('/')
-    await page.waitForSelector('.dashboard')
-    await openSessionsSidecar(page, { pin: false })
-    await page.waitForSelector('.session-item')
+test.describe('Peek (chrote-5grx.22)', () => {
+  test('docks at the left, snapped to a tile boundary, with the tiles beside it still readable', async ({ page }) => {
+    await openPeek(page)
 
-    // Open modal by clicking an unassigned session
-    await page.click('.session-item:has-text("jack")')
-    await expect(page.locator('.floating-modal')).toBeVisible()
+    const peek = page.locator('.sheet.sheet-left')
+    const peekBox = await peek.boundingBox()
+    expect(peekBox).toBeTruthy()
 
-    const modal = page.locator('.floating-modal')
-    const header = page.locator('.floating-modal-header')
+    const workspace = page.locator('.dashboard-content')
+    const workspaceBox = await workspace.boundingBox()
+    expect(workspaceBox).toBeTruthy()
 
-    // Get initial position
-    const initialBox = await modal.boundingBox()
-    expect(initialBox).toBeTruthy()
+    // Never more than 60% of the workspace, and left-docked.
+    expect(peekBox!.x).toBeLessThanOrEqual(workspaceBox!.x + 1)
+    expect(peekBox!.width).toBeLessThanOrEqual(workspaceBox!.width * 0.6 + 1)
 
-    // Drag the header
-    const headerBox = await header.boundingBox()
-    expect(headerBox).toBeTruthy()
+    // The width lands on a tile's own edge, so no tile is cut mid-glyph.
+    const tileEdges = await page.locator('.terminal-workspace-dock[data-active="true"] .terminal-window')
+      .evaluateAll(tiles => tiles.map(tile => tile.getBoundingClientRect().right))
+    const snapped = tileEdges.some(edge => Math.abs(edge - (peekBox!.x + peekBox!.width)) <= 1)
+    expect(snapped).toBe(true)
 
-    const startX = headerBox!.x + headerBox!.width / 2
-    const startY = headerBox!.y + headerBox!.height / 2
-
-    await page.mouse.move(startX, startY)
-    await page.mouse.down()
-    await page.mouse.move(startX + 150, startY + 100, { steps: 10 })
-    await page.mouse.up()
-
-    // Verify position changed
-    const newBox = await modal.boundingBox()
-    expect(newBox).toBeTruthy()
-    expect(newBox!.x).not.toBe(initialBox!.x)
-    // Horizontal drag moves; vertical movement is clamped to the viewport.
-    expect(newBox!.x - initialBox!.x).toBeGreaterThan(20)
-    expect(newBox!.y).toBeGreaterThanOrEqual(16)
-    expect(newBox!.y + newBox!.height).toBeLessThanOrEqual(await page.evaluate(() => window.innerHeight - 16))
+    // The status line is a full-width footer, so a left sheet covers the panel
+    // without truncating the line.
+    const statusBox = await page.locator('.status-line').boundingBox()
+    expect(statusBox).toBeTruthy()
+    expect(statusBox!.x).toBeLessThanOrEqual(1)
+    expect(statusBox!.y).toBeGreaterThanOrEqual(peekBox!.y + peekBox!.height - 1)
   })
 
-  // Bead chrote-wgqp.3: a click's target is the common ancestor of its press
-  // and its release, so a selection drag released past the modal edge used to
-  // dismiss Peek and the selection with it.
-  test('a selection drag released outside the modal leaves Peek open', async ({ page }) => {
+  test('lays no backdrop, so a selection released outside it keeps both the selection and the sheet', async ({ page }) => {
     await openPeek(page)
-    const rows = page.locator('.floating-modal .xterm-rows')
+    const rows = page.locator('.sheet-left .xterm-rows')
     await expect(rows).toContainText(PEEK_LINE)
 
-    const row = page.locator('.floating-modal .xterm-rows > div').first()
+    const row = page.locator('.sheet-left .xterm-rows > div').first()
     const box = await row.boundingBox()
     expect(box).toBeTruthy()
     const y = box!.y + box!.height / 2
     await page.keyboard.down('Shift')
-    // Paint leftwards from mid-row, so the release lands past the modal edge
-    // with a selection still behind it.
     await page.mouse.move(box!.x + box!.width / 2, y)
     await page.mouse.down()
     await page.mouse.move(box!.x + 1, y, { steps: 5 })
-    // Past the left edge of the modal, onto the overlay.
     await page.mouse.move(4, y, { steps: 5 })
     await page.mouse.up()
     await page.keyboard.up('Shift')
 
-    await expect(page.locator('.floating-modal')).toBeVisible()
-    await expect(page.locator('.floating-modal .xterm-selection > div')).not.toHaveCount(0)
+    await expect(page.locator('.sheet.sheet-left')).toBeVisible()
+    await expect(page.locator('.sheet-left .xterm-selection > div')).not.toHaveCount(0)
   })
 
-  test('a genuine click on the overlay still closes Peek', async ({ page }) => {
+  test('closes on Escape and from its header, and not from a click outside', async ({ page }) => {
     await openPeek(page)
 
-    await page.mouse.click(4, 4)
+    // A click on a tile beside Peek is a click on that tile, nothing more.
+    await page.locator('.terminal-workspace-dock[data-active="true"] .terminal-window').last().click({ position: { x: 8, y: 8 } })
+    await expect(page.locator('.sheet.sheet-left')).toBeVisible()
 
-    await expect(page.locator('.floating-modal')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.sheet.sheet-left')).toHaveCount(0)
+
+    await page.click('.session-item:has-text("jack")')
+    await expect(page.locator('.sheet.sheet-left')).toBeVisible()
+    await page.getByRole('button', { name: 'Close Peek' }).click()
+    await expect(page.locator('.sheet.sheet-left')).toHaveCount(0)
   })
-
 })

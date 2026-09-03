@@ -11,7 +11,7 @@ test('opens Dashboard Help from the help menu', async ({ page }) => {
   await page.waitForSelector('.dashboard')
 
   await page.locator('.keys-menu-container > .tab').click({ button: 'right' })
-  await page.locator('.help-dropdown-item', { hasText: 'Dashboard Help' }).click()
+  await page.locator('.menu-row', { hasText: 'Dashboard Help' }).click()
 
   await expect(page.locator('.help-title')).toContainText('Dashboard Help')
   await expect(page.locator('.help-subtitle')).toContainText('How to use this interface.')

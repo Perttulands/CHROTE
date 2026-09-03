@@ -1,96 +1,51 @@
-/* Chrote Dashboard - Floating Modal Styles */
-/* Pop-out modal for terminal windows */
+/* Chrote Dashboard - Peek */
+/* A sheet docked at the left of the workspace: no backdrop, no drag, no radius. */
 
-.floating-modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
-  z-index: 1000;
+.peek-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.floating-modal {
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  background-color: var(--surface-primary);
-  border: 1px solid var(--accent);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  min-width: 400px;
-  min-height: 300px;
-}
-
-.floating-modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  background-color: var(--surface-secondary);
-  border-bottom: 1px solid var(--divider);
-  cursor: move;
-}
-
-.modal-title {
-  font-weight: bold;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-.modal-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.modal-close {
+.peek-send,
+.peek-close {
+  flex: none;
   background: transparent;
-  border: 1px solid var(--divider);
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: 2px 8px;
-  font-size: 16px;
-  transition: all 0.15s ease;
-}
-
-.modal-close:hover {
-  color: var(--color-error);
-  border-color: var(--color-error);
-}
-
-.modal-send {
-  background: transparent;
-  border: 1px solid var(--divider);
+  border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 2px 6px;
   font-family: inherit;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
-.modal-send:hover {
+.peek-send:hover {
   color: var(--accent);
-  border-color: var(--accent);
 }
 
-.floating-modal-body {
+.peek-close:hover {
+  color: var(--color-error);
+}
+
+.peek-body {
   flex: 1;
   position: relative;
   overflow: hidden;
   scrollbar-width: none;
 }
 
-.floating-modal-body::-webkit-scrollbar {
+.peek-body::-webkit-scrollbar {
   display: none;
 }
 
 /* Peek on an ended session, treated exactly as the tile treats one: the last
    frame stays readable but recedes, and it stops taking input that would go
    nowhere. The note itself is the tile's, class and wording alike. */
-.floating-modal-body.detached .terminal-surface-host {
+.peek-body.detached .terminal-surface-host {
   opacity: 0.5;
   pointer-events: none;
 }

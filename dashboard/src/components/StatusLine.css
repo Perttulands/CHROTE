@@ -1,0 +1,33 @@
+/* The status line. One row, one height, present whether or not it has news. */
+
+.status-line {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 28px;
+  padding: 0 12px;
+  background-color: var(--surface-primary);
+  border-top: 1px solid var(--divider);
+  font-size: 12px;
+  line-height: 28px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.status-line-time {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.status-line-message {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-line-failure {
+  color: var(--color-error);
+}

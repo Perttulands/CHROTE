@@ -1,33 +1,49 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+/**
+ * Peek: a second look at a session, docked at the left of the workspace.
+ *
+ * It is a sheet, not a modal. It opens over the Sessions panel it was reached
+ * from, and its width snaps to the nearest tile boundary at or below 60% of the
+ * workspace, so the tiles to its right stay whole and readable rather than cut
+ * mid-glyph. There is no backdrop and no drag handle: Escape closes it, the
+ * header's close does, and a click anywhere else does what that click means.
+ */
+
+import { useEffect, useMemo, useState } from 'react'
 import { useSession } from '../context/SessionContext'
 import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
 import TerminalSurface, { useTerminalSession } from './TerminalSurface'
+import { SessionCommandMark } from './sessionLabel'
+import Sheet from './Sheet'
 import { terminalSocketUrl } from '../terminal/ttydProtocol'
 import { isSessionEnded } from '../terminal/tileState'
 import { useSessionEvidence } from '../context/useSessionEvidence'
 
-const VIEWPORT_MARGIN = 16
+/** The most of the workspace Peek is allowed to take before it snaps down. */
+export const PEEK_MAX_SHARE = 0.6
 
-function viewportRect() {
-  const width = Math.min(1000, Math.max(280, window.innerWidth - VIEWPORT_MARGIN * 2))
-  const height = Math.min(700, Math.max(240, window.innerHeight - VIEWPORT_MARGIN * 2))
-  return {
-    size: { width, height },
-    position: {
-      x: Math.max(VIEWPORT_MARGIN, (window.innerWidth - width) / 2),
-      y: Math.max(VIEWPORT_MARGIN, (window.innerHeight - height) / 2),
-    },
-  }
+/**
+ * The widest tile boundary that fits inside the share, measured from the live
+ * grid rather than guessed from the layout count: a boundary is where a tile
+ * actually ends, whatever the grid is doing.
+ */
+export function peekExtent(): string {
+  if (typeof document === 'undefined') return `${PEEK_MAX_SHARE * 100}%`
+  const content = document.querySelector<HTMLElement>('.dashboard-content')
+  if (!content) return `${PEEK_MAX_SHARE * 100}%`
+  const total = content.clientWidth
+  const cap = total * PEEK_MAX_SHARE
+  const left = content.getBoundingClientRect().left
+  const boundaries = Array.from(
+    document.querySelectorAll<HTMLElement>('.terminal-workspace-dock[data-active="true"] .terminal-window'),
+  )
+    .map(tile => tile.getBoundingClientRect().right - left)
+    .filter(edge => edge > 0 && edge <= cap)
+  return boundaries.length > 0 ? `${Math.round(Math.max(...boundaries))}px` : `${PEEK_MAX_SHARE * 100}%`
 }
 
 function FloatingModal() {
   const { floatingSession, closeFloatingModal, openSendToSession, settings, sessions } = useSession()
-  const initialRect = useRef(viewportRect())
-  const [position, setPosition] = useState(initialRect.current.position)
-  const [size, setSize] = useState(initialRect.current.size)
-  const [isDragging, setIsDragging] = useState(false)
-  const dragOffset = useRef({ x: 0, y: 0 })
-  const overlayPressed = useRef(false)
+  const [extent, setExtent] = useState<string>(`${PEEK_MAX_SHARE * 100}%`)
 
   const displayName = floatingSession ? getSessionNameFromKey(floatingSession) : ''
   const keyUser = floatingSession ? getSessionUserFromKey(floatingSession) : ''
@@ -46,7 +62,7 @@ function FloatingModal() {
   const evidence = useSessionEvidence()
   const ended = floatingSession !== null && isSessionEnded(floatingSession, evidence)
 
-  // Peek owns its terminal for the life of the modal: it is a second observer
+  // Peek owns its terminal for the life of the sheet: it is a second observer
   // of the session, not the tile's terminal moved onto the overlay. It attaches
   // as an observer, so it never displaces the tile or resizes the window.
   const socketUrl = useMemo(
@@ -57,108 +73,51 @@ function FloatingModal() {
   // the last frame is not disposed; `connect` is what stops it dialling again.
   const { session: terminal, connectionState } = useTerminalSession(socketUrl, settings.fontSize, settings.hideScrollbar)
 
+  // The grid the boundary comes from is laid out in the same paint that opened
+  // the sheet, so the measurement is taken after it and again on every resize.
   useEffect(() => {
     if (!floatingSession) return
-    const next = viewportRect()
-    setPosition(next.position)
-    setSize(next.size)
-    setIsDragging(false)
+    const measure = () => setExtent(peekExtent())
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
   }, [floatingSession])
-
-  useEffect(() => {
-    if (!floatingSession) return
-    const clampToViewport = () => {
-      const next = viewportRect()
-      setSize(next.size)
-      setPosition(current => ({
-        x: Math.min(Math.max(VIEWPORT_MARGIN, current.x), Math.max(VIEWPORT_MARGIN, window.innerWidth - next.size.width - VIEWPORT_MARGIN)),
-        y: Math.min(Math.max(VIEWPORT_MARGIN, current.y), Math.max(VIEWPORT_MARGIN, window.innerHeight - next.size.height - VIEWPORT_MARGIN)),
-      }))
-    }
-    window.addEventListener('resize', clampToViewport)
-    return () => window.removeEventListener('resize', clampToViewport)
-  }, [floatingSession])
-
-  const handleMouseDown = (event: React.MouseEvent) => {
-    if ((event.target as HTMLElement).closest('button')) return
-    setIsDragging(true)
-    dragOffset.current = {
-      x: event.clientX - position.x,
-      y: event.clientY - position.y,
-    }
-  }
-
-  useEffect(() => {
-    if (!isDragging) return
-    const handleMouseMove = (event: MouseEvent) => {
-      const maxX = Math.max(VIEWPORT_MARGIN, window.innerWidth - size.width - VIEWPORT_MARGIN)
-      const maxY = Math.max(VIEWPORT_MARGIN, window.innerHeight - size.height - VIEWPORT_MARGIN)
-      setPosition({
-        x: Math.min(maxX, Math.max(VIEWPORT_MARGIN, event.clientX - dragOffset.current.x)),
-        y: Math.min(maxY, Math.max(VIEWPORT_MARGIN, event.clientY - dragOffset.current.y)),
-      })
-    }
-    const handleMouseUp = () => setIsDragging(false)
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [isDragging, size.height, size.width])
 
   if (!floatingSession) return null
 
+  const header = (
+    <>
+      <SessionCommandMark command={session?.currentCommand} />
+      <span className="peek-name">{displayName}</span>
+      {canOpenSession && !ended && connectionState !== 'open' && (
+        <span className="terminal-loading-state">
+          {connectionState === 'closed' || connectionState === 'dropped' ? 'Terminal disconnected' : 'Loading terminal…'}
+        </span>
+      )}
+      <button type="button" className="peek-send" onClick={() => openSendToSession(floatingSession)}>Send</button>
+      <button type="button" className="peek-close" onClick={closeFloatingModal} aria-label="Close Peek">×</button>
+    </>
+  )
+
   return (
-    <div
-      className="floating-modal-overlay"
-      // A click's target is the nearest common ancestor of its press and its
-      // release, so a selection drag that starts in the terminal and ends past
-      // the modal edge delivers a click here and used to dismiss Peek along
-      // with the selection just painted. Dismiss only when the press landed on
-      // the overlay too: clicking outside should mean the operator clicked
-      // outside. The press is read as a pointerdown because xterm stops
-      // propagation of the mousedown that starts a selection under tmux mouse
-      // mode. Escape and the header's close button remain, so a Peek that is
-      // hard to dismiss by click is not a trap.
-      onPointerDown={event => { overlayPressed.current = event.target === event.currentTarget }}
-      onClick={event => { if (overlayPressed.current && event.target === event.currentTarget) closeFloatingModal() }}
-    >
-      <div
-        className="floating-modal"
-        style={{ left: position.x, top: position.y, width: size.width, height: size.height }}
-        onClick={event => event.stopPropagation()}
-      >
-        <div className="floating-modal-header" onMouseDown={handleMouseDown}>
-          <span className="modal-title">{displayName}</span>
-          <div className="modal-controls">
-            {canOpenSession && !ended && connectionState !== 'open' && (
-              <span className="terminal-loading-state">
-                {connectionState === 'closed' || connectionState === 'dropped' ? 'Terminal disconnected' : 'Loading terminal…'}
-              </span>
+    <Sheet open edge="left" extent={extent} label={`Peek ${displayName}`} onClose={closeFloatingModal} header={header}>
+      <div className={ended ? 'peek-body detached' : 'peek-body'}>
+        {canOpenSession ? (
+          <>
+            <TerminalSurface session={terminal} connect={!ended} />
+            {ended && (
+              <div className="terminal-tile-detached" data-tile-state="ended" role="status">
+                <span className="terminal-tile-detached-note">
+                  {displayName} ended. This frame shows its last output.
+                </span>
+              </div>
             )}
-            <button className="modal-send" onClick={() => openSendToSession(floatingSession)}>Send to Session</button>
-            <button className="modal-close" onClick={closeFloatingModal}>×</button>
-          </div>
-        </div>
-        <div className={ended ? 'floating-modal-body detached' : 'floating-modal-body'}>
-          {canOpenSession ? (
-            <>
-              <TerminalSurface session={terminal} connect={!ended} />
-              {ended && (
-                <div className="terminal-tile-detached" data-tile-state="ended" role="status">
-                  <span className="terminal-tile-detached-note">
-                    {displayName} ended. This frame shows its last output.
-                  </span>
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="empty-window-content">Ambiguous legacy session name; attach the user-qualified session from the session list.</div>
-          )}
-        </div>
+          </>
+        ) : (
+          <div className="empty-window-content">Ambiguous legacy session name; attach the user-qualified session from the session list.</div>
+        )}
       </div>
-    </div>
+    </Sheet>
   )
 }
 

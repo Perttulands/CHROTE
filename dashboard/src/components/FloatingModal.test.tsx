@@ -49,29 +49,30 @@ describe('FloatingModal Send to Session action', () => {
     })
   })
 
-  it('offers Send to Session from the peek panel without closing the terminal peek', () => {
+  it('offers Send from the peek sheet without closing the terminal peek', () => {
     render(<FloatingModal />)
 
-    fireEvent.click(screen.getByRole('button', { name: /Send to Session/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
     expect(mockState.openSendToSession).toHaveBeenCalledWith('alice:alice-shell')
     expect(mockState.closeFloatingModal).not.toHaveBeenCalled()
   })
 
-  it('uses truthful loading text, responsive geometry, and does not drag from header controls', () => {
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 640 })
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 480 })
+  it('docks at the left edge with no backdrop, and closes on Escape but not on an outside click', () => {
     const { container } = render(<FloatingModal />)
 
-    const modal = container.querySelector('.floating-modal') as HTMLElement
+    const sheet = container.querySelector('.sheet.sheet-left') as HTMLElement
+    expect(sheet).not.toBeNull()
     expect(screen.getByText('Loading terminal…')).toBeInTheDocument()
-    expect(Number.parseInt(modal.style.width, 10)).toBeLessThanOrEqual(608)
-    expect(Number.parseInt(modal.style.height, 10)).toBeLessThanOrEqual(448)
+    // No backdrop: there is nothing between the sheet and the work behind it.
+    expect(document.querySelector('.floating-panel-dismiss-layer')).toBeNull()
 
-    const initialLeft = modal.style.left
-    fireEvent.mouseDown(screen.getByRole('button', { name: /Send to Session/i }), { clientX: 20, clientY: 20 })
-    fireEvent.mouseMove(document, { clientX: 300, clientY: 300 })
-    expect(modal.style.left).toBe(initialLeft)
+    fireEvent.pointerDown(document.body)
+    fireEvent.click(document.body)
+    expect(mockState.closeFloatingModal).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(mockState.closeFloatingModal).toHaveBeenCalled()
   })
 
   it('gives a peek at an ended session the tile\'s note instead of a silent dead terminal', () => {
@@ -80,7 +81,7 @@ describe('FloatingModal Send to Session action', () => {
 
     // The same wording the tile uses, over the same last frame.
     expect(screen.getByText('alice-shell ended. This frame shows its last output.')).toBeInTheDocument()
-    expect(container.querySelector('.floating-modal-body.detached')).not.toBeNull()
+    expect(container.querySelector('.peek-body.detached')).not.toBeNull()
     expect(container.querySelector('.terminal-surface-host')).not.toBeNull()
     // Naming the failure is the point: no socket is opened to rediscover it.
     expect(FakeSocket.instances).toHaveLength(0)
