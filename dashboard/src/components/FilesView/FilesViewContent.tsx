@@ -18,7 +18,7 @@ export default function FilesViewContent({
   loading, error, selectedPaths, sortBy, sortDir, viewMode, setViewMode,
   contentMode, setContentMode, searchQuery, setSearchQuery, contextMenu, setContextMenu,
   tabContextMenu, setTabContextMenu, renamingPath, renameValue, setRenameValue,
-  createIntent, setCreateIntent, deleteTargets, setDeleteTargets, toast, setToast,
+  createIntent, setCreateIntent, deleteTargets, setDeleteTargets,
   openFiles, activeFilePath, setActiveFilePath, fileViewStates, setFileViewStates,
   pinnedPaths, recentPaths, savedGroupsCollapsed, editingPath, setEditingPath,
   pathDraft, setPathDraft, setDraggingPaths, dropTargetPath, setDropTargetPath,
@@ -216,14 +216,6 @@ export default function FilesViewContent({
 
   return (
     <div className="fb-container files-view">
-      {toast && (
-        <div className="fb-error-toast" role="alert">
-          <span className="fb-error-toast-icon">!</span>
-          <span className="fb-error-toast-message">{toast}</span>
-          <button className="fb-error-toast-dismiss" type="button" onClick={() => setToast(null)}>x</button>
-        </div>
-      )}
-
       <input
         ref={uploadInputRef}
         className="fb-hidden-input"

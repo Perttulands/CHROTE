@@ -1,10 +1,10 @@
 /**
  * What CHROTE last said, and when it said it.
  *
- * Every announcement in the dashboard lands here and is drawn once, on the
- * status line at the foot of the window. There is no queue to read, nothing
- * appears over the work, and nothing has to be dismissed: the newest line
- * replaces the one before it, and the operator reads it when he looks down.
+ * Every announcement in the dashboard lands here and is drawn twice: as a
+ * toast in the bottom-centre slot for as long as it takes to read, and on the
+ * status line at the foot of the window as the record. There is no queue and
+ * nothing has to be dismissed: the newest event replaces the one before it.
  *
  * `announce` carries the same two arguments the old toast did, so a call site
  * says what it always said and says it in one place.

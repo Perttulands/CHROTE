@@ -1,0 +1,43 @@
+/* The toast. It fades in and out in place; it never travels and takes no pointer. */
+
+/* The key echo owns the 16px slot beneath. The toast sits above the space the
+   echo takes, so neither moves when the other appears. */
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  z-index: 2400;
+  max-width: min(560px, calc(100% - 32px));
+  padding: 8px 12px;
+  background-color: var(--surface-primary);
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 4px);
+  transition: opacity 200ms ease-out, transform 200ms ease-out;
+}
+
+.toast-raised {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition-duration: 120ms;
+}
+
+.toast-failure {
+  color: var(--color-error);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast,
+  .toast-raised {
+    transform: translateX(-50%);
+    transition-property: opacity;
+  }
+}
