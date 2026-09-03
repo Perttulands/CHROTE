@@ -457,6 +457,7 @@
 }
 
 .library-empty,
+.library-git-error,
 .library-error {
   margin: 0;
   padding: 6px;

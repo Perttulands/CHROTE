@@ -58,6 +58,9 @@ export default function LibraryView() {
   const [changes, setChanges] = useState<LibraryChange[]>([])
   const [proposals, setProposals] = useState<BeadRow[]>([])
   const [error, setError] = useState<string | null>(null)
+  // What git said when it would not read the corpus. Without it a refused
+  // repository looks exactly like a library nobody has written in.
+  const [gitError, setGitError] = useState('')
 
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<LibrarySearchResult[] | null>(null)
@@ -92,7 +95,11 @@ export default function LibraryView() {
     if (!root) return
     let current = true
     fetchChanges(ARRIVALS)
-      .then(found => { if (current) setChanges(found) })
+      .then(found => {
+        if (!current) return
+        setChanges(found.changes)
+        setGitError(found.error ?? '')
+      })
       .catch(() => { if (current) setChanges([]) })
     return () => { current = false }
   }, [root])
@@ -115,6 +122,7 @@ export default function LibraryView() {
     fetchPage(path)
       .then(found => {
         setPage(found)
+        setGitError(found.error ?? '')
         setShelf(shelfOf(found.path) || null)
       })
       .catch((cause: unknown) => {
@@ -160,7 +168,11 @@ export default function LibraryView() {
     }
     let current = true
     fetchShelfPages(shelf)
-      .then(found => { if (current) setShelfPages(found) })
+      .then(found => {
+        if (!current) return
+        setShelfPages(found.pages)
+        setGitError(found.error ?? '')
+      })
       .catch(() => { if (current) setShelfPages([]) })
     return () => { current = false }
   }, [shelf])
@@ -277,6 +289,7 @@ export default function LibraryView() {
           <section className="library-section library-yields">
             <h3>New arrivals</h3>
             <div className="library-scroll">
+              {gitError && <p className="library-git-error">{gitError}</p>}
               {changes.length === 0 && <p className="library-empty">Nothing has arrived yet.</p>}
               {changes.map(change => (
                 <button

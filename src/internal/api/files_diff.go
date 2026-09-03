@@ -3,22 +3,23 @@ package api
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/chrote/server/internal/core"
 )
 
-// DiffResponse is the body of GET /api/files/diff.
+// DiffResponse is the body of GET /api/files/diff. Error is what git said when
+// it would not diff, which an empty diff on its own cannot tell from a file
+// nobody has changed.
 type DiffResponse struct {
 	Path       string `json:"path"`
 	Repository string `json:"repository"`
 	Diff       string `json:"diff"`
 	Truncated  bool   `json:"truncated"`
+	Error      string `json:"error,omitempty"`
 }
 
 // diffOutputLimit bounds the diff bytes a response carries.
@@ -26,8 +27,8 @@ const diffOutputLimit = 1 << 20
 
 // DiffFile handles GET /api/files/diff?path= - the unified diff of a file
 // against the HEAD of the repository that contains it. A file outside any
-// repository, an unchanged file, and a repository git cannot diff all yield an
-// empty diff rather than an error.
+// repository and an unchanged file both yield an empty diff; a repository git
+// would not read yields an empty diff and the reason it gave.
 func (h *FilesHandler) DiffFile(w http.ResponseWriter, r *http.Request) {
 	requestPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	if requestPath == "" {
@@ -50,17 +51,17 @@ func (h *FilesHandler) DiffFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	diff, truncated, err := gitDiffAgainstHead(r.Context(), repository, result.Path)
-	if err != nil {
-		core.WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
-		return
-	}
-	core.WriteJSON(w, http.StatusOK, DiffResponse{
+	diff, truncated, gitErr := gitDiffAgainstHead(r.Context(), repository, result.Path)
+	response := DiffResponse{
 		Path:       result.Path,
 		Repository: repository,
 		Diff:       diff,
 		Truncated:  truncated,
-	})
+	}
+	if gitErr != nil {
+		response.Error = gitErr.Error()
+	}
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // findRepositoryRoot walks up from directory to the filesystem root and
@@ -111,33 +112,10 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 }
 
 // gitDiffAgainstHead runs git diff HEAD for path inside repository and returns
-// at most diffOutputLimit bytes of it. A missing git binary or a git failure
-// (no commits yet, an unreadable gitfile) is reported as an empty diff. Only a
-// failure to run the command at all is an error.
+// at most diffOutputLimit bytes of it, whether it was cut short, and what git
+// said when it would not run. A repository with no commits yet, an unreadable
+// gitfile, and a repository owned by another account all end up here, and the
+// caller reports the reason rather than an unexplained empty diff.
 func gitDiffAgainstHead(ctx context.Context, repository, path string) (string, bool, error) {
-	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		return "", false, nil
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	output := &boundedOutput{limit: diffOutputLimit, onOverflow: cancel}
-
-	cmd := exec.CommandContext(ctx, gitPath, "--no-pager", "-C", repository, "diff", "HEAD", "--", path)
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
-	cmd.Stdout = output
-	runErr := cmd.Run()
-
-	if output.truncated {
-		return output.buffer.String(), true, nil
-	}
-	if runErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) || ctx.Err() != nil {
-			return "", false, nil
-		}
-		return "", false, runErr
-	}
-	return output.buffer.String(), false, nil
+	return runGitCommand(ctx, repository, diffOutputLimit, "diff", "HEAD", "--", path)
 }

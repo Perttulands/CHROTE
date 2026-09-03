@@ -230,7 +230,7 @@ func TestLibraryPagesTitlesAndLastChange(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 	}
-	pages := decodeLibrary[[]LibraryPage](t, rec)
+	pages := decodeLibrary[LibraryPagesResponse](t, rec).Pages
 	if len(pages) != 2 {
 		t.Fatalf("pages = %d, want 2: %#v", len(pages), pages)
 	}
@@ -250,7 +250,7 @@ func TestLibraryPagesTitlesAndLastChange(t *testing.T) {
 	}
 
 	nested := libraryRequest(t, handler, http.MethodGet, "/api/library/pages?shelf=knowledge", "")
-	knowledge := decodeLibrary[[]LibraryPage](t, nested)
+	knowledge := decodeLibrary[LibraryPagesResponse](t, nested).Pages
 	found := false
 	for _, page := range knowledge {
 		if page.Path == "knowledge/notes/deep.md" {
@@ -410,7 +410,7 @@ func TestLibraryChanges(t *testing.T) {
 			if tt.wantStatus != http.StatusOK {
 				return
 			}
-			changes := decodeLibrary[[]LibraryChange](t, rec)
+			changes := decodeLibrary[LibraryChangesResponse](t, rec).Changes
 			if len(changes) != tt.wantCount {
 				t.Fatalf("changes = %d, want %d: %#v", len(changes), tt.wantCount, changes)
 			}
