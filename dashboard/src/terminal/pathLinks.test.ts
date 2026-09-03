@@ -20,7 +20,7 @@ describe('absolute paths as terminal links', () => {
   it.each([
     ['a sentence ends: see /tmp/out.log.', '/tmp/out.log'],
     ['in brackets (/srv/chrote/README.md)', '/srv/chrote/README.md'],
-    ['quoted "/home/perttu/notes.txt"', '/home/perttu/notes.txt'],
+    ['quoted "/home/alice/notes.txt"', '/home/alice/notes.txt'],
     ['with a line: /srv/chrote/dashboard/src/App.tsx:123:5', '/srv/chrote/dashboard/src/App.tsx'],
     ['a directory /srv/chrote/', '/srv/chrote'],
     ['--flag=/etc/hosts', '/etc/hosts'],
