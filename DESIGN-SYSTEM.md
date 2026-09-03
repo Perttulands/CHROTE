@@ -51,6 +51,10 @@ of them is the wall of buttons the doctrine exists to prevent.
    one button that acts; a second primary marks neither.
 6. **A surface states its purpose in a sentence, or it is not a surface.** A tab
    that cannot say what it is for collects whatever else has no home.
+7. **Nothing moves under the pointer.** A region reserves the space of its
+   largest state, a list that can grow scrolls inside a fixed extent, and a
+   control never shifts because a sibling appeared or vanished. A surface
+   changes size only on the operator's own resize.
 
 ## The colour rule
 
@@ -171,13 +175,17 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | `Alt+1` … `Alt+6` | Terminal tab n, for the tabs that exist |
 | `Alt+B` | Beads tab |
 | `Alt+L` | Library tab |
+| `Alt+G` | Agents tab |
 | `Alt+W`, `Alt+Shift+W` | Next and previous window in the active tab |
 | `Alt+Plus`, `Alt+Minus` | Add a window; remove the last empty one |
 | `Alt+N` | Launcher in the focused window |
-| `Alt+S` | Send to Session for the focused tile |
+| `Alt+S` | Send to Session for the focused tile; in a tab with a resident, paste the table's reference into its prompt |
 | `Alt+P` | Peek the focused tile's session |
 | `Alt+A` | Sessions panel |
 | `Alt+O` | Files panel |
+| `Alt+I` | Close the table |
+| `Alt+R` | The Library's map or its reading room |
+| `Alt+Enter` | Focus the resident's column |
 | `Alt+K` | Keybindings panel |
 
 `Plus` and `Minus` are matched by the character the layout produces, not by
@@ -190,6 +198,8 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
   `Keys off`: device-local, on by default, and off means nothing is intercepted.
 - **Panel.** The leader and `Alt+K` open the same centred list of every chord in
   scope, as `CHORD → action`. Typing filters it, `Enter` runs the current row.
+- **Toggles.** A chord that opens a glance closes it when pressed again: the
+  leader and `Alt+K` on the keybindings panel, `Alt+P` on Peek.
 - **Echo.** A registered chord that fires shows its key caps at the foot of the
   workspace for 800 ms. Nothing else echoes, because nothing else was taken.
 - **Scopes.** `global` chords list always, `workspace` chords while a terminal
@@ -199,12 +209,14 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 
 ## Hand-off
 
-Send to Session is the one way to hand work to an agent. Every object that can
-be handed over opens it: a tile, a session row, Peek, a file, a diff, a Bead, a
-library page, an annotated element.
+Send to Session is the one way to hand work to an agent: the drawer for any
+session, and in a tab with a resident a paste straight into the resident's
+prompt. Every object that can be handed over opens it: a tile, a session row,
+Peek, a file, a diff, a Bead, a library page, an annotated element.
 
-- **A drawer, not a modal.** It docks at the right and the grid narrows to fit,
-  so the tile it targets stays visible; only a narrow viewport makes it overlay.
+- **A drawer, not a modal.** It draws from the right edge at 380px over the
+  table's column, with no gutter, so nothing beneath it moves and what was
+  beneath is there again when it closes.
 - **A reference, then the note.** Each entry point passes one line the agent can
   act on — a path, a Bead id and title, a library page, a component and its file.
   The drawer shows that line first, styled read-only, and puts the cursor in the
@@ -213,6 +225,10 @@ library page, an annotated element.
   otherwise, and a "new agent" entry that opens the launcher with the message.
 - **One primary action.** Send pastes and submits. Pasting without submitting is
   the secondary action, for a prompt the operator wants to read before it runs.
+- **A resident takes the paste.** Where the tab has a resident agent, `Alt+S`
+  and the object's Send put the table's reference into the resident's prompt
+  without submitting, and the operator finishes the sentence there. The drawer
+  serves every other session.
 - **A receipt.** The tile scrolls to the bottom and the drawer closes; a failure
   keeps the drawer open with the server's own message.
 
@@ -226,23 +242,93 @@ which the build is told to keep through minification. The target picker offers a
 new CHROTE agent alongside the live sessions, because a complaint about CHROTE
 usually has no session waiting for it.
 
+## The right edge
+
+Three things share the right edge of a tab, in layers: the table, the Send
+drawer over it, and the resident's column beyond both.
+
+- **The table** holds the one selected object: a Bead, a page, what an agent
+  sees. It is global, so the object chosen in one tab is on the table in every
+  tab, and each tab shows it where it fits: the Beads tab as the detail column
+  beside its map, a terminal tab as a column at the right of the grid that
+  stays through tab switches. The column is drag-resizable at its left edge,
+  400px by default and never narrower than 320px, and the width is remembered
+  on the device. It narrows the content beside it and never overlays it.
+  `Alt+I`, `Escape` and its Close word clear it.
+- **The Send drawer** overlays the table's column from the right edge at 380px
+  with no gutter, so nothing beneath it moves. Its own border and surface say
+  that a layer is beneath; no strip of cut words does. It closes after Send and
+  on `Escape`, and what was beneath is there again.
+- **The resident's column** is a tmux session that lives in its tab: the
+  Librarian in the Library, the tender in Agents, the Clerk in Beads. It sits
+  at the far right of the tab, 44 columns wide by default, drag-resizable and
+  remembered, under a 32px header carrying the label, the harness mark, the
+  session name, its state as a word, and Send with its chord. The terminal is
+  the input; there is no ask line. `Alt+S` in the tab pastes the table's
+  reference into the resident's prompt without submitting it, and the operator
+  types the rest and presses `Enter` there; the drawer serves every other
+  session. `Alt+Enter` or a click focuses the column. When the session is
+  absent, the column shows Launch with the resident's folder. The column
+  persists per tab, so leaving and returning finds the agent mid-answer. The
+  header's menu offers Peek, Send, Launch and Restart. Which session and folder
+  each resident uses is operator configuration, and each resident's charter
+  lives on the host outside this repository.
+
+When space runs out, the content keeps 480px first, the table shrinks to its
+minimum, and then the resident's column collapses to its header with Expand. A
+rail narrows to its longest name, between 120 and 200px.
+
 ## Floating surfaces
+
+A surface that opens over or beside the workspace is one of two kinds, told
+apart by how it closes.
+
+- **A glance goes away when you look elsewhere.** Peek, the keybindings panel,
+  every menu, the launcher while nothing has been typed into it, and the image
+  glance. A click outside closes it, and that click is consumed rather than
+  passed through; `Escape` closes it from anywhere, a focused terminal
+  included; the chord that opened it closes it.
+- **A work surface stays until you close it.** The Send drawer, an editor, the
+  Bead card and What this agent sees. `Escape`, its Close word or its chord
+  closes it, and a click outside means what that click meant. A drawer holding
+  typed text confirms in place before it discards.
+
+`Escape` belongs to the topmost open surface. It reaches the pty only when
+nothing is open.
 
 A menu is a flat sheet of words attached flush to the edge of the control that
 opened it: the action with its chord at the right, hairlines between groups, no
 icons, no radius and no blur, and the highlighted row taking
-`--surface-secondary` and a 2px `--accent` bar. A sheet docks to an edge and
-takes a share of the workspace with no backdrop — Peek at the left, snapped to
-the nearest tile boundary at or below 60% so no tile is cut mid-glyph — so
-`Escape` closes it while a click outside still means what that click meant.
-Every announcement lands on the status line, a 28px footer across the full width
-of the window beneath both the Sessions panel and the workspace, carrying the
-last event with its time, where only a failure takes colour. Nothing asks a
-question in a dialog: a destructive control reads its own confirmation until a
-second press within three seconds runs it, a rename happens in the object's own
-place, and neither `window.prompt` nor `window.confirm` appears anywhere. No
-scanlines, no glow, no decorative motion: motion survives only where it confirms
-an action.
+`--surface-secondary` and a 2px `--accent` bar.
+
+Peek is a floating window centred over the workspace and sized by the session
+it shows: its column count at the tile font, capped at 70% of the workspace
+width and 80% of its height. A one-line header carries the mark, the name, Send
+and Close as words. It is not dragged and not resized.
+
+The image glance is Peek's manner for a picture: the path, the pixel size, and
+Open in Files, Copy path and Close as words. The image fits 90% of the
+workspace and is never upscaled. It opens from an image path link in a terminal
+and from a click on an image in the Files panel or tab.
+
+An announcement is a toast in the bottom-centre slot the key echo uses. It
+fades in over 120 ms, holds for 1800 ms and fades out over 200 ms, one at a
+time with the newest replacing the last, `--text-primary` on
+`--surface-primary` with a 1px `--divider` border, and the error colour for a
+failure. The status line, a 28px footer across the full width of the window
+beneath both the Sessions panel and the workspace, keeps the last event with
+its time as the record, so nothing is lost when the toast has gone; only a
+failure takes colour there. When an agent finishes or needs input, its
+harness's own hook tells CHROTE, and the telling is a mark on the session's row
+and its tab until the session is focused, the toast naming the session, and,
+opt in on the device, a short tone for each kind of event and a browser
+notification while the tab is hidden.
+
+Nothing asks a question in a dialog: a destructive control reads its own
+confirmation until a second press within three seconds runs it, a rename
+happens in the object's own place, and neither `window.prompt` nor
+`window.confirm` appears anywhere. No scanlines, no glow, no decorative motion:
+motion survives only where it confirms an action.
 
 ## Copy tone
 
