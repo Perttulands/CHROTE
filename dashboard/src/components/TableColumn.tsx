@@ -8,11 +8,12 @@
  * out of room the content keeps 480px first, then the column shrinks to its
  * minimum. Below 900px there is no column to give, so it overlays the tab.
  *
- * Escape closes it while it is the topmost surface: with the Send drawer or
- * Peek open, Escape is theirs. Alt+I closes it from anywhere.
+ * It is a work surface for the dismissal owner: Escape closes it while it is
+ * the topmost thing open (the Send drawer or Peek above it take Escape first),
+ * a click outside leaves it, and Alt+I closes it from anywhere.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import BeadCard from './BeadCard'
 import AgentContextSheet from './AgentContextSheet'
@@ -29,13 +30,11 @@ import {
   useTableActions,
   useTableObject,
 } from '../context/TableContext'
+import { useSurface } from '../keys/dismiss'
 import './TableColumn.css'
 
 /** What one arrow key on the handle is worth. */
 const KEYBOARD_STEP = 16
-
-/** Surfaces whose focus means Escape is theirs, until the dismissal owner lands. */
-const ESCAPE_OWNERS = '[role="menu"], [role="dialog"], .keys-panel'
 
 export default function TableColumn() {
   const object = useTableObject()
@@ -46,21 +45,8 @@ export default function TableColumn() {
   const [dragWidth, setDragWidth] = useState<number | null>(null)
 
   const open = object !== null
-  const drawerOpen = Boolean(session.sendToSessionRequest)
-  const peekOpen = Boolean(session.floatingSession)
 
-  useEffect(() => {
-    if (!open || drawerOpen || peekOpen) return
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      const target = event.target instanceof HTMLElement ? event.target : null
-      if (target?.closest(ESCAPE_OWNERS)) return
-      event.preventDefault()
-      dismissTable()
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [open, drawerOpen, peekOpen])
+  useSurface({ open, kind: 'work', onClose: dismissTable, ref: columnRef })
 
   const { settings, updateSettings, openSendToSession } = session
   const remembered = clampTableWidth(settings?.tableWidth)
