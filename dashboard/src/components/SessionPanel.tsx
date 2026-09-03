@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
-import { Pin, PinOff, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { getGroupPriority } from '../types'
 import type { WorkspaceId } from '../types'
@@ -14,9 +14,7 @@ type SessionPanelProps = {
   collapsed?: boolean
   width?: number
   pinned?: boolean
-  canPin?: boolean
   panelId?: string
-  onTogglePin?: () => void
   onClose?: () => void
   onWidthChange?: (width: number) => void
   searchTerm?: string
@@ -30,9 +28,7 @@ function SessionPanel({
   collapsed,
   width = 260,
   pinned = false,
-  canPin = true,
   panelId,
-  onTogglePin,
   onClose,
   onWidthChange,
   searchTerm: controlledSearchTerm,
@@ -40,7 +36,8 @@ function SessionPanel({
   onSearchTermChange,
   onCollapsedGroupsChange,
 }: SessionPanelProps) {
-  const { groupedSessions, loading, error, sidebarCollapsed, refreshSessions } = useSession()
+  // The list refreshes itself on a poll; there is no button that says so.
+  const { groupedSessions, loading, error, sidebarCollapsed } = useSession()
   const isCollapsed = collapsed ?? sidebarCollapsed
   const [localSearchTerm, setLocalSearchTerm] = useState('')
   const [localCollapsedGroups, setLocalCollapsedGroups] = useState<string[]>([])
@@ -140,21 +137,6 @@ function SessionPanel({
             >
               +
             </button>
-            <button className="refresh-btn" onClick={refreshSessions} title="Refresh sessions">
-              ↻
-            </button>
-            {canPin && onTogglePin && (
-              <button
-                type="button"
-                className="toggle-btn sidecar-pin-btn"
-                aria-label={pinned ? 'Unpin Sessions sidecar' : 'Pin Sessions sidecar'}
-                title={pinned ? 'Unpin sidecar' : 'Pin sidecar'}
-                aria-pressed={pinned}
-                onClick={onTogglePin}
-              >
-                {pinned ? <PinOff size={15} aria-hidden="true" /> : <Pin size={15} aria-hidden="true" />}
-              </button>
-            )}
             {onClose && (
               <button
                 type="button"

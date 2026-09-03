@@ -37,7 +37,6 @@
   text-transform: uppercase;
 }
 
-.sidecar-pin-btn,
 .sidecar-close-btn {
   width: 28px;
   height: 28px;
@@ -63,7 +62,6 @@
 }
 
 .toggle-btn,
-.refresh-btn,
 .add-btn {
   background: transparent;
   border: 1px solid var(--divider);
@@ -76,7 +74,6 @@
 }
 
 .toggle-btn:hover,
-.refresh-btn:hover,
 .add-btn:hover {
   color: var(--text-primary);
   border-color: var(--accent);
@@ -197,32 +194,6 @@
   width: 420px;
 }
 
-/* Where a session is assigned, as an outline chip: T1 W2. */
-.window-badge.window-location-chip {
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  flex: 0 0 auto;
-  padding: 3px 4px;
-  border: 1px solid var(--divider);
-  border-radius: 3px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 10px;
-  line-height: 1;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.window-location-chip:hover,
-.window-location-chip:focus-visible {
-  border-color: var(--text-secondary);
-  color: var(--text-primary);
-  outline: none;
-}
-
 /* Session Item */
 .session-item {
   display: flex;
@@ -268,6 +239,13 @@
 
 .session-item.assigned {
   /* No longer greyed out - text is colored based on window assignment */
+}
+
+/* The row whose session the focused tile is showing: the same mark a menu
+   gives its current row, so "where I am" reads the same everywhere. */
+.session-item.in-focused-tile {
+  background-color: var(--surface-secondary);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 /* Session Context Menu */

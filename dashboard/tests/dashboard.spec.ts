@@ -151,11 +151,20 @@ test.describe('Arena Dashboard', () => {
 
   test.describe('Terminal Area', () => {
 
-    test('should switch to 1 window layout', async ({ page }) => {
-      await page.click('.layout-btn:visible:has-text("4")')
+    // The counts left the strip: the layout grows and shrinks on the chords the
+    // strip names, and the strip states the number it reached.
+    test('grows and shrinks the layout on its chords', async ({ page }) => {
+      const controls = page.locator('.terminal-area:visible .terminal-area-controls')
+      await expect(controls).toContainText('Alt+= add window · Alt+- remove empty')
+      await expect(controls.locator('.layout-count')).toHaveText('2')
+      await expect(controls.locator('.layout-btn')).toHaveCount(0)
+
+      await page.keyboard.press('Alt+=')
+      await page.keyboard.press('Alt+=')
       const windows = page.locator('.terminal-window:visible')
       await expect(windows).toHaveCount(4)
       await expect(page.locator('.terminal-grid:visible')).toHaveClass(/grid-4/)
+      await expect(controls.locator('.layout-count')).toHaveText('4')
 
       const firstBox = await windows.nth(0).boundingBox()
       const thirdBox = await windows.nth(2).boundingBox()
@@ -163,9 +172,37 @@ test.describe('Arena Dashboard', () => {
       expect(thirdBox).toBeTruthy()
       expect(Math.abs(firstBox!.height - thirdBox!.height)).toBeLessThan(10)
 
-      await page.click('.layout-btn:visible:has-text("1")')
+      for (let press = 0; press < 3; press += 1) await page.keyboard.press('Alt+-')
       await expect(page.locator('.terminal-window:visible')).toHaveCount(1)
       await expect(page.locator('.terminal-grid:visible')).toHaveClass(/grid-1/)
+      await expect(controls.locator('.layout-count')).toHaveText('1')
+    })
+
+    // Every control the cut removed, in one place: none of them is reachable,
+    // and the two that survived moved into the active tab's own menu.
+    test('offers the cut controls nowhere and the moved ones in the tab menu', async ({ page }) => {
+      await openSessionsSidecar(page)
+
+      await expect(page.locator('.cycle-btn')).toHaveCount(0)
+      await expect(page.locator('.layout-btn')).toHaveCount(0)
+      await expect(page.locator('.terminal-maintenance-btn')).toHaveCount(0)
+      await expect(page.locator('.window-location-chip')).toHaveCount(0)
+      await expect(page.locator('.session-panel .refresh-btn')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Pin Sessions sidecar' })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '⋯ Tab' })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: /Refit/ })).toHaveCount(0)
+
+      await page.locator('.tab.active .tab-menu-caret').click()
+      const menu = page.locator('.menu-sheet')
+      for (const item of ['Rename tab', 'Save layout as preset', 'Restore preset', 'Clear tab assignments', 'Reconnect frames', 'Claim all', 'Pin sessions panel']) {
+        await expect(menu.locator('.menu-row', { hasText: item })).toHaveCount(1)
+      }
+
+      // The pin is a setting now, and the menu reads it back.
+      await expect(menu.locator('.menu-row', { hasText: 'Pin sessions panel' })).toContainText('off')
+      await menu.locator('.menu-row', { hasText: 'Pin sessions panel' }).click()
+      await page.locator('.tab.active .tab-menu-caret').click()
+      await expect(page.locator('.menu-sheet').locator('.menu-row', { hasText: 'Pin sessions panel' })).toContainText('on')
     })
 
   })

@@ -166,4 +166,18 @@ describe('SessionPanel session launcher', () => {
     render(<SessionPanel activeWorkspaceId="terminal1" />)
     expect(screen.queryByText('Nuke All')).not.toBeInTheDocument()
   })
+
+  // The header names the panel and offers the two things it is for: a new
+  // session and closing. The list polls itself, and the pin is a setting the
+  // terminal tab's own menu carries.
+  it('carries only the title, the launcher and close in its header', () => {
+    render(<SessionPanel activeWorkspaceId="terminal1" onClose={vi.fn()} />)
+
+    const header = document.querySelector('.session-panel-header') as HTMLElement
+    expect(Array.from(header.querySelectorAll('button')).map(button => button.getAttribute('aria-label') ?? button.textContent))
+      .toEqual(['+', 'Close Sessions sidecar'])
+    expect(screen.queryByTitle('Refresh sessions')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Pin Sessions sidecar/ })).not.toBeInTheDocument()
+    expect(refreshSessions).not.toHaveBeenCalled()
+  })
 })

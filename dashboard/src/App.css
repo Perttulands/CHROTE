@@ -67,6 +67,28 @@
   border-bottom-color: var(--accent);
 }
 
+/* The active terminal tab is its own menu. The caret says so on hover, and
+   keeps its space at all times so the tab bar does not shift under the mouse. */
+.tab-with-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tab-menu-caret {
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-dim);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.tab-with-menu:hover .tab-menu-caret,
+.tab-with-menu:focus-visible .tab-menu-caret,
+.tab-with-menu.dismissible-trigger-active .tab-menu-caret {
+  opacity: 1;
+}
+
 .tab.external {
   color: var(--text-dim);
   opacity: 0.8;

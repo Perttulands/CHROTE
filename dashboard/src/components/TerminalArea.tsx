@@ -1,11 +1,49 @@
 import { useState, useEffect, useRef } from 'react'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
+import { useDndContext, useDroppable } from '@dnd-kit/core'
 import { useSession } from '../context/SessionContext'
-import TerminalWindow, { CLAIM_EXPLANATION } from './TerminalWindow'
-import Menu, { type MenuGroup } from './Menu'
+import TerminalWindow from './TerminalWindow'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import type { WorkspaceId } from '../types'
-import { useTerminalPool } from './TerminalPool'
+
+/** The layout never grows past the four windows the grid classes describe. */
+const MAX_WINDOWS = 4
+
+/**
+ * How far either side of the 4px grid gap still counts as the gap. A seam is
+ * easy to see and hard to hit, so the drop target is wider than the line the
+ * operator aims at, and still far narrower than the tiles beside it.
+ */
+const GAP_HIT_PAD = 12
+
+interface GapRect {
+  index: number
+  style: CSSProperties
+}
+
+/**
+ * The seam between two tiles, live only while a session is in the air. Dropping
+ * here adds a window to the layout and binds the dragged session to it, which is
+ * the drag equivalent of Alt+= followed by a drop. The zone takes no pointer
+ * events: dnd-kit collides against its rectangle, and the terminal underneath
+ * keeps every click it would otherwise have had.
+ */
+function WindowGapDropZone({ workspaceId, index, style }: { workspaceId: WorkspaceId } & GapRect) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `gap-${workspaceId}-${index}`,
+    data: { type: 'window-gap', workspaceId },
+  })
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`terminal-window-gap ${isOver ? 'over' : ''}`}
+      style={style}
+      data-window-gap={index}
+      aria-hidden="true"
+    />
+  )
+}
 
 interface TerminalAreaProps {
   workspaceId: WorkspaceId
@@ -15,8 +53,7 @@ interface TerminalAreaProps {
 }
 
 function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspaceActive = true }: TerminalAreaProps) {
-  const { workspaces, setWindowCount, windowRevealRequest } = useSession()
-  const pool = useTerminalPool()
+  const { workspaces, windowRevealRequest } = useSession()
   const workspace = workspaces[workspaceId]
   const windows = workspace.windows
   const windowCount = workspace.windowCount
@@ -24,9 +61,17 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
   const isMobile = useMediaQuery('(max-width: 768px)')
   const [mobileActiveIndex, setMobileActiveIndex] = useState(0)
   const lastConsumedRevealRequestId = useRef(0)
-  const [refitNonce, setRefitNonce] = useState(0)
-  const [controlsMenu, setControlsMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
+  const gridRef = useRef<HTMLDivElement>(null)
+  const [gaps, setGaps] = useState<GapRect[]>([])
   const visibleWindows = windows.slice(0, windowCount)
+
+  // A tag or a row in the air is the only reason a seam exists.
+  const { active } = useDndContext()
+  const activeDragType = (active?.data.current as { type?: string } | undefined)?.type
+  const gapsOffered = (activeDragType === 'session' || activeDragType === 'tag')
+    && !isMobile
+    && workspaceActive
+    && windowCount < MAX_WINDOWS
 
   // Ensure valid mobile index when configuration changes
   useEffect(() => {
@@ -49,37 +94,38 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
     setMobileActiveIndex(targetIndex)
   }, [windowCount, windowRevealRequest, windows, workspaceId])
 
-  const closeControlsMenu = () => setControlsMenu({ show: false, x: 0, y: 0 })
+  // The seams are measured from the tiles themselves, once, when the drag
+  // starts: the grid decides where they fall, and every layout that can still
+  // grow lays its tiles in one row.
+  useEffect(() => {
+    if (!gapsOffered) {
+      setGaps(current => (current.length === 0 ? current : []))
+      return
+    }
+    const grid = gridRef.current
+    if (!grid) return
 
-  const reconnectFrames = () => {
-    const sessionNames = new Set<string>()
-    visibleWindows.forEach(window => window.boundSessions.forEach(sessionName => {
-      if (sessionName) sessionNames.add(sessionName)
-    }))
-    sessionNames.forEach(sessionName => pool.terminals.get(sessionName)?.reconnect())
-  }
-
-  // The sessions this device is actually showing: the active binding of each
-  // window on screen. Claiming resizes a tmux window for everyone watching it,
-  // so it is offered only for the frames in front of the operator — a bound
-  // session behind a tab, or on a mobile carousel slide he is not on, would be
-  // resized by a device that cannot show him the result.
-  const sessionsInView = () => {
-    const inView = new Set<string>()
-    visibleWindows.forEach((window, index) => {
-      if (isMobile && index !== mobileActiveIndex) return
-      if (window.activeSession) inView.add(window.activeSession)
-    })
-    return inView
-  }
-
-  const claimSessionsInView = () => {
-    sessionsInView().forEach(sessionName => pool.terminals.get(sessionName)?.claim())
-  }
-
-  const refitTerminalLayout = () => {
-    setRefitNonce(n => n + 1)
-  }
+    const gridRect = grid.getBoundingClientRect()
+    const tiles = Array.from(grid.querySelectorAll<HTMLElement>(':scope > .terminal-window'))
+      .map(tile => tile.getBoundingClientRect())
+    const measured: GapRect[] = []
+    for (let index = 0; index < tiles.length - 1; index += 1) {
+      const before = tiles[index]
+      const after = tiles[index + 1]
+      // Only a seam within one row is a seam the operator can aim at.
+      if (Math.abs(before.top - after.top) > 1 || after.left <= before.right) continue
+      measured.push({
+        index,
+        style: {
+          left: before.right - gridRect.left - GAP_HIT_PAD,
+          top: before.top - gridRect.top,
+          width: after.left - before.right + GAP_HIT_PAD * 2,
+          height: before.height,
+        },
+      })
+    }
+    setGaps(measured)
+  }, [gapsOffered, windowCount])
 
   // Get grid class based on window count
   const getGridClass = () => {
@@ -94,28 +140,6 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
     }
   }
 
-  const maintenanceGroups: MenuGroup[] = [
-    {
-      id: 'frames',
-      rows: [
-        {
-          id: 'reconnect',
-          label: 'Reconnect frames',
-          disabled: visibleWindows.every(window => window.boundSessions.length === 0),
-          onSelect: reconnectFrames,
-        },
-        {
-          id: 'claim',
-          label: 'Claim all sessions in view',
-          reason: CLAIM_EXPLANATION,
-          disabled: sessionsInView().size === 0,
-          onSelect: claimSessionsInView,
-        },
-        { id: 'refit', label: 'Refit terminal layout', onSelect: refitTerminalLayout },
-      ],
-    },
-  ]
-
   return (
     <div className="terminal-area">
       <div
@@ -125,76 +149,33 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
         {sidecarControls}
         {sidecarControls && <span className="terminal-controls-divider" aria-hidden="true" />}
         {isMobile ? (
-          <>
-            <span className="layout-label">View:</span>
-            <div className="mobile-controls-row" style={{ display: 'flex', gap: '4px', alignItems: 'center', flex: 1, overflowX: 'auto' }}>
-              <div role="group" aria-label="Window view controls" style={{ display: 'contents' }}>
-                {Array.from({ length: windowCount }).map((_, idx) => (
-                  <button
-                    key={`view-${idx}`}
-                    className={`layout-btn ${mobileActiveIndex === idx ? 'active' : ''}`}
-                    onClick={() => setMobileActiveIndex(idx)}
-                    aria-label={`View window ${idx + 1}`}
-                  >
-                    {idx + 1}
-                  </button>
-                ))}
-              </div>
-
-              <div style={{ width: '1px', height: '16px', background: 'var(--divider)', margin: '0 8px' }}></div>
-
-              <span className="layout-label">Count:</span>
-              {[1, 2, 3, 4].map(count => (
-                <button
-                  key={`count-${count}`}
-                  className={`layout-btn ${windowCount === count ? 'active' : ''}`}
-                  onClick={() => setWindowCount(workspaceId, count)}
-                  style={{ opacity: windowCount === count ? 1 : 0.7 }}
-                >
-                  {count}
-                </button>
-              ))}
-            </div>
-          </>
-        ) : (
-          <>
-            <span className="layout-label">Layout:</span>
-            {[1, 2, 3, 4].map(count => (
+          // A phone shows one window at a time, so the carousel keeps its
+          // pager. There is no keyboard behind it to reach the same window.
+          <div className="mobile-controls-row" role="group" aria-label="Window view controls">
+            <span className="layout-label">View</span>
+            {Array.from({ length: windowCount }).map((_, idx) => (
               <button
-                key={count}
-                className={`layout-btn ${windowCount === count ? 'active' : ''}`}
-                onClick={() => setWindowCount(workspaceId, count)}
-                title={`${count} window${count > 1 ? 's' : ''}`}
+                key={`view-${idx}`}
+                className={`layout-btn ${mobileActiveIndex === idx ? 'active' : ''}`}
+                onClick={() => setMobileActiveIndex(idx)}
+                aria-label={`View window ${idx + 1}`}
               >
-                {count}
+                {idx + 1}
               </button>
             ))}
-          </>
+          </div>
+        ) : (
+          // The layout is a fact, not a control: it says what it is and names
+          // the two chords that change it.
+          <div className="layout-state">
+            <span className="layout-label">Layout</span>
+            <span className="layout-count">{windowCount}</span>
+            <span className="layout-chords">Alt+= add window · Alt+- remove empty</span>
+          </div>
         )}
-        <button
-          className="layout-btn terminal-maintenance-btn"
-          aria-label="Terminal maintenance actions"
-          title="Terminal maintenance actions"
-          onClick={(event) => {
-            const rect = event.currentTarget.getBoundingClientRect()
-            setControlsMenu({ show: true, x: rect.right, y: rect.bottom })
-          }}
-        >
-          ⋯
-        </button>
       </div>
 
-      {controlsMenu.show && (
-        <Menu
-          at={{ x: controlsMenu.x, y: controlsMenu.y }}
-          label="Terminal maintenance actions"
-          estimatedSize={{ width: 220, height: 130 }}
-          onClose={closeControlsMenu}
-          groups={maintenanceGroups}
-        />
-      )}
-
-      <div className={`terminal-grid ${getGridClass()}`} data-workspace={workspaceId}>
+      <div ref={gridRef} className={`terminal-grid ${getGridClass()}`} data-workspace={workspaceId}>
         {visibleWindows.map((window, index) => {
           const isVisible = !isMobile || index === mobileActiveIndex
           return (
@@ -202,13 +183,15 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
               key={window.id}
               workspaceId={workspaceId}
               window={window}
-              refitNonce={refitNonce}
               style={{ display: isVisible ? 'flex' : 'none' }}
               onOpenFilesAtPath={onOpenFilesAtPath}
               workspaceActive={workspaceActive}
             />
           )
         })}
+        {gapsOffered && gaps.map(gap => (
+          <WindowGapDropZone key={`gap-${gap.index}`} workspaceId={workspaceId} {...gap} />
+        ))}
       </div>
     </div>
   )

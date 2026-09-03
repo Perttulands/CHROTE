@@ -6,13 +6,26 @@ import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from './types'
 const mocks = vi.hoisted(() => ({
   dndProps: null as Record<string, any> | null,
   addSessionToWindow: vi.fn(),
+  setWindowCount: vi.fn(),
   removeSessionFromWindow: vi.fn(),
   openSendToSession: vi.fn(),
   windowRevealRequest: null as { workspaceId: string; windowId: string; requestId: number } | null,
   workspaceIds: null as readonly string[] | null,
   settings: null as typeof DEFAULT_SETTINGS | null,
   sessions: [{ name: 'alpha', windows: 1, attached: false, unixUser: 'alice', currentCommand: 'claude' }],
+  terminal2WindowCount: 2,
 }))
+
+// The canonical four slots every workspace holds; windowCount decides how many
+// of them are on screen.
+function windowSlots(workspaceId: string) {
+  return Array.from({ length: 4 }, (_, index) => ({
+    id: `${workspaceId}-window-${index}`,
+    boundSessions: [],
+    activeSession: null,
+    colorIndex: index,
+  }))
+}
 
 vi.mock('@dnd-kit/core', () => ({
   DndContext: (props: Record<string, any>) => {
@@ -31,13 +44,14 @@ vi.mock('./context/SessionContext', () => ({
   SessionProvider: ({ children }: { children: React.ReactNode }) => children,
   useSession: () => ({
     addSessionToWindow: mocks.addSessionToWindow,
+    setWindowCount: mocks.setWindowCount,
     removeSessionFromWindow: mocks.removeSessionFromWindow,
     settings: mocks.settings ?? DEFAULT_SETTINGS,
     windowRevealRequest: mocks.windowRevealRequest,
     workspaces: {
-      terminal1: { windows: [] },
-      terminal2: { windows: [] },
-      terminal3: { windows: [] },
+      terminal1: { windowCount: 2, windows: windowSlots('terminal1') },
+      terminal2: { windowCount: mocks.terminal2WindowCount, windows: windowSlots('terminal2') },
+      terminal3: { windowCount: 2, windows: windowSlots('terminal3') },
     },
     workspaceIds: mocks.workspaceIds ?? TERMINAL_WORKSPACE_IDS,
     sessions: mocks.sessions,
@@ -111,6 +125,7 @@ describe('App drag lifecycle', () => {
     mocks.windowRevealRequest = null
     mocks.workspaceIds = null
     mocks.settings = null
+    mocks.terminal2WindowCount = 2
   })
 
   it('uses one reset path for drag cancel and clears all active drag visuals', () => {
@@ -181,6 +196,48 @@ describe('App drag lifecycle', () => {
     // The ghost is made of the same pieces as the tag it left: badge, mark, name.
     expect(overlays[0].querySelector('[data-harness="claude-code"]')).not.toBeNull()
     expect(overlays[0].querySelector('.session-label')).toHaveTextContent('alpha')
+  })
+
+  // The seam between two tiles is the layout's own control: dropping there
+  // makes the window the session needs and binds it in one gesture.
+  it('adds a window and binds the session when a drop lands in the seam between tiles', () => {
+    render(<App />)
+
+    act(() => mocks.dndProps?.onDragStart(panelDrag))
+    act(() => mocks.dndProps?.onDragEnd({
+      ...panelDrag,
+      over: { data: { current: { type: 'window-gap', workspaceId: 'terminal2' } } },
+    }))
+
+    expect(mocks.setWindowCount).toHaveBeenCalledWith('terminal2', 3)
+    expect(mocks.addSessionToWindow).toHaveBeenCalledWith('terminal2', 'terminal2-window-2', 'alpha', 'alice')
+  })
+
+  it('adds nothing when the layout is already at its four windows', () => {
+    mocks.terminal2WindowCount = 4
+    render(<App />)
+
+    act(() => mocks.dndProps?.onDragStart(panelDrag))
+    act(() => mocks.dndProps?.onDragEnd({
+      ...panelDrag,
+      over: { data: { current: { type: 'window-gap', workspaceId: 'terminal2' } } },
+    }))
+
+    expect(mocks.setWindowCount).not.toHaveBeenCalled()
+    expect(mocks.addSessionToWindow).not.toHaveBeenCalled()
+  })
+
+  it('ignores a seam drop naming a workspace that is not a terminal one', () => {
+    render(<App />)
+
+    act(() => mocks.dndProps?.onDragStart(panelDrag))
+    act(() => mocks.dndProps?.onDragEnd({
+      ...panelDrag,
+      over: { data: { current: { type: 'window-gap', workspaceId: 'files' } } },
+    }))
+
+    expect(mocks.setWindowCount).not.toHaveBeenCalled()
+    expect(mocks.addSessionToWindow).not.toHaveBeenCalled()
   })
 
   it('moves tags only when dropped on a different explicit window target', () => {

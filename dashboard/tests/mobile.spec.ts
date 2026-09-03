@@ -62,8 +62,9 @@ test.describe('Terminal Area - Mobile View Switcher', () => {
     const controlsRow = page.locator('.terminal-area:visible .mobile-controls-row')
     const viewButtons = controlsRow.locator('.layout-btn')
 
-    // Default 2 windows means view buttons 1 and 2, plus 4 count buttons.
-    // Button "1" (first view button) should be active by default
+    // The pager is all that is left on the row: two windows, two buttons, and
+    // no layout counts — a phone has no keyboard to reach the chords with.
+    await expect(viewButtons).toHaveCount(2)
     await expect(viewButtons.first()).toHaveClass(/active/)
 
     // Click button "2" to switch to second window

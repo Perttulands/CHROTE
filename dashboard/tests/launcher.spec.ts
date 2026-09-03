@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures'
 import { mockApiRoutes } from './mock-api'
-import { layoutControls, openSessionsSidecar } from './helpers'
+import { openSessionsSidecar } from './helpers'
 
 // The launcher is the only way CHROTE starts a session: in an empty window it
 // is the window, and the Sessions plus opens the same panel.
@@ -97,7 +97,7 @@ test.describe('Launcher', () => {
     await page.waitForSelector('.dashboard')
     // One window to the workspace, so the launcher has a tile wide enough for
     // two columns to be a question the container query can answer either way.
-    await layoutControls(page).getByTitle('1 window').click()
+    await page.keyboard.press('Alt+-')
 
     const launcher = page.locator('.terminal-window').first().locator('.launcher')
     await launcher.getByRole('button', { name: 'Flags…' }).click()

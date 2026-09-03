@@ -20,10 +20,6 @@ test.describe.serial('Terminal sizing: the pane fits its frame', () => {
     return page.locator('.terminal-grid[data-workspace="terminal1"]');
   }
 
-  function layoutControls(page: Page) {
-    return page.locator('.terminal-area-controls').first();
-  }
-
   function terminal(page: Page): Locator {
     return page.locator('.terminal-window-body .terminal-surface').first();
   }
@@ -117,7 +113,7 @@ test.describe.serial('Terminal sizing: the pane fits its frame', () => {
     await page.reload();
     await page.waitForSelector('.dashboard', { timeout: 10000 });
 
-    await layoutControls(page).locator('.layout-btn').filter({ hasText: '1' }).click();
+    await page.keyboard.press('Alt+-');
     const firstWindow = visibleArea(page).locator('.terminal-window').first();
 
     await createTrackedSession(page, firstWindow);

@@ -1,10 +1,8 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TerminalArea from './TerminalArea'
 
 const setWindowCount = vi.fn()
-const reconnect = vi.fn()
-const claim = vi.fn()
 const sessionState = vi.hoisted(() => ({
   isMobile: false,
   windowCount: 2,
@@ -36,28 +34,10 @@ vi.mock('../hooks/useMediaQuery', () => ({
   useMediaQuery: () => sessionState.isMobile,
 }))
 
-const pooledTerminals = new Map<string, { reconnect: () => void; claim: () => void }>()
-vi.mock('./TerminalPool', () => ({
-  useTerminalPool: () => ({
-    terminals: {
-      get(sessionKey: string) {
-        if (!pooledTerminals.has(sessionKey)) {
-          pooledTerminals.set(sessionKey, {
-            reconnect: () => reconnect(sessionKey),
-            claim: () => claim(sessionKey),
-          })
-        }
-        return pooledTerminals.get(sessionKey)
-      },
-    },
-    connectionStates: new Map(),
-  }),
-}))
-
 vi.mock('./TerminalWindow', () => ({
   CLAIM_EXPLANATION: 'Set the tmux window to this device\'s size. Other devices keep watching, at that size.',
-  default: ({ window, refitNonce, style }: { window: { id: string }, refitNonce: number, style?: React.CSSProperties }) => (
-    <div data-testid={`terminal-window-${window.id}`} data-refit-nonce={refitNonce} style={style} />
+  default: ({ window, style }: { window: { id: string }, style?: React.CSSProperties }) => (
+    <div className="terminal-window" data-testid={`terminal-window-${window.id}`} style={style} />
   ),
 }))
 
@@ -71,79 +51,29 @@ describe('TerminalArea layout controls', () => {
     sessionState.windowRevealRequest = null
   })
 
-  it('reconnects all visible session frames from the layout controls menu', () => {
-    render(<TerminalArea workspaceId="terminal1" />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /Reconnect frames/i }))
-
-    expect(reconnect.mock.calls.flat().sort()).toEqual(['alice:alpha', 'bare-session', 'bob:beta'])
-  })
-
-  it('renders the current desktop layout controls and default visible window count', () => {
+  // The strip states the layout and names the chords that change it. Nothing
+  // on it is pressable any more: the counts, Refit and the overflow menu are
+  // gone, and the tab's own menu holds what survived.
+  it('states the layout and its chords instead of offering buttons', () => {
     const { container } = render(<TerminalArea workspaceId="terminal1" />)
 
-    for (const count of [1, 2, 3, 4]) {
-      expect(screen.getByTitle(`${count} window${count > 1 ? 's' : ''}`)).toBeInTheDocument()
-    }
-    expect(screen.getByTitle('2 windows')).toHaveClass('active')
+    const controls = screen.getByLabelText('Terminal workspace controls')
+    expect(controls).toHaveTextContent('Layout2')
+    expect(controls).toHaveTextContent('Alt+= add window · Alt+- remove empty')
+    expect(within(controls).queryAllByRole('button')).toHaveLength(0)
+    expect(screen.queryByRole('button', { name: 'Terminal maintenance actions' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Refit/ })).not.toBeInTheDocument()
+
     expect(container.querySelector('.terminal-grid')).toHaveClass('grid-2')
     expect(container.querySelectorAll('[data-testid^="terminal-window-"]')).toHaveLength(2)
   })
 
-  // The row's permanent space belongs to what is used often. Refit is the rare
-  // escape hatch — each surface already fits itself from its own resize
-  // observation — so it moved into the overflow menu.
-  it('keeps only the layout counts and the overflow button on the control row', () => {
-    render(<TerminalArea workspaceId="terminal1" />)
+  // No drag is in the air in a rendered frame, so no seam is either: the drop
+  // zone exists only for the gesture that can use it.
+  it('draws no seam between tiles while nothing is being dragged', () => {
+    const { container } = render(<TerminalArea workspaceId="terminal1" />)
 
-    expect(screen.queryByRole('button', { name: 'Refit terminal layout' })).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
-    const menu = document.querySelector('.menu-sheet') as HTMLElement
-    const refit = within(menu).getByRole('menuitem', { name: 'Refit terminal layout' })
-    fireEvent.click(refit)
-
-    expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveAttribute('data-refit-nonce', '1')
-    expect(screen.getByTestId('terminal-window-terminal1-window-1')).toHaveAttribute('data-refit-nonce', '1')
-  })
-
-  it('offers no binding cleanup at all', () => {
-    render(<TerminalArea workspaceId="terminal1" />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
-    const menu = document.querySelector('.menu-sheet') as HTMLElement
-    // Bindings are operator intent, so no control sweeps them wholesale.
-    expect(within(menu).queryByRole('button', { name: /stale/i })).not.toBeInTheDocument()
-  })
-
-  // Claiming resizes a tmux window for everyone watching it, so it acts on the
-  // frames in front of this device and says so. A session bound behind a tab is
-  // not one of them: resizing it from a device that cannot show the result is
-  // the remote resizing this model exists to stop.
-  it('claims only the sessions the visible windows are showing', () => {
-    render(<TerminalArea workspaceId="terminal1" />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
-    const menu = document.querySelector('.menu-sheet') as HTMLElement
-    const claimAll = within(menu).getByRole('menuitem', { name: /Claim all sessions in view/ })
-    expect(claimAll).toHaveTextContent('Other devices keep watching')
-    fireEvent.click(claimAll)
-
-    // 'bare-session' is bound behind a tab and 'alice:hidden' is in a window
-    // outside the visible count; neither is in view.
-    expect(claim.mock.calls.flat().sort()).toEqual(['alice:alpha', 'bob:beta'])
-  })
-
-  it('claims only the mobile slide on screen, not every window in the layout', () => {
-    sessionState.isMobile = true
-    render(<TerminalArea workspaceId="terminal1" />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal maintenance actions' }))
-    const menu = document.querySelector('.menu-sheet') as HTMLElement
-    fireEvent.click(within(menu).getByRole('menuitem', { name: /Claim all sessions in view/ }))
-
-    expect(claim.mock.calls.flat()).toEqual(['alice:alpha'])
+    expect(container.querySelectorAll('.terminal-window-gap')).toHaveLength(0)
   })
 
   it('selects a newly revealed hidden slot as the active mobile window after it enters the visible slice', () => {

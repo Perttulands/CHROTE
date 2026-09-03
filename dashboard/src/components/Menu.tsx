@@ -32,6 +32,8 @@ export interface MenuAction {
   disabled?: boolean
   /** Marks the row the object is already in, as a check at the right. */
   checked?: boolean
+  /** What the setting this row toggles currently reads, at the row's right. */
+  state?: string
   /** Present means confirm in place: this label is what the armed row reads. */
   confirmLabel?: string
   /** Rows this row opens beside itself. */
@@ -124,6 +126,9 @@ function MenuRows({ rows, armed, onArm, onSelect, openSubmenu, onToggleSubmenu, 
               {hasSubmenu && <span className="menu-row-chord" aria-hidden="true">▸</span>}
               {!hasSubmenu && row.chord !== undefined && (
                 <span className="menu-row-chord" aria-hidden="true">{row.chord}</span>
+              )}
+              {!hasSubmenu && row.state !== undefined && (
+                <span className="menu-row-chord menu-row-state">{row.state}</span>
               )}
             </button>
             {hasSubmenu && openSubmenu === row.id && (

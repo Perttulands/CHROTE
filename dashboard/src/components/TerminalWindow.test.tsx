@@ -203,29 +203,23 @@ describe('TerminalWindow launch user', () => {
     await waitFor(() => expect(launchButton).toBeEnabled())
   })
 
-  it('shows cycle controls only for multiple sessions and marks the active tag', () => {
+  // The tags are the tile's tabs; the arrows that stepped through them are
+  // gone, and nothing in the header cycles a session any more.
+  it('marks the active tag and offers no cycle controls beside it', () => {
     const twoSessions = {
       id: 'terminal3-window-0',
       boundSessions: ['build:forge-existing', 'alice:shell-existing'],
       activeSession: 'alice:shell-existing',
       colorIndex: 0,
     }
-    const { container, rerender } = render(<TerminalWindow workspaceId="terminal3" window={twoSessions} />)
+    const { container } = render(<TerminalWindow workspaceId="terminal3" window={twoSessions} />)
 
-    expect(screen.getByTitle('Previous session')).toBeInTheDocument()
-    expect(screen.getByTitle('Next session')).toBeInTheDocument()
     expect(tagLabel('shell-existing').closest('.session-tag')).toHaveClass('active')
     expect(tagLabel('forge-existing').closest('.session-tag')).not.toHaveClass('active')
-    fireEvent.click(screen.getByTitle('Next session'))
-    expect(cycleSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'next')
-
-    rerender(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ ...twoSessions, boundSessions: ['alice:shell-existing'] }}
-      />
-    )
     expect(container.querySelectorAll('.cycle-btn')).toHaveLength(0)
+    expect(screen.queryByTitle('Previous session')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Next session')).not.toBeInTheDocument()
+    expect(cycleSession).not.toHaveBeenCalled()
   })
 
   it('does not intercept right-click on the empty window launcher', async () => {

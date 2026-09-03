@@ -22,7 +22,7 @@ async function openPeek(page: Page) {
   await servePeekTerminal(page)
   await page.goto('/')
   await page.waitForSelector('.dashboard')
-  await openSessionsSidecar(page, { pin: false })
+  await openSessionsSidecar(page)
   await page.waitForSelector('.session-item')
   await page.click('.session-item:has-text("jack")')
   await expect(page.locator('.sheet.sheet-left')).toBeVisible()

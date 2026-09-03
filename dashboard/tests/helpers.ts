@@ -161,14 +161,6 @@ export async function waitForTerminal(page: Page, timeout = 10_000): Promise<Loc
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the first visible `.terminal-area-controls` locator
- * (the bar with layout 1/2/3/4 buttons).
- */
-export function layoutControls(page: Page): Locator {
-  return page.locator('.terminal-area-controls').first();
-}
-
-/**
  * Returns the `.terminal-grid` scoped to the terminal1 workspace.
  */
 export function visibleArea(page: Page): Locator {
@@ -180,29 +172,16 @@ export function visibleArea(page: Page): Locator {
 // ---------------------------------------------------------------------------
 
 /**
- * Open the Sessions sidecar for tests that exercise session rows. Pin it on
- * desktop by default so terminal targets remain directly interactive; narrow
- * viewports intentionally remain overlay-only.
+ * Open the Sessions sidecar for tests that exercise session rows. A desktop
+ * panel opens in the rail beside the terminals, so terminal targets stay
+ * directly interactive; narrow viewports remain overlay-only.
  */
-export async function openSessionsSidecar(
-  page: Page,
-  options: { pin?: boolean } = {},
-): Promise<void> {
-  const { pin = true } = options;
+export async function openSessionsSidecar(page: Page): Promise<void> {
   const trigger = page.getByRole('button', { name: 'Sessions sidecar', exact: true });
   await trigger.waitFor({ state: 'visible' });
   if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
 
-  const panel = page.locator('.session-panel');
-  await panel.waitFor({ state: 'visible' });
-
-  if (pin && !await panel.evaluate(element => element.classList.contains('sidecar-pinned'))) {
-    const pinButton = page.getByRole('button', { name: 'Pin Sessions sidecar' });
-    if (await pinButton.count() > 0 && await pinButton.isVisible()) {
-      await pinButton.click();
-      await panel.waitFor({ state: 'visible' });
-    }
-  }
+  await page.locator('.session-panel').waitFor({ state: 'visible' });
 }
 
 // ---------------------------------------------------------------------------

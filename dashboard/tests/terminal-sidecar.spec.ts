@@ -111,7 +111,9 @@ test.describe('terminal workspace sidecars', () => {
     await expect(dock.locator('.terminal-files-panel')).toHaveCount(0)
   })
 
-  test('peeks an attached session from the row and reserves location-chip click for frame navigation', async ({ page }) => {
+  // The T2 W1 chip is gone. The row says where the operator is by being marked
+  // when the focused tile is showing its session, and by nothing otherwise.
+  test('peeks an attached session from the row and marks the row the focused tile shows', async ({ page }) => {
     await openFreshTerminal(page, { width: 1280, height: 800 })
     await page.getByRole('button', { name: 'Sessions sidecar' }).click()
 
@@ -121,19 +123,24 @@ test.describe('terminal workspace sidecars', () => {
     await page.getByRole('menuitem', { name: /Attach to window/ }).click()
     await page.locator('.menu-submenu .menu-row').filter({ hasText: 'Terminal 2 - Window 1' }).click()
 
-    const location = row.getByRole('button', { name: 'Focus assigned window T2 W1' })
-    await expect(location).toBeVisible()
+    await expect(row.locator('.window-location-chip')).toHaveCount(0)
+    await expect(row).not.toHaveClass(/in-focused-tile/)
+
     await row.locator('.session-name').click()
     await expect(page.locator('.sheet-left')).toBeVisible()
-    await expect(page.locator('.tab.active')).toContainText(/^Terminal$/)
-    await expect(location).toBeVisible()
+    await expect(page.locator('.tab.active')).toContainText(/^Terminal ?▾?$/)
 
     await page.keyboard.press('Escape')
     await expect(page.locator('.sheet-left')).toHaveCount(0)
     await expect(row).toBeVisible()
 
-    await location.click()
+    // Go where the session went, focus its tile, and the row is marked.
+    await page.keyboard.press('Alt+2')
     await expect(page.locator('.tab.active')).toContainText('Terminal 2')
-    await expect(page.locator('.terminal-window:visible').first().locator('.session-tag')).toContainText('hq-mayor')
+    const tile = page.locator('.terminal-workspace-dock[data-workspace="terminal2"] .terminal-window').first()
+    await expect(tile.locator('.session-tag')).toContainText('hq-mayor')
+    await tile.locator('.terminal-window-body').click()
+    await expect(tile).toHaveClass(/focused/)
+    await expect(row).toHaveClass(/in-focused-tile/)
   })
 })

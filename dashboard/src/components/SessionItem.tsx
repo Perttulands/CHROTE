@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import type { TmuxSession } from '../types'
 import { useSession } from '../context/SessionContext'
@@ -19,7 +19,7 @@ interface ContextMenuState {
 }
 
 function SessionItem({ session }: SessionItemProps) {
-  const { assignedSessions, handleSessionClick, focusSessionAssignment, deleteSession, renameSession, workspaces, workspaceIds, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, terminalUsers } = useSession()
+  const { assignedSessions, handleSessionClick, deleteSession, renameSession, workspaces, workspaceIds, focusedWindowKey, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, terminalUsers } = useSession()
   const theme = useTheme()
   const sessionKey = getSessionKey(session.name, session.unixUser)
   const assignmentKey = assignedSessions.has(sessionKey) ? sessionKey : session.name
@@ -31,9 +31,16 @@ function SessionItem({ session }: SessionItemProps) {
   const renameInputRef = useRef<HTMLInputElement>(null)
 
 
-  const locationLabel = assignment
-    ? `${assignment.workspaceId.replace('terminal', 'T')} W${assignment.windowIndex}`
-    : ''
+  // Where the operator is typing, said once, in the list he steers from: the
+  // row of the session the focused tile is showing. No chip repeats the tile's
+  // address back at him.
+  const isInFocusedTile = useMemo(() => {
+    if (!focusedWindowKey) return false
+    return workspaceIds.some(wsId => workspaces[wsId]?.windows.some(
+      w => `${wsId}-${w.id}` === focusedWindowKey && w.activeSession === sessionKey,
+    ))
+  }, [focusedWindowKey, sessionKey, workspaceIds, workspaces])
+
   const userBadgeColor = session.unixUser ? identityColorFor(session.unixUser, terminalUsers, theme) : undefined
   const userBadgeStyle = userBadgeColor
     ? {
@@ -241,9 +248,10 @@ function SessionItem({ session }: SessionItemProps) {
     <>
       <div
         ref={setNodeRef}
-        className={`session-item ${isAssigned ? 'assigned' : ''} ${isDragging ? 'dragging' : ''}`}
+        className={`session-item ${isAssigned ? 'assigned' : ''} ${isInFocusedTile ? 'in-focused-tile' : ''} ${isDragging ? 'dragging' : ''}`}
         style={style}
         title={dragLabel}
+        aria-current={isInFocusedTile ? 'true' : undefined}
         {...listeners}
         onPointerDown={handlePointerDown}
         onPointerUp={clearPendingTouchGesture}
@@ -264,21 +272,6 @@ function SessionItem({ session }: SessionItemProps) {
           >
             {getTerminalUserInitial(session.unixUser)}
           </span>
-        )}
-        {assignment && (
-          <button
-            type="button"
-            className="window-badge window-location-chip"
-            title={`Focus ${locationLabel}`}
-            aria-label={`Focus assigned window ${locationLabel}`}
-            onClick={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              focusSessionAssignment(assignmentKey)
-            }}
-          >
-            {locationLabel}
-          </button>
         )}
         <SessionCommandMark command={session.currentCommand} />
         <SessionLabel name={session.name} className="session-name" />

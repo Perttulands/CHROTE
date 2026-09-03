@@ -10,6 +10,7 @@ const mockState = vi.hoisted(() => ({
   clearWorkspaceAssignments: vi.fn(),
   deletePreset: vi.fn(),
   workspaceIds: null as readonly string[] | null,
+  windowCount: 2,
 }))
 
 vi.mock('../context/SessionContext', () => ({
@@ -22,8 +23,46 @@ vi.mock('../context/SessionContext', () => ({
     clearWorkspaceAssignments: mockState.clearWorkspaceAssignments,
     deletePreset: mockState.deletePreset,
     workspaceIds: mockState.workspaceIds ?? TERMINAL_WORKSPACE_IDS,
+    workspaces: {
+      terminal1: {
+        windowCount: mockState.windowCount,
+        windows: [
+          { id: 'terminal1-window-0', boundSessions: ['alice:alpha', 'bare-session'], activeSession: 'alice:alpha', colorIndex: 0 },
+          { id: 'terminal1-window-1', boundSessions: ['bob:beta'], activeSession: 'bob:beta', colorIndex: 1 },
+          { id: 'terminal1-window-2', boundSessions: [], activeSession: null, colorIndex: 2 },
+          { id: 'terminal1-window-3', boundSessions: ['alice:hidden'], activeSession: 'alice:hidden', colorIndex: 3 },
+        ],
+      },
+    },
   }),
 }))
+
+const reconnect = vi.fn()
+const claim = vi.fn()
+const pooledTerminals = new Map<string, { reconnect: () => void; claim: () => void }>()
+vi.mock('./TerminalPool', () => ({
+  useTerminalPool: () => ({
+    terminals: {
+      get(sessionKey: string) {
+        if (!pooledTerminals.has(sessionKey)) {
+          pooledTerminals.set(sessionKey, {
+            reconnect: () => reconnect(sessionKey),
+            claim: () => claim(sessionKey),
+          })
+        }
+        return pooledTerminals.get(sessionKey)
+      },
+    },
+    connectionStates: new Map(),
+  }),
+}))
+
+/** The active terminal tab is the trigger: its caret opens the tab's menu. */
+function openTabMenu() {
+  const caret = document.querySelector('.tab.active .tab-menu-caret')
+  if (!caret) throw new Error('the active terminal tab has no menu caret')
+  fireEvent.click(caret)
+}
 
 function mockMatchMedia(matches: boolean) {
   Object.defineProperty(window, 'matchMedia', {
@@ -41,6 +80,8 @@ describe('TabBar Services navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockState.deletePreset = vi.fn()
+    mockState.windowCount = 2
+    pooledTerminals.clear()
   })
 
   it('shows Terminal 3 in desktop navigation and routes through tab change', () => {
@@ -58,7 +99,8 @@ describe('TabBar Services navigation', () => {
 
     render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
 
-    const labels = screen.getAllByRole('button').map(button => button.textContent)
+    // The active tab carries its menu caret; the label is the word before it.
+    const labels = screen.getAllByRole('button').map(button => button.textContent?.replace('▾', ''))
     const terminalLabels = labels.filter(label => label?.startsWith('Terminal'))
     expect(terminalLabels).toEqual(['Terminal', 'Terminal 2', 'Terminal 3'])
     expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
@@ -70,7 +112,8 @@ describe('TabBar Services navigation', () => {
 
     render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
 
-    const labels = screen.getAllByRole('button').map(button => button.textContent)
+    // The active tab carries its menu caret; the label is the word before it.
+    const labels = screen.getAllByRole('button').map(button => button.textContent?.replace('▾', ''))
     const terminalLabels = labels.filter(label => label?.startsWith('Terminal'))
     expect(terminalLabels).toEqual(['Terminal', 'Terminal 2', 'Terminal 3', 'Terminal 4', 'Terminal 5'])
     mockState.workspaceIds = null
@@ -117,7 +160,7 @@ describe('TabBar Services navigation', () => {
     mockMatchMedia(false)
 
     render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
-    fireEvent.click(screen.getByRole('button', { name: '⋯ Tab' }))
+    openTabMenu()
 
     expect(screen.getByRole('menuitem', { name: /Rename tab/i })).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: /Save layout as preset/i })).toBeInTheDocument()
@@ -136,7 +179,7 @@ describe('TabBar Services navigation', () => {
     mockMatchMedia(false)
     render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '⋯ Tab' }))
+    openTabMenu()
     expect(screen.getByRole('menuitem', { name: /Rename tab/i })).toBeInTheDocument()
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menuitem', { name: /Rename tab/i })).not.toBeInTheDocument()
@@ -155,7 +198,7 @@ describe('TabBar Services navigation', () => {
     mockMatchMedia(false)
     render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '\u22ef Tab' }))
+    openTabMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Rename tab' }))
 
     // The input takes the tab's own place: nothing floats over the workspace.
@@ -170,7 +213,7 @@ describe('TabBar Services navigation', () => {
     expect(screen.getByRole('button', { name: 'Terminal' })).toBeInTheDocument()
 
     mockState.updateSettings.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: '\u22ef Tab' }))
+    openTabMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Rename tab' }))
     fireEvent.change(screen.getByRole('textbox', { name: 'Rename Terminal' }), { target: { value: 'Discarded' } })
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Rename Terminal' }), { key: 'Escape' })
@@ -183,7 +226,7 @@ describe('TabBar Services navigation', () => {
     mockMatchMedia(false)
     render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '\u22ef Tab' }))
+    openTabMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Save layout as preset' }))
 
     // The menu becomes the editor rather than handing off to a dialog.
@@ -192,7 +235,7 @@ describe('TabBar Services navigation', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(mockState.saveCurrentLayout).toHaveBeenCalledWith('Focus')
 
-    fireEvent.click(screen.getByRole('button', { name: '\u22ef Tab' }))
+    openTabMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Restore preset' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Focus Layout' }))
     expect(mockState.loadPreset).toHaveBeenCalledWith('preset-1')
@@ -205,12 +248,93 @@ describe('TabBar Services navigation', () => {
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Keys on' }))
     expect(screen.getByRole('menuitem', { name: 'Dashboard Help' })).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '⋯ Tab' }))
+    openTabMenu()
     expect(screen.queryByRole('menuitem', { name: 'Dashboard Help' })).not.toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: /Rename tab/i })).toBeInTheDocument()
     expect(document.querySelectorAll('.floating-panel-dismiss-layer')).toHaveLength(1)
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menuitem', { name: /Rename tab/i })).not.toBeInTheDocument()
+  })
+
+  // The workspace strip carried these two and a "⋯ Tab" pseudo-tab carried the
+  // rest. One menu, on the tab the operator is already looking at, holds them.
+  it('carries every moved item on the active tab, and opens on the secondary button too', () => {
+    mockMatchMedia(false)
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} onToggleSessionsPinned={vi.fn()} />)
+
+    expect(screen.queryByRole('button', { name: '⋯ Tab' })).not.toBeInTheDocument()
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Terminal' }))
+
+    for (const item of ['Rename tab', 'Save layout as preset', 'Restore preset', 'Clear tab assignments', 'Reconnect frames', 'Claim all', 'Pin sessions panel']) {
+      expect(screen.getByRole('menuitem', { name: new RegExp(`^${item}`) })).toBeInTheDocument()
+    }
+  })
+
+  it('offers no tab menu on a tab that is not the active terminal one', () => {
+    mockMatchMedia(false)
+    render(<TabBar activeTab="settings" onTabChange={vi.fn()} />)
+
+    expect(document.querySelector('.tab-menu-caret')).toBeNull()
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Settings' }))
+    expect(screen.queryByRole('menuitem', { name: /Rename tab/i })).not.toBeInTheDocument()
+  })
+
+  it('reconnects every frame the visible windows hold', () => {
+    mockMatchMedia(false)
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
+
+    openTabMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect frames' }))
+
+    // Window 3 is outside the visible count, so its binding is not a frame.
+    expect(reconnect.mock.calls.flat().sort()).toEqual(['alice:alpha', 'bare-session', 'bob:beta'])
+  })
+
+  // Claiming resizes a tmux window for everyone watching it, so it acts on the
+  // frames in front of this device: the active binding of each visible window,
+  // never a session sitting behind a tag or outside the layout.
+  it('claims only the sessions the visible windows are showing', () => {
+    mockMatchMedia(false)
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
+
+    openTabMenu()
+    const claimAll = screen.getByRole('menuitem', { name: /^Claim all/ })
+    expect(claimAll).toHaveTextContent('Other devices keep watching')
+    fireEvent.click(claimAll)
+
+    expect(claim.mock.calls.flat().sort()).toEqual(['alice:alpha', 'bob:beta'])
+  })
+
+  it('refuses a blanket claim on a phone, where one slide is on screen', () => {
+    mockMatchMedia(true)
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '☰' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal tab options' }))
+    const claimAll = screen.getByRole('menuitem', { name: /^Claim all/ })
+    expect(claimAll).toBeDisabled()
+    fireEvent.click(claimAll)
+
+    expect(claim).not.toHaveBeenCalled()
+  })
+
+  it('reads the Sessions panel pin state in the menu and toggles it there', () => {
+    mockMatchMedia(false)
+    const onToggleSessionsPinned = vi.fn()
+    const { rerender } = render(
+      <TabBar activeTab="terminal1" onTabChange={vi.fn()} onToggleSessionsPinned={onToggleSessionsPinned} />,
+    )
+
+    openTabMenu()
+    expect(screen.getByRole('menuitem', { name: /^Pin sessions panel/ })).toHaveTextContent('off')
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Pin sessions panel/ }))
+    expect(onToggleSessionsPinned).toHaveBeenCalledTimes(1)
+
+    rerender(
+      <TabBar activeTab="terminal1" onTabChange={vi.fn()} sessionsPinned onToggleSessionsPinned={onToggleSessionsPinned} />,
+    )
+    openTabMenu()
+    expect(screen.getByRole('menuitem', { name: /^Pin sessions panel/ })).toHaveTextContent('on')
   })
 })

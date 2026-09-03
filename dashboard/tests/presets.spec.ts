@@ -2,9 +2,10 @@ import { test, expect, Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
 import { openSessionsSidecar } from './helpers'
 
-// Presets live in the active terminal tab's own menu; there is no panel.
+// Presets live in the active terminal tab's own menu; the caret on the tab is
+// its trigger, and there is no panel and no pseudo-tab.
 async function openTabMenu(page: Page) {
-  await page.locator('.tab-bar-actions .tab', { hasText: 'Tab' }).click()
+  await page.locator('.tab.active .tab-menu-caret').click()
   await page.waitForSelector('.menu-sheet')
 }
 

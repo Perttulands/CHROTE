@@ -52,13 +52,16 @@ async function open(page: Page, workspaces: Record<string, unknown>) {
 }
 
 test.describe('Terminal retention', () => {
-  test('survives a window-count shrink and grow inside a workspace', async ({ page }) => {
+  // The counts left the strip, so the layout moves on its chords. A live
+  // terminal keeps its one connection across every step, and the chord that
+  // shrinks the layout stops at the window holding it.
+  test('survives a window-count grow and shrink inside a workspace', async ({ page }) => {
     const connections = await open(page, {
       terminal1: {
         windowCount: 2,
         windows: [
-          { id: 'terminal1-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
-          { id: 'terminal1-window-1', boundSessions: ['main'], activeSession: 'main', colorIndex: 1 },
+          { id: 'terminal1-window-0', boundSessions: ['main'], activeSession: 'main', colorIndex: 0 },
+          { id: 'terminal1-window-1', boundSessions: [], activeSession: null, colorIndex: 1 },
         ],
       },
       terminal2: emptyWorkspace('terminal2'),
@@ -66,13 +69,18 @@ test.describe('Terminal retention', () => {
     })
 
     const terminal = page.locator('.terminal-grid[data-workspace="terminal1"] .xterm-rows')
+    const windows = page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-window')
     await expect(terminal).toContainText('connection-1')
 
-    const activeDock = page.locator('[data-active="true"]')
-    await activeDock.getByTitle('1 window').click()
-    await expect(terminal).toHaveCount(0)
+    await page.keyboard.press('Alt+=')
+    await expect(windows).toHaveCount(3)
+    await page.keyboard.press('Alt+-')
+    await page.keyboard.press('Alt+-')
+    await expect(windows).toHaveCount(1)
 
-    await activeDock.getByTitle('2 windows').click()
+    // The last window holds somebody's live terminal, so the chord refuses.
+    await page.keyboard.press('Alt+-')
+    await expect(windows).toHaveCount(1)
 
     await expect(terminal).toContainText('connection-1')
     expect(connections.count).toBe(1)
