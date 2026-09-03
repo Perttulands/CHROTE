@@ -78,7 +78,7 @@ function mockMatchMedia(matches: boolean) {
   })
 }
 
-describe('TabBar Services navigation', () => {
+describe('TabBar navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockState.deletePreset = vi.fn()
@@ -122,14 +122,14 @@ describe('TabBar Services navigation', () => {
     mockState.workspaceIds = null
   })
 
-  it('shows Services in desktop navigation', () => {
+  it('shows the Library in desktop navigation', () => {
     mockMatchMedia(false)
     const onTabChange = vi.fn()
 
     render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Services' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Library' }))
 
-    expect(onTabChange).toHaveBeenCalledWith('services')
+    expect(onTabChange).toHaveBeenCalledWith('library')
   })
 
   it('shows Scheduled Tasks in desktop navigation', () => {
@@ -142,7 +142,7 @@ describe('TabBar Services navigation', () => {
     expect(onTabChange).toHaveBeenCalledWith('scheduled')
   })
 
-  it('shows Services in mobile navigation', () => {
+  it('shows the Library in mobile navigation', () => {
     mockMatchMedia(true)
     const onTabChange = vi.fn()
 
@@ -154,9 +154,9 @@ describe('TabBar Services navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: '☰' }))
     expect(screen.getByRole('button', { name: 'Terminal' })).toHaveClass('active')
     expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Services' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Library' }))
 
-    expect(onTabChange).toHaveBeenCalledWith('services')
+    expect(onTabChange).toHaveBeenCalledWith('library')
   })
 
   it('opens terminal tab context actions without adding session defaults', () => {

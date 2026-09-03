@@ -134,10 +134,8 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
     const focusedSession = () => focusedWindow()?.activeSession ?? null
 
     const chords: Chord[] = [
-      // Alt+L opens the Library tab in the keyboard map, and is deliberately
-      // not registered here: the Library does not exist yet. A chord with
-      // nothing behind it would list in the panel and do nothing.
       { id: 'keys.beads', key: 'b', direct: { alt: true, shift: false, key: 'b' }, label: 'Beads tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('beads') },
+      { id: 'keys.library', key: 'l', direct: { alt: true, shift: false, key: 'l' }, label: 'Library tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('library') },
       // Alt+K opens the panel, which is also what the leader opens. Turning
       // keys off has no chord of its own: the tab bar's own button says so and
       // is how they come back, and the panel's row runs it from here.

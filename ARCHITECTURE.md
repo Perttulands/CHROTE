@@ -57,7 +57,7 @@ The launch configuration names what may be started and where. It is read once at
 
 `src/cmd/server/` assembles the process and registers the runtime routes.
 
-- `src/internal/api/` contains tmux, files, Beads, scheduled tasks, services, theme, launch, health, and system handlers.
+- `src/internal/api/` contains tmux, files, Beads, scheduled tasks, the Library, theme, launch, health, and system handlers.
 - `src/internal/proxy/` owns the terminal transport and the pseudo-terminals it attaches on.
 - `src/internal/dashboard/` embeds the built dashboard into the Go binary.
 - `src/internal/scheduled/` contains scheduled-task persistence and execution support.
@@ -69,7 +69,7 @@ The build script compiles the dashboard and embeds its output into the Go server
 
 ## Core and components
 
-Terminal workspaces, sessions, files, server status, and settings form the core. Beads, Scheduled, Services, and future Formations integration are separate first-party modules.
+Terminal workspaces, sessions, files, server status, and settings form the core. Beads, Scheduled, the Library, and future Formations integration are separate first-party modules.
 
 This separation is static code organization, not a marketplace or dynamic plugin loader. Components can add routes, views, and configuration. Their failure must remain contained so the terminal core still loads and works.
 

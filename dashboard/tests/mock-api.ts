@@ -436,3 +436,105 @@ export async function mockBeadsApiError(page: Page) {
     })
   })
 }
+
+/**
+ * A small corpus for the Library: two shelves, three pages, one history. The
+ * routes are flat, as the server writes them, so a journey exercises the same
+ * shapes the browser parses in production.
+ */
+const libraryChangedAt = new Date(Date.now() - 3 * 3600_000).toISOString()
+
+export const mockLibraryShelves = {
+  root: '/corpus',
+  librarianSession: 'hq-deacon',
+  beadsProject: '/code/test-project',
+  shelves: [
+    { name: 'knowledge', path: 'knowledge', pages: 1 },
+    { name: 'preferences', path: 'preferences', pages: 2 },
+  ],
+}
+
+const mockLibraryPages: Record<string, object[]> = {
+  knowledge: [
+    { path: 'knowledge/testing.md', title: 'Test isolation', updated: libraryChangedAt, author: 'The Operator' },
+  ],
+  preferences: [
+    { path: 'preferences/tools.md', title: 'Tool Preferences', updated: libraryChangedAt, author: 'The Operator' },
+    { path: 'preferences/workflow.md', title: 'Workflow Preferences', updated: libraryChangedAt, author: 'The Operator' },
+  ],
+}
+
+const mockLibraryPageContents: Record<string, { path: string; title: string; updated: string; author: string; content: string; history: object[] }> = {
+  'preferences/workflow.md': {
+    path: 'preferences/workflow.md',
+    title: 'Workflow Preferences',
+    updated: libraryChangedAt,
+    author: 'The Operator',
+    content: '# Workflow Preferences\n\nPrefer small, verifiable changes.\n',
+    history: [
+      { hash: 'c79783abc', time: libraryChangedAt, author: 'The Operator', message: 'Record a workflow preference' },
+    ],
+  },
+  'preferences/tools.md': {
+    path: 'preferences/tools.md',
+    title: 'Tool Preferences',
+    updated: libraryChangedAt,
+    author: 'The Operator',
+    content: '# Tool Preferences\n\nTools the operator reaches for.\n',
+    history: [],
+  },
+}
+
+export async function mockLibraryApiRoutes(page: Page, options?: { shelves?: object }) {
+  const flat = (route: Route, data: unknown) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) })
+
+  await page.route('**/api/library/shelves**', route => flat(route, options?.shelves ?? mockLibraryShelves))
+
+  await page.route('**/api/library/changes**', route => flat(route, [
+    {
+      hash: 'c79783abc',
+      time: libraryChangedAt,
+      author: 'The Operator',
+      message: 'Record a workflow preference',
+      files: ['preferences/workflow.md'],
+    },
+  ]))
+
+  await page.route('**/api/library/pages**', route => {
+    const shelf = new URL(route.request().url()).searchParams.get('shelf') ?? ''
+    return flat(route, mockLibraryPages[shelf] ?? [])
+  })
+
+  await page.route('**/api/library/search**', route => {
+    const query = (new URL(route.request().url()).searchParams.get('q') ?? '').toLowerCase()
+    const hits = Object.values(mockLibraryPageContents)
+      .filter(entry => entry.content.toLowerCase().includes(query) || entry.path.toLowerCase().includes(query))
+      .map(entry => ({ path: entry.path, title: entry.title, line: 3, snippet: 'Prefer small, verifiable changes.' }))
+    return flat(route, hits)
+  })
+
+  // The page route is matched exactly: Playwright tries the newest route
+  // first, and a glob for `page` would swallow `pages` with it.
+  await page.route(/\/api\/library\/page(\?|$)/, route => {
+    if (route.request().method() === 'PUT') {
+      const body = route.request().postDataJSON() as { summary?: string } | null
+      return flat(route, {
+        hash: 'newc0mm1t',
+        time: new Date().toISOString(),
+        author: 'The Operator',
+        message: body?.summary ?? '',
+      })
+    }
+    const path = new URL(route.request().url()).searchParams.get('path') ?? ''
+    const found = mockLibraryPageContents[path]
+    if (!found) {
+      return route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false, error: { code: 'NOT_FOUND', message: 'No such page' } }),
+      })
+    }
+    return flat(route, found)
+  })
+}

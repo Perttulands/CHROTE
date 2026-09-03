@@ -29,7 +29,7 @@ The application shell currently exposes:
 - Terminal 3
 - Files
 - Beads
-- Services
+- Library
 - Scheduled
 - Server (default-enabled feature flag)
 - Settings
@@ -58,7 +58,7 @@ src/
 │   ├── FilesView/                  full Files workspace
 │   ├── TerminalFilesPanel.tsx      terminal-companion Files sidecar
 │   ├── BeadsView/                  Beads workspace and issue surfaces
-│   ├── ServicesView/               configured local service adapters
+│   ├── LibraryView/                the context corpus as a reading room
 │   ├── ScheduledTasksView.tsx      schedules and run history
 │   ├── SystemStatusView/           health, resources, and system history
 │   └── SettingsView.tsx            appearance, flags, and session cleanup

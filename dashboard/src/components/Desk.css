@@ -1,0 +1,131 @@
+/* The desk: one line at the foot of a tab, and the terminal it opens into. */
+
+.desk {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-primary);
+  border-top: 1px solid var(--divider);
+}
+
+/* Expanded, the desk takes the share of the tab the terminal needs to be worth
+   reading, and the columns above it give up that height rather than scrolling
+   out of the window. */
+.desk-expanded {
+  flex: 0 0 40%;
+  min-height: 0;
+}
+
+.desk-line {
+  flex: none;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+}
+
+.desk-label {
+  flex: none;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.desk-session {
+  flex: none;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.desk-state {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.desk-ask {
+  margin-left: auto;
+  width: 400px;
+  max-width: 50%;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+/* Expanded, the field leaves the line and takes the desk's own width, above
+   the terminal it is talking to. */
+.desk-ask-wide {
+  margin: 0 8px 8px;
+  width: auto;
+  max-width: none;
+  height: 26px;
+  font-size: 13px;
+}
+
+.desk-ask::placeholder {
+  color: var(--text-dim);
+}
+
+.desk-ask:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.desk-ask:disabled {
+  color: var(--text-dim);
+}
+
+.desk-action {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.desk-action:hover {
+  color: var(--text-primary);
+}
+
+/* Launch and the Ask field are never on the line together — one means the
+   session is running and the other means it is not — so both take the space
+   between the identity at the left and Expand at the right. */
+.desk-launch {
+  margin-left: auto;
+}
+
+.desk-expand {
+  margin-left: 16px;
+}
+
+/* Expanded, the Ask field has left the line, so Collapse takes the space it
+   was holding and stays at the right edge where it was. */
+.desk-expanded .desk-expand {
+  margin-left: auto;
+}
+
+/* The terminal surface positions itself against the nearest positioned
+   ancestor, so the tile must be one: without this the desk's terminal escapes
+   and covers the whole tab. */
+.desk-tile {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0 8px 8px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--terminal-background);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}

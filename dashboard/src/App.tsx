@@ -40,7 +40,7 @@ const FilesView = lazy(() => import('./components/FilesView'))
 const SettingsView = lazy(() => import('./components/SettingsView'))
 const HelpView = lazy(() => import('./components/HelpView'))
 const BeadsView = lazy(() => import('./components/BeadsView'))
-const ServicesView = lazy(() => import('./components/ServicesView'))
+const LibraryView = lazy(() => import('./components/LibraryView'))
 const SystemStatusView = lazy(() => import('./components/SystemStatusView'))
 const ScheduledTasksView = lazy(() => import('./components/ScheduledTasksView'))
 
@@ -422,10 +422,10 @@ function DashboardContent() {
               </Suspense>
             </ErrorBoundary>
           )}
-          {activeTab === 'services' && (
+          {activeTab === 'library' && (
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
-                <ServicesView />
+                <LibraryView />
               </Suspense>
             </ErrorBoundary>
           )}
