@@ -337,7 +337,11 @@ export async function mockBeadsApiRoutes(page: Page, options?: {
   workResponse?: object
   beadResponse?: object
 }) {
-  await mockBeadsProjectsRoute(page, options?.projectsResponse)
+  // mockApiRoutes already serves the project map, because every terminal asks
+  // for it to link the ids in its output. Playwright answers with the most
+  // recently registered handler, so registering the same map again here would
+  // only shadow that one with an identical body. Register it only to override.
+  if (options?.projectsResponse) await mockBeadsProjectsRoute(page, options.projectsResponse)
 
   // Each store answers for itself: the second project is empty, so "All" is a
   // sum of stores rather than the same rows twice.
@@ -410,16 +414,11 @@ export async function mockSystemStatusApiRoutes(page: Page, onRequest?: () => vo
   })
 }
 
-// Beads API error mock - simulates bd not installed
+// Beads API error mock - simulates bd not installed.
+// The project map still answers, from the registration mockApiRoutes made:
+// what fails is the two routes that carry the Beads themselves, which is the
+// shape of a host that has the stores configured but no `bd` on its PATH.
 export async function mockBeadsApiError(page: Page) {
-  await page.route('**/api/beads/projects**', async route => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(mockBeadsProjects),
-    })
-  })
-
   await page.route('**/api/beads/work**', async route => {
     await route.fulfill({
       status: 503,

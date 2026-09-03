@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FilesView from './FilesView'
 import { MAX_TEXT_PREVIEW_BYTES } from './FileViewer'
-import { deleteItem, fetchDirectory, probeTextFile, readTextFile, renameItem, writeTextFile } from './FilesView/fileService'
+import { deleteItem, fetchDirectory, probeTextFile, readTextFile, renameItem, uploadFiles, writeTextFile } from './FilesView/fileService'
 
 vi.mock('./FilesView/fileService', async () => {
   const actual = await vi.importActual<typeof import('./FilesView/fileService')>('./FilesView/fileService')
@@ -103,21 +103,131 @@ describe('FilesView directory values', () => {
     expect(screen.getByTitle('Upload')).toBeEnabled()
   })
 
-  it('shows a retryable error and keeps the exact navigated path in the breadcrumb', async () => {
-    mockFetchDirectory.mockRejectedValue(new Error('file service offline'))
-    const first = render(<FilesView />)
-    expect(await screen.findByText('file service offline')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
-    first.unmount()
+  it('reloads the failed folder from its own error, and keeps the exact navigated path in the breadcrumb', async () => {
+    let offline = true
+    mockFetchDirectory.mockImplementation(async path => {
+      if (offline) throw new Error('file service offline')
+      return path === '/' ? [directory('code')] : [textFile('package.json', '{}')]
+    })
 
-    mockFetchDirectory.mockImplementation(async path => (
-      path === '/' ? [directory('code')] : [textFile('package.json', '{}')]
-    ))
-    const second = render(<FilesView />)
-    fireEvent.doubleClick(await screen.findByRole('row', { name: /code/i }))
+    const { container } = render(<FilesView />)
+    expect(await screen.findByText('file service offline')).toBeInTheDocument()
+
+    // Retry re-reads the folder in place: the error goes and its contents arrive.
+    offline = false
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+    expect(await screen.findByRole('row', { name: /code/i })).toBeInTheDocument()
+    expect(screen.queryByText('file service offline')).not.toBeInTheDocument()
+
+    fireEvent.doubleClick(screen.getByRole('row', { name: /code/i }))
     expect(await screen.findByRole('row', { name: /package\.json/i })).toBeInTheDocument()
-    expect(second.container.querySelector('.fb-breadcrumb-item')).toHaveTextContent('code')
-    expect(second.container.querySelector('.fb-path-display')).toHaveTextContent('/code')
+    expect(container.querySelector('.fb-breadcrumb-item')).toHaveTextContent('code')
+    expect(container.querySelector('.fb-path-display')).toHaveTextContent('/code')
+  })
+})
+
+describe('FilesView folder navigation', () => {
+  beforeEach(() => {
+    mockFetchDirectory.mockImplementation(async path => (
+      path === '/'
+        ? [directory('code'), directory('projects'), textFile('readme.txt', 'hello')]
+        : [directory('src'), textFile('package.json', '{}')]
+    ))
+  })
+
+  it('walks into a folder and back out by breadcrumb and by Up, and re-reads the folder on Refresh', async () => {
+    const { container } = render(<FilesView />)
+    await screen.findByRole('row', { name: /readme\.txt/i })
+
+    // Nothing to go back to, forward to, or up from: this is where Files opens.
+    expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Up' })).toBeDisabled()
+
+    fireEvent.doubleClick(screen.getByRole('row', { name: /code/i }))
+
+    expect(await screen.findByRole('row', { name: /package\.json/i })).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /src/i })).toBeInTheDocument()
+    expect(container.querySelector('.fb-breadcrumb-item')).toHaveTextContent('code')
+
+    // The leading / of the path is a way home, not a way into the path editor.
+    fireEvent.click(container.querySelector('.fb-breadcrumb-root') as HTMLElement)
+
+    expect(await screen.findByRole('row', { name: /readme\.txt/i })).toBeInTheDocument()
+    expect(container.querySelector('.fb-breadcrumb-item')).toBeNull()
+
+    fireEvent.doubleClick(screen.getByRole('row', { name: /code/i }))
+    await screen.findByRole('row', { name: /package\.json/i })
+    fireEvent.click(screen.getByRole('button', { name: 'Up' }))
+
+    expect(await screen.findByRole('row', { name: /readme\.txt/i })).toBeInTheDocument()
+
+    mockFetchDirectory.mockClear()
+    fireEvent.click(screen.getByTitle('Refresh'))
+
+    await waitFor(() => expect(mockFetchDirectory).toHaveBeenCalledWith('/'))
+  })
+
+  it('uploads into the folder on screen and re-reads it so the new file appears', async () => {
+    const { container } = render(<FilesView />)
+    fireEvent.doubleClick(await screen.findByRole('row', { name: /code/i }))
+    await screen.findByRole('row', { name: /package\.json/i })
+    mockFetchDirectory.mockClear()
+
+    const upload = new File(['uploaded content'], 'upload.txt', { type: 'text/plain' })
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    Object.defineProperty(input, 'files', { configurable: true, value: [upload] })
+    fireEvent.change(input)
+
+    await waitFor(() => expect(uploadFiles).toHaveBeenCalledWith('/code', [upload]))
+    await waitFor(() => expect(mockFetchDirectory).toHaveBeenCalledWith('/code'))
+  })
+})
+
+describe('FilesView listing controls', () => {
+  beforeEach(() => {
+    mockFetchDirectory.mockResolvedValue([directory('code'), directory('projects'), textFile('readme.txt', 'hello')])
+  })
+
+  it('reads the same folder as columned rows or as named tiles', async () => {
+    const { container } = render(<FilesView />)
+    await screen.findByRole('row', { name: /readme\.txt/i })
+
+    // The list is the columned reading, sortable by each column it shows.
+    expect(screen.getByRole('button', { name: /^Modified/ })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('Grid view'))
+
+    // Tiles drop the columns and keep every item named.
+    const grid = container.querySelector('.fb-grid') as HTMLElement
+    expect(screen.queryByRole('row')).not.toBeInTheDocument()
+    for (const name of ['code', 'projects', 'readme.txt']) {
+      expect(within(grid).getByText(name)).toBeInTheDocument()
+    }
+
+    fireEvent.click(screen.getByTitle('List view'))
+
+    expect(screen.getByRole('row', { name: /readme\.txt/i })).toBeInTheDocument()
+    expect(container.querySelector('.fb-grid')).toBeNull()
+  })
+
+  it('narrows the listing to the items matching the filter', async () => {
+    const { container } = render(<FilesView />)
+    await screen.findByRole('row', { name: /readme\.txt/i })
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'code' } })
+
+    expect(screen.getByRole('row', { name: /code/i })).toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /readme\.txt/i })).not.toBeInTheDocument()
+    expect(container.querySelector('.fb-statusbar')).toHaveTextContent('1 items')
+
+    // A filter that matches nothing says so rather than looking like an empty folder.
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'nothing here' } })
+    expect(screen.getByText('No matching files')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
+    expect(screen.getByRole('row', { name: /readme\.txt/i })).toBeInTheDocument()
   })
 })
 

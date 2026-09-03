@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchDirectory, fetchFileDiff, findFiles, probeTextFile, readTextFile } from './fileService'
+import { fetchDirectory, fetchFileDiff, findFiles, probeTextFile, readTextFile, uploadFiles } from './fileService'
 
 describe('probeTextFile', () => {
   afterEach(() => {
@@ -76,6 +76,27 @@ describe('fetchDirectory paths', () => {
       '/api/files/resources/',
       '/api/files/resources/code',
     ])
+  })
+})
+
+describe('uploadFiles', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('posts each file to its own path inside the folder it was dropped in', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const upload = new File(['uploaded content'], 'upload.txt', { type: 'text/plain' })
+    await uploadFiles('/code', [upload])
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/files/resources/code/upload.txt')
+    expect(init.method).toBe('POST')
+    // The file itself is the body, so nothing re-encodes the bytes on the way out.
+    expect(init.body).toBe(upload)
+    expect(init.headers['Content-Type']).toBe('text/plain')
   })
 })
 

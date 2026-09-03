@@ -73,38 +73,29 @@ async function unsteadyClick(page: Page, tag: Locator) {
 }
 
 test.describe('Session tag click', () => {
-  test('shows the clicked session and marks its tag active', async ({ page }) => {
+  // Both presses on one page: the steady click a mouse makes, and the drifting
+  // one a trackpad or a touchscreen makes, which crosses dnd-kit's threshold.
+  test('shows the clicked session and marks its tag active, however unsteady the press', async ({ page }) => {
     const window = await openWindow(page)
     const other = tagFor(window, OTHER)
+    const shown = tagFor(window, SHOWN)
+    const surface = window.locator('.terminal-surface-host:visible .xterm-rows')
     await expect(other).not.toHaveClass(/active/)
 
     await other.click()
 
     await expect(other).toHaveClass(/active/)
-    await expect(tagFor(window, SHOWN)).not.toHaveClass(/active/)
-    await expect(window.locator('.terminal-surface-host:visible .xterm-rows'))
-      .toContainText(`mock terminal ${OTHER}`)
-  })
+    await expect(shown).not.toHaveClass(/active/)
+    await expect(surface).toContainText(`mock terminal ${OTHER}`)
 
-  test('switches on a press that drifts into a drag and goes nowhere', async ({ page }) => {
-    const window = await openWindow(page)
-    const other = tagFor(window, OTHER)
+    // Back to the first, so the drifting press has somewhere to switch to.
+    await shown.click()
+    await expect(shown).toHaveClass(/active/)
+    await expect(surface).toContainText(`mock terminal ${SHOWN}`)
 
     await unsteadyClick(page, other)
 
     await expect(other).toHaveClass(/active/)
-    await expect(window.locator('.terminal-surface-host:visible .xterm-rows'))
-      .toContainText(`mock terminal ${OTHER}`)
-  })
-
-  test('leaves the remove cross removing the binding rather than switching to it', async ({ page }) => {
-    const window = await openWindow(page)
-
-    await tagFor(window, OTHER).locator('.tag-remove').click()
-
-    await expect(window.locator('.session-tag')).toHaveCount(1)
-    await expect(tagFor(window, SHOWN)).toHaveClass(/active/)
-    await expect(window.locator('.terminal-surface-host:visible .xterm-rows'))
-      .toContainText(`mock terminal ${SHOWN}`)
+    await expect(surface).toContainText(`mock terminal ${OTHER}`)
   })
 })

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SystemStatusView from './index'
 
@@ -140,6 +140,25 @@ describe('SystemStatusView', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  // Behind another tab this view is the only thing keeping the history warm, so
+  // it samples on mount and goes on sampling, just slower than the tab in front.
+  it('samples on mount and keeps sampling while the Server tab is not the one on screen', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    render(<SystemStatusView active={false} />)
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/status'))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/history'))
+    const onMount = fetchMock.mock.calls.length
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000)
+    })
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(onMount)
   })
 
   it('renders one instrument row per metric with its reading, detail and window stats', async () => {

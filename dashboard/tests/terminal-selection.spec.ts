@@ -1,5 +1,6 @@
 import { test, expect, type Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
+import { dragAndDrop } from './helpers'
 
 /**
  * Copy-on-select gate (bead: chrote-wgqp.1).
@@ -127,41 +128,80 @@ test.describe('Terminal copy on select', () => {
     await expect.poll(() => readClipboard(page)).toContain(PAINTED_LINE)
   })
 
-  test('copies on a plain-HTTP origin, where only execCommand is left', async ({ page }) => {
+  // The plain-HTTP path is the one the operator actually reaches CHROTE on, so
+  // every rule about when a copy fires is proven here, on one page: painting
+  // copies once, and a click — over an old selection or over none — never does.
+  test('copies once per painted drag on a plain-HTTP origin, and never on a click', async ({ page }) => {
     await hideAsyncClipboard(page)
     await openTerminal(page)
     await page.evaluate(() => window.__realClipboard?.writeText('untouched'))
 
+    await clickFirstRow(page)
+    expect(await page.evaluate(() => window.__copyCommands)).toBe(0)
+
     await paintFirstRow(page)
 
     await expect.poll(() => readClipboard(page)).toContain(PAINTED_LINE)
-  })
-
-  test('copies once when the drag settles, not once per mousemove', async ({ page }) => {
-    await hideAsyncClipboard(page)
-    await openTerminal(page)
-
-    await paintFirstRow(page)
-
+    // Once for the whole drag, not once per mousemove.
     expect(await page.evaluate(() => window.__copyCommands)).toBe(1)
-  })
 
-  test('a click that paints nothing copies nothing', async ({ page }) => {
-    await hideAsyncClipboard(page)
-    await openTerminal(page)
+    // The click lands while the painted selection is still on screen; putting
+    // it back on the clipboard would overwrite whatever the operator copied.
     await clickFirstRow(page)
-
-    expect(await page.evaluate(() => window.__copyCommands)).toBe(0)
+    expect(await page.evaluate(() => window.__copyCommands)).toBe(1)
   })
 
-  test('clicking a terminal that still holds an old selection does not put it back', async ({ page }) => {
-    await hideAsyncClipboard(page)
-    await openTerminal(page)
-    await paintFirstRow(page)
-    expect(await page.evaluate(() => window.__copyCommands)).toBe(1)
+  // Moved from the live suite, which needed a real backend for none of it. The
+  // terminal shares the dashboard's document, so only this assertion stops the
+  // dashboard from swallowing the operator's native right-click menu inside it.
+  test('keeps terminal input native while exposing visible assignment controls', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await mockApiRoutes(page)
+    await page.goto('/')
+    await expect(page.locator('.dashboard')).toBeVisible()
+    await expect(page.locator('.terminal-grid[data-workspace="terminal1"]')).toBeVisible()
 
-    await clickFirstRow(page)
+    // Tab out of the tab bar: the active tab stays active and gives up focus,
+    // rather than the tab strip capturing the keyboard.
+    const terminalOneTab = page.locator('.tab-bar .tab.active').first()
+    await expect(terminalOneTab).toHaveClass(/active/)
+    await terminalOneTab.focus()
+    await page.keyboard.press('Tab')
+    await expect(terminalOneTab).toHaveClass(/active/)
+    await expect(terminalOneTab).not.toBeFocused()
 
-    expect(await page.evaluate(() => window.__copyCommands)).toBe(1)
+    const workspace = page.locator('.terminal-workspace-dock[data-active="true"]')
+    const sessionsSidecar = workspace.getByRole('button', { name: 'Sessions sidecar', exact: true })
+    await expect(sessionsSidecar).toHaveAttribute('aria-expanded', 'false')
+    await sessionsSidecar.click()
+    await expect(sessionsSidecar).toHaveAttribute('aria-expanded', 'true')
+
+    const sessionRow = workspace.locator('.session-item').first()
+    await expect(sessionRow).toBeVisible()
+    const sessionName = (await sessionRow.locator('.session-name').textContent())?.trim()
+    expect(sessionName).toBeTruthy()
+    await expect(sessionRow.getByRole('button', { name: `Session actions for ${sessionName}` })).toBeVisible()
+
+    const firstWindow = workspace.locator('.terminal-window:visible').first()
+    await dragAndDrop(page, '.session-panel .session-item', '.terminal-window')
+    await expect(firstWindow.locator('.tag-name')).toHaveText(sessionName!)
+
+    await sessionsSidecar.click()
+    await expect(sessionsSidecar).toHaveAttribute('aria-expanded', 'false')
+
+    const terminal = firstWindow.locator('.terminal-window-body .terminal-surface')
+    await expect(terminal.locator('.xterm')).toBeVisible()
+
+    await terminal.evaluate(element => {
+      const marker = window as Window & { __chroteContextMenuPrevented?: boolean }
+      marker.__chroteContextMenuPrevented = true
+      element.addEventListener('contextmenu', event => {
+        marker.__chroteContextMenuPrevented = event.defaultPrevented
+      }, { once: true })
+    })
+    await terminal.click({ button: 'right', position: { x: 20, y: 20 } })
+    await expect.poll(() => page.evaluate(() => (
+      window as Window & { __chroteContextMenuPrevented?: boolean }
+    ).__chroteContextMenuPrevented)).toBe(false)
   })
 })

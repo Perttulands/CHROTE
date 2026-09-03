@@ -117,18 +117,24 @@ describe('TabBar Services navigation', () => {
     mockState.workspaceIds = null
   })
 
-  it('shows Services in mobile navigation', () => {
+  // A phone has no room for the tab strip, so the hamburger is the only way to
+  // every tab: none of them is reachable until it is opened.
+  it('reaches every tab through the hamburger on a phone', () => {
     mockMatchMedia(true)
     const onTabChange = vi.fn()
 
     const { container } = render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
     expect(container.querySelector('.tab-bar')).toHaveClass('mobile-mode')
     expect(container.querySelector('.tab-bar-tabs')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '☰' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Files' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '☰' }))
+
+    for (const label of ['Terminal', 'Terminal 2', 'Terminal 3', 'Files', 'Beads', 'Services', 'Scheduled', 'Settings']) {
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
+    }
     expect(screen.getByRole('button', { name: 'Terminal' })).toHaveClass('active')
-    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
+
     fireEvent.click(screen.getByRole('button', { name: 'Services' }))
 
     expect(onTabChange).toHaveBeenCalledWith('services')
@@ -206,6 +212,18 @@ describe('TabBar Services navigation', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Restore preset' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Focus Layout' }))
     expect(mockState.loadPreset).toHaveBeenCalledWith('preset-1')
+  })
+
+  // The help view has no tab of its own, so this menu row is the way in to it.
+  it('routes to the help view from the keys menu', () => {
+    mockMatchMedia(false)
+    const onTabChange = vi.fn()
+    render(<TabBar activeTab="terminal1" onTabChange={onTabChange} onShowKeys={vi.fn()} />)
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Keys on' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Dashboard Help' }))
+
+    expect(onTabChange).toHaveBeenCalledWith('help')
   })
 
   it('keeps the keys menu and terminal tab menus mutually exclusive', () => {

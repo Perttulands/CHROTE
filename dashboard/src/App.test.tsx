@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   settings: null as typeof DEFAULT_SETTINGS | null,
   sessions: [{ name: 'alpha', windows: 1, attached: false, unixUser: 'alice', currentCommand: 'claude' }],
   terminal2WindowCount: 2,
+  enabledFlags: [] as string[],
 }))
 
 // The canonical four slots every workspace holds; windowCount decides how many
@@ -85,7 +86,9 @@ vi.mock('./components/SendDrawer', () => ({ default: () => null }))
 vi.mock('./components/HelpView', () => ({ default: () => null }))
 vi.mock('./components/BeadsView', () => ({ default: () => null }))
 vi.mock('./components/ServicesView', () => ({ default: () => null }))
-vi.mock('./components/SystemStatusView', () => ({ default: () => null }))
+vi.mock('./components/SystemStatusView', () => ({
+  default: ({ active }: { active?: boolean }) => <div data-testid="system-status-view" data-active={String(active)} />,
+}))
 vi.mock('./components/ScheduledTasksView', () => ({ default: () => null }))
 vi.mock('./components/ErrorBoundary', () => ({ default: ({ children }: { children: React.ReactNode }) => children }))
 vi.mock('./keys/KeysPanel', () => ({ default: () => null }))
@@ -93,7 +96,10 @@ vi.mock('./keys/LeaderStrip', () => ({ default: () => null }))
 vi.mock('./components/LayoutPresetsPanel', () => ({ default: () => null }))
 vi.mock('./components/TerminalPool', () => ({ TerminalPoolProvider: ({ children }: { children: React.ReactNode }) => children }))
 vi.mock('./hooks/useKeyboardShortcuts', () => ({ useKeyboardShortcuts: vi.fn() }))
-vi.mock('./featureFlags', () => ({ installFeatureFlagHelpers: vi.fn(), isFeatureEnabled: () => false }))
+vi.mock('./featureFlags', () => ({
+  installFeatureFlagHelpers: vi.fn(),
+  isFeatureEnabled: (flag: string) => mocks.enabledFlags.includes(flag),
+}))
 
 const panelDrag = {
   active: {
@@ -126,6 +132,7 @@ describe('App drag lifecycle', () => {
     mocks.workspaceIds = null
     mocks.settings = null
     mocks.terminal2WindowCount = 2
+    mocks.enabledFlags = []
   })
 
   it('uses one reset path for drag cancel and clears all active drag visuals', () => {
@@ -255,5 +262,28 @@ describe('App drag lifecycle', () => {
 
     expect(container.querySelector('[data-workspace="terminal3"]')).toHaveAttribute('data-active', 'false')
     expect(container.querySelector('[data-workspace="terminal1"]')).toHaveAttribute('data-active', 'true')
+  })
+})
+
+// The Server tab's history is built from samples the view takes for itself, so
+// it has to go on taking them while the operator is somewhere else. App keeps
+// it mounted out of sight rather than tearing it down and starting over.
+describe('App background sampling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.dndProps = null
+    mocks.windowRevealRequest = null
+    mocks.workspaceIds = null
+    mocks.settings = null
+    mocks.terminal2WindowCount = 2
+    mocks.enabledFlags = ['serverStatusTab']
+  })
+
+  it('keeps the Server status view mounted and out of sight behind another tab', async () => {
+    render(<App />)
+
+    const statusView = await screen.findByTestId('system-status-view')
+    expect(statusView).toHaveAttribute('data-active', 'false')
+    expect(statusView.parentElement).toHaveStyle({ display: 'none' })
   })
 })
