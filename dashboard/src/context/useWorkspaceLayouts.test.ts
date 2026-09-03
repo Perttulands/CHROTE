@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import { featureFlagKey } from '../featureFlags'
-import { DEFAULT_SETTINGS } from '../types'
+import { DEFAULT_SETTINGS, MAX_PRESETS } from '../types'
 import {
   renderSession,
+  renderSessionWithStatus,
   setViewportWidth,
   store,
   storedDashboardState,
@@ -32,6 +33,33 @@ describe('dashboard persisted storage contract', () => {
     const presets = JSON.parse(store['chrote-dashboard-presets'])
     expect(presets).toHaveLength(1)
     expect(presets[0].name).toBe('baseline')
+  })
+
+  // The ceiling is the reducer's, not the menu's: the browser spec that used to
+  // read this announcement off the status line is gone, so the refusal and the
+  // words it says are pinned here.
+  it('refuses the preset past the ceiling and says so, keeping the ones already saved', () => {
+    const { result } = renderSessionWithStatus()
+
+    act(() => {
+      for (let index = 0; index < MAX_PRESETS; index += 1) {
+        result.current.session.saveCurrentLayout(`layout ${index}`)
+      }
+    })
+    expect(result.current.session.layoutPresets).toHaveLength(MAX_PRESETS)
+
+    let accepted: boolean | undefined
+    act(() => {
+      accepted = result.current.session.saveCurrentLayout('one too many')
+    })
+
+    expect(accepted).toBe(false)
+    expect(result.current.session.layoutPresets).toHaveLength(MAX_PRESETS)
+    expect(result.current.session.layoutPresets.map(preset => preset.name)).not.toContain('one too many')
+    expect(result.current.status.status).toMatchObject({
+      message: `Maximum ${MAX_PRESETS} presets reached`,
+      severity: 'warning',
+    })
   })
 
   it('loads V3 viewport layouts as a normalized stored-state fixture', () => {

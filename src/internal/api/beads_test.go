@@ -48,9 +48,22 @@ func makeBeadsPermissionProject(t *testing.T) string {
 	return project
 }
 
+// requireUnprivileged fails the child of a permission probe that is still root.
+// A `chmod 0` fixture denies nothing to root, so a privileged child would prove
+// nothing about the permission reporting it is here to pin. Without this the
+// failure mode is silent, and these probes are the only place the effective-user
+// wording is exercised at all.
+func requireUnprivileged(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Fatal("permission probe is running as root; the unprivileged re-exec did not drop privileges and the fixture would deny nothing")
+	}
+}
+
 func runBeadsPermissionSubprocess(t *testing.T, project string) bool {
 	t.Helper()
 	if os.Getenv(beadsPermissionHelperEnv) == "1" {
+		requireUnprivileged(t)
 		return true
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$")

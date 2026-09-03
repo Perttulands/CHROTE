@@ -352,6 +352,7 @@ func TestFilesHandlerServesReadablePathUnderConfiguredRoot(t *testing.T) {
 func TestFilesHandlerUnreadablePathUnderConfiguredRootReturnsPermissionError(t *testing.T) {
 	const helperEnv = "CHROTE_FILES_PERMISSION_HELPER"
 	if os.Getenv(helperEnv) == "1" {
+		requireUnprivileged(t)
 		mux := http.NewServeMux()
 		NewFilesHandler().RegisterRoutes(mux)
 		path := os.Getenv("CHROTE_FILES_PERMISSION_PATH")
