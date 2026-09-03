@@ -699,3 +699,50 @@ These were found during the audit and are outside its scope:
 - A tolerance for a legacy session-listing format is exercised only by its own
   fixtures; production never emits that shape.
 - The strategy document's counts and job duration are stale.
+
+## Execution: before and after
+
+The cuts, the merges, the moves and the CI split landed under chrote-64pz.2.
+Every figure below is measured on the same 16-core host, `-count=1` so nothing
+is served from a cache, and the "after" column is the merged tree with the
+Library and Agents tabs on it.
+
+| gate | before | after | note |
+| --- | --- | --- | --- |
+| Go, `go test -race -count=1 ./...` | 9.132s | 3.936s | api 8.82s to 2.18s, proxy 3.19s to 1.18s |
+| gofmt and go vet | clean | clean | unchanged |
+| Dashboard unit, `npm run test:unit` | 5.783s | 5.791s | no change, as predicted |
+| ESLint | 2.461s | 2.436s | unchanged |
+| Mocked Playwright, 4 workers | 44.670s | 17.675s | 101 cases to 36 |
+| doc-lint | 0.28s | 0.27s | unchanged |
+| host-neutrality | 0.161s | 0.161s | unchanged |
+| embedded parity | n/a | 0.30s | bundle rebuilt, 260 tracked files |
+| embedded dashboard build | n/a | 3.758s | unchanged work, measured for the record |
+
+Local wall time across the suites falls from about 62s to about 30s. The CI
+saving is larger and is not measured here: the worker cap that serialised the
+browser suite is gone, and the single job is now five that start together.
+
+### Corrections to this audit
+
+The counts above were measured against an older main and were stale by the time
+the cuts began. The real baseline was 64 unit files and 716 cases (not 57 and
+650), 101 browser cases (not 98), and 33 Go test files with 278 test functions.
+`beads.spec.ts` had been rewritten entirely by another lane, so none of its
+verdict rows applied and it was left alone.
+
+"Two dashboard components have no consumers" was one component, DockPanelToggle,
+plus three dead exports of LoadingSkeleton whose default export is live.
+
+### What was deliberately not done
+
+`tests/integration/terminal-pool.spec.ts` keeps both cases rather than
+collapsing to one. It is an opt-in live spec, and verifying a collapse needs a
+real tmux substrate that must not be touched on this host. An unverified edit to
+the gate that defends the golden invariant is worse than a second case that
+never runs in CI.
+
+Nothing now pins the live specs to the cleanup ledger's retry counts. The two
+unit cases that did it read the spec files as text, which is a lint rule wearing
+a test's clothes, and they were deleted. If that intent is worth keeping it
+belongs in a source contract script.

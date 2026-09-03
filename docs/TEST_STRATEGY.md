@@ -32,9 +32,9 @@ Measured on a 16-core host, September 2026, after the rationalization.
 
 | suite | files | cases | wall |
 | --- | --- | --- | --- |
-| Go, race enabled | 29 | 198 test functions | about 3s |
-| Dashboard unit | 63 | 606 | about 5.5s |
-| Mocked Playwright | 20 | 33 | about 20s at four workers |
+| Go, race enabled | 29 | 198 test functions | 3.9s |
+| Dashboard unit | 67 | 657 | 5.8s |
+| Mocked Playwright | 21 | 36 | 17.7s at four workers |
 
 The numbers that matter about that table are the ratios. A browser case
 costs roughly two seconds; a unit case costs under ten milliseconds. That is
