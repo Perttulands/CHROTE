@@ -479,7 +479,12 @@ describe('TerminalWindow launch user', () => {
     render(
       <TerminalWindow
         workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
+        window={{
+          id: 'terminal3-window-0',
+          boundSessions: ['shell-existing', 'build:forge-existing'],
+          activeSession: 'shell-existing',
+          colorIndex: 0,
+        }}
       />
     )
 
@@ -529,17 +534,70 @@ describe('TerminalWindow launch user', () => {
     const { container } = render(
       <TerminalWindow
         workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['forge-existing'], activeSession: 'forge-existing', colorIndex: 0 }}
+        window={{
+          id: 'terminal3-window-0',
+          boundSessions: ['forge-existing', 'shell-existing'],
+          activeSession: 'forge-existing',
+          colorIndex: 0,
+        }}
       />
     )
 
-    const remove = screen.getByRole('button', { name: '×' })
+    const remove = screen.getAllByRole('button', { name: '×' })[0]
     fireEvent.pointerDown(remove, { pointerType: 'mouse' })
     expect(draggableState.listeners.onPointerDown).not.toHaveBeenCalled()
+    expect(setActiveSession).not.toHaveBeenCalled()
     expect(container.querySelector('.session-tag-drag-handle')).toBeNull()
 
+    fireEvent.click(tagLabel('shell-existing'))
+    expect(setActiveSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'shell-existing')
+  })
+
+  // The whole tag is the drag surface, so a press that drifts past the sensor's
+  // threshold becomes a drag and dnd-kit swallows the click that would have
+  // followed. Selecting on the press is what keeps an unsteady click working,
+  // and the press still reaches the drag sensor.
+  it('shows a session as soon as its tag is pressed, and leaves the shown one alone', () => {
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{
+          id: 'terminal3-window-0',
+          boundSessions: ['forge-existing', 'shell-existing'],
+          activeSession: 'forge-existing',
+          colorIndex: 0,
+        }}
+      />
+    )
+
+    fireEvent.pointerDown(tagLabel('shell-existing'), { pointerType: 'mouse', button: 0 })
+
+    expect(setActiveSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'shell-existing')
+    expect(draggableState.listeners.onPointerDown).toHaveBeenCalled()
+
+    setActiveSession.mockClear()
+    fireEvent.pointerDown(tagLabel('forge-existing'), { pointerType: 'mouse', button: 0 })
     fireEvent.click(tagLabel('forge-existing'))
-    expect(setActiveSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'forge-existing')
+
+    expect(setActiveSession).not.toHaveBeenCalled()
+  })
+
+  it('leaves the session shown by a tag alone when the tag is pressed with the secondary button', () => {
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{
+          id: 'terminal3-window-0',
+          boundSessions: ['forge-existing', 'shell-existing'],
+          activeSession: 'forge-existing',
+          colorIndex: 0,
+        }}
+      />
+    )
+
+    fireEvent.pointerDown(tagLabel('shell-existing'), { pointerType: 'mouse', button: 2 })
+
+    expect(setActiveSession).not.toHaveBeenCalled()
   })
 
   it('calls removeSessionFromWindow when the tag remove button is clicked', () => {

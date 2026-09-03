@@ -67,13 +67,24 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   const displayName = actualName
   const dragLabel = `Drag ${displayName}${resolvedUser ? ` (Unix user ${resolvedUser})` : ''}`
 
-  // Handle click on the tag - only fire if not dragging
-  const handleClick = (e: React.MouseEvent) => {
-    // Don't trigger click if we're dragging
-    if (isDragging) return
-    // Don't trigger if clicking the remove button
-    if ((e.target as HTMLElement).closest('.tag-remove')) return
+  // A tag is a tab: pressing it shows that session, whatever the press turns
+  // into next. Selecting on the press rather than on the click is what makes an
+  // unsteady click work — the whole tag is the drag surface, so a press that
+  // drifts past the sensor's threshold becomes a drag, and dnd-kit then
+  // swallows the click that would otherwise have followed. Dropping a tag back
+  // on the window it came from is a no-op, so that click was the operator's
+  // only way to switch sessions and it went nowhere.
+  const activate = (event: React.MouseEvent | React.PointerEvent) => {
+    // The remove cross and the rename box are their own controls, and only the
+    // primary button selects: the secondary one opens the tag's menu.
+    if (isActive || event.button !== 0) return
+    if ((event.target as HTMLElement).closest('.tag-remove')) return
     onClick()
+  }
+
+  const handleTagPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    listeners?.onPointerDown?.(event)
+    activate(event)
   }
 
   const handleTagKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -139,7 +150,8 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
         {...attributes}
         {...listeners}
         aria-label={`Session ${displayName}`}
-        onClick={handleClick}
+        onPointerDown={handleTagPointerDown}
+        onClick={activate}
         onKeyDown={handleTagKeyDown}
         onContextMenu={(event) => {
           if ((event.target as HTMLElement).closest('.tag-remove')) return
