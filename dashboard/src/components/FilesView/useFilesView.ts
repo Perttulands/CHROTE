@@ -26,7 +26,8 @@ import {
   writeTextFile,
 } from './fileService'
 import { CONFIRM_WINDOW_MS } from '../confirmInPlace'
-import { copyTextToClipboard } from '../../utils/clipboard'
+import { useStatus } from '../../context/StatusContext'
+import { copyAndAnnounce } from '../../utils/clipboard'
 import {
   MAX_TEXT_PREVIEW_BYTES,
   getFileBaseName as getBaseName,
@@ -95,7 +96,6 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
   const [renameValue, setRenameValue] = useState('')
   const [createIntent, setCreateIntent] = useState<CreateIntent | null>(null)
   const [deleteTargets, setDeleteTargets] = useState<FileItem[] | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
   // openFilesModel owns every buffer transition; the view holds the state but
   // never rewrites the buffer set inline.
   const [openFilesState, setOpenFilesState] = useState<OpenFilesState>(() => ({
@@ -139,9 +139,8 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
 
   const currentPathPinned = pinnedPaths.some(item => item.path === currentPath)
   const workbenchStyle = { '--fb-explorer-width': `${explorerWidth}px` } as CSSProperties
-  const showError = useCallback((message: string) => {
-    setToast(message)
-  }, [])
+  const { announce } = useStatus()
+  const showError = useCallback((message: string) => announce(message, 'error'), [announce])
 
   const loadDirectory = useCallback(async (path: string) => {
     const normalized = normalizePath(path)
@@ -631,7 +630,7 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
   }
 
   const copyPath = (path: string) => {
-    void copyTextToClipboard(toDisplayPath(path))
+    void copyAndAnnounce(toDisplayPath(path), toDisplayPath(path), announce)
     setContextMenu(null)
   }
 
@@ -641,12 +640,13 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
 
   const copySelectedPaths = (targets: FileItem[]) => {
     if (targets.length === 0) return
-    void copyTextToClipboard(targets.map(target => toDisplayPath(target.path)).join('\n'))
+    const shown = targets.map(target => toDisplayPath(target.path))
+    void copyAndAnnounce(shown.join('\n'), shown.length === 1 ? shown[0] : `${shown.length} paths`, announce)
     setContextMenu(null)
   }
 
   const copyRelativePath = (path: string) => {
-    void copyTextToClipboard(pathRelativeToCurrent(path))
+    void copyAndAnnounce(pathRelativeToCurrent(path), pathRelativeToCurrent(path), announce)
     setContextMenu(null)
   }
 
@@ -781,7 +781,7 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
     loading, error, selectedPaths, sortBy, sortDir, viewMode, setViewMode,
     contentMode, setContentMode, searchQuery, setSearchQuery, contextMenu, setContextMenu,
     tabContextMenu, setTabContextMenu, renamingPath, renameValue, setRenameValue,
-    createIntent, setCreateIntent, deleteTargets, setDeleteTargets, toast, setToast,
+    createIntent, setCreateIntent, deleteTargets, setDeleteTargets,
     openFiles, activeFilePath, setActiveFilePath, fileViewStates, setFileViewStates,
     pinnedPaths, recentPaths, savedGroupsCollapsed, editingPath, setEditingPath,
     pathDraft, setPathDraft, setDraggingPaths, dropTargetPath, setDropTargetPath,

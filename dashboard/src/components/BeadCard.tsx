@@ -14,11 +14,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Markdown from './Markdown'
 import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
-import { copyTextToClipboard } from '../utils/clipboard'
+import { copyAndAnnounce } from '../utils/clipboard'
 import { registerChords, type Chord } from '../keys/chords'
 import { backInBeadCard, closeBeadCard, followBeadFromCard, useBeadCardRequest } from '../beads/beadCard'
 import { beadIdPattern, beadProjectPath, ensureBeadProjects } from '../beads/beadIds'
-import { fetchBead, type BeadDetail, type BeadLink } from '../beads/beadsApi'
+import type { BeadDetail, BeadLink } from '../beads/beadsApi'
+import { knownBead, readBead } from '../beads/knownBeads'
 import { beadGlyph, beadStatusLabel, formatBeadTime } from '../beads/beadStatus'
 import './BeadCard.css'
 
@@ -62,41 +63,53 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
   const { settings, openSendToSession } = useSession()
   const { announce } = useStatus()
   const request = useBeadCardRequest()
-  const [bead, setBead] = useState<BeadDetail | null>(null)
-  const [projectPath, setProjectPath] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // The store an id was found in when no caller named one, once the project
+  // list has been read for it.
+  const [resolved, setResolved] = useState<{ id: string; path: string } | null>(null)
+  const [fetched, setFetched] = useState<{ key: string; bead: BeadDetail } | null>(null)
+  const [failure, setFailure] = useState<{ id: string; message: string } | null>(null)
   const [loading, setLoading] = useState(false)
 
   const manualPaths = useMemo(() => settings.beadsProjectPaths || [], [settings.beadsProjectPaths])
   const id = request?.id ?? null
   const behind = request?.trail.length ?? 0
+  const projectPath = id
+    ? request?.projectPath ?? beadProjectPath(id) ?? (resolved?.id === id ? resolved.path : null)
+    : null
 
+  // Everything drawn is keyed on the Bead in hand, so a card whose id changes
+  // can never show the one before it: what does not match the key is not
+  // drawn. Until the server answers, the card is what the map already said,
+  // read once per Bead so the seed keeps its identity across renders.
+  const key = id && projectPath ? `${projectPath} ${id}` : null
+  const known = useMemo(() => (id && projectPath ? knownBead(projectPath, id) : null), [id, projectPath])
+  const bead = fetched?.key === key ? fetched.bead : known?.bead ?? null
+  const complete = fetched?.key === key || known?.complete === true
+  const error = failure?.id === id ? failure.message : null
+
+  // Every open reads the card from the server, whether or not the session
+  // already holds it: a remembered card is shown at once and refreshed behind.
   useEffect(() => {
-    if (!id) {
-      setBead(null)
-      setError(null)
-      return
-    }
+    if (!id) return
     let current = true
     setLoading(true)
-    setError(null)
+    setFailure(null)
     const resolve = async () => {
-      const known = request?.projectPath ?? beadProjectPath(id)
-      if (known) return known
+      const named = request?.projectPath ?? beadProjectPath(id)
+      if (named) return named
       await ensureBeadProjects(manualPaths)
       return beadProjectPath(id)
     }
     resolve()
       .then(async path => {
         if (!path) throw new Error(`No configured Beads project owns ${id}`)
-        if (current) setProjectPath(path)
-        const detail = await fetchBead(path, id)
-        if (current) setBead(detail)
+        if (current) setResolved({ id, path })
+        const detail = await readBead(path, id)
+        if (current) setFetched({ key: `${path} ${id}`, bead: detail })
       })
       .catch((cause: unknown) => {
         if (!current) return
-        setBead(null)
-        setError(cause instanceof Error ? cause.message : `Could not read ${id}`)
+        setFailure({ id, message: cause instanceof Error ? cause.message : `Could not read ${id}` })
       })
       .finally(() => { if (current) setLoading(false) })
     return () => { current = false }
@@ -156,10 +169,7 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
         <button
           type="button"
           className="table-action"
-          onClick={() => {
-            void copyTextToClipboard(request.id)
-            announce(`Copied ${request.id}`, 'success')
-          }}
+          onClick={() => { void copyAndAnnounce(request.id, request.id, announce) }}
         >
           Copy id
         </button>
@@ -198,6 +208,7 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
               <dt>Blocks</dt>
               <dd><BeadLinks links={bead.blocks} onOpen={open} /></dd>
             </dl>
+            {loading && !complete && <p className="bead-card-note">Reading…</p>}
             <BeadSection label="Description" text={bead.description} onToken={open} />
             <BeadSection label="Design" text={bead.design} onToken={open} />
             <BeadSection label="Acceptance criteria" text={bead.acceptance} onToken={open} />

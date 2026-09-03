@@ -12,6 +12,7 @@ import type { BeadsRevealRequest } from './components/BeadsView'
 import ErrorBoundary from './components/ErrorBoundary'
 import Skeleton from './components/LoadingSkeleton'
 import StatusLine from './components/StatusLine'
+import Toast from './components/Toast'
 import KeysPanel from './keys/KeysPanel'
 import KeyEcho from './keys/KeyEcho'
 import DevMode from './dev/DevMode'
@@ -482,6 +483,8 @@ function DashboardContent() {
               tab's own: a flex sibling of its content, never a layer here. */}
           <FloatingModal />
           <SendDrawer />
+          {/* The bottom-centre slot: the toast above, the key echo beneath. */}
+          <Toast />
           <KeyEcho />
         </div>
 

@@ -4,7 +4,7 @@ import { ArrowUp, Pin, PinOff, X } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
 import { getSessionKey, type WorkspaceId } from '../types'
-import { copyTextToClipboard } from '../utils/clipboard'
+import { copyAndAnnounce } from '../utils/clipboard'
 import FilePanelViewer from './FilePanelViewer'
 import FileTree from './FileTree'
 import { FileContextMenu } from './FileContextMenu'
@@ -277,7 +277,8 @@ function TerminalFilesPanel({
   }
 
   const copyPath = (path: string) => {
-    void copyTextToClipboard(normalizeFilePath(path))
+    const shown = normalizeFilePath(path)
+    void copyAndAnnounce(shown, shown, announce)
     setContextMenu(null)
   }
 
@@ -488,7 +489,8 @@ function TerminalFilesPanel({
           onTogglePin={togglePin}
           onCopyPath={copyPath}
           onCopyRelativePath={path => {
-            void copyTextToClipboard(pathRelativeTo(filesState.currentPath, path))
+            const relative = pathRelativeTo(filesState.currentPath, path)
+            void copyAndAnnounce(relative, relative, announce)
             setContextMenu(null)
           }}
           onOpenParent={path => {

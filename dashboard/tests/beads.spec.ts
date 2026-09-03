@@ -35,16 +35,21 @@ test.describe('Beads', () => {
     await expect(page.locator('.bead-row-blocked')).toContainText('blocked by test-ep1.2')
   })
 
-  test('folds an epic and narrows by search', async ({ page }) => {
+  test('folds an epic from its title and narrows by search', async ({ page }) => {
     await openBeadsTab(page)
 
-    await page.click('.bead-row:has-text("One interaction language") .bead-row-glyph')
+    const epic = page.locator('.bead-row', { hasText: 'One interaction language' })
+    await expect(epic.locator('.bead-row-fold')).toHaveText('▾4')
+    await epic.locator('.bead-row-title').click()
     await expect(page.locator('.bead-row', { hasText: 'Fix login bug' })).toHaveCount(0)
+    await expect(epic.locator('.bead-row-fold')).toHaveText('▸4')
+    // The same click put the epic on the table.
+    await expect(page.getByRole('complementary', { name: 'Bead test-ep1' })).toBeVisible()
 
-    await page.click('.bead-row:has-text("One interaction language") .bead-row-glyph')
     await page.fill('.beads-search', 'dark mode')
     await expect(page.locator('.bead-row', { hasText: 'Add dark mode' })).toBeVisible()
     await expect(page.locator('.bead-row', { hasText: 'Fix login bug' })).toHaveCount(0)
+    await expect(epic.locator('.bead-row-fold')).toHaveText('▾1')
   })
 
   test('splits ready from in progress, and lists what has gone stale', async ({ page }) => {
@@ -78,6 +83,12 @@ test.describe('Beads', () => {
     await expect(table.locator('.bead-card-title')).toHaveText('Fix login bug')
     await expect(table).toContainText('A login survives a reload.')
     await expect(table.locator('.bead-card-fields')).toContainText('test-ep1')
+
+    // Copy id confirms as a toast in the bottom-centre slot, and the status
+    // line keeps the same event as the record.
+    await table.getByRole('button', { name: 'Copy id' }).click()
+    await expect(page.locator('.toast')).toHaveText('Copied test-ep1.1')
+    await expect(page.locator('.status-line')).toContainText('Copied test-ep1.1')
 
     const send = table.getByRole('button', { name: 'Send' })
     await send.click()

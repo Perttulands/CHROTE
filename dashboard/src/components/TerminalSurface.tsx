@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createTerminalSession, type TerminalConnectionState, type TerminalSession } from '../terminal/terminalSession'
+import { useStatus } from '../context/StatusContext'
 import { useTheme } from '../theme/ThemeContext'
 import { TERMINAL_FONT_FAMILY } from '../theme/theme'
 
@@ -63,8 +64,12 @@ export function useTerminalSession(url: string | null, fontSize: number, hideScr
   const [session, setSession] = useState<TerminalSession | null>(null)
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>('idle')
   const theme = useTheme()
+  const { announce } = useStatus()
   const initialAppearance = useRef({ fontSize, hideScrollbar, theme })
   initialAppearance.current = { fontSize, hideScrollbar, theme }
+  // Read through a ref so the terminal's life is keyed on the url alone.
+  const announceRef = useRef(announce)
+  announceRef.current = announce
 
   useEffect(() => {
     if (!url) {
@@ -79,6 +84,7 @@ export function useTerminalSession(url: string | null, fontSize: number, hideScr
       terminalTheme: initialAppearance.current.theme.terminal,
       fontFamily: TERMINAL_FONT_FAMILY,
       onStateChange: setConnectionState,
+      announce: (message, severity) => announceRef.current(message, severity),
     })
     setSession(created)
     return () => {

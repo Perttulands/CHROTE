@@ -268,29 +268,6 @@ func (h *BeadsHandler) execBdIssues(projectPath string, args ...string) ([]map[s
 	return issues, nil
 }
 
-func (h *BeadsHandler) execBdIssue(projectPath string, args ...string) (map[string]interface{}, error) {
-	result, err := h.execBdJSON(projectPath, args...)
-	if err != nil {
-		return nil, err
-	}
-
-	if items, ok := result.([]interface{}); ok {
-		if len(items) == 0 {
-			return nil, fmt.Errorf("bd %s returned an empty array, expected issue", strings.Join(args, " "))
-		}
-		result = items[0]
-	}
-
-	issue, ok := result.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("bd %s returned %T, expected JSON object", strings.Join(args, " "), result)
-	}
-	if typ, ok := issue["_type"].(string); ok && typ != "issue" {
-		return nil, fmt.Errorf("bd %s returned %q, expected issue", strings.Join(args, " "), typ)
-	}
-	return issue, nil
-}
-
 func requiredIssueID(r *http.Request) (string, string, string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if id == "" {
@@ -435,11 +412,8 @@ type beadCard struct {
 // start.
 const blocksDependency = "blocks"
 
-const parentDependency = "parent-child"
-
 // How far up a parent chain the card walks. Bead ids nest as prefix-abc.1.2, so
-// a chain this long is already longer than any store here has, and the bound is
-// what keeps a cycle in the data from costing an unbounded number of bd calls.
+// a chain this long is already longer than any store here has.
 const maxParentChainDepth = 4
 
 // A Bead id is its project's prefix and a short random tail, with a dotted
@@ -645,15 +619,15 @@ func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// parentChain walks up from a Bead, nearest parent first. bd tells a Bead its
-// parent and no further, so each step up is its own show.
-func (h *BeadsHandler) parentChain(projectPath, parentID string) []beadBrief {
+// parentChain walks up from a Bead through the store's own list, nearest
+// parent first. The bound keeps a cycle in the data from walking forever.
+func parentChain(byID map[string]map[string]interface{}, parentID string) []beadBrief {
 	chain := make([]beadBrief, 0, maxParentChainDepth)
 	seen := make(map[string]bool)
 	for parentID != "" && len(chain) < maxParentChainDepth && !seen[parentID] {
 		seen[parentID] = true
-		parent, err := h.execBdIssue(projectPath, "show", parentID)
-		if err != nil {
+		parent, known := byID[parentID]
+		if !known {
 			return chain
 		}
 		chain = append(chain, beadBriefOf(parent))
@@ -662,11 +636,30 @@ func (h *BeadsHandler) parentChain(projectPath, parentID string) []beadBrief {
 	return chain
 }
 
+// briefByID names a neighbour from the list, or by id alone when the edge
+// points outside the store.
+func briefByID(byID map[string]map[string]interface{}, id string) beadBrief {
+	if raw, known := byID[id]; known {
+		return beadBriefOf(raw)
+	}
+	return beadBrief{ID: id, Priority: 3}
+}
+
+func sortBriefs(briefs []beadBrief) {
+	sort.SliceStable(briefs, func(i, j int) bool {
+		if briefs[i].Priority != briefs[j].Priority {
+			return briefs[i].Priority < briefs[j].Priority
+		}
+		return briefs[i].ID < briefs[j].ID
+	})
+}
+
 // IssueDetail handles GET /api/beads/issue: one Bead as the card reads it.
 //
-// bd tells a Bead what it depends on; what depends on it is the other
-// direction, and that is the second call. Children and blocks are the same
-// answer read by edge type.
+// One `bd list --status all` answers all of it, the same call the map makes:
+// the Bead's own text is in its record, its parents are the records the parent
+// field names, and its children and dependents are the records that name it.
+// bd is spawned once per card, whatever the depth of the chain.
 func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
 	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
 	if code != "" {
@@ -684,9 +677,21 @@ func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issue, err := h.execBdIssue(projectPath, "show", issueID)
+	issues, err := h.execBdIssues(projectPath, "list", "--status", "all", "--limit", "0")
 	if err != nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
+		return
+	}
+
+	byID := make(map[string]map[string]interface{}, len(issues))
+	for _, raw := range issues {
+		if id := beadString(raw, "id"); id != "" {
+			byID[id] = raw
+		}
+	}
+	issue, known := byID[issueID]
+	if !known {
+		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("No Bead %s in %s", issueID, projectPath))
 		return
 	}
 
@@ -699,36 +704,26 @@ func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
 		Design:      beadString(issue, "design"),
 		Acceptance:  beadString(issue, "acceptance_criteria"),
 		Notes:       beadString(issue, "notes"),
-		Parents:     h.parentChain(projectPath, beadString(issue, "parent")),
+		Parents:     parentChain(byID, beadString(issue, "parent")),
 		Children:    []beadBrief{},
 		BlockedBy:   []beadBrief{},
 		Blocks:      []beadBrief{},
 	}
-	for _, blocker := range beadDependencies(issue, blocksDependency) {
-		card.BlockedBy = append(card.BlockedBy, beadBriefOf(blocker))
+	for _, blockerID := range beadDependencyIDs(issue, blocksDependency) {
+		card.BlockedBy = append(card.BlockedBy, briefByID(byID, blockerID))
 	}
-
-	// Dependents are not in the show at all, so they are asked for by name.
-	// A store that cannot answer leaves the card without its reverse links
-	// rather than without the Bead.
-	dependents, err := h.execBdIssues(projectPath, "dep", "list", issueID, "--direction", "up")
-	if err == nil {
-		for _, dependent := range dependents {
-			brief := beadBriefOf(dependent)
-			switch beadString(dependent, "dependency_type") {
-			case parentDependency:
-				card.Children = append(card.Children, brief)
-			case blocksDependency:
-				card.Blocks = append(card.Blocks, brief)
+	for _, raw := range issues {
+		if beadString(raw, "parent") == issueID {
+			card.Children = append(card.Children, beadBriefOf(raw))
+		}
+		for _, blockerID := range beadDependencyIDs(raw, blocksDependency) {
+			if blockerID == issueID {
+				card.Blocks = append(card.Blocks, beadBriefOf(raw))
 			}
 		}
 	}
-	sort.SliceStable(card.Children, func(i, j int) bool {
-		if card.Children[i].Priority != card.Children[j].Priority {
-			return card.Children[i].Priority < card.Children[j].Priority
-		}
-		return card.Children[i].ID < card.Children[j].ID
-	})
+	sortBriefs(card.Children)
+	sortBriefs(card.Blocks)
 
 	core.WriteSuccess(w, map[string]interface{}{
 		"bead":        card,

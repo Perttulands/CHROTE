@@ -16,6 +16,7 @@ import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { setBeadProjects } from '../../beads/beadIds'
 import { fetchBeadProjects, fetchBeadWork, type BeadProject } from '../../beads/beadsApi'
+import { rememberBeadRows } from '../../beads/knownBeads'
 import {
   buildBeadMap,
   filterBeadRows,
@@ -109,6 +110,8 @@ export default function BeadsView({ reveal }: BeadsViewProps = {}) {
     })))
       .then(loaded => {
         if (!current) return
+        // The card opens from these rows before the server has answered.
+        loaded.forEach(({ project, work }) => rememberBeadRows(project.path, work.beads))
         const all = loaded.flatMap(({ project, work }) => work.beads.map(bead => ({
           ...bead,
           projectPath: project.path,

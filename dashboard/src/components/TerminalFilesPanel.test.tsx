@@ -470,6 +470,7 @@ describe('TerminalFilesPanel', () => {
     menu = document.querySelector('.menu-sheet') as HTMLElement
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy relative path' }))
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('README.md')
+    await waitFor(() => expect(statusMocks.announce).toHaveBeenCalledWith('Copied README.md', 'success'))
 
     fireEvent.contextMenu(screen.getByRole('treeitem', { name: /README\.md/ }))
     menu = document.querySelector('.menu-sheet') as HTMLElement

@@ -21,6 +21,12 @@ vi.mock('./FilesView/fileService', async () => {
   }
 })
 
+const statusMocks = vi.hoisted(() => ({ announce: vi.fn() }))
+
+vi.mock('../context/StatusContext', () => ({
+  useStatus: () => ({ status: null, announce: statusMocks.announce }),
+}))
+
 const mockFetchDirectory = vi.mocked(fetchDirectory)
 const mockProbeTextFile = vi.mocked(probeTextFile)
 const mockReadTextFile = vi.mocked(readTextFile)
@@ -286,7 +292,7 @@ describe('FilesView editor tab bulk close', () => {
 
     fireEvent.click(await within(editorTabs()).findByRole('button', { name: /close all/i }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/save or close unsaved files/i)
+    await waitFor(() => expect(statusMocks.announce).toHaveBeenCalledWith(expect.stringMatching(/save or close unsaved files/i), 'error'))
     expect(within(editorTabs()).getByRole('button', { name: /clean\.txt/ })).toBeInTheDocument()
     expect(within(editorTabs()).getByRole('button', { name: /dirty\.txt/ })).toBeInTheDocument()
   })
@@ -345,7 +351,7 @@ describe('FilesView dirty buffer safety', () => {
     fireEvent.click(closeControl())
 
     // The close asks where it stands and leaves the buffer exactly as it was.
-    expect(await screen.findByRole('alert')).toHaveTextContent(/close it again to discard them/i)
+    await waitFor(() => expect(statusMocks.announce).toHaveBeenCalledWith(expect.stringMatching(/close it again to discard them/i), 'error'))
     expect(within(editorTabs()).getByRole('button', { name: /notes\.txt/ })).toBeInTheDocument()
     expect(screen.getByDisplayValue('unsaved work')).toBeInTheDocument()
 
@@ -368,7 +374,7 @@ describe('FilesView dirty buffer safety', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: /^delete$/i }))
     fireEvent.click(await screen.findByRole('button', { name: /^delete$/i }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/save or close unsaved files before deleting/i)
+    await waitFor(() => expect(statusMocks.announce).toHaveBeenCalledWith(expect.stringMatching(/save or close unsaved files before deleting/i), 'error'))
     expect(deleteItem).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: 'File' }))

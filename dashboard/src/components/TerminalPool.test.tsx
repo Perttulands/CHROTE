@@ -71,6 +71,10 @@ vi.mock('../context/SessionContext', () => ({
   }),
 }))
 
+vi.mock('../context/StatusContext', () => ({
+  useStatus: () => ({ status: null, announce: () => {} }),
+}))
+
 let pool: ReturnType<typeof useTerminalPool>
 
 function Probe() {
