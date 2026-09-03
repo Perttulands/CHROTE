@@ -18,6 +18,9 @@ type Session struct {
 	UnixUser       string `json:"unixUser,omitempty"`
 	CWD            string `json:"cwd,omitempty"`
 	CurrentCommand string `json:"currentCommand,omitempty"`
+	// Activity is when the session last saw output or input, as tmux counts
+	// it, in RFC 3339 UTC. Empty when the inventory did not report it.
+	Activity string `json:"activity,omitempty"`
 
 	// The fields below carry facts that contradict what a session looks like
 	// from the outside, so the dashboard can say so. They describe the

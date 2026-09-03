@@ -429,9 +429,10 @@ const sessionInventoryFormat = "#{session_id}\t" +
 	"#{window_height}\t" +
 	"#{window-size}\t" +
 	"#{mouse}\t" +
-	"#{session_attached_list}"
+	"#{session_attached_list}\t" +
+	"#{session_activity}"
 
-const sessionInventoryFieldCount = 12
+const sessionInventoryFieldCount = 13
 
 func parseSessionsOutput(output string, unixUser string, ownedPTYs map[string]bool) []core.Session {
 	sessions := []core.Session{}
@@ -477,6 +478,9 @@ func parseSessionsOutput(output string, unixUser string, ownedPTYs map[string]bo
 		}
 		session.ForeignClients = foreignClientTTYs(field(11), ownedPTYs)
 		session.Viewers = countAttachedClients(field(11))
+		if activity, err := strconv.ParseInt(field(12), 10, 64); err == nil && activity > 0 {
+			session.Activity = time.Unix(activity, 0).UTC().Format(time.RFC3339)
+		}
 		sessions = append(sessions, session)
 	}
 	return sessions
@@ -509,6 +513,23 @@ func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget, ownedPTYs map[str
 		return []core.Session{}, publicTmuxSourceError(err)
 	}
 	return parseSessionsOutput(output, target.unixUser, ownedPTYs), ""
+}
+
+// liveSessions is every session on every configured socket, for a caller that
+// wants the facts and not the diagnostics: a socket that cannot be read
+// contributes nothing, and ListSessions is where that failure is reported.
+func (h *TmuxHandler) liveSessions() []core.Session {
+	ownedPTYs := h.proc.ownedPTYs()
+	sessions := []core.Session{}
+	for _, unixUser := range configuredTerminalUsers() {
+		target, err := h.targetForUnixUser(unixUser)
+		if err != nil {
+			continue
+		}
+		found, _ := h.listSessionsForTarget(target, ownedPTYs)
+		sessions = append(sessions, found...)
+	}
+	return sessions
 }
 
 // ListSessions handles GET /api/tmux/sessions

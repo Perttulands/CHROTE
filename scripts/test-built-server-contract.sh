@@ -163,7 +163,6 @@ CHROTE_TMUX_SOCKET="$(id -un)=$artifact_root/tmux/default" \
 CHROTE_WORKDIR="$workspace" \
 CHROTE_ROOTS="$workspace" \
 CHROTE_BEADS_WORKSPACES="$workspace" \
-CHROTE_BEADS_AUTO_DISCOVER=false \
 CHROTE_SCHEDULED_TASKS_DIR="$artifact_root/scheduled-tasks" \
 CHROTE_SESSION_DROPS_DIR="$artifact_root/session-drops" \
   "$server_binary" -host 127.0.0.1 -port "$port" -start-system-history=false >"$server_log" 2>&1 &

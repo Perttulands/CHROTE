@@ -170,6 +170,9 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	agentContextHandler := api.NewAgentContextHandler()
 	agentContextHandler.RegisterRoutes(mux)
 
+	workspacesHandler := api.NewWorkspacesHandler(tmuxHandler, beadsHandler)
+	workspacesHandler.RegisterRoutes(mux)
+
 	healthHandler := api.NewHealthHandlerWithBuildInfo(Version, BuildCommit)
 	healthHandler.RegisterRoutes(mux)
 
