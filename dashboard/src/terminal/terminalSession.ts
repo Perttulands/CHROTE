@@ -189,7 +189,7 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   const copySettledSelection = () => {
     document.removeEventListener('mouseup', copySettledSelection)
     const painted = terminal.getSelection()
-    if (painted && painted !== selectionAtPress) void copyAndAnnounce(painted, 'selection', options.announce)
+    if (painted && painted !== selectionAtPress) void copyAndAnnounce(painted, 'selection', options.announce, { quiet: true })
   }
   const watchSelectionDrag = () => {
     selectionAtPress = terminal.getSelection()

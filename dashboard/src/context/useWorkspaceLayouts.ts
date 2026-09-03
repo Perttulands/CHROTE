@@ -220,14 +220,14 @@ export function useWorkspaceLayouts() {
       ...previous,
       ...sanitizeWorkspaces(cloneWorkspaces(preset.workspaces), []),
     }))
-    announce(`Layout '${preset.name}' loaded`, 'info')
+    announce(`Layout '${preset.name}' loaded`, 'success')
   }, [layoutPresets, announce])
 
   const deletePreset = useCallback((presetId: string) => {
     const preset = layoutPresets.find(candidate => candidate.id === presetId)
     if (preset) {
       setLayoutPresets(previous => previous.filter(candidate => candidate.id !== presetId))
-      announce(`Preset '${preset.name}' deleted`, 'info')
+      announce(`Preset '${preset.name}' deleted`, 'success')
     }
   }, [layoutPresets, announce])
 

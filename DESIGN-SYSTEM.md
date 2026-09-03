@@ -316,7 +316,9 @@ Open in Files, Copy path and Close as words. The image fits 90% of the
 workspace and is never upscaled. It opens from an image path link in a terminal
 and from a click on an image in the Files panel or tab.
 
-An announcement is a toast in the bottom-centre slot the key echo uses. It
+An announcement that confirms the operator's own action, or reports a failure,
+is a toast in the bottom-centre slot the key echo uses; information such as a
+load or a count takes the status line only. The toast
 fades in over 120 ms, holds for 1800 ms and fades out over 200 ms, one at a
 time with the newest replacing the last, `--text-primary` on
 `--surface-primary` with a 1px `--divider` border, and the error colour for a

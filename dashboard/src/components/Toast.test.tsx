@@ -45,7 +45,7 @@ describe('Toast', () => {
   it('shows the newest of two announcements and starts the hold over', () => {
     const { toast } = renderToast()
 
-    act(() => announce('Layout saved', 'info'))
+    act(() => announce('Layout saved', 'success'))
     act(() => { vi.advanceTimersByTime(1000) })
     act(() => announce('Copied chrote-5grx.49', 'success'))
 
@@ -85,5 +85,14 @@ describe('Toast', () => {
 
     act(() => announce('Harness did not start', 'warning'))
     expect(toast()).not.toHaveClass('toast-failure')
+  })
+
+  it('leaves information on the status line and shows no toast for it', () => {
+    const { toast } = renderToast()
+
+    act(() => announce('Library loaded · 72 pages on 8 shelves', 'info'))
+    act(() => { vi.advanceTimersByTime(TOAST_FADE_IN_MS) })
+
+    expect(toast()).toBeNull()
   })
 })
