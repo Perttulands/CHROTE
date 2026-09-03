@@ -232,9 +232,15 @@ A menu is a flat sheet of words attached flush to the edge of the control that
 opened it: the action with its chord at the right, hairlines between groups, no
 icons, no radius and no blur, and the highlighted row taking
 `--surface-secondary` and a 2px `--accent` bar. A sheet docks to an edge and
-takes a share of the workspace with no backdrop — Peek at the left, snapped to
-the nearest tile boundary at or below 60% so no tile is cut mid-glyph — so
-`Escape` closes it while a click outside still means what that click meant.
+takes a share of the workspace with no backdrop. Two classes of surface: a
+glance goes away when you look elsewhere — Peek, the Keys panel, a menu, the
+launcher with nothing typed, the image glance — so a click outside closes it
+and is consumed, `Escape` from anywhere closes it, and its own chord toggles
+it; a work surface stays until you close it — the Send drawer, an editor, the
+Bead card, What this agent sees — on `Escape`, its Close word or its chord,
+never on a click outside, and a drawer holding typed text confirms in place
+first. `Escape` belongs to the topmost open surface and reaches the pty only
+when nothing is open.
 Every announcement lands on the status line, a 28px footer across the full width
 of the window beneath both the Sessions panel and the workspace, carrying the
 last event with its time, where only a failure takes colour. Nothing asks a

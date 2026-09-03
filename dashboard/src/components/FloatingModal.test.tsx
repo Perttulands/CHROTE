@@ -58,21 +58,18 @@ describe('FloatingModal Send to Session action', () => {
     expect(mockState.closeFloatingModal).not.toHaveBeenCalled()
   })
 
-  it('docks at the left edge with no backdrop, and closes on Escape but not on an outside click', () => {
+  it('docks at the left edge as a glance: a press outside closes it, and so does Escape', () => {
     const { container } = render(<FloatingModal />)
 
     const sheet = container.querySelector('.sheet.sheet-left') as HTMLElement
     expect(sheet).not.toBeNull()
     expect(screen.getByText('Loading terminal…')).toBeInTheDocument()
-    // No backdrop: there is nothing between the sheet and the work behind it.
-    expect(document.querySelector('.floating-panel-dismiss-layer')).toBeNull()
 
     fireEvent.pointerDown(document.body)
-    fireEvent.click(document.body)
-    expect(mockState.closeFloatingModal).not.toHaveBeenCalled()
+    expect(mockState.closeFloatingModal).toHaveBeenCalledTimes(1)
 
     fireEvent.keyDown(document, { key: 'Escape' })
-    expect(mockState.closeFloatingModal).toHaveBeenCalled()
+    expect(mockState.closeFloatingModal).toHaveBeenCalledTimes(2)
   })
 
   it('gives a peek at an ended session the tile\'s note instead of a silent dead terminal', () => {

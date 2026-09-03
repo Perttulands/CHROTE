@@ -228,9 +228,15 @@ interface LauncherProps {
    * just launched.
    */
   onLaunched?: (created: { name: string; unixUser: LaunchUser }) => void
+  /**
+   * Reports whether the operator has typed anything over the defaults. A
+   * popover that holds typed text is work in progress, and stays open through
+   * a press outside it; one that holds nothing goes away like a glance.
+   */
+  onTypedChange?: (typed: boolean) => void
 }
 
-export default function Launcher({ workspaceId, attachTo, initialFolder, initialHarness, onLaunched }: LauncherProps) {
+export default function Launcher({ workspaceId, attachTo, initialFolder, initialHarness, onLaunched, onTypedChange }: LauncherProps) {
   const { sessions, settings, terminalUsers, createSession } = useSession()
   const theme = useTheme()
   const options = useLaunchOptions()
@@ -251,6 +257,11 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
   const [flagEdits, setFlagEdits] = useState<Record<string, string>>({})
   const [flagsOpen, setFlagsOpen] = useState(false)
   const flagsFieldId = useId()
+
+  const typed = typedName !== null || Object.keys(flagEdits).length > 0
+  useEffect(() => {
+    onTypedChange?.(typed)
+  }, [onTypedChange, typed])
 
   const harness = options.harnesses.find(entry => entry.id === chosenHarness) ??
     options.harnesses.find(entry => entry.id === initialHarness) ??

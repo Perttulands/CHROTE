@@ -1,17 +1,20 @@
 /**
  * A sheet docks to an edge of the workspace and takes a share of it.
  *
- * It is not a modal: there is no backdrop, the surfaces it does not cover stay
- * readable and usable, and a click outside is a click outside — it does what it
- * would have done anyway. Escape closes, and so does the header's own control.
+ * It is not a modal: there is no backdrop, and the surfaces it does not cover
+ * stay readable and usable. Dismissal belongs to the owner in keys/dismiss: a
+ * work sheet, which is what a sheet is unless told otherwise, closes on Escape
+ * and on its header's own control, and a press outside it is an ordinary
+ * press; a glance closes on a press outside too, and that press is consumed.
  *
  * The sheet draws one hairline on the edge it faces and nothing on the three
  * edges it shares with the viewport, so it reads as a panel of the workspace
  * rather than as a window floating over it.
  */
 
-import { useEffect } from 'react'
+import { useRef } from 'react'
 import type { ReactNode } from 'react'
+import { useSurface, type SurfaceKind } from '../keys/dismiss'
 import './Sheet.css'
 
 export type SheetEdge = 'left' | 'right' | 'bottom'
@@ -23,29 +26,23 @@ export interface SheetProps {
   extent: string
   label: string
   onClose: () => void
+  /** Whether a press outside closes the sheet. A sheet is work unless said otherwise. */
+  kind?: SurfaceKind
   /** The one-line header: what this is, and what can be done with it. */
   header?: ReactNode
   children: ReactNode
 }
 
-export default function Sheet({ open, edge, extent, label, onClose, header, children }: SheetProps) {
-  useEffect(() => {
-    if (!open) return
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      onClose()
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [open, onClose])
+export default function Sheet({ open, edge, extent, label, onClose, kind = 'work', header, children }: SheetProps) {
+  const sheetRef = useRef<HTMLElement>(null)
+  useSurface({ open, kind, onClose, ref: sheetRef })
 
   if (!open) return null
 
   const style = edge === 'bottom' ? { height: extent } : { width: extent }
 
   return (
-    <aside className={`sheet sheet-${edge}`} style={style} role="dialog" aria-label={label}>
+    <aside ref={sheetRef} className={`sheet sheet-${edge}`} style={style} role="dialog" aria-label={label}>
       {header !== undefined && <div className="sheet-header">{header}</div>}
       <div className="sheet-body">{children}</div>
     </aside>

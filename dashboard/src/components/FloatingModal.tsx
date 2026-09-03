@@ -100,7 +100,7 @@ function FloatingModal() {
   )
 
   return (
-    <Sheet open edge="left" extent={extent} label={`Peek ${displayName}`} onClose={closeFloatingModal} header={header}>
+    <Sheet open edge="left" extent={extent} kind="glance" label={`Peek ${displayName}`} onClose={closeFloatingModal} header={header}>
       <div className={ended ? 'peek-body detached' : 'peek-body'}>
         {canOpenSession ? (
           <>

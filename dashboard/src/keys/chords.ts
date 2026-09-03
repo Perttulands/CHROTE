@@ -20,6 +20,7 @@
  */
 
 import { useSyncExternalStore } from 'react'
+import { ownsKey } from './dismiss'
 
 export type ChordScope = 'global' | 'workspace' | 'tile'
 
@@ -363,9 +364,11 @@ export function interceptKeyEvent(event: KeyboardEvent): boolean {
 /**
  * xterm's `attachCustomKeyEventHandler` contract: true lets xterm handle the
  * key and send it to the pty, false keeps it out of the terminal entirely.
+ * Escape belongs to the topmost open surface, and reaches the pty only when
+ * nothing is open.
  */
 export function terminalKeyEvent(event: KeyboardEvent): boolean {
-  return !interceptKeyEvent(event)
+  return !interceptKeyEvent(event) && !ownsKey(event)
 }
 
 // The capture phase is what puts this ahead of everything else in the page,

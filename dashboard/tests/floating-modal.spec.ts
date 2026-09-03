@@ -58,23 +58,22 @@ test.describe('Peek (chrote-5grx.22)', () => {
     expect(statusBox!.y).toBeGreaterThanOrEqual(peekBox!.y + peekBox!.height - 1)
   })
 
-  // Peek lays no backdrop, and everything that follows from that on one page:
-  // a click outside is a click on what it landed on, a selection released
-  // outside keeps both the selection and the sheet, and the only ways out are
-  // Escape and the header.
-  // Peek lays no backdrop, and everything that follows from that on one page:
-  // a click outside is a click on what it landed on, a selection released
-  // outside keeps both the selection and the sheet, and the only ways out are
-  // Escape and the header. Escape comes first, because painting a selection
-  // leaves the cursor in the peeked terminal, where Escape belongs to the shell.
-  test('lays no backdrop, so only Escape and its header close it', async ({ page }) => {
+  // Peek is a glance: a press on a tile beside it closes it and goes no
+  // further, a selection released outside keeps both the selection and the
+  // sheet, and Escape and the header close it too.
+  test('closes on a press outside, on Escape and from its header, and keeps a selection released outside', async ({ page }) => {
     await openPeek(page)
     const sheet = page.locator('.sheet.sheet-left')
 
-    // A click on a tile beside Peek is a click on that tile, nothing more.
-    await page.locator('.terminal-workspace-dock[data-active="true"] .terminal-window').last().click({ position: { x: 8, y: 8 } })
-    await expect(sheet).toBeVisible()
+    // A press on a tile beside Peek closes Peek and is consumed: the tile is
+    // not focused by it.
+    const tile = page.locator('.terminal-workspace-dock[data-active="true"] .terminal-window').last()
+    await tile.click({ position: { x: 8, y: 8 } })
+    await expect(sheet).toHaveCount(0)
+    await expect(tile).not.toHaveClass(/focused/)
 
+    await page.click('.session-item:has-text("jack")')
+    await expect(sheet).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(sheet).toHaveCount(0)
 
