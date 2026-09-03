@@ -165,10 +165,35 @@ describe('Launcher', () => {
       cwd: '/srv/chrote',
       harness: 'codex',
       flags: '--full-auto',
+      notify: true,
       workspaceId: 'terminal3',
       attachTo: { workspaceId: 'terminal3', windowId: 'terminal3-window-1' },
     }))
     await waitFor(() => expect(onLaunched).toHaveBeenCalled())
+  })
+
+  it('launches without completion hooks once told to, and remembers that on this device', async () => {
+    const { unmount } = render(<Launcher workspaceId="terminal3" />)
+
+    const notify = await screen.findByRole('checkbox', { name: 'Notify on completion' })
+    expect(notify).toBeChecked()
+    fireEvent.click(notify)
+    fireEvent.click(screen.getByRole('button', { name: 'Launch claude in chrote' }))
+
+    await waitFor(() => expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ notify: false })))
+    unmount()
+
+    render(<Launcher workspaceId="terminal3" />)
+    expect(await screen.findByRole('checkbox', { name: 'Notify on completion' })).not.toBeChecked()
+    window.localStorage.clear()
+  })
+
+  it('offers no completion hooks for a shell, which runs no agent', async () => {
+    render(<Launcher workspaceId="terminal3" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Shell' }))
+
+    expect(screen.queryByRole('checkbox', { name: 'Notify on completion' })).not.toBeInTheDocument()
   })
 
   it('offers the folders this user is already working in', async () => {

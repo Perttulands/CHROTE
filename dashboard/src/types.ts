@@ -161,6 +161,24 @@ export interface TmuxSession {
   foreignClients?: string[]
   /** Clients attached to this session, CHROTE's own and foreign alike. */
   viewers?: number
+  /**
+   * What the agent inside last reported through its own completion hook.
+   * Absent when nothing was reported; kept, marked seen, once the operator
+   * focused the session.
+   */
+  lastEvent?: AgentEvent
+}
+
+export type AgentEventKind = 'finished' | 'needs-input'
+
+export interface AgentEvent {
+  event: AgentEventKind
+  /** When the report arrived, RFC 3339 with milliseconds, UTC. */
+  time: string
+  /** What the harness said about it, if anything. */
+  summary?: string
+  /** True once the operator focused the session after the event. */
+  seen: boolean
 }
 
 export type SessionBadgeId = 'pinned-size' | 'foreign-client' | 'shared-view' | 'structure' | 'mouse-off'
@@ -396,6 +414,11 @@ export interface CreateSessionOptions {
    * configured defaults; an empty string means this launch takes none.
    */
   flags?: string
+  /**
+   * Whether the harness's completion hooks are installed, so the session
+   * reports when its agent finishes or needs input. Absent means yes.
+   */
+  notify?: boolean
 }
 
 // Layout preset for saving/restoring window configurations

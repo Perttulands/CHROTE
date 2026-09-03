@@ -44,6 +44,24 @@ const HOME_TOKEN = '~'
 const SHELL_HARNESS = 'shell'
 const KNOWN_HARNESSES: readonly string[] = ['claude-code', 'codex', 'shell']
 const RECENT_FOLDER_LIMIT = 5
+/** Device-local: whether a launch installs the harness's completion hooks. On unless turned off. */
+const NOTIFY_STORAGE_KEY = 'chrote-launcher-notify'
+
+function readNotifyPreference(): boolean {
+  try {
+    return window.localStorage.getItem(NOTIFY_STORAGE_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+function storeNotifyPreference(enabled: boolean): void {
+  try {
+    window.localStorage.setItem(NOTIFY_STORAGE_KEY, enabled ? '1' : '0')
+  } catch {
+    // A device that cannot remember still launches as asked.
+  }
+}
 
 /** The word a derived session name starts with: the harness, said short. */
 export function launchShortName(id: string): string {
@@ -251,6 +269,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
   const [flagEdits, setFlagEdits] = useState<Record<string, string>>({})
   const [flagsOpen, setFlagsOpen] = useState(false)
   const flagsFieldId = useId()
+  const [notify, setNotify] = useState(readNotifyPreference)
 
   const harness = options.harnesses.find(entry => entry.id === chosenHarness) ??
     options.harnesses.find(entry => entry.id === initialHarness) ??
@@ -304,14 +323,19 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
         cwd: folder,
         harness: harness.id,
         workspaceId,
-        ...(flagsOffered ? { flags: flagLine } : {}),
+        ...(flagsOffered ? { flags: flagLine, notify } : {}),
         ...(attachTo ? { attachTo } : {}),
       })
       if (created) onLaunched?.({ name: created, unixUser: user })
     } finally {
       setLaunching(false)
     }
-  }, [attachTo, createSession, flagLine, flagsOffered, folder, harness.id, launching, name, onLaunched, user, workspaceId])
+  }, [attachTo, createSession, flagLine, flagsOffered, folder, harness.id, launching, name, notify, onLaunched, user, workspaceId])
+
+  const setNotifyPreference = useCallback((enabled: boolean) => {
+    setNotify(enabled)
+    storeNotifyPreference(enabled)
+  }, [])
 
   const folderOption = (path: string, className: string) => (
     <button
@@ -435,6 +459,17 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
                   </button>
                 )}
               </div>
+              {/* The harness's own completion hooks, installed through its
+                  flags by the server: the session then reports when its
+                  agent finishes or waits. Off means the command runs as typed. */}
+              <label className="launcher-notify">
+                <input
+                  type="checkbox"
+                  checked={notify}
+                  onChange={event => setNotifyPreference(event.target.checked)}
+                />
+                Notify on completion
+              </label>
             </>
           )}
 
