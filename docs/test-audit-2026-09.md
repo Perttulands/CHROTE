@@ -746,3 +746,12 @@ Nothing now pins the live specs to the cleanup ledger's retry counts. The two
 unit cases that did it read the spec files as text, which is a lint rule wearing
 a test's clothes, and they were deleted. If that intent is worth keeping it
 belongs in a source contract script.
+
+### Measured after the cut (2026-09-03, first run of the parallel layout)
+
+| | before | after |
+| --- | --- | --- |
+| CI wall time | 5m46s, one serial job | 1m43s, five parallel jobs (build 47s, go 34s, unit 68s, browser 99s, contracts 38s) |
+| Go suite | 9.1s | 3.9s |
+| Browser suite, 4 workers | 44.7s | 17.7s |
+| Unit suite | 5.8s | 5.8s |
