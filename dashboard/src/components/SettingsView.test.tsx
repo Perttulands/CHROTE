@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -184,14 +184,42 @@ describe('SettingsView terminal launch users', () => {
     expect(updateSettings).toHaveBeenCalledWith({ hideScrollbar: false })
   })
 
-  it('keeps bulk session destruction in advanced Settings', () => {
-    const updateSettings = vi.fn()
-    mockUseSession.mockReturnValue(sessionReturn(updateSettings, {
-      sessions: [{ name: 'shell', windows: 1, attached: false, group: 'shell' }],
+  // Bulk destruction lives here, and the byte-exact confirmation header is the
+  // only thing standing between a stray click and every live tmux session. The
+  // browser spec that used to pin it is gone; this owns it now.
+  it('arms in place, names what is preserved, and only then sends DELETE with the exact confirmation header', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('') })
+    vi.stubGlobal('fetch', fetchMock)
+
+    mockUseSession.mockReturnValue(sessionReturn(vi.fn(), {
+      sessions: [
+        { name: 'shell', windows: 1, attached: false, group: 'shell' },
+        { name: 'chrote-chat', windows: 1, attached: false, group: 'chrote' },
+      ],
     }))
 
     render(<SettingsView />)
-    expect(screen.getByRole('button', { name: /Nuke All/i })).toBeInTheDocument()
+
+    // The button that destroys is the button that asks: nothing opens over the work.
+    const nukeButton = screen.getByRole('button', { name: /Nuke All/i })
+    fireEvent.click(nukeButton)
+
+    expect(nukeButton).toHaveTextContent('Confirm: destroy 1 session')
+    expect(screen.getByText(/Preserved: chrote-chat/)).toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    fireEvent.click(nukeButton)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/tmux/sessions/all')
+    expect(init.method).toBe('DELETE')
+    expect(init.headers).toEqual({ 'X-Nuke-Confirm': 'DASHBOARD-NUKE-CONFIRMED' })
+
+    await waitFor(() => expect(announce).toHaveBeenCalledWith('All sessions destroyed', 'warning'))
+    expect(refreshSessions).toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
   })
 })
 

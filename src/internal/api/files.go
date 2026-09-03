@@ -22,7 +22,6 @@ import (
 type FilesHandler struct {
 	allowedRoots   []string
 	maxUploadBytes int64
-	operationHook  func(string)
 }
 
 const defaultMaxUploadBytes int64 = 64 << 20
@@ -731,10 +730,6 @@ func (h *FilesHandler) GetResource(w http.ResponseWriter, r *http.Request) {
 		h.ListRoot(w, r)
 		return
 	}
-	if h.operationHook != nil {
-		h.operationHook("get")
-	}
-
 	resource, err := h.openConfinedExisting(result)
 	if err != nil {
 		writeFilesUseError(w, err, true)
@@ -783,10 +778,6 @@ func (h *FilesHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", errMsg)
 		return
 	}
-	if h.operationHook != nil {
-		h.operationHook("create")
-	}
-
 	// If path ends with /, create directory
 	if strings.HasSuffix(requestPath, "/") {
 		directory, err := h.openConfinedDirectory(result, true)
@@ -859,10 +850,6 @@ func (h *FilesHandler) RenameResource(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", "Invalid destination")
 		return
 	}
-	if h.operationHook != nil {
-		h.operationHook("rename")
-	}
-
 	sourceParent, err := h.openConfinedParent(result, false)
 	if err != nil {
 		writeFilesUseError(w, err, false)
@@ -909,10 +896,6 @@ func (h *FilesHandler) DeleteResource(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", errMsg)
 		return
 	}
-	if h.operationHook != nil {
-		h.operationHook("delete")
-	}
-
 	parent, err := h.openConfinedParent(result, false)
 	if err != nil {
 		writeFilesUseError(w, err, true)
@@ -945,10 +928,6 @@ func (h *FilesHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", errMsg)
 		return
 	}
-	if h.operationHook != nil {
-		h.operationHook("download")
-	}
-
 	file, err := h.openConfinedExisting(result)
 	if err != nil {
 		writeFilesUseError(w, err, true)

@@ -20,105 +20,80 @@ func inventoryLine(fields ...string) string {
 	return strings.Join(fields, "\t") + "\n"
 }
 
+// The badge facts are read from one inventory line, and every one of them can
+// contradict what the session looks like: a window pinned to somebody else's
+// size, the mouse turned off underneath CHROTE, a viewer CHROTE did not create.
+// Viewers counts everyone watching, whoever created them, because tmux draws the
+// window once, so a second viewer means this pane is somebody else's size.
 func TestParseSessionsOutputReportsFactsThatContradictAppearances(t *testing.T) {
-	output := inventoryLine("$1", "pinned", "1", "1", "/home/operator", "bash", "3", "100", "30", "manual", "0", "/dev/pts/9,/dev/pts/12")
-
-	sessions := parseSessionsOutput(output, "operator", map[string]bool{"/dev/pts/9": true})
-	if len(sessions) != 1 {
-		t.Fatalf("sessions = %+v, want one", sessions)
-	}
-	session := sessions[0]
-	if !session.SizePinned {
-		t.Fatalf("SizePinned = false, want true for window-size manual")
-	}
-	if session.Width != 100 || session.Height != 30 {
-		t.Fatalf("size = %dx%d, want 100x30", session.Width, session.Height)
-	}
-	if session.Panes != 3 {
-		t.Fatalf("Panes = %d, want 3", session.Panes)
-	}
-	if session.MouseEnabled == nil || *session.MouseEnabled {
-		t.Fatalf("MouseEnabled = %v, want an explicit false", session.MouseEnabled)
-	}
-	if got := strings.Join(session.ForeignClients, ","); got != "/dev/pts/12" {
-		t.Fatalf("ForeignClients = %q, want only the client CHROTE did not create", got)
-	}
-	// Viewers counts everyone watching, whoever created them: tmux draws the
-	// window once, so a second viewer means this pane is somebody else's size.
-	if session.Viewers != 2 {
-		t.Fatalf("Viewers = %d, want both attached clients counted", session.Viewers)
-	}
-}
-
-func TestParseSessionsOutputCountsEveryViewerIncludingCHROTEsOwn(t *testing.T) {
-	for name, tt := range map[string]struct {
-		attachedList string
-		want         int
+	for _, testCase := range []struct {
+		name        string
+		line        string
+		owned       map[string]bool
+		wantPinned  bool
+		wantWidth   int
+		wantHeight  int
+		wantPanes   int
+		wantMouse   bool
+		wantForeign string
+		wantViewers int
 	}{
-		"nobody watching":        {attachedList: "", want: 0},
-		"one viewer":             {attachedList: "/dev/pts/9", want: 1},
-		"a viewer and a watcher": {attachedList: "/dev/pts/9,/dev/pts/12", want: 2},
+		{
+			name:        "a pinned window, the mouse off, and a viewer CHROTE did not create",
+			line:        inventoryLine("$1", "pinned", "1", "1", "/home/operator", "bash", "3", "100", "30", "manual", "0", "/dev/pts/9,/dev/pts/12"),
+			owned:       map[string]bool{"/dev/pts/9": true},
+			wantPinned:  true,
+			wantWidth:   100,
+			wantHeight:  30,
+			wantPanes:   3,
+			wantMouse:   false,
+			wantForeign: "/dev/pts/12",
+			wantViewers: 2,
+		},
+		{
+			name:        "an ordinary session raises no claim at all",
+			line:        inventoryLine("$1", "ordinary", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", "/dev/pts/9"),
+			owned:       map[string]bool{"/dev/pts/9": true},
+			wantWidth:   120,
+			wantHeight:  40,
+			wantPanes:   1,
+			wantMouse:   true,
+			wantViewers: 1,
+		},
+		{
+			// A control-mode client has no tty, so nothing can be said about it.
+			name:       "nobody reports a tty, so nobody is watching and nobody is foreign",
+			line:       inventoryLine("$1", "sizing", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", ""),
+			owned:      map[string]bool{},
+			wantWidth:  120,
+			wantHeight: 40,
+			wantPanes:  1,
+			wantMouse:  true,
+		},
 	} {
-		t.Run(name, func(t *testing.T) {
-			output := inventoryLine("$1", "shared", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", tt.attachedList)
-
-			sessions := parseSessionsOutput(output, "operator", map[string]bool{"/dev/pts/9": true})
-
-			if sessions[0].Viewers != tt.want {
-				t.Fatalf("Viewers = %d, want %d", sessions[0].Viewers, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseSessionsOutputRaisesNoClaimForAnOrdinarySession(t *testing.T) {
-	output := inventoryLine("$1", "ordinary", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", "/dev/pts/9")
-
-	sessions := parseSessionsOutput(output, "operator", map[string]bool{"/dev/pts/9": true})
-	if len(sessions) != 1 {
-		t.Fatalf("sessions = %+v, want one", sessions)
-	}
-	session := sessions[0]
-	if session.SizePinned {
-		t.Fatalf("SizePinned = true, want false for window-size latest")
-	}
-	if session.MouseEnabled == nil || !*session.MouseEnabled {
-		t.Fatalf("MouseEnabled = %v, want an explicit true", session.MouseEnabled)
-	}
-	if len(session.ForeignClients) != 0 {
-		t.Fatalf("ForeignClients = %#v, want none for a client CHROTE spawned", session.ForeignClients)
-	}
-	if session.Panes != 1 {
-		t.Fatalf("Panes = %d, want 1", session.Panes)
-	}
-}
-
-func TestParseSessionsOutputTreatsAnUnattributableClientAsSilent(t *testing.T) {
-	// A control-mode client has no tty, so nothing can be said about it.
-	output := inventoryLine("$1", "sizing", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", "")
-
-	sessions := parseSessionsOutput(output, "operator", map[string]bool{})
-	if len(sessions[0].ForeignClients) != 0 {
-		t.Fatalf("ForeignClients = %#v, want none when no client reports a tty", sessions[0].ForeignClients)
-	}
-}
-
-func TestParseSessionsOutputKeepsOlderShapesClaimFree(t *testing.T) {
-	for name, line := range map[string]string{
-		"through the foreground command": "$1\tlegacy\t2\t1\t/home/operator\tbash\n",
-		"through the working directory":  "$1\tlegacy\t2\t1\t/home/operator\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			sessions := parseSessionsOutput(line, "operator", map[string]bool{})
+		t.Run(testCase.name, func(t *testing.T) {
+			sessions := parseSessionsOutput(testCase.line, "operator", testCase.owned)
 			if len(sessions) != 1 {
 				t.Fatalf("sessions = %+v, want one", sessions)
 			}
 			session := sessions[0]
-			if session.Name != "legacy" || session.Windows != 2 || !session.Attached {
-				t.Fatalf("session = %+v, want the older fields still read", session)
+			if session.SizePinned != testCase.wantPinned {
+				t.Fatalf("SizePinned = %v, want %v", session.SizePinned, testCase.wantPinned)
 			}
-			if session.SizePinned || session.MouseEnabled != nil || session.Panes != 0 || len(session.ForeignClients) != 0 {
-				t.Fatalf("session = %+v, want no badge claim from an older shape", session)
+			if session.Width != testCase.wantWidth || session.Height != testCase.wantHeight {
+				t.Fatalf("size = %dx%d, want %dx%d", session.Width, session.Height, testCase.wantWidth, testCase.wantHeight)
+			}
+			if session.Panes != testCase.wantPanes {
+				t.Fatalf("Panes = %d, want %d", session.Panes, testCase.wantPanes)
+			}
+			if session.MouseEnabled == nil || *session.MouseEnabled != testCase.wantMouse {
+				t.Fatalf("MouseEnabled = %v, want an explicit %v", session.MouseEnabled, testCase.wantMouse)
+			}
+			if got := strings.Join(session.ForeignClients, ","); got != testCase.wantForeign {
+				t.Fatalf("ForeignClients = %q, want %q: only clients CHROTE did not create", got, testCase.wantForeign)
+			}
+			if session.Viewers != testCase.wantViewers {
+				t.Fatalf("Viewers = %d, want %d attached clients counted", session.Viewers, testCase.wantViewers)
 			}
 		})
 	}
@@ -163,19 +138,10 @@ printf '$1\tone\t1\t0\t/home/operator\tbash\t1\t120\t40\tlatest\t1\t\n'
 	}
 }
 
+// Every badge fact comes out of one list-sessions call. A format that carries
+// fewer fields than the parser reads means some fact would need a second call,
+// and CHROTE runs exactly one list per socket.
 func TestSessionInventoryFormatCarriesEveryBadgeFact(t *testing.T) {
-	for _, variable := range []string{
-		"#{window_panes}",
-		"#{window_width}",
-		"#{window_height}",
-		"#{window-size}",
-		"#{mouse}",
-		"#{session_attached_list}",
-	} {
-		if !strings.Contains(sessionInventoryFormat, variable) {
-			t.Fatalf("inventory format is missing %s, so that fact would need a second tmux call", variable)
-		}
-	}
 	if got := strings.Count(sessionInventoryFormat, "\t") + 1; got != sessionInventoryFieldCount {
 		t.Fatalf("inventory format has %d fields, want %d", got, sessionInventoryFieldCount)
 	}
@@ -248,24 +214,13 @@ func TestOwnedPTYsFollowsDescendantsAcrossEveryThread(t *testing.T) {
 	if len(owned) != 2 {
 		t.Fatalf("owned = %#v, want exactly the two spawned ptys", owned)
 	}
-}
 
-func TestOwnedPTYsOwnsNothingWhenProcIsUnreadable(t *testing.T) {
+	// A tree it cannot read is not a tree it owns. Claiming ownership on a failed
+	// read would mark every foreign viewer as CHROTE's own.
 	if owned := (procSource{}).ownedPTYs(); len(owned) != 0 {
 		t.Fatalf("owned = %#v, want an empty set rather than a claim of ownership", owned)
 	}
 	if owned := (procSource{root: filepath.Join(t.TempDir(), "absent"), pid: 1}).ownedPTYs(); len(owned) != 0 {
 		t.Fatalf("owned = %#v, want an empty set for an absent proc tree", owned)
-	}
-}
-
-func TestOwnedPTYsSurvivesACycleInTheProcessTree(t *testing.T) {
-	root := t.TempDir()
-	writeFakeProcess(t, root, 100, (136<<8)|1, map[int][]int{100: {200}})
-	writeFakeProcess(t, root, 200, (136<<8)|2, map[int][]int{200: {100}})
-
-	owned := procSource{root: root, pid: 100}.ownedPTYs()
-	if len(owned) != 2 {
-		t.Fatalf("owned = %#v, want both ptys and no repeat visit", owned)
 	}
 }

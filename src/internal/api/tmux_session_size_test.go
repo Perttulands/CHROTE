@@ -92,37 +92,37 @@ func TestCreateSessionSizesOnceWithoutPinningTheWindow(t *testing.T) {
 	if got, want := string(stdin), "refresh-client -C 200,50\n"; got != want {
 		t.Fatalf("control-mode stdin = %q, want %q", got, want)
 	}
-}
 
-func TestCreateSessionHonoursConfiguredCanonicalSize(t *testing.T) {
-	_, stdinPath := installSizingRecorderTmux(t)
-	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
-	t.Setenv("CHROTE_TERMINAL_CREATION_COLS", "160")
-	t.Setenv("CHROTE_TERMINAL_CREATION_ROWS", "48")
+	t.Run("a configured canonical size is the one sized to", func(t *testing.T) {
+		_, stdinPath := installSizingRecorderTmux(t)
+		t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
+		t.Setenv("CHROTE_TERMINAL_CREATION_COLS", "160")
+		t.Setenv("CHROTE_TERMINAL_CREATION_ROWS", "48")
 
-	createSessionThroughHandler(t, "configured-size-smoke")
+		createSessionThroughHandler(t, "configured-size-smoke")
 
-	stdin, err := os.ReadFile(stdinPath)
-	if err != nil {
-		t.Fatalf("read recorded stdin: %v", err)
-	}
-	if got, want := string(stdin), "refresh-client -C 160,48\n"; got != want {
-		t.Fatalf("control-mode stdin = %q, want %q", got, want)
-	}
-}
-
-func TestCanonicalWindowSizeIgnoresUnusableConfiguration(t *testing.T) {
-	// Below the tmux default in either dimension, and any value that is not a
-	// number at all, leaves the canonical size alone.
-	for _, unusable := range []string{"", "wide", "0", "-1", "23"} {
-		t.Setenv("CHROTE_TERMINAL_CREATION_COLS", unusable)
-		t.Setenv("CHROTE_TERMINAL_CREATION_ROWS", unusable)
-		cols, rows := canonicalWindowSize()
-		if cols != defaultCanonicalWindowCols || rows != defaultCanonicalWindowRows {
-			t.Fatalf("canonical size with %q = %dx%d, want %dx%d",
-				unusable, cols, rows, defaultCanonicalWindowCols, defaultCanonicalWindowRows)
+		stdin, err := os.ReadFile(stdinPath)
+		if err != nil {
+			t.Fatalf("read recorded stdin: %v", err)
 		}
-	}
+		if got, want := string(stdin), "refresh-client -C 160,48\n"; got != want {
+			t.Fatalf("control-mode stdin = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("an unusable configured size leaves the canonical one alone", func(t *testing.T) {
+		// Below the tmux default in either dimension, and any value that is not
+		// a number at all, leaves the canonical size alone.
+		for _, unusable := range []string{"", "wide", "0", "-1", "23"} {
+			t.Setenv("CHROTE_TERMINAL_CREATION_COLS", unusable)
+			t.Setenv("CHROTE_TERMINAL_CREATION_ROWS", unusable)
+			cols, rows := canonicalWindowSize()
+			if cols != defaultCanonicalWindowCols || rows != defaultCanonicalWindowRows {
+				t.Fatalf("canonical size with %q = %dx%d, want %dx%d",
+					unusable, cols, rows, defaultCanonicalWindowCols, defaultCanonicalWindowRows)
+			}
+		}
+	})
 }
 
 func TestCreateSessionCleansUpWhenSizingFails(t *testing.T) {

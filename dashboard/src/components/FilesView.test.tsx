@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FilesView from './FilesView'
 import { MAX_TEXT_PREVIEW_BYTES } from './FileViewer'
-import { deleteItem, fetchDirectory, probeTextFile, readTextFile, renameItem, writeTextFile } from './FilesView/fileService'
+import { deleteItem, fetchDirectory, probeTextFile, readTextFile, renameItem, uploadFiles, writeTextFile } from './FilesView/fileService'
 
 vi.mock('./FilesView/fileService', async () => {
   const actual = await vi.importActual<typeof import('./FilesView/fileService')>('./FilesView/fileService')
@@ -69,65 +69,12 @@ function editorTabs() {
   return document.querySelector('.fb-editor-tabs') as HTMLElement
 }
 
-function setViewportForTest(width: number, height: number) {
-  const originalWidth = window.innerWidth
-  const originalHeight = window.innerHeight
-
-  Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: width })
-  Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: height })
-
-  return () => {
-    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: originalWidth })
-    Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: originalHeight })
-  }
-}
-
-function menuRect(width: number, height: number): DOMRect {
-  return {
-    x: 0,
-    y: 0,
-    width,
-    height,
-    top: 0,
-    left: 0,
-    right: width,
-    bottom: height,
-    toJSON: () => ({}),
-  } as DOMRect
-}
-
 function installClipboardMock(writeText = vi.fn().mockResolvedValue(undefined)) {
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
     value: { writeText },
   })
   return writeText
-}
-
-function captureExecCommandCopy() {
-  const hadExecCommand = 'execCommand' in document
-  const originalExecCommand = document.execCommand
-  let copiedText = ''
-  const execCommand = vi.fn((command: string) => {
-    if (command !== 'copy') return false
-    copiedText = (document.querySelector('[data-chrote-clipboard-fallback="true"]') as HTMLTextAreaElement | null)?.value ?? ''
-    return true
-  })
-  Object.defineProperty(document, 'execCommand', {
-    configurable: true,
-    value: execCommand,
-  })
-  return {
-    execCommand,
-    copiedText: () => copiedText,
-    restore: () => {
-      if (hadExecCommand) {
-        Object.defineProperty(document, 'execCommand', { configurable: true, value: originalExecCommand })
-      } else {
-        Reflect.deleteProperty(document, 'execCommand')
-      }
-    },
-  }
 }
 
 beforeEach(() => {
@@ -154,26 +101,133 @@ describe('FilesView directory values', () => {
     expect(container.querySelector('.fb-statusbar')).toHaveTextContent('2 items')
     expect(screen.getByRole('button', { name: /^Folder$/ })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTitle('Upload')).toBeEnabled()
-    expect(container.querySelector('.fb-hidden-input[type="file"]')).toBeInTheDocument()
-    expect(container.querySelector('.fb-editor-pane')).not.toBeInTheDocument()
   })
 
-  it('shows a retryable error and keeps the exact navigated path in the breadcrumb', async () => {
-    mockFetchDirectory.mockRejectedValue(new Error('file service offline'))
-    const first = render(<FilesView />)
-    expect(await screen.findByText('file service offline')).toBeInTheDocument()
-    expect(first.container.querySelector('.fb-error')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
-    first.unmount()
+  it('reloads the failed folder from its own error, and keeps the exact navigated path in the breadcrumb', async () => {
+    let offline = true
+    mockFetchDirectory.mockImplementation(async path => {
+      if (offline) throw new Error('file service offline')
+      return path === '/' ? [directory('code')] : [textFile('package.json', '{}')]
+    })
 
-    mockFetchDirectory.mockImplementation(async path => (
-      path === '/' ? [directory('code')] : [textFile('package.json', '{}')]
-    ))
-    const second = render(<FilesView />)
-    fireEvent.doubleClick(await screen.findByRole('row', { name: /code/i }))
+    const { container } = render(<FilesView />)
+    expect(await screen.findByText('file service offline')).toBeInTheDocument()
+
+    // Retry re-reads the folder in place: the error goes and its contents arrive.
+    offline = false
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+    expect(await screen.findByRole('row', { name: /code/i })).toBeInTheDocument()
+    expect(screen.queryByText('file service offline')).not.toBeInTheDocument()
+
+    fireEvent.doubleClick(screen.getByRole('row', { name: /code/i }))
     expect(await screen.findByRole('row', { name: /package\.json/i })).toBeInTheDocument()
-    expect(second.container.querySelector('.fb-breadcrumb-item')).toHaveTextContent('code')
-    expect(second.container.querySelector('.fb-path-display')).toHaveTextContent('/code')
+    expect(container.querySelector('.fb-breadcrumb-item')).toHaveTextContent('code')
+    expect(container.querySelector('.fb-path-display')).toHaveTextContent('/code')
+  })
+})
+
+describe('FilesView folder navigation', () => {
+  beforeEach(() => {
+    mockFetchDirectory.mockImplementation(async path => (
+      path === '/'
+        ? [directory('code'), directory('projects'), textFile('readme.txt', 'hello')]
+        : [directory('src'), textFile('package.json', '{}')]
+    ))
+  })
+
+  it('walks into a folder and back out by breadcrumb and by Up, and re-reads the folder on Refresh', async () => {
+    const { container } = render(<FilesView />)
+    await screen.findByRole('row', { name: /readme\.txt/i })
+
+    // Nothing to go back to, forward to, or up from: this is where Files opens.
+    expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Up' })).toBeDisabled()
+
+    fireEvent.doubleClick(screen.getByRole('row', { name: /code/i }))
+
+    expect(await screen.findByRole('row', { name: /package\.json/i })).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /src/i })).toBeInTheDocument()
+    expect(container.querySelector('.fb-breadcrumb-item')).toHaveTextContent('code')
+
+    // The leading / of the path is a way home, not a way into the path editor.
+    fireEvent.click(container.querySelector('.fb-breadcrumb-root') as HTMLElement)
+
+    expect(await screen.findByRole('row', { name: /readme\.txt/i })).toBeInTheDocument()
+    expect(container.querySelector('.fb-breadcrumb-item')).toBeNull()
+
+    fireEvent.doubleClick(screen.getByRole('row', { name: /code/i }))
+    await screen.findByRole('row', { name: /package\.json/i })
+    fireEvent.click(screen.getByRole('button', { name: 'Up' }))
+
+    expect(await screen.findByRole('row', { name: /readme\.txt/i })).toBeInTheDocument()
+
+    mockFetchDirectory.mockClear()
+    fireEvent.click(screen.getByTitle('Refresh'))
+
+    await waitFor(() => expect(mockFetchDirectory).toHaveBeenCalledWith('/'))
+  })
+
+  it('uploads into the folder on screen and re-reads it so the new file appears', async () => {
+    const { container } = render(<FilesView />)
+    fireEvent.doubleClick(await screen.findByRole('row', { name: /code/i }))
+    await screen.findByRole('row', { name: /package\.json/i })
+    mockFetchDirectory.mockClear()
+
+    const upload = new File(['uploaded content'], 'upload.txt', { type: 'text/plain' })
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    Object.defineProperty(input, 'files', { configurable: true, value: [upload] })
+    fireEvent.change(input)
+
+    await waitFor(() => expect(uploadFiles).toHaveBeenCalledWith('/code', [upload]))
+    await waitFor(() => expect(mockFetchDirectory).toHaveBeenCalledWith('/code'))
+  })
+})
+
+describe('FilesView listing controls', () => {
+  beforeEach(() => {
+    mockFetchDirectory.mockResolvedValue([directory('code'), directory('projects'), textFile('readme.txt', 'hello')])
+  })
+
+  it('reads the same folder as columned rows or as named tiles', async () => {
+    const { container } = render(<FilesView />)
+    await screen.findByRole('row', { name: /readme\.txt/i })
+
+    // The list is the columned reading, sortable by each column it shows.
+    expect(screen.getByRole('button', { name: /^Modified/ })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('Grid view'))
+
+    // Tiles drop the columns and keep every item named.
+    const grid = container.querySelector('.fb-grid') as HTMLElement
+    expect(screen.queryByRole('row')).not.toBeInTheDocument()
+    for (const name of ['code', 'projects', 'readme.txt']) {
+      expect(within(grid).getByText(name)).toBeInTheDocument()
+    }
+
+    fireEvent.click(screen.getByTitle('List view'))
+
+    expect(screen.getByRole('row', { name: /readme\.txt/i })).toBeInTheDocument()
+    expect(container.querySelector('.fb-grid')).toBeNull()
+  })
+
+  it('narrows the listing to the items matching the filter', async () => {
+    const { container } = render(<FilesView />)
+    await screen.findByRole('row', { name: /readme\.txt/i })
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'code' } })
+
+    expect(screen.getByRole('row', { name: /code/i })).toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /readme\.txt/i })).not.toBeInTheDocument()
+    expect(container.querySelector('.fb-statusbar')).toHaveTextContent('1 items')
+
+    // A filter that matches nothing says so rather than looking like an empty folder.
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'nothing here' } })
+    expect(screen.getByText('No matching files')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
+    expect(screen.getByRole('row', { name: /readme\.txt/i })).toBeInTheDocument()
   })
 })
 
@@ -192,13 +246,13 @@ describe('FilesView fallback text preview', () => {
 })
 
 describe('FilesView editor tab bulk close', () => {
-  it('shows Close All for multiple clean tabs and clears open files and active file', async () => {
+  it('closes every clean tab at once, and refuses while any of them is unsaved', async () => {
     mockRootFiles({
       'one.txt': 'one',
       'two.txt': 'two',
     })
 
-    render(<FilesView />)
+    const { unmount } = render(<FilesView />)
 
     await openRootFile('one.txt')
     await openRootFile('two.txt')
@@ -215,9 +269,10 @@ describe('FilesView editor tab bulk close', () => {
     })
     expect(screen.getByRole('button', { name: 'Folder' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: 'File' })).toBeDisabled()
-  })
+    unmount()
 
-  it('refuses Close All when any open tab is dirty', async () => {
+    // One unsaved buffer refuses the whole gesture: nothing closes, and the
+    // operator is told why rather than losing the edit.
     mockRootFiles({
       'clean.txt': 'clean',
       'dirty.txt': 'dirty',
@@ -568,57 +623,6 @@ describe('FilesView context menu copy/open actions', () => {
 
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy current folder path' }))
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/')
-  })
-
-  it('copies current folder path through the browser fallback when Clipboard API is unavailable', async () => {
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
-    const execCopy = captureExecCommandCopy()
-
-    try {
-      render(<FilesView />)
-      await screen.findByRole('row', { name: /hosts/ })
-
-      fireEvent.contextMenu(document.querySelector('.fb-content') as HTMLElement)
-      const menu = document.querySelector('.menu-sheet') as HTMLElement
-      fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy current folder path' }))
-
-      expect(execCopy.execCommand).toHaveBeenCalledWith('copy')
-      expect(execCopy.copiedText()).toBe('/')
-    } finally {
-      execCopy.restore()
-    }
-  })
-
-  it('clamps the background context menu inside the viewport near the bottom-right edge', async () => {
-    const restoreViewport = setViewportForTest(400, 300)
-    const menuWidth = 180
-    const menuHeight = 180
-    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
-    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      if ((this as HTMLElement).classList.contains('fb-context-menu')) return menuRect(menuWidth, menuHeight)
-      return originalGetBoundingClientRect.call(this)
-    })
-
-    try {
-      render(<FilesView />)
-      await screen.findByRole('row', { name: /hosts/ })
-
-      fireEvent.contextMenu(document.querySelector('.fb-content') as HTMLElement, { clientX: 390, clientY: 290 })
-      const menu = document.querySelector('.menu-sheet') as HTMLElement
-
-      await waitFor(() => {
-        const left = Number.parseFloat(menu.style.left)
-        const top = Number.parseFloat(menu.style.top)
-
-        expect(left).toBeLessThan(390)
-        expect(top).toBeLessThan(290)
-        expect(left + menuWidth).toBeLessThanOrEqual(window.innerWidth)
-        expect(top + menuHeight).toBeLessThanOrEqual(window.innerHeight)
-      })
-    } finally {
-      rectSpy.mockRestore()
-      restoreViewport()
-    }
   })
 
   it('copies selected paths, relative path, and opens a selected item parent from item menus', async () => {

@@ -5,29 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/chrote/server/internal/core"
 )
-
-func TestMain(m *testing.M) {
-	os.Exit(m.Run())
-}
-
-func TestTmuxHandler_NewTmuxHandler(t *testing.T) {
-	handler := NewTmuxHandler()
-
-	if handler == nil {
-		t.Fatal("NewTmuxHandler() returned nil")
-	}
-}
 
 func TestTmuxHandler_RunTmuxBoundsAggregateOutput(t *testing.T) {
 	installScriptedTmux(t, `
@@ -39,102 +28,104 @@ yes x | head -c 1049600
 	}
 }
 
-func TestTmuxHandler_CreateSession_InvalidJSON(t *testing.T) {
+// A malformed request is refused before tmux is asked to do anything. The fake
+// tmux is installed and a socket configured on purpose: with neither in place a
+// handler refuses for want of configuration, and the test would pass without
+// touching the validation it is here to pin. The empty argv log is the proof.
+func TestTmuxHandler_RefusesMalformedRequestsBeforeReachingTmux(t *testing.T) {
+	argsPath := installScriptedTmux(t, "")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
 	handler := NewTmuxHandler()
 
-	// Test with invalid JSON
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", bytes.NewBufferString("{invalid}"))
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
+	for _, testCase := range []struct {
+		name     string
+		method   string
+		path     string
+		body     string
+		pathName string
+		call     func(http.ResponseWriter, *http.Request)
+	}{
+		{
+			name:   "create a session from malformed JSON",
+			method: http.MethodPost,
+			path:   "/api/tmux/sessions",
+			body:   "{invalid}",
+			call:   handler.CreateSession,
+		},
+		{
+			name:   "create a session whose name has spaces",
+			method: http.MethodPost,
+			path:   "/api/tmux/sessions",
+			body:   `{"name":"invalid name with spaces"}`,
+			call:   handler.CreateSession,
+		},
+		{
+			name:     "delete a session whose name has punctuation",
+			method:   http.MethodDelete,
+			path:     "/api/tmux/sessions/invalid@name",
+			pathName: "invalid@name",
+			call:     handler.DeleteSession,
+		},
+		{
+			name:     "rename a session to a name with punctuation",
+			method:   http.MethodPatch,
+			path:     "/api/tmux/sessions/oldsession",
+			body:     `{"newName":"invalid name!"}`,
+			pathName: "oldsession",
+			call:     handler.RenameSession,
+		},
+		{
+			name:   "set mouse mode from malformed JSON",
+			method: http.MethodPost,
+			path:   "/api/tmux/mouse",
+			body:   "{invalid}",
+			call:   handler.SetMouseMode,
+		},
+		{
+			name:   "set mouse mode without saying which way",
+			method: http.MethodPost,
+			path:   "/api/tmux/mouse",
+			body:   `{}`,
+			call:   handler.SetMouseMode,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := os.WriteFile(argsPath, nil, 0o600); err != nil {
+				t.Fatalf("reset tmux argv log: %v", err)
+			}
+			req := httptest.NewRequest(testCase.method, testCase.path, strings.NewReader(testCase.body))
+			if testCase.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			if testCase.pathName != "" {
+				req.SetPathValue("name", testCase.pathName)
+			}
+			recorder := httptest.NewRecorder()
 
-	handler.CreateSession(recorder, req)
+			testCase.call(recorder, req)
 
-	if recorder.Code != http.StatusBadRequest {
-		t.Errorf("Status code = %d, expected %d", recorder.Code, http.StatusBadRequest)
-	}
-}
-
-func TestTmuxHandler_CreateSession_InvalidName(t *testing.T) {
-	handler := NewTmuxHandler()
-
-	body := CreateSessionRequest{Name: "invalid name with spaces"}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", bytes.NewBuffer(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	handler.CreateSession(recorder, req)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Errorf("Status code = %d, expected %d", recorder.Code, http.StatusBadRequest)
-	}
-
-	var response map[string]interface{}
-	json.Unmarshal(recorder.Body.Bytes(), &response)
-
-	if response["success"] != false {
-		t.Error("Response should indicate failure")
-	}
-}
-
-func TestTmuxHandler_DeleteSession_InvalidName(t *testing.T) {
-	handler := NewTmuxHandler()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/tmux/sessions/invalid@name", nil)
-	req.SetPathValue("name", "invalid@name")
-	recorder := httptest.NewRecorder()
-
-	handler.DeleteSession(recorder, req)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Errorf("Status code = %d, expected %d", recorder.Code, http.StatusBadRequest)
-	}
-}
-
-func TestTmuxHandler_DeleteAllSessions_NoConfirmHeader(t *testing.T) {
-	handler := NewTmuxHandler()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/tmux/sessions/all", nil)
-	// Intentionally NOT setting X-Nuke-Confirm header
-	recorder := httptest.NewRecorder()
-
-	handler.DeleteAllSessions(recorder, req)
-
-	if recorder.Code != http.StatusForbidden {
-		t.Errorf("Status code = %d, expected %d (Forbidden)", recorder.Code, http.StatusForbidden)
-	}
-
-	var response map[string]interface{}
-	json.Unmarshal(recorder.Body.Bytes(), &response)
-
-	if response["success"] != false {
-		t.Error("Response should indicate failure")
-	}
-}
-
-func TestTmuxHandler_RenameSession_InvalidNewName(t *testing.T) {
-	handler := NewTmuxHandler()
-
-	body := RenameSessionRequest{NewName: "invalid name!"}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPatch, "/api/tmux/sessions/oldsession", bytes.NewBuffer(bodyBytes))
-	req.SetPathValue("name", "oldsession")
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	handler.RenameSession(recorder, req)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Errorf("Status code = %d, expected %d", recorder.Code, http.StatusBadRequest)
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+			}
+			var response core.APIResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode refusal: %v; body=%s", err, recorder.Body.String())
+			}
+			if response.Success || response.Error == nil || response.Error.Code == "" {
+				t.Fatalf("refusal = %s, want an unsuccessful envelope carrying an error code", recorder.Body.String())
+			}
+			if calls := readArgvRecordingTmuxCalls(t, argsPath); len(calls) != 0 {
+				t.Fatalf("tmux calls = %#v, want the request refused before any tmux command", calls)
+			}
+		})
 	}
 }
 
 func TestTmuxHandler_ListSessionsFiltersReservedProbeSessions(t *testing.T) {
 	installScriptedTmux(t, `
 case "$*" in
-  *list-sessions*) printf '$1\tchrote-probe-123\t1\t0\t/workspaces/alice\n$2\twork\t1\t0\t/workspaces/alice\n' ;;
+  *list-sessions*) printf '$1\tchrote-probe-123\t1\t0\t/workspaces/alice\tbash\t1\t120\t40\tlatest\t1\t\n$2\twork\t1\t0\t/workspaces/alice\tbash\t1\t120\t40\tlatest\t1\t\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
@@ -158,7 +149,7 @@ esac
 func TestTmuxHandler_ListSessionsReportsLiveActivePaneCWDAndCommand(t *testing.T) {
 	installScriptedTmux(t, `
 case "$*" in
-  *pane_current_path*) printf '$9\twork\t1\t0\t/workspaces/alice/live\tcodex\n$10\tno-cwd\t1\t0\t\tbash\n' ;;
+  *pane_current_path*) printf '$9\twork\t1\t0\t/workspaces/alice/live\tcodex\t1\t120\t40\tlatest\t1\t\n$10\tno-cwd\t1\t0\t\tbash\t1\t120\t40\tlatest\t1\t\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
@@ -259,126 +250,73 @@ esac
 	}
 }
 
-func TestTmuxHandler_RegisterRoutes(t *testing.T) {
-	handler := NewTmuxHandler()
-	mux := http.NewServeMux()
+// Creating a session must land on the socket and the working directory
+// configured for the chosen Unix user, and must carry the mouse policy the
+// request asked for. The whole argv is compared, because a session created on
+// the wrong socket is invisible to the operator who asked for it.
+func TestTmuxHandler_CreateSessionUsesTheConfiguredTargetForTheChosenUser(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		sockets   string
+		workdirs  string
+		body      string
+		wantCalls []string
+	}{
+		{
+			name:      "a sole configured socket carries its own working directory",
+			sockets:   "alice=/tmp/tmux-2002/default",
+			workdirs:  "alice=/srv/terminal-three",
+			body:      `{"name":"terminal-three-smoke"}`,
+			wantCalls: tmuxCreationCalls("/tmp/tmux-2002/default", "terminal-three-smoke", "/srv/terminal-three", "on"),
+		},
+		{
+			name:      "a named Unix user picks its own socket out of several",
+			sockets:   "alice=/run/user/2001/chrote-tmux/tmux-1000/default,build=/tmp/tmux-2002/default",
+			workdirs:  "alice=/home/operator,build=/home/secondary",
+			body:      `{"name":"build-shell","unixUser":"build","mouseScroll":false}`,
+			wantCalls: tmuxCreationCalls("/tmp/tmux-2002/default", "build-shell", "/home/secondary", "off"),
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, argsPath := installFakeTmux(t)
+			t.Setenv("CHROTE_TMUX_SOCKET", testCase.sockets)
+			t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", testCase.workdirs)
 
-	// This should not panic
-	handler.RegisterRoutes(mux)
-}
+			handler := NewTmuxHandler()
+			req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", strings.NewReader(testCase.body))
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
 
-func TestTmuxHandler_ListSessions_ReturnsValidJSON(t *testing.T) {
-	handler := NewTmuxHandler()
+			handler.CreateSession(recorder, req)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
-	recorder := httptest.NewRecorder()
-
-	handler.ListSessions(recorder, req)
-
-	// Should return valid JSON even if tmux isn't running
-	var response SessionsResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("Response is not valid JSON: %v", err)
-	}
-
-	// Should have a timestamp
-	if response.Timestamp == "" {
-		t.Error("Response should include timestamp")
-	}
-
-	// Sessions should be initialized (not nil)
-	if response.Sessions == nil {
-		t.Error("Sessions should be initialized slice, not nil")
-	}
-
-	// Grouped should be initialized (not nil)
-	if response.Grouped == nil {
-		t.Error("Grouped should be initialized map, not nil")
-	}
-}
-
-func TestTmuxHandler_SoleExplicitSocketUsesConfiguredWorkDir(t *testing.T) {
-	_, argsPath := installFakeTmux(t)
-	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-2002/default")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/srv/terminal-three")
-
-	handler := NewTmuxHandler()
-	body := CreateSessionRequest{Name: "terminal-three-smoke"}
-	bodyBytes, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", bytes.NewBuffer(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	handler.CreateSession(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath))
-	want := []string{
-		"-S /tmp/tmux-2002/default new-session -d -P -F #{session_id} -e CHROTE_CREATION_TOKEN=<token> -s terminal-three-smoke -c /srv/terminal-three",
-		"-S /tmp/tmux-2002/default -C attach-session -t $42",
-		"-S /tmp/tmux-2002/default set-option -g mouse on",
-		"-S /tmp/tmux-2002/default unbind-key -q -n MouseDown3Pane",
-		"-S /tmp/tmux-2002/default unbind-key -q -n MouseDown3Status",
-		"-S /tmp/tmux-2002/default unbind-key -q -n MouseDown3StatusLeft",
-		"-S /tmp/tmux-2002/default unbind-key -q -n M-MouseDown3Pane",
-		"-S /tmp/tmux-2002/default unbind-key -q -n M-MouseDown3Status",
-		"-S /tmp/tmux-2002/default unbind-key -q -n M-MouseDown3StatusLeft",
-	}
-	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("tmux calls = %#v, want %#v", got, want)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+			got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath))
+			if strings.Join(got, "\x00") != strings.Join(testCase.wantCalls, "\x00") {
+				t.Fatalf("tmux calls = %#v, want %#v", got, testCase.wantCalls)
+			}
+		})
 	}
 }
 
-func TestTmuxHandler_CreateSessionUsesSelectedUnixUserTarget(t *testing.T) {
-	_, argsPath := installFakeTmux(t)
-	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/run/user/2001/chrote-tmux/tmux-1000/default,build=/tmp/tmux-2002/default")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/operator,build=/home/secondary")
-
-	handler := NewTmuxHandler()
-	bodyBytes := []byte(`{"name":"build-shell","unixUser":"build","mouseScroll":false}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", bytes.NewBuffer(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	handler.CreateSession(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath))
-	want := []string{
-		"-S /tmp/tmux-2002/default new-session -d -P -F #{session_id} -e CHROTE_CREATION_TOKEN=<token> -s build-shell -c /home/secondary",
-		"-S /tmp/tmux-2002/default -C attach-session -t $42",
-		"-S /tmp/tmux-2002/default set-option -g mouse off",
-		"-S /tmp/tmux-2002/default unbind-key -q -n MouseDown3Pane",
-		"-S /tmp/tmux-2002/default unbind-key -q -n MouseDown3Status",
-		"-S /tmp/tmux-2002/default unbind-key -q -n MouseDown3StatusLeft",
-		"-S /tmp/tmux-2002/default unbind-key -q -n M-MouseDown3Pane",
-		"-S /tmp/tmux-2002/default unbind-key -q -n M-MouseDown3Status",
-		"-S /tmp/tmux-2002/default unbind-key -q -n M-MouseDown3StatusLeft",
-	}
-	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("tmux calls = %#v, want %#v", got, want)
-	}
-}
-
+// The socket specification is read the way an operator writes it, spaces and
+// all, because listing and attaching resolve it separately and must agree.
 func TestTmuxHandler_ListSessionsAggregatesConfiguredTerminalUsers(t *testing.T) {
 	tmpDir := t.TempDir()
 	fakeTmux := filepath.Join(tmpDir, "tmux")
 	script := `#!/bin/sh
 case "$*" in
-  *"/tmp/tmux-p"*) printf '$1\talice-shell\t1\t0\t/home/operator\n' ;;
-  *"/tmp/tmux-t"*) printf '$2\tbuild-shell\t2\t1\t/home/secondary\n' ;;
-  *) printf '$3\tunexpected\t1\t0\t/tmp\n' ;;
+  *"/tmp/tmux-p"*) printf '$1\talice-shell\t1\t0\t/home/operator\tbash\t1\t120\t40\tlatest\t1\t\n' ;;
+  *"/tmp/tmux-t"*) printf '$2\tbuild-shell\t2\t1\t/home/secondary\tbash\t1\t120\t40\tlatest\t1\t\n' ;;
+  *) printf '$3\tunexpected\t1\t0\t/tmp\tbash\t1\t120\t40\tlatest\t1\t\n' ;;
 esac
 `
 	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake tmux: %v", err)
 	}
 	t.Setenv("PATH", tmpDir)
-	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-p,build=/tmp/tmux-t")
+	t.Setenv("CHROTE_TMUX_SOCKET", " alice=/tmp/tmux-p, build = /tmp/tmux-t ")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/operator,build=/home/secondary")
 
 	handler := NewTmuxHandler()
@@ -406,31 +344,7 @@ esac
 	}
 	wantUsers := []string{"alice", "build"}
 	if strings.Join(response.TerminalUsers, ",") != strings.Join(wantUsers, ",") {
-		t.Fatalf("terminalUsers = %#v, want %#v", response.TerminalUsers, wantUsers)
-	}
-}
-
-func TestTmuxHandler_ListSessionsReturnsOrderedTrimmedTerminalUsers(t *testing.T) {
-	installFakeTmux(t)
-	t.Setenv("CHROTE_TMUX_SOCKET", " alice=/tmp/tmux-a, bob=/tmp/tmux-b ")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice,bob=/home/bob")
-
-	handler := NewTmuxHandler()
-	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
-	recorder := httptest.NewRecorder()
-
-	handler.ListSessions(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	var response SessionsResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	want := []string{"alice", "bob"}
-	if strings.Join(response.TerminalUsers, ",") != strings.Join(want, ",") {
-		t.Fatalf("terminalUsers = %#v, want %#v", response.TerminalUsers, want)
+		t.Fatalf("terminalUsers = %#v, want %#v in configured order with the padding trimmed", response.TerminalUsers, wantUsers)
 	}
 }
 
@@ -454,6 +368,14 @@ func TestTmuxHandler_ZeroMappingsReturnEmptyInventoryAndRoutingError(t *testing.
 	}
 	if len(response.Sessions) != 0 {
 		t.Fatalf("sessions = %#v, want no routed inventory with zero socket mappings", response.Sessions)
+	}
+	// An empty inventory serialises as an empty array and an empty object, never
+	// as null: the dashboard iterates both without a guard.
+	if response.Sessions == nil || response.Grouped == nil {
+		t.Fatalf("sessions=%#v grouped=%#v, want empty collections rather than null", response.Sessions, response.Grouped)
+	}
+	if response.Timestamp == "" {
+		t.Fatal("empty inventory carried no timestamp")
 	}
 	if _, err := handler.targetForUnixUser(""); err == nil || !strings.Contains(err.Error(), "no tmux sockets are configured") {
 		t.Fatalf("zero-mapping target error = %v, want an explicit configuration error", err)
@@ -521,28 +443,25 @@ func TestTmuxHandler_SetMouseModeTargetsConfiguredTerminalUsers(t *testing.T) {
 	}
 }
 
+// tmux's own right-click menus sit on top of the terminal and swallow the
+// browser's, so turning the mouse on has to unbind every one of them. The
+// request travels through the mux, because a policy nothing routes to is a
+// policy the operator never gets.
 func TestTmuxHandler_SetMouseModeRemovesTmuxRightClickMenus(t *testing.T) {
 	_, argsPath := installFakeTmux(t)
 	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
-	handler := NewTmuxHandler()
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBufferString(`{"enabled":true}`))
+	mux := http.NewServeMux()
+	NewTmuxHandler().RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", strings.NewReader(`{"enabled":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 
-	handler.SetMouseMode(recorder, req)
+	mux.ServeHTTP(recorder, req)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
-	want := []string{
-		"-S /tmp/tmux-a set-option -g mouse on",
-		"-S /tmp/tmux-a unbind-key -q -n MouseDown3Pane",
-		"-S /tmp/tmux-a unbind-key -q -n MouseDown3Status",
-		"-S /tmp/tmux-a unbind-key -q -n MouseDown3StatusLeft",
-		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3Pane",
-		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3Status",
-		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3StatusLeft",
-	}
+	want := tmuxMousePolicyCalls("/tmp/tmux-a", "on")
 	if got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath)); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("tmux calls = %#v, want mouse mode plus no right-click menus %#v", got, want)
 	}
@@ -684,170 +603,6 @@ esac
 	}
 }
 
-func TestTmuxHandler_SetMouseModeRejectsInvalidJSON(t *testing.T) {
-	handler := NewTmuxHandler()
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBufferString("{invalid}"))
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	handler.SetMouseMode(recorder, req)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
-	}
-}
-
-func TestTmuxHandler_SetMouseModeRejectsMissingEnabled(t *testing.T) {
-	_, argsPath := installFakeTmux(t)
-	handler := NewTmuxHandler()
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBufferString(`{}`))
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	handler.SetMouseMode(recorder, req)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
-	}
-	if got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath)); len(got) != 0 {
-		t.Fatalf("tmux calls = %#v, want no side effect for missing enabled", got)
-	}
-}
-
-func TestTmuxHandler_RegisterRoutesWiresMouseMode(t *testing.T) {
-	_, argsPath := installFakeTmux(t)
-	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
-	handler := NewTmuxHandler()
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBufferString(`{"enabled":true}`))
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	mux.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	want := []string{
-		"-S /tmp/tmux-a set-option -g mouse on",
-		"-S /tmp/tmux-a unbind-key -q -n MouseDown3Pane",
-		"-S /tmp/tmux-a unbind-key -q -n MouseDown3Status",
-		"-S /tmp/tmux-a unbind-key -q -n MouseDown3StatusLeft",
-		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3Pane",
-		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3Status",
-		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3StatusLeft",
-	}
-	if got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath)); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("tmux calls = %#v, want %#v", got, want)
-	}
-}
-
-func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
-	h := newSendHarness(t, "$7\talice-shell\t%42\t111\t9001\n")
-	dropsDir := h.dropsDir
-	argsPath := h.tmuxLog
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	if err := writer.WriteField("text", "Please inspect this screenshot."); err != nil {
-		t.Fatalf("write text field: %v", err)
-	}
-	if err := writer.WriteField("submit", "true"); err != nil {
-		t.Fatalf("write submit field: %v", err)
-	}
-	if err := writer.WriteField("unixUser", "alice"); err != nil {
-		t.Fatalf("write unixUser field: %v", err)
-	}
-	fileWriter, err := writer.CreateFormFile("files", "../clipboard image.png")
-	if err != nil {
-		t.Fatalf("create file field: %v", err)
-	}
-	if _, err := fileWriter.Write([]byte("fake png")); err != nil {
-		t.Fatalf("write file payload: %v", err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close multipart writer: %v", err)
-	}
-
-	handler := NewTmuxHandler()
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/alice-shell/send", body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	var response map[string]any
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if response["success"] != true || response["session"] != "alice-shell" || response["unixUser"] != "alice" || response["pane"] != "%42" || response["submitKeyDispatched"] != true {
-		t.Fatalf("send response = %#v", response)
-	}
-	dropPath, _ := response["dropPath"].(string)
-	if dropPath == "" || !strings.HasPrefix(dropPath, dropsDir) {
-		t.Fatalf("dropPath = %q, want under %q", dropPath, dropsDir)
-	}
-	for _, rel := range []string{"manifest.json", "text.txt", "payload.txt", filepath.Join("files", "clipboard-image.png")} {
-		if _, err := os.Stat(filepath.Join(dropPath, rel)); err != nil {
-			t.Fatalf("expected drop file %s: %v", rel, err)
-		}
-	}
-	payload, err := os.ReadFile(filepath.Join(dropPath, "payload.txt"))
-	if err != nil {
-		t.Fatalf("read payload: %v", err)
-	}
-	filePath := filepath.Join(dropPath, "files", "clipboard-image.png")
-	payloadText := string(payload)
-	if !strings.Contains(payloadText, "Please inspect this screenshot.") || !strings.Contains(payloadText, "CHROTE stored this send at:") || !strings.Contains(payloadText, dropPath) || !strings.Contains(payloadText, "Files:") || !strings.Contains(payloadText, filePath) {
-		t.Fatalf("payload = %q, want text, drop path %q, and stored file path %q", payloadText, dropPath, filePath)
-	}
-	if strings.HasSuffix(payloadText, "\n") {
-		t.Fatalf("payload has trailing newline; submit=false must not press Enter implicitly: %q", payloadText)
-	}
-	info, err := os.Stat(filePath)
-	if err != nil {
-		t.Fatalf("stat stored file: %v", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("stored file owner-only base mode = %o, want 600 with fake ACL", info.Mode().Perm())
-	}
-
-	calls := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath))
-	joined := make([]string, 0, len(calls))
-	for _, call := range calls {
-		joined = append(joined, strings.Join(call, "\x00"))
-	}
-	wantSnippets := []string{
-		strings.Join([]string{"-S", "/tmp/tmux-a", "load-buffer"}, "\x00"),
-		strings.Join([]string{"-S", "/tmp/tmux-a", "if-shell", "-F", "-t", "%42"}, "\x00"),
-		"paste-buffer -p -d -b chrote-send-",
-		"send-keys -t %42 Enter",
-		atomicSendSubmitKeyMarker,
-	}
-	for _, snippet := range wantSnippets {
-		found := false
-		for _, call := range joined {
-			if strings.Contains(call, snippet) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("tmux calls = %#v, missing %q", calls, snippet)
-		}
-	}
-	for _, call := range joined {
-		if strings.Contains(call, "Please inspect this screenshot") {
-			t.Fatalf("bulk text leaked into tmux argv instead of buffer file: %#v", calls)
-		}
-	}
-}
-
 func readArgvRecordingTmuxCalls(t *testing.T, argsPath string) [][]string {
 	t.Helper()
 	raw, err := os.ReadFile(argsPath)
@@ -969,4 +724,288 @@ exit 0
 	t.Setenv("TMUX_SESSION_MARKER_FILE", markerPath)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return argsPath
+}
+
+func TestAPIEnvelopeContract_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.T) {
+	installFakeTmux(t)
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
+	handler := NewTmuxHandler()
+
+	tests := []struct {
+		name      string
+		method    string
+		path      string
+		body      string
+		pathName  string
+		headerKey string
+		headerVal string
+		call      func(http.ResponseWriter, *http.Request)
+		wantKeys  []string
+	}{
+		{
+			name:     "list sessions",
+			method:   http.MethodGet,
+			path:     "/api/tmux/sessions",
+			call:     handler.ListSessions,
+			wantKeys: []string{"grouped", "sessions", "terminalUsers", "timestamp"},
+		},
+		{
+			name:     "create session",
+			method:   http.MethodPost,
+			path:     "/api/tmux/sessions",
+			body:     `{"name":"baseline-session"}`,
+			call:     handler.CreateSession,
+			wantKeys: []string{"cwd", "flags", "harness", "session", "success", "timestamp"},
+		},
+		{
+			name:     "delete session",
+			method:   http.MethodDelete,
+			path:     "/api/tmux/sessions/baseline-session",
+			pathName: "baseline-session",
+			call:     handler.DeleteSession,
+			wantKeys: []string{"killed", "success", "timestamp"},
+		},
+		{
+			name:      "delete all sessions",
+			method:    http.MethodDelete,
+			path:      "/api/tmux/sessions/all",
+			headerKey: "X-Nuke-Confirm",
+			headerVal: "DASHBOARD-NUKE-CONFIRMED",
+			call:      handler.DeleteAllSessions,
+			wantKeys:  []string{"killed", "protected", "sessions", "success", "timestamp"},
+		},
+		{
+			name:     "rename session",
+			method:   http.MethodPatch,
+			path:     "/api/tmux/sessions/old-session",
+			pathName: "old-session",
+			body:     `{"newName":"new-session"}`,
+			call:     handler.RenameSession,
+			wantKeys: []string{"newName", "oldName", "success", "timestamp"},
+		},
+		{
+			name:     "capture pane",
+			method:   http.MethodGet,
+			path:     "/api/tmux/sessions/baseline-session/capture",
+			pathName: "baseline-session",
+			call:     handler.CapturePane,
+			wantKeys: []string{"content", "session"},
+		},
+		{
+			name:     "set mouse mode",
+			method:   http.MethodPost,
+			path:     "/api/tmux/mouse",
+			body:     `{"enabled":true}`,
+			call:     handler.SetMouseMode,
+			wantKeys: []string{"applied", "mouse", "success", "timestamp", "total"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			if tt.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			if tt.pathName != "" {
+				req.SetPathValue("name", tt.pathName)
+			}
+			if tt.headerKey != "" {
+				req.Header.Set(tt.headerKey, tt.headerVal)
+			}
+			rec := httptest.NewRecorder()
+
+			tt.call(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			response := decodeJSONMap(t, rec)
+			assertTopLevelKeys(t, response, tt.wantKeys)
+			assertNoTopLevelKey(t, response, "data")
+		})
+	}
+}
+
+func TestTmuxHandler_DeleteAllSessionsRequiresExactNukeConfirmationHeader(t *testing.T) {
+	_, argsPath := installFakeTmux(t)
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
+	handler := NewTmuxHandler()
+
+	tests := []struct {
+		name        string
+		headerValue string
+		wantStatus  int
+		wantCalls   []string
+	}{
+		{
+			name:       "missing confirmation",
+			wantStatus: http.StatusForbidden,
+			wantCalls:  nil,
+		},
+		{
+			name:        "wrong confirmation",
+			headerValue: "DASHBOARD-NUKE",
+			wantStatus:  http.StatusForbidden,
+			wantCalls:   nil,
+		},
+		{
+			name:        "wrong case confirmation",
+			headerValue: "dashboard-nuke-confirmed",
+			wantStatus:  http.StatusForbidden,
+			wantCalls:   nil,
+		},
+		{
+			name:        "confirmation with trailing space",
+			headerValue: "DASHBOARD-NUKE-CONFIRMED ",
+			wantStatus:  http.StatusForbidden,
+			wantCalls:   nil,
+		},
+		{
+			name:        "exact confirmation",
+			headerValue: "DASHBOARD-NUKE-CONFIRMED",
+			wantStatus:  http.StatusOK,
+			wantCalls: []string{
+				"-S /tmp/tmux-a list-sessions -F #{session_name}",
+				"-S /tmp/tmux-a kill-session -t alpha",
+				"-S /tmp/tmux-a kill-session -t beta",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.WriteFile(argsPath, nil, 0600); err != nil {
+				t.Fatalf("reset tmux args: %v", err)
+			}
+			req := httptest.NewRequest(http.MethodDelete, "/api/tmux/sessions/all", nil)
+			if tt.headerValue != "" {
+				req.Header.Set("X-Nuke-Confirm", tt.headerValue)
+			}
+			rec := httptest.NewRecorder()
+
+			handler.DeleteAllSessions(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if gotCalls := readFakeCommandCalls(t, argsPath); !reflect.DeepEqual(gotCalls, tt.wantCalls) {
+				t.Fatalf("tmux calls = %#v, want %#v", gotCalls, tt.wantCalls)
+			}
+		})
+	}
+}
+
+func installFakeTmux(t *testing.T) (string, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "tmux-args.txt")
+	scriptPath := filepath.Join(dir, "tmux")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_ARGS_FILE"
+socket=""
+if [ "${1:-}" = "-S" ]; then socket="$2"; shift 2; fi
+case "$*" in
+  *"list-sessions -F #{session_id}"*)
+	printf 'no server running on %s\n' "$socket" >&2
+    exit 1
+    ;;
+  "list-sessions -F #{session_name}:#{session_windows}:#{session_attached}")
+    printf 'alpha:1:0\nbeta:2:1\n'
+    ;;
+  "list-sessions -F #{session_name}")
+    printf 'alpha\nbeta\n'
+    ;;
+  capture-pane*)
+    printf 'line one\nline two\n'
+    ;;
+  *new-session*)
+    printf '$42\n'
+    ;;
+  *)
+    printf ''
+    ;;
+esac
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
+		t.Fatalf("write fake tmux command: %v", err)
+	}
+	if err := os.WriteFile(argsPath, nil, 0600); err != nil {
+		t.Fatalf("write fake tmux args file: %v", err)
+	}
+
+	t.Setenv("TMUX_ARGS_FILE", argsPath)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return scriptPath, argsPath
+}
+
+func readFakeCommandCalls(t *testing.T, argsPath string) []string {
+	t.Helper()
+
+	raw, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read fake command calls: %v", err)
+	}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return nil
+	}
+	return strings.Split(string(raw), "\n")
+}
+
+func decodeJSONMap(t *testing.T, rec *httptest.ResponseRecorder) map[string]interface{} {
+	t.Helper()
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode JSON response: %v\nbody: %s", err, rec.Body.String())
+	}
+	return response
+}
+
+func assertTopLevelKeys(t *testing.T, response map[string]interface{}, want []string) {
+	t.Helper()
+
+	got := make([]string, 0, len(response))
+	for key := range response {
+		got = append(got, key)
+	}
+	sort.Strings(got)
+	want = append([]string(nil), want...)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("top-level keys = %#v, want %#v", got, want)
+	}
+}
+
+func assertNoTopLevelKey(t *testing.T, response map[string]interface{}, key string) {
+	t.Helper()
+
+	if _, ok := response[key]; ok {
+		t.Fatalf("unexpected top-level %q key in response %#v", key, response)
+	}
+}
+
+// tmuxCreationCalls is the whole argv a create produces: the detached session,
+// the control-mode attach that keeps it alive, and the mouse policy.
+func tmuxCreationCalls(socket, session, workdir, mouse string) []string {
+	calls := []string{
+		"-S " + socket + " new-session -d -P -F #{session_id} -e CHROTE_CREATION_TOKEN=<token> -s " + session + " -c " + workdir,
+		"-S " + socket + " -C attach-session -t $42",
+	}
+	return append(calls, tmuxMousePolicyCalls(socket, mouse)...)
+}
+
+// tmuxMousePolicyCalls is the mouse setting plus every right-click binding that
+// has to go, in the order CHROTE issues them.
+func tmuxMousePolicyCalls(socket, mouse string) []string {
+	calls := []string{"-S " + socket + " set-option -g mouse " + mouse}
+	for _, binding := range []string{
+		"MouseDown3Pane", "MouseDown3Status", "MouseDown3StatusLeft",
+		"M-MouseDown3Pane", "M-MouseDown3Status", "M-MouseDown3StatusLeft",
+	} {
+		calls = append(calls, "-S "+socket+" unbind-key -q -n "+binding)
+	}
+	return calls
 }

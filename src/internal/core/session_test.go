@@ -2,30 +2,6 @@ package core
 
 import "testing"
 
-func TestGetGroupPriority(t *testing.T) {
-	tests := []struct {
-		name     string
-		group    string
-		expected int
-	}{
-		{"main group", "main", 1},
-		{"named group", "project", 4},
-		{"another named group", "team", 4},
-		{"other group", "random", 4},
-		{"ungrouped sessions last", "other", 100},
-		{"empty group", "", 4},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GetGroupPriority(tt.group)
-			if result != tt.expected {
-				t.Errorf("GetGroupPriority(%q) = %d, expected %d", tt.group, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestCategorizeSession(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -54,41 +30,56 @@ func TestCategorizeSession(t *testing.T) {
 	}
 }
 
-func TestSortSessions(t *testing.T) {
+// Sorting and grouping are two readings of one ordering rule, so they share a
+// fixture: the order the panel shows and the buckets it draws must agree. A
+// session whose group could not be read carries an empty group and still sorts
+// among the named ones, rather than falling into the trailing block reserved for
+// sessions that were categorised as ungrouped.
+func TestSortSessionsOrdersGroupsAndBucketsThem(t *testing.T) {
 	sessions := []Session{
 		{Name: "random1", Group: "other"},
 		{Name: "team-worker", Group: "team"},
 		{Name: "main", Group: "main"},
 		{Name: "project-api", Group: "project"},
 		{Name: "project-worker", Group: "project"},
+		{Name: "unreadable-group", Group: ""},
 	}
 
 	SortSessions(sessions)
 
 	// Main comes first, then named groups alphabetically, and ungrouped sessions last.
-	expectedOrder := []string{"main", "project-api", "project-worker", "team-worker", "random1"}
+	expectedOrder := []string{"main", "unreadable-group", "project-api", "project-worker", "team-worker", "random1"}
 
 	for i, expected := range expectedOrder {
 		if sessions[i].Name != expected {
 			t.Errorf("Position %d: got %q, expected %q", i, sessions[i].Name, expected)
 		}
 	}
-}
-
-func TestGroupSessions(t *testing.T) {
-	sessions := []Session{
-		{Name: "project-1", Group: "project"},
-		{Name: "project-2", Group: "project"},
-		{Name: "main", Group: "main"},
-	}
 
 	grouped := GroupSessions(sessions)
-
-	if len(grouped["project"]) != 2 {
-		t.Errorf("Expected 2 project sessions, got %d", len(grouped["project"]))
+	wantSizes := map[string]int{"main": 1, "project": 2, "team": 1, "other": 1, "": 1}
+	for group, want := range wantSizes {
+		if got := len(grouped[group]); got != want {
+			t.Errorf("group %q holds %d sessions, expected %d", group, got, want)
+		}
 	}
-	if len(grouped["main"]) != 1 {
-		t.Errorf("Expected 1 main session, got %d", len(grouped["main"]))
+	if len(grouped) != len(wantSizes) {
+		t.Errorf("groups = %d, expected %d: %#v", len(grouped), len(wantSizes), grouped)
+	}
+}
+
+// CHROTE_TMUX_BIN pins the tmux the server runs. Falling back to a bare name is
+// what lets a test put a fake first on PATH, and the pin is what lets an
+// operator name a tmux that is not on the service's PATH at all.
+func TestTmuxBin_PrefersPinnedBinaryOverPathLookup(t *testing.T) {
+	t.Setenv("CHROTE_TMUX_BIN", " /home/linuxbrew/.linuxbrew/bin/tmux ")
+	if got := TmuxBin(); got != "/home/linuxbrew/.linuxbrew/bin/tmux" {
+		t.Fatalf("TmuxBin() = %q, want the pinned CHROTE_TMUX_BIN path", got)
+	}
+
+	t.Setenv("CHROTE_TMUX_BIN", "")
+	if got := TmuxBin(); got != "tmux" {
+		t.Fatalf("TmuxBin() = %q, want %q when CHROTE_TMUX_BIN is unset", got, "tmux")
 	}
 }
 

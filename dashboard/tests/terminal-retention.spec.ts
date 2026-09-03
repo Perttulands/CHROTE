@@ -70,13 +70,33 @@ test.describe('Terminal retention', () => {
 
     const terminal = page.locator('.terminal-grid[data-workspace="terminal1"] .xterm-rows')
     const windows = page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-window')
+    const controls = page.locator('.terminal-area:visible .terminal-area-controls')
     await expect(terminal).toContainText('connection-1')
+
+    // The strip carries no buttons: it names the chords and states the count
+    // they reached, which is the only place the number is readable.
+    await expect(controls).toContainText('Alt+= add window · Alt+- remove empty')
+    await expect(controls.locator('.layout-count')).toHaveText('2')
+    await expect(controls.locator('.layout-btn')).toHaveCount(0)
 
     await page.keyboard.press('Alt+=')
     await expect(windows).toHaveCount(3)
-    await page.keyboard.press('Alt+-')
-    await page.keyboard.press('Alt+-')
+    await page.keyboard.press('Alt+=')
+    await expect(windows).toHaveCount(4)
+    await expect(page.locator('.terminal-grid:visible')).toHaveClass(/grid-4/)
+    await expect(controls.locator('.layout-count')).toHaveText('4')
+
+    // The tiles share the frame rather than one of them keeping most of it.
+    const firstBox = await windows.nth(0).boundingBox()
+    const thirdBox = await windows.nth(2).boundingBox()
+    expect(firstBox).toBeTruthy()
+    expect(thirdBox).toBeTruthy()
+    expect(Math.abs(firstBox!.height - thirdBox!.height)).toBeLessThan(10)
+
+    for (let press = 0; press < 3; press += 1) await page.keyboard.press('Alt+-')
     await expect(windows).toHaveCount(1)
+    await expect(page.locator('.terminal-grid:visible')).toHaveClass(/grid-1/)
+    await expect(controls.locator('.layout-count')).toHaveText('1')
 
     // The last window holds somebody's live terminal, so the chord refuses.
     await page.keyboard.press('Alt+-')

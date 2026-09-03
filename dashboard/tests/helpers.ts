@@ -1,16 +1,11 @@
-import { Page, Locator } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
 
 /**
- * Shared test helpers for CHROTE dashboard integration tests.
+ * Shared test helpers for the mocked CHROTE browser journeys.
  *
- * Extracted from terminal-sizing.spec.ts, terminal-pool.spec.ts, and
- * dashboard.spec.ts to avoid duplication across test suites.
- *
- * Bead: pol-346b
+ * Everything here has at least one caller. A helper the specs stopped using is
+ * deleted rather than kept warm, so this file stays readable as the suite moves.
  */
-
-/** Backend URL used by integration tests that hit the real CHROTE server. */
-export const BACKEND_URL = process.env.CHROTE_TEST_URL || 'http://127.0.0.1:8095';
 
 // ---------------------------------------------------------------------------
 // StoredStateV2 helpers — mirror the structure in SessionContext.tsx
@@ -99,75 +94,6 @@ export async function setWorkspaceState(
 }
 
 // ---------------------------------------------------------------------------
-// Session creation
-// ---------------------------------------------------------------------------
-
-/**
- * Launch a session from the launcher inside a specific terminal window and
- * wait for the session tag to appear.  Returns the session name captured from
- * the POST request so the caller can clean it up later.
- *
- * @param windowId  CSS selector or Locator for the target .terminal-window.
- *                  Defaults to the first visible terminal window.
- */
-export async function createAndBindSession(
-  page: Page,
-  windowId?: string | Locator,
-): Promise<string> {
-  const win: Locator =
-    typeof windowId === 'string'
-      ? page.locator(windowId)
-      : windowId ?? page.locator('.terminal-window').first();
-
-  const createBtn = win.locator('.launcher-launch');
-
-  // Intercept POST to capture name
-  let sessionName = '';
-  const handler = (req: { method(): string; url(): string; postData(): string | null }) => {
-    if (req.method() === 'POST' && req.url().includes('/api/tmux/sessions')) {
-      try {
-        sessionName = JSON.parse(req.postData() || '{}').name || '';
-      } catch { /* ignore */ }
-    }
-  };
-  page.on('request', handler);
-
-  await createBtn.click();
-  await win.locator('.session-tag').first().waitFor({ state: 'visible', timeout: 10_000 });
-
-  // Remove listener to avoid leaking across tests
-  page.removeListener('request', handler);
-  return sessionName;
-}
-
-// ---------------------------------------------------------------------------
-// Terminal helpers
-// ---------------------------------------------------------------------------
-
-/** The visible terminal in the first terminal window. */
-export function terminalSurface(page: Page): Locator {
-  return page.locator('.terminal-window-body .terminal-surface-host:not([style*="display: none"]) .xterm').first();
-}
-
-/** Wait until the first terminal window has a rendered terminal. */
-export async function waitForTerminal(page: Page, timeout = 10_000): Promise<Locator> {
-  const surface = terminalSurface(page);
-  await surface.waitFor({ state: 'visible', timeout });
-  return surface;
-}
-
-// ---------------------------------------------------------------------------
-// Layout locators
-// ---------------------------------------------------------------------------
-
-/**
- * Returns the `.terminal-grid` scoped to the terminal1 workspace.
- */
-export function visibleArea(page: Page): Locator {
-  return page.locator('.terminal-grid[data-workspace="terminal1"]');
-}
-
-// ---------------------------------------------------------------------------
 // Terminal workspace sidecar
 // ---------------------------------------------------------------------------
 
@@ -190,7 +116,11 @@ export async function openSessionsSidecar(page: Page): Promise<void> {
 
 /**
  * Perform a pointer-based drag-and-drop that satisfies dnd-kit's 8 px
- * activation distance.  Accepts CSS selectors.
+ * activation distance. Accepts CSS selectors.
+ *
+ * The waits are on the drag itself rather than on a clock: the dashboard wears
+ * `is-dragging` for exactly as long as dnd-kit holds a drag, so this settles on
+ * the real start and the real end instead of hoping 100 ms was enough.
  */
 export async function dragAndDrop(
   page: Page,
@@ -212,36 +142,14 @@ export async function dragAndDrop(
   const endX = targetBox.x + targetBox.width / 2;
   const endY = targetBox.y + targetBox.height / 2;
 
+  const dashboard = page.locator('.dashboard');
+
   await page.mouse.move(startX, startY);
   await page.mouse.down();
   // Exceed dnd-kit's 8 px distance threshold
   await page.mouse.move(startX + 10, startY + 10, { steps: 5 });
   await page.mouse.move(endX, endY, { steps: 10 });
-  await page.waitForTimeout(100);
+  await expect(dashboard).toHaveClass(/is-dragging/);
   await page.mouse.up();
-  await page.waitForTimeout(100);
-}
-
-// ---------------------------------------------------------------------------
-// Session cleanup
-// ---------------------------------------------------------------------------
-
-/**
- * Delete sessions created during a test.  Intended for use in afterEach().
- *
- * Usage:
- *   const sessions: string[] = [];
- *   test.afterEach(({ request }) => cleanupSessions(request, sessions));
- */
-export async function cleanupSessions(
-  request: { delete(url: string): Promise<unknown> },
-  sessionNames: string[],
-  baseUrl = BACKEND_URL,
-): Promise<void> {
-  for (const name of sessionNames) {
-    try {
-      await request.delete(`${baseUrl}/api/tmux/sessions/${name}`);
-    } catch { /* ignore */ }
-  }
-  sessionNames.length = 0;
+  await expect(dashboard).not.toHaveClass(/is-dragging/);
 }

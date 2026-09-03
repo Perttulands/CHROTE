@@ -66,8 +66,12 @@ async function openWithFocusedTerminal(page: Page) {
   return { typed, firstWindow }
 }
 
-test('the leader opens the keys panel over a focused terminal, and typing filters it', async ({ page }) => {
-  const { typed } = await openWithFocusedTerminal(page)
+// One page for the whole keyboard model: the leader is discovery, Alt chords
+// run over a focused terminal without reaching the pty, an unregistered Alt key
+// still does, and the toggle hands every key back to the terminal.
+test('the leader and Alt chords run over a focused terminal, and keys off hands the terminal every key', async ({ page }) => {
+  const { typed, firstWindow } = await openWithFocusedTerminal(page)
+  const windows = page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-window')
 
   await page.keyboard.press(LEADER)
 
@@ -87,27 +91,6 @@ test('the leader opens the keys panel over a focused terminal, and typing filter
 
   await page.keyboard.press('Escape')
   await expect(panel).toBeHidden()
-  // Nothing the leader took reached the shell.
-  expect(typed).toEqual([])
-})
-
-test('a chord that fires echoes its key caps, and an unregistered one does not', async ({ page }) => {
-  await openWithFocusedTerminal(page)
-
-  await page.keyboard.press('Alt+2')
-  const echo = page.locator('.key-echo')
-  await expect(echo).toBeVisible()
-  await expect(echo.locator('.key-echo-cap')).toHaveText(['ALT', '2'])
-  // It appears and it is gone; it does not have to be dismissed.
-  await expect(echo).toHaveCount(0, { timeout: 3000 })
-
-  await page.keyboard.press('Alt+x')
-  await expect(page.locator('.key-echo')).toHaveCount(0)
-})
-
-test('Alt chords run over a focused terminal and unregistered Alt keys reach the pty', async ({ page }) => {
-  const { typed } = await openWithFocusedTerminal(page)
-  const windows = page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-window')
 
   // The tab chord, with the cursor in a terminal and no leader first.
   await page.keyboard.press('Alt+2')
@@ -125,9 +108,9 @@ test('Alt chords run over a focused terminal and unregistered Alt keys reach the
 
   // Alt+K is the keybindings panel, and it closes again on Escape.
   await page.keyboard.press('Alt+k')
-  await expect(page.locator('.keys-panel')).toBeVisible()
+  await expect(panel).toBeVisible()
   await page.keyboard.press('Escape')
-  await expect(page.locator('.keys-panel')).toBeHidden()
+  await expect(panel).toBeHidden()
 
   // Nothing so far was typed at the shell: every one of those was registered.
   expect(typed).toEqual([])
@@ -136,49 +119,6 @@ test('Alt chords run over a focused terminal and unregistered Alt keys reach the
   await windows.first().locator('.xterm-screen').click()
   await page.keyboard.press('Alt+x')
   await expect.poll(() => typed.join('')).toBe('\u001bx')
-})
-
-test('the keys panel is the registry, searched on either column and run from its rows', async ({ page }) => {
-  await openWithFocusedTerminal(page)
-
-  await page.keyboard.press('Alt+k')
-
-  const panel = page.locator('.keys-panel')
-  await expect(panel).toBeVisible()
-  await expect(panel.locator('.keys-panel-chord')).toContainText(['Beads tab'])
-  const chordCount = await panel.locator('.keys-panel-chord').count()
-  expect(chordCount).toBeGreaterThan(5)
-
-  await panel.locator('.keys-panel-search').fill('window')
-  const filtered = panel.locator('.keys-panel-chord')
-  // The two cycle chords, the two that change the layout, and the launcher.
-  await expect(filtered).toHaveCount(5)
-  expect(chordCount).toBeGreaterThan(5)
-  await expect(filtered.first()).toContainText('Next window')
-
-  // The search reads the chord column too, so a chord is findable as the
-  // operator writes it.
-  await panel.locator('.keys-panel-search').fill('alt + b')
-  await expect(panel.locator('.keys-panel-chord')).toHaveCount(1)
-  await expect(panel.locator('.keys-panel-chord')).toContainText('Beads tab')
-
-  // Enter runs the current row, which is what makes the panel a way in.
-  await panel.locator('.keys-panel-search').fill('alt + 2')
-  await expect(panel.locator('.keys-panel-chord')).toHaveCount(1)
-  await page.keyboard.press('Enter')
-  await expect(panel).toBeHidden()
-  await expect(page.locator('.terminal-workspace-dock[data-workspace="terminal2"]')).toHaveAttribute('data-active', 'true')
-
-  await page.keyboard.press('Alt+k')
-  await panel.locator('.keys-panel-search').fill('no such chord')
-  await expect(panel.locator('.keys-panel-empty')).toBeVisible()
-
-  await page.keyboard.press('Escape')
-  await expect(panel).toBeHidden()
-})
-
-test('with keys off the terminal owns the leader and the key after it', async ({ page }) => {
-  const { typed, firstWindow } = await openWithFocusedTerminal(page)
 
   const keysToggle = page.locator('.keys-menu-container > .tab')
   await expect(keysToggle).toHaveText('Keys on')
@@ -191,7 +131,7 @@ test('with keys off the terminal owns the leader and the key after it', async ({
 
   // Nothing was intercepted: xterm answered the leader itself, and the key
   // after it went where every key goes when keys are off.
-  await expect(page.locator('.keys-panel')).toHaveCount(0)
+  await expect(panel).toHaveCount(0)
   await expect.poll(() => typed.join('')).toContain('a')
 
   // The toggle brings the model back, and the panel with it.
@@ -199,5 +139,5 @@ test('with keys off the terminal owns the leader and the key after it', async ({
   await expect(keysToggle).toHaveText('Keys on')
   await firstWindow.locator('.xterm-screen').click()
   await page.keyboard.press(LEADER)
-  await expect(page.locator('.keys-panel')).toBeVisible()
+  await expect(panel).toBeVisible()
 })

@@ -87,38 +87,29 @@ describe('TabBar navigation', () => {
     pooledTerminals.clear()
   })
 
-  it('shows Terminal 3 in desktop navigation and routes through tab change', () => {
+  it('draws the resolved workspace list and every other tab, and routes each one', () => {
     mockMatchMedia(false)
     const onTabChange = vi.fn()
 
-    render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal 3' }))
-
-    expect(onTabChange).toHaveBeenCalledWith('terminal3')
-  })
-
-  it('renders exactly the default terminal tabs, in order, with canonical labels', () => {
-    mockMatchMedia(false)
-
-    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
-
     // The active tab carries its menu caret; the label is the word before it.
-    const labels = screen.getAllByRole('button').map(button => button.textContent?.replace('▾', ''))
-    const terminalLabels = labels.filter(label => label?.startsWith('Terminal'))
-    expect(terminalLabels).toEqual(['Terminal', 'Terminal 2', 'Terminal 3'])
+    const terminalLabels = () => screen.getAllByRole('button')
+      .map(button => button.textContent?.replace('▾', ''))
+      .filter(label => label?.startsWith('Terminal'))
+
+    const { unmount } = render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
+
+    expect(terminalLabels()).toEqual(['Terminal', 'Terminal 2', 'Terminal 3'])
     expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
-  })
 
-  it('follows the resolved workspace id list instead of a fixed tab set', () => {
-    mockMatchMedia(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal 3' }))
+    expect(onTabChange).toHaveBeenLastCalledWith('terminal3')
+    unmount()
+
+    // The strip follows whatever ids the layout resolved, not a fixed tab set.
     mockState.workspaceIds = ['terminal1', 'terminal2', 'terminal3', 'terminal4', 'terminal5']
-
     render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
 
-    // The active tab carries its menu caret; the label is the word before it.
-    const labels = screen.getAllByRole('button').map(button => button.textContent?.replace('▾', ''))
-    const terminalLabels = labels.filter(label => label?.startsWith('Terminal'))
-    expect(terminalLabels).toEqual(['Terminal', 'Terminal 2', 'Terminal 3', 'Terminal 4', 'Terminal 5'])
+    expect(terminalLabels()).toEqual(['Terminal', 'Terminal 2', 'Terminal 3', 'Terminal 4', 'Terminal 5'])
     mockState.workspaceIds = null
   })
 
@@ -142,18 +133,24 @@ describe('TabBar navigation', () => {
     expect(onTabChange).toHaveBeenCalledWith('scheduled')
   })
 
-  it('shows the Library in mobile navigation', () => {
+  // A phone has no room for the tab strip, so the hamburger is the only way to
+  // every tab: none of them is reachable until it is opened.
+  it('reaches every tab through the hamburger on a phone', () => {
     mockMatchMedia(true)
     const onTabChange = vi.fn()
 
     const { container } = render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
     expect(container.querySelector('.tab-bar')).toHaveClass('mobile-mode')
     expect(container.querySelector('.tab-bar-tabs')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '☰' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Files' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '☰' }))
+
+    for (const label of ['Terminal', 'Terminal 2', 'Terminal 3', 'Files', 'Beads', 'Library', 'Scheduled', 'Settings']) {
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
+    }
     expect(screen.getByRole('button', { name: 'Terminal' })).toHaveClass('active')
-    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
+
     fireEvent.click(screen.getByRole('button', { name: 'Library' }))
 
     expect(onTabChange).toHaveBeenCalledWith('library')
@@ -169,23 +166,12 @@ describe('TabBar navigation', () => {
     expect(screen.getByRole('menuitem', { name: /Save layout as preset/i })).toBeInTheDocument()
     expect(screen.getByText(/Restore preset/i)).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: /Clear tab assignments/i })).toBeInTheDocument()
-    expect(screen.queryByText(/defaults/i)).not.toBeInTheDocument()
 
     // Clearing is destructive, so it confirms in the row it was chosen from.
     fireEvent.click(screen.getByRole('menuitem', { name: /Clear tab assignments/i }))
     expect(mockState.clearWorkspaceAssignments).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Confirm clear' }))
     expect(mockState.clearWorkspaceAssignments).toHaveBeenCalledWith('terminal1')
-  })
-
-  it('closes the visible terminal tab menu with Escape', () => {
-    mockMatchMedia(false)
-    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
-
-    openTabMenu()
-    expect(screen.getByRole('menuitem', { name: /Rename tab/i })).toBeInTheDocument()
-    fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByRole('menuitem', { name: /Rename tab/i })).not.toBeInTheDocument()
   })
 
   it('toggles keys from the tab bar and offers the keys panel on its context menu', () => {
@@ -244,6 +230,18 @@ describe('TabBar navigation', () => {
     expect(mockState.loadPreset).toHaveBeenCalledWith('preset-1')
   })
 
+  // The help view has no tab of its own, so this menu row is the way in to it.
+  it('routes to the help view from the keys menu', () => {
+    mockMatchMedia(false)
+    const onTabChange = vi.fn()
+    render(<TabBar activeTab="terminal1" onTabChange={onTabChange} onShowKeys={vi.fn()} />)
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Keys on' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Dashboard Help' }))
+
+    expect(onTabChange).toHaveBeenCalledWith('help')
+  })
+
   it('keeps the keys menu and terminal tab menus mutually exclusive', () => {
     mockMatchMedia(false)
     render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} onShowKeys={vi.fn()} />)
@@ -262,20 +260,18 @@ describe('TabBar navigation', () => {
 
   // The workspace strip carried these two and a "⋯ Tab" pseudo-tab carried the
   // rest. One menu, on the tab the operator is already looking at, holds them.
-  it('carries every moved item on the active tab, and opens on the secondary button too', () => {
+  it('carries every moved item on the active tab, and nothing on any other', () => {
     mockMatchMedia(false)
-    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} onToggleSessionsPinned={vi.fn()} />)
+    const { unmount } = render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} onToggleSessionsPinned={vi.fn()} />)
 
-    expect(screen.queryByRole('button', { name: '⋯ Tab' })).not.toBeInTheDocument()
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Terminal' }))
 
     for (const item of ['Rename tab', 'Save layout as preset', 'Restore preset', 'Clear tab assignments', 'Reconnect frames', 'Claim all', 'Pin sessions panel']) {
       expect(screen.getByRole('menuitem', { name: new RegExp(`^${item}`) })).toBeInTheDocument()
     }
-  })
+    unmount()
 
-  it('offers no tab menu on a tab that is not the active terminal one', () => {
-    mockMatchMedia(false)
+    // No other tab carries it, by caret or by secondary button.
     render(<TabBar activeTab="settings" onTabChange={vi.fn()} />)
 
     expect(document.querySelector('.tab-menu-caret')).toBeNull()

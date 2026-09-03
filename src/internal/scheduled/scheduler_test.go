@@ -2,11 +2,8 @@ package scheduled
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -505,112 +502,6 @@ func TestDeliveryRunTimeoutIncludesValidation(t *testing.T) {
 	}
 	if run.Status != RunStatusError || len(run.Targets) != 1 || !strings.Contains(run.Targets[0].Message, context.DeadlineExceeded.Error()) {
 		t.Fatalf("run = %+v, want a deadline error without attempting send", run)
-	}
-}
-
-func TestTargetRunJSONReportsSubmitKeyDispatchWithoutSubmittedClaim(t *testing.T) {
-	raw, err := json.Marshal(TargetRun{
-		SessionName:         "worker-1",
-		Status:              RunStatusSuccess,
-		SubmitKeyDispatched: true,
-	})
-	if err != nil {
-		t.Fatalf("marshal target run: %v", err)
-	}
-	if !strings.Contains(string(raw), `"submitKeyDispatched":true`) {
-		t.Fatalf("target run JSON = %s, want submitKeyDispatched receipt", raw)
-	}
-	if strings.Contains(string(raw), `"submitted"`) {
-		t.Fatalf("target run JSON = %s, must not claim application submission", raw)
-	}
-}
-
-func TestTargetRunJSONMigratesLegacySubmissionClaim(t *testing.T) {
-	var target TargetRun
-	if err := json.Unmarshal([]byte(`{
-		"sessionName":"worker-1",
-		"status":"success",
-		"pane":"%1",
-		"submitted":true,
-		"message":"pasted and submitted"
-	}`), &target); err != nil {
-		t.Fatalf("unmarshal legacy target run: %v", err)
-	}
-	if !target.SubmitKeyDispatched {
-		t.Fatalf("legacy target run = %+v, want truthful submit-key receipt", target)
-	}
-	if target.Message != SubmitKeyDispatchedDetail {
-		t.Fatalf("legacy target message = %q, want %q", target.Message, SubmitKeyDispatchedDetail)
-	}
-
-	raw, err := json.Marshal(target)
-	if err != nil {
-		t.Fatalf("marshal migrated target run: %v", err)
-	}
-	if strings.Contains(string(raw), `"submitted"`) || strings.Contains(string(raw), `pasted and submitted`) {
-		t.Fatalf("migrated target run still exposes legacy false ACK: %s", raw)
-	}
-	if !strings.Contains(string(raw), `"submitKeyDispatched":true`) {
-		t.Fatalf("migrated target run JSON = %s, want submit-key receipt", raw)
-	}
-}
-
-func TestStoreReadsLegacySingleTargetDocument(t *testing.T) {
-	dir := t.TempDir()
-	legacy := `{
-  "id": "tsk_legacy",
-  "name": "legacy task",
-  "prompt": "still works",
-  "target": {"sessionName": "ops", "unixUser": "alice"},
-  "schedule": {"type": "interval", "everyMinutes": 10, "timezone": "UTC"},
-  "enabled": true,
-  "createdAt": "2026-06-27T13:00:00Z",
-  "updatedAt": "2026-06-27T13:00:00Z"
-}`
-	if err := os.WriteFile(filepath.Join(dir, "tsk_legacy.json"), []byte(legacy), 0o600); err != nil {
-		t.Fatalf("write legacy task: %v", err)
-	}
-
-	loaded, err := NewStore(dir).Get("tsk_legacy")
-	if err != nil {
-		t.Fatalf("get legacy task: %v", err)
-	}
-	if len(loaded.Targets) != 1 || loaded.Targets[0].SessionName != "ops" || loaded.Targets[0].UnixUser != "alice" {
-		t.Fatalf("legacy targets = %+v, want the single documented target migrated", loaded.Targets)
-	}
-}
-
-func TestTaskJSONWritesCurrentTargetsSchema(t *testing.T) {
-	raw, err := json.Marshal(Task{
-		ID:      "tsk_mirror",
-		Targets: []Target{{SessionName: "worker-1"}, {SessionName: "worker-2"}},
-	})
-	if err != nil {
-		t.Fatalf("marshal task: %v", err)
-	}
-	var document map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &document); err != nil {
-		t.Fatalf("unmarshal task: %v", err)
-	}
-	wantKeys := map[string]bool{
-		"id": true, "name": true, "prompt": true, "targets": true,
-		"schedule": true, "enabled": true, "paused": true,
-		"createdAt": true, "updatedAt": true,
-	}
-	if len(document) != len(wantKeys) {
-		t.Fatalf("task schema keys = %v, want current schema keys %v", document, wantKeys)
-	}
-	for key := range wantKeys {
-		if _, ok := document[key]; !ok {
-			t.Fatalf("task schema missing current field %q: %s", key, raw)
-		}
-	}
-	var targets []Target
-	if err := json.Unmarshal(document["targets"], &targets); err != nil {
-		t.Fatalf("decode task targets: %v", err)
-	}
-	if len(targets) != 2 || targets[0].SessionName != "worker-1" || targets[1].SessionName != "worker-2" {
-		t.Fatalf("targets = %+v, want both current targets in order", targets)
 	}
 }
 

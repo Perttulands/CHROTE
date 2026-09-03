@@ -12,12 +12,18 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
+# One serial job measured 5m46s, and 69% of it was the dashboard step waiting on
+# a browser suite pinned to a single worker. The work splits along its real
+# dependencies instead: only the jobs that compile the server need the embedded
+# bundle, only the browser jobs need Chromium, and nothing else needs to wait.
 jobs:
-  quality:
+  # The dashboard bundle is embedded into the Go binary by a compile-time
+  # directive and is not tracked, so every job that compiles the server needs
+  # this one to have run. It publishes the bundle and the binary so no other job
+  # rebuilds them.
+  build:
     runs-on: ubuntu-latest
-    # The job measured 4m22s against the previous 5m cap, so a new step would
-    # have started failing on time rather than on truth.
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -32,17 +38,53 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
-      - name: Install dashboard and Chromium
-        run: |
-          npm ci --prefix dashboard
-          cd dashboard
-          npx playwright install --with-deps chromium
+      - name: Install dashboard
+        run: npm ci --prefix dashboard
 
       - name: Build embedded dashboard and server
         run: |
           ./scripts/build-embedded-dashboard.sh
           cd src
           go build -trimpath -o ../chrote-server-ci ./cmd/server
+
+      # The stamp travels with the bundle: check-embedded-dashboard.py needs both
+      # and reports "bundle or stamp missing" if it gets only one.
+      - name: Publish the embedded bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: embedded-dashboard
+          path: |
+            src/internal/dashboard/dist
+            src/internal/dashboard/dist.stamp
+          include-hidden-files: true
+          retention-days: 1
+
+      - name: Publish the server binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrote-server
+          path: chrote-server-ci
+          retention-days: 1
+
+  go:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: src/go.sum
+
+      # The embed directive fails to compile without a bundle on disk, so the
+      # Go job takes the one build already produced rather than installing Node.
+      - name: Take the embedded bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: embedded-dashboard
+          path: src/internal/dashboard
 
       - name: Go format and vet
         run: |
@@ -54,12 +96,93 @@ jobs:
       - name: Go race tests
         run: cd src && go test -race ./...
 
-      - name: Dashboard unit, lint, and browser tests
+  # No browser, so no Chromium download: this job is Node and nothing else.
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dashboard
+        run: npm ci --prefix dashboard
+
+      - name: Dashboard unit tests and lint
         run: |
           cd dashboard
           npm run test:unit
           npm run lint
-          npm test
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dashboard and Chromium
+        run: |
+          npm ci --prefix dashboard
+          cd dashboard
+          npx playwright install --with-deps chromium
+
+      # The worker count is the runner's, set in playwright.config.ts. Pinning it
+      # to one serialised 282s of measured CPU into a single lane.
+      - name: Mocked browser journeys
+        run: cd dashboard && npm test
+
+      - name: Upload browser failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure
+          path: |
+            dashboard/playwright-report
+            dashboard/test-results
+          include-hidden-files: true
+          if-no-files-found: warn
+
+  # The gates that guard the built product, run once against the binary the
+  # build job produced.
+  contracts:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Take the embedded bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: embedded-dashboard
+          path: src/internal/dashboard
+
+      - name: Take the server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: chrote-server
+
+      - name: Install dashboard and Chromium
+        run: |
+          npm ci --prefix dashboard
+          cd dashboard
+          npx playwright install --with-deps chromium
 
       - name: Source contracts
         run: |
@@ -71,13 +194,15 @@ jobs:
         env:
           CHROTE_CONTRACT_ARTIFACT_DIR: ${{ runner.temp }}/chrote-contract
           CHROTE_SERVER_BINARY: ${{ github.workspace }}/chrote-server-ci
-        run: ./scripts/test-built-server-contract.sh
+        run: |
+          chmod +x chrote-server-ci
+          ./scripts/test-built-server-contract.sh
 
       # Runs on every push, not only on installer changes. What this smoke
       # covers is the installed product -- its routes, its environment contract
       # and its unit -- so a server change that touches no installer file can
       # break it, and one did: 932b7831 left it red for two commits and nothing
-      # said so. It reuses the binary built above, so it costs seconds.
+      # said so. It reuses the binary the build job produced, so it costs seconds.
       - name: Public installer smoke on the built binary
         run: |
           # The runner image ships no tmux; the smoke creates and removes its
@@ -88,22 +213,39 @@ jobs:
           fi
           ./scripts/test-public-install.sh "$GITHUB_WORKSPACE/chrote-server-ci"
 
-      - name: Weekly dependency scans
-        if: github.event_name == 'schedule'
-        run: |
-          cd src
-          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
-          cd ../dashboard
-          npm audit --audit-level=moderate
-
-      - name: Upload browser failure artifacts
+      - name: Upload contract failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: quality-browser-failure
+          name: contract-failure
           path: |
             dashboard/playwright-report
             dashboard/test-results
             ${{ runner.temp }}/chrote-contract/server.log
           include-hidden-files: true
           if-no-files-found: warn
+
+  dependency-scans:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: src/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Weekly dependency scans
+        run: |
+          cd src
+          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+          cd ../dashboard
+          npm audit --audit-level=moderate

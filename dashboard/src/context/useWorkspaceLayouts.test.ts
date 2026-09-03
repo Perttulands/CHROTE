@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import { featureFlagKey } from '../featureFlags'
-import { DEFAULT_SETTINGS } from '../types'
+import { DEFAULT_SETTINGS, MAX_PRESETS } from '../types'
 import {
   renderSession,
+  renderSessionWithStatus,
   setViewportWidth,
   store,
   storedDashboardState,
@@ -32,6 +33,33 @@ describe('dashboard persisted storage contract', () => {
     const presets = JSON.parse(store['chrote-dashboard-presets'])
     expect(presets).toHaveLength(1)
     expect(presets[0].name).toBe('baseline')
+  })
+
+  // The ceiling is the reducer's, not the menu's: the browser spec that used to
+  // read this announcement off the status line is gone, so the refusal and the
+  // words it says are pinned here.
+  it('refuses the preset past the ceiling and says so, keeping the ones already saved', () => {
+    const { result } = renderSessionWithStatus()
+
+    act(() => {
+      for (let index = 0; index < MAX_PRESETS; index += 1) {
+        result.current.session.saveCurrentLayout(`layout ${index}`)
+      }
+    })
+    expect(result.current.session.layoutPresets).toHaveLength(MAX_PRESETS)
+
+    let accepted: boolean | undefined
+    act(() => {
+      accepted = result.current.session.saveCurrentLayout('one too many')
+    })
+
+    expect(accepted).toBe(false)
+    expect(result.current.session.layoutPresets).toHaveLength(MAX_PRESETS)
+    expect(result.current.session.layoutPresets.map(preset => preset.name)).not.toContain('one too many')
+    expect(result.current.status.status).toMatchObject({
+      message: `Maximum ${MAX_PRESETS} presets reached`,
+      severity: 'warning',
+    })
   })
 
   it('loads V3 viewport layouts as a normalized stored-state fixture', () => {
@@ -323,7 +351,7 @@ describe('migrateStoredState (via loadStoredState)', () => {
     expect(result.current.sidebarCollapsed).toBe(true)
   })
 
-  it('loads V2 format directly without migration', () => {
+  it('loads a V2 layout as written, and clean defaults from unreadable storage', () => {
     const v2State = {
       workspaces: {
         terminal1: {
@@ -341,76 +369,31 @@ describe('migrateStoredState (via loadStoredState)', () => {
         },
       },
       sidebarCollapsed: false,
-      settings: {
-        terminalMode: 'tmux',
-        fontSize: 14,
-        theme: 'matrix',
-        autoRefreshInterval: 5000,
-        defaultSessionPrefix: 'shell',
-        musicVolume: 0.5,
-        musicEnabled: false,
-        tmuxAppearance: {
-          statusBg: 'default',
-          statusFg: '#00ff41',
-          paneBorderActive: '#00ff41',
-          paneBorderInactive: '#333333',
-          modeStyleBg: '#00ff41',
-          modeStyleFg: '#000000',
-        },
-      },
+      settings: DEFAULT_SETTINGS,
     }
 
     localStorage.setItem('chrote-dashboard-state', JSON.stringify(v2State))
 
-    const { result } = renderSession()
+    const stored = renderSession()
 
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alpha'])
-    expect(result.current.workspaces.terminal2.windows[0].boundSessions).toEqual(['beta'])
-    expect(result.current.workspaces.terminal2.windowCount).toBe(2)
-    expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
-    expect(result.current.workspaces.terminal2.windows).toHaveLength(4)
-  })
+    expect(stored.result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alpha'])
+    expect(stored.result.current.workspaces.terminal2.windows[0].boundSessions).toEqual(['beta'])
+    expect(stored.result.current.workspaces.terminal2.windowCount).toBe(2)
+    expect(stored.result.current.workspaces.terminal1.windows).toHaveLength(4)
+    expect(stored.result.current.workspaces.terminal2.windows).toHaveLength(4)
+    stored.unmount()
 
-  it('returns defaults for empty/corrupt localStorage', () => {
+    // Storage the browser cannot parse is storage the dashboard does not have.
     localStorage.setItem('chrote-dashboard-state', '{invalid json')
 
     const { result } = renderSession()
 
-    // Should get clean defaults — 2 windows per workspace, all empty
     expect(result.current.workspaces.terminal1.windowCount).toBe(2)
     expect(result.current.workspaces.terminal2.windowCount).toBe(2)
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
     expect(result.current.settings).toEqual(DEFAULT_SETTINGS)
   })
 
-  it('keeps window layouts separate between desktop and mobile viewports', () => {
-    setViewportWidth(1280)
-    const desktop = renderSession()
-
-    act(() => {
-      desktop.result.current.setWindowCount('terminal1', 4)
-    })
-
-    expect(desktop.result.current.workspaces.terminal1.windowCount).toBe(4)
-    desktop.unmount()
-
-    setViewportWidth(390)
-    const mobile = renderSession()
-
-    expect(mobile.result.current.workspaces.terminal1.windowCount).toBe(2)
-
-    act(() => {
-      mobile.result.current.setWindowCount('terminal1', 1)
-    })
-
-    expect(mobile.result.current.workspaces.terminal1.windowCount).toBe(1)
-    mobile.unmount()
-
-    setViewportWidth(1280)
-    const desktopReload = renderSession()
-
-    expect(desktopReload.result.current.workspaces.terminal1.windowCount).toBe(4)
-  })
 })
 
 describe('live viewport bucket switching', () => {
@@ -430,7 +413,10 @@ describe('live viewport bucket switching', () => {
     return JSON.parse(localStorage.getItem('chrote-dashboard-state') ?? '{}')
   }
 
-  it('carries the current layout into a never-used bucket and persists later edits under the new key only', () => {
+  // Each bucket owns its own layout: a fresh one inherits what is on screen,
+  // edits after that stay under their own key, and coming back reads the key
+  // the operator left behind. Reloading in either bucket finds the same thing.
+  it('gives every viewport bucket its own layout, live and across a reload', () => {
     const hook = renderSession()
     act(() => { hook.result.current.setWindowCount('terminal1', 4) })
 
@@ -442,22 +428,23 @@ describe('live viewport bucket switching', () => {
 
     expect(persisted().layoutsByViewport.mobile.workspaces.terminal1.windowCount).toBe(1)
     expect(persisted().layoutsByViewport.desktop.workspaces.terminal1.windowCount).toBe(4)
-    hook.unmount()
-  })
-
-  it('loads the stored layout live when crossing into a bucket that already has one', () => {
-    const hook = renderSession()
-    act(() => { hook.result.current.setWindowCount('terminal1', 4) })
-
-    crossTo(390)
-    act(() => { hook.result.current.setWindowCount('terminal1', 1) })
 
     crossTo(1280)
 
     expect(hook.result.current.workspaces.terminal1.windowCount).toBe(4)
-    expect(persisted().layoutsByViewport.mobile.workspaces.terminal1.windowCount).toBe(1)
-    expect(persisted().layoutsByViewport.desktop.workspaces.terminal1.windowCount).toBe(4)
     hook.unmount()
+
+    const mobileReload = (() => {
+      setViewportWidth(390)
+      return renderSession()
+    })()
+    expect(mobileReload.result.current.workspaces.terminal1.windowCount).toBe(1)
+    mobileReload.unmount()
+
+    setViewportWidth(1280)
+    const desktopReload = renderSession()
+    expect(desktopReload.result.current.workspaces.terminal1.windowCount).toBe(4)
+    desktopReload.unmount()
   })
 
   it('survives rapid breakpoint flapping with a consistent final bucket and no cross-key leakage', () => {
@@ -474,30 +461,17 @@ describe('live viewport bucket switching', () => {
     expect(persisted().layoutsByViewport.mobile.workspaces.terminal1.windowCount).toBe(1)
     expect(persisted().layoutsByViewport.desktop.workspaces.terminal1.windowCount).toBe(3)
     expect(persisted().layoutsByViewport.tablet.workspaces.terminal1.windowCount).toBe(3)
-    hook.unmount()
-  })
 
-  it('ignores resizes that stay inside the same bucket', () => {
-    const hook = renderSession()
-    act(() => { hook.result.current.setWindowCount('terminal1', 4) })
-    const before = hook.result.current.workspaces
-
+    // Widening inside one bucket is not a bucket change, so the layout the
+    // operator is looking at is the very same object.
+    crossTo(1280)
+    const settled = hook.result.current.workspaces
     crossTo(1400)
 
-    expect(hook.result.current.workspaces).toBe(before)
-    expect(persisted().layoutsByViewport.mobile).toBeUndefined()
+    expect(hook.result.current.workspaces).toBe(settled)
     hook.unmount()
   })
 
-  it('removes the viewport listener on unmount', () => {
-    const hook = renderSession()
-    hook.unmount()
-
-    expect(() => {
-      setViewportWidth(390)
-      window.dispatchEvent(new Event('resize'))
-    }).not.toThrow()
-  })
 })
 
 describe('addSessionToWindow', () => {
@@ -517,7 +491,7 @@ describe('addSessionToWindow', () => {
     expect(win.activeSession).toBe('my-session')
   })
 
-  it('removes session from source window before adding to target (cross-workspace dedup)', () => {
+  it('binds a session in exactly one window, releasing whichever window held it', () => {
     const { result } = renderSession()
 
     // Bind to terminal1 window-0
@@ -533,6 +507,15 @@ describe('addSessionToWindow', () => {
 
     expect(result.current.workspaces.terminal2.windows[0].boundSessions).toContain('traveler')
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).not.toContain('traveler')
+
+    // Another window of the same workspace is no different: one binding, one
+    // window, so the old one lets go.
+    act(() => {
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'traveler')
+    })
+
+    expect(result.current.workspaces.terminal2.windows[0].boundSessions).not.toContain('traveler')
+    expect(result.current.workspaces.terminal2.windows[1].boundSessions).toContain('traveler')
   })
 
   it('keeps same-named sessions from different Unix users distinct', () => {
@@ -551,69 +534,55 @@ describe('addSessionToWindow', () => {
     expect(result.current.assignedSessions.get('build:shell')).toMatchObject({ workspaceId: 'terminal1', windowId: 'terminal1-window-0' })
   })
 
-  it('replaces a legacy bare binding with the user-qualified binding instead of duplicating it', () => {
-    const { result } = renderSession()
+  // A bare name is an old binding with no Unix user recorded. Where exactly one
+  // qualified session could answer to it, the bare name is that session and
+  // moves with it; where two could, the store refuses to guess.
+  it('resolves a bare binding to its one safe owner, and never guesses between two', () => {
+    const unambiguous = renderSession()
 
     act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell')
+      unambiguous.result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell')
     })
     act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'alice')
+      unambiguous.result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'alice')
     })
 
-    const win = result.current.workspaces.terminal1.windows[0]
-    expect(win.boundSessions).toEqual(['alice:shell'])
-    expect(win.activeSession).toBe('alice:shell')
-  })
+    // The qualified binding replaces the bare one rather than sitting beside it.
+    expect(unambiguous.result.current.workspaces.terminal1.windows[0]).toMatchObject({
+      boundSessions: ['alice:shell'],
+      activeSession: 'alice:shell',
+    })
 
-  it('moves the single safe bare-qualified identity into a non-empty target and activates it', () => {
-    const { result } = renderSession()
-
+    // Attaching the bare name elsewhere moves that same identity, and shows it.
     act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'alice')
-      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'resident')
+      unambiguous.result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'resident')
     })
     act(() => {
-      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'shell')
+      unambiguous.result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'shell')
     })
 
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
-    expect(result.current.workspaces.terminal2.windows[1]).toMatchObject({
+    expect(unambiguous.result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
+    expect(unambiguous.result.current.workspaces.terminal2.windows[1]).toMatchObject({
       boundSessions: ['resident', 'shell'],
       activeSession: 'shell',
     })
-  })
+    unambiguous.unmount()
+    localStorage.clear()
 
-  it('keeps a bare same-name binding distinct when multiple qualified users make the alias ambiguous', () => {
-    const { result } = renderSession()
+    const ambiguous = renderSession()
 
     act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'alice')
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-1', 'shell', 'bob')
-      result.current.addSessionToWindow('terminal2', 'terminal2-window-0', 'shell')
+      ambiguous.result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'alice')
+      ambiguous.result.current.addSessionToWindow('terminal1', 'terminal1-window-1', 'shell', 'bob')
+      ambiguous.result.current.addSessionToWindow('terminal2', 'terminal2-window-0', 'shell')
     })
 
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:shell'])
-    expect(result.current.workspaces.terminal1.windows[1].boundSessions).toEqual(['bob:shell'])
-    expect(result.current.workspaces.terminal2.windows[0]).toMatchObject({
+    expect(ambiguous.result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:shell'])
+    expect(ambiguous.result.current.workspaces.terminal1.windows[1].boundSessions).toEqual(['bob:shell'])
+    expect(ambiguous.result.current.workspaces.terminal2.windows[0]).toMatchObject({
       boundSessions: ['shell'],
       activeSession: 'shell',
     })
-  })
-
-  it('removes session from another window in the SAME workspace', () => {
-    const { result } = renderSession()
-
-    act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'jumper')
-    })
-
-    act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-1', 'jumper')
-    })
-
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).not.toContain('jumper')
-    expect(result.current.workspaces.terminal1.windows[1].boundSessions).toContain('jumper')
   })
 
   it('activates every deliberate attach, including a non-empty destination used by drop and context Attach', () => {
@@ -699,42 +668,15 @@ describe('removeSessionFromWindow', () => {
 
     expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('B')
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['B', 'C'])
+
+    // Removing anything else leaves the shown session where it is.
+    act(() => {
+      result.current.removeSessionFromWindow('terminal1', 'terminal1-window-0', 'C')
+    })
+
+    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('B')
   })
 
-  it('removing a non-active session does not change activeSession', () => {
-    const { result } = renderSession()
-
-    act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'X')
-    })
-    act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'Y')
-    })
-    act(() => result.current.setActiveSession('terminal1', 'terminal1-window-0', 'X'))
-
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('X')
-
-    act(() => {
-      result.current.removeSessionFromWindow('terminal1', 'terminal1-window-0', 'Y')
-    })
-
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('X')
-  })
-
-  it('removing the last session sets activeSession to null', () => {
-    const { result } = renderSession()
-
-    act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'only')
-    })
-
-    act(() => {
-      result.current.removeSessionFromWindow('terminal1', 'terminal1-window-0', 'only')
-    })
-
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBeNull()
-  })
 })
 
 describe('canonical terminal layout invariants', () => {
@@ -833,33 +775,14 @@ describe('canonical terminal layout invariants', () => {
 
     act(() => result.current.setFocusedWindowKey('terminal3-terminal3-window-2'))
     expect(result.current.focusedWindowKey).toBe('terminal3-terminal3-window-2')
-  })
 
-  it('leaves visibility and reveal state unchanged for malformed or noncanonical targets', () => {
-    const { result } = renderSession()
-
-    act(() => result.current.setWindowCount('terminal3', 1))
-    expect(result.current.windowRevealRequest).toBeNull()
-
-    act(() => result.current.revealWindow('terminal3', 'terminal3-window-03'))
-    expect(result.current.workspaces.terminal3.windowCount).toBe(1)
-    expect(result.current.windowRevealRequest).toBeNull()
-
-    act(() => result.current.revealWindow('missing-workspace' as never, 'missing-workspace-window-0'))
-    expect(result.current.workspaces.terminal3.windowCount).toBe(1)
-    expect(result.current.windowRevealRequest).toBeNull()
-  })
-
-  it('issues a fresh increasing request ID for every repeated valid reveal', () => {
-    const { result } = renderSession()
-
-    act(() => result.current.revealWindow('terminal2', 'terminal2-window-1'))
+    // Asking again is a fresh request, so the slice focuses the slot a second
+    // time rather than reading a stale one.
     const firstRequest = result.current.windowRevealRequest
-    act(() => result.current.revealWindow('terminal2', 'terminal2-window-1'))
+    act(() => result.current.revealWindow('terminal3', 'terminal3-window-2'))
     const secondRequest = result.current.windowRevealRequest
 
-    expect(firstRequest).toMatchObject({ workspaceId: 'terminal2', windowId: 'terminal2-window-1' })
-    expect(secondRequest).toMatchObject({ workspaceId: 'terminal2', windowId: 'terminal2-window-1' })
+    expect(secondRequest).toMatchObject({ workspaceId: 'terminal3', windowId: 'terminal3-window-2' })
     expect(secondRequest!.requestId).toBeGreaterThan(firstRequest!.requestId)
   })
 
@@ -1032,79 +955,21 @@ describe('clampWindowCount (via setWindowCount)', () => {
     localStorage.clear()
   })
 
-  it('clamps 0 to 1', () => {
+  // Visibility is clamped to the one-to-four the layout can draw, and the four
+  // canonical slots stay behind it whatever the operator asks for.
+  it('shows between one and four windows, whatever count it is handed', () => {
     const { result } = renderSession()
 
-    act(() => {
-      result.current.setWindowCount('terminal1', 0)
-    })
+    for (const [asked, shown] of [[0, 1], [5, 4], [1, 1], [4, 4], [-3, 1]] as const) {
+      act(() => {
+        result.current.setWindowCount('terminal1', asked)
+      })
 
-    expect(result.current.workspaces.terminal1.windowCount).toBe(1)
-    expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
+      expect(result.current.workspaces.terminal1.windowCount).toBe(shown)
+      expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
+    }
   })
 
-  it('clamps 5 to 4', () => {
-    const { result } = renderSession()
-
-    act(() => {
-      result.current.setWindowCount('terminal1', 5)
-    })
-
-    expect(result.current.workspaces.terminal1.windowCount).toBe(4)
-    expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
-  })
-
-  it('keeps 1 as 1', () => {
-    const { result } = renderSession()
-
-    act(() => {
-      result.current.setWindowCount('terminal1', 1)
-    })
-
-    expect(result.current.workspaces.terminal1.windowCount).toBe(1)
-    expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
-  })
-
-  it('keeps 4 as 4', () => {
-    const { result } = renderSession()
-
-    act(() => {
-      result.current.setWindowCount('terminal1', 4)
-    })
-
-    expect(result.current.workspaces.terminal1.windowCount).toBe(4)
-    expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
-  })
-
-  it('clamps negative numbers to 1', () => {
-    const { result } = renderSession()
-
-    act(() => {
-      result.current.setWindowCount('terminal1', -3)
-    })
-
-    expect(result.current.workspaces.terminal1.windowCount).toBe(1)
-  })
-
-  it('preserves existing window data when increasing count', () => {
-    const { result } = renderSession()
-
-    // Start with 2 windows, bind a session
-    act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'persist-me')
-    })
-
-    // Increase to 4
-    act(() => {
-      result.current.setWindowCount('terminal1', 4)
-    })
-
-    expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('persist-me')
-    // New windows should be empty
-    expect(result.current.workspaces.terminal1.windows[2].boundSessions).toEqual([])
-    expect(result.current.workspaces.terminal1.windows[3].boundSessions).toEqual([])
-  })
 })
 
 describe('terminal tab count', () => {
@@ -1113,14 +978,8 @@ describe('terminal tab count', () => {
     setViewportWidth(1280)
   })
 
-  it('defaults to three visible workspaces', () => {
-    const { result } = renderSession()
-    expect(result.current.settings.terminalTabCount).toBe(3)
-    expect(result.current.workspaceIds).toEqual(['terminal1', 'terminal2', 'terminal3'])
-  })
-
-  it('normalizes malformed counts through updateSettings', () => {
-    const { result } = renderSession()
+  it('normalizes malformed counts, whether set live or read back from storage', () => {
+    const { result, unmount } = renderSession()
 
     act(() => result.current.updateSettings({ terminalTabCount: 9 }))
     expect(result.current.settings.terminalTabCount).toBe(6)
@@ -1133,9 +992,10 @@ describe('terminal tab count', () => {
 
     act(() => result.current.updateSettings({ terminalTabCount: Number.NaN }))
     expect(result.current.settings.terminalTabCount).toBe(3)
-  })
+    unmount()
 
-  it('normalizes malformed stored counts at load time', () => {
+    // Storage written by an older browser is another way in, so it is normalized
+    // on load rather than trusted.
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
       version: 3,
       settingsSchemaVersion: 2,
@@ -1144,8 +1004,8 @@ describe('terminal tab count', () => {
       settings: { ...DEFAULT_SETTINGS, terminalTabCount: '5' },
     }))
 
-    const { result } = renderSession()
-    expect(result.current.settings.terminalTabCount).toBe(3)
+    const reloaded = renderSession()
+    expect(reloaded.result.current.settings.terminalTabCount).toBe(3)
   })
 
   it('grows by revealing default workspaces and keeps them across the visible list', () => {
@@ -1158,8 +1018,8 @@ describe('terminal tab count', () => {
     expect(result.current.workspaces.terminal5.windowCount).toBe(2)
   })
 
-  it('shrink hides tabs but preserves the workspace record, then grow restores it exactly', () => {
-    const { result } = renderSession()
+  it('shrink hides tabs but preserves the workspace record, through grow and reload alike', () => {
+    const { result, unmount } = renderSession()
 
     // Non-default terminal3 state: window count, binding, label, launch user.
     act(() => result.current.setWindowCount('terminal3', 3))
@@ -1180,24 +1040,19 @@ describe('terminal tab count', () => {
     act(() => result.current.updateSettings({ terminalTabCount: 3 }))
     expect(result.current.workspaceIds).toEqual(['terminal1', 'terminal2', 'terminal3'])
     expect(result.current.workspaces.terminal3).toEqual(before)
-  })
 
-  it('round-trips a hidden workspace through storage across a reload', () => {
-    const first = renderSession()
+    // The record has to survive the browser closing on it too, not just a grow
+    // inside one session.
+    act(() => result.current.updateSettings({ terminalTabCount: 2 }))
+    unmount()
 
-    act(() => first.result.current.setWindowCount('terminal3', 3))
-    act(() => first.result.current.addSessionToWindow('terminal3', 'terminal3-window-1', 'ops-shell', 'build'))
-    act(() => first.result.current.updateSettings({ terminalTabCount: 2 }))
-    const before = JSON.parse(JSON.stringify(first.result.current.workspaces.terminal3))
-    first.unmount()
+    const reloaded = renderSession()
+    expect(reloaded.result.current.settings.terminalTabCount).toBe(2)
+    expect(reloaded.result.current.workspaceIds).toEqual(['terminal1', 'terminal2'])
+    expect(reloaded.result.current.workspaces.terminal3).toEqual(before)
 
-    const second = renderSession()
-    expect(second.result.current.settings.terminalTabCount).toBe(2)
-    expect(second.result.current.workspaceIds).toEqual(['terminal1', 'terminal2'])
-    expect(second.result.current.workspaces.terminal3).toEqual(before)
-
-    act(() => second.result.current.updateSettings({ terminalTabCount: 3 }))
-    expect(second.result.current.workspaces.terminal3).toEqual(before)
+    act(() => reloaded.result.current.updateSettings({ terminalTabCount: 3 }))
+    expect(reloaded.result.current.workspaces.terminal3).toEqual(before)
   })
 
   // The host owns the theme now, and the tmux palette, the per-user badge

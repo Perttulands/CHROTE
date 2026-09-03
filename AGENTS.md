@@ -38,6 +38,8 @@ Stage only files owned by the active Bead. Preserve unrelated work already prese
 
 ## Validation
 
+`docs/TEST_STRATEGY.md` states the rule a test must satisfy to earn its place, which layer owns which behaviour, and how these gates are split across CI; read it before adding or deleting a test.
+
 Run the gates relevant to the changed area:
 
 ```bash

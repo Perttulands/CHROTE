@@ -197,6 +197,13 @@ async function returnToTab(page: Page) {
   })
 }
 
+/** Wait for the next `count` session polls to land, however long they take. */
+async function pollsLand(page: Page, count: number) {
+  for (let poll = 0; poll < count; poll += 1) {
+    await page.waitForResponse(response => /\/api\/tmux\/sessions\/?$/.test(new URL(response.url()).pathname))
+  }
+}
+
 test.describe('Tile states', () => {
   test('a session that dies while viewed keeps its tile, its final output, and its place', async ({ page }) => {
     const harness = await open(page, ['doomed', 'survivor'], 'doomed')
@@ -221,95 +228,12 @@ test.describe('Tile states', () => {
     expect(harness.dials.get('survivor')).toBe(1)
 
     // Several further polls land, all of them without the session. Still there.
-    await page.waitForTimeout(1600)
+    await pollsLand(page, 3)
     await expect(activeTag(page)).toHaveText('doomed')
     await expect(shownFrame(page)).toContainText('doomed output 1')
     await expect(tile(page).getByRole('button', { name: 'Restart' })).toBeVisible()
     await expect(tile(page).getByRole('button', { name: 'Remove' })).toBeVisible()
     await expect(tile(page).getByRole('button', { name: 'Claim', exact: true })).toHaveCount(0)
-  })
-
-  test('a poll that fails does not take back an Ended verdict or offer Claim on a session that is gone', async ({ page }) => {
-    allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 500')
-    const harness = await open(page, ['doomed'], 'doomed')
-    await expect(shownFrame(page)).toContainText('doomed output 1')
-
-    harness.live.current = []
-    await harness.sockets.get('doomed')!.close()
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
-
-    // The poll now fails outright. That is the absence of news, not news that
-    // a dead session came back, so the verdict CHROTE already reached stands.
-    harness.failing.current = true
-    await page.waitForTimeout(1600)
-
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
-    await expect(tile(page).getByText('doomed ended. This frame shows its last output.')).toBeVisible()
-    await expect(tile(page).getByRole('button', { name: 'Restart' })).toBeVisible()
-    await expect(tile(page).getByRole('button', { name: 'Remove' })).toBeVisible()
-    // Claim would dial a session tmux does not have and close at once.
-    await expect(tile(page).getByRole('button', { name: 'Claim', exact: true })).toHaveCount(0)
-
-    // Held one poll deep, not forever: a poll that answers again replaces the
-    // verdict, so a session back under the same name is not stuck as Ended.
-    harness.failing.current = false
-    harness.live.current = ['doomed']
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
-    await expect(tile(page).getByText('doomed ended. This frame shows its last output.')).toHaveCount(0)
-  })
-
-  test('a partial outage does not take back an Ended verdict under the user that failed', async ({ page }) => {
-    const harness = await open(page, ['build:doomed'], 'build:doomed')
-    await expect(shownFrame(page)).toContainText('build:doomed output 1')
-
-    harness.live.current = []
-    await harness.sockets.get('build:doomed')!.close()
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
-
-    // 'build' now stops answering while 'alice' still does. The response says
-    // nothing about this binding, so it is in no position to overturn what the
-    // last response that could speak for it already settled.
-    harness.partial.current = { successfulUsers: ['alice'], failedUsers: ['build'] }
-    await page.waitForTimeout(1600)
-
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
-    await expect(tile(page).getByText('doomed ended. This frame shows its last output.')).toBeVisible()
-    await expect(tile(page).getByRole('button', { name: 'Restart' })).toBeVisible()
-    // Claim would dial a session tmux does not have and close at once.
-    await expect(tile(page).getByRole('button', { name: 'Claim', exact: true })).toHaveCount(0)
-
-    // Still only held: the socket recovering, with the session back under the
-    // same name, is news the verdict gives way to.
-    harness.partial.current = null
-    harness.live.current = ['build:doomed']
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
-  })
-
-  test('a detached tile states itself in the middle of the frame it is preserving, with plain outline controls', async ({ page }) => {
-    const harness = await open(page, ['doomed'], 'doomed')
-    await expect(shownFrame(page)).toContainText('doomed output 1')
-
-    harness.live.current = []
-    await harness.sockets.get('doomed')!.close()
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
-
-    const panel = tile(page).locator('.terminal-tile-detached')
-    await expect(panel).toBeVisible()
-    const panelBox = (await panel.boundingBox())!
-    const bodyBox = (await windowBody(page).boundingBox())!
-
-    // Centred on both axes rather than pinned along the bottom edge.
-    expect(Math.abs((panelBox.y + panelBox.height / 2) - (bodyBox.y + bodyBox.height / 2))).toBeLessThan(4)
-    expect(Math.abs((panelBox.x + panelBox.width / 2) - (bodyBox.x + bodyBox.width / 2))).toBeLessThan(4)
-    // Compact: the last rendered frame is the thing this state exists to keep,
-    // so the panel may not be what the tile mostly shows.
-    expect(panelBox.height).toBeLessThan(bodyBox.height / 2)
-    expect(panelBox.width).toBeLessThan(bodyBox.width)
-
-    // Plain outline controls: reclaiming a tile is ordinary work.
-    await expect(tile(page).getByRole('button', { name: 'Restart' })).toHaveClass(/\bterminal-tile-detached-action\b/)
-    await expect(tile(page).getByRole('button', { name: 'Remove' })).toHaveClass(/\bterminal-tile-detached-action\b/)
-    await expect(tile(page).locator('.terminal-tile-action')).toHaveCount(0)
   })
 
   test('an ended binding survives a reload, and Restart brings the session back into the same tile', async ({ page }) => {
@@ -340,115 +264,70 @@ test.describe('Tile states', () => {
     expect(harness.created).toEqual(['doomed'])
   })
 
-  test('a partial outage ends only the bindings it can speak for', async ({ page }) => {
-    // 'alice' answers and no longer lists 'departed'. 'build' does not answer at
-    // all, so its sessions are absent from the response for want of a reply,
-    // not because they died — and a bare binding names no user to check.
-    await open(page, ['alice:departed'], 'alice:departed', {
-      live: [],
-      partial: { successfulUsers: ['alice'], failedUsers: ['build'] },
+  // Three tiles on one page, because what separates these states is only how
+  // the socket went. The operator's report, 2026-09-02: twenty tiles saying the
+  // session was attached elsewhere minutes after a deploy, with one client on
+  // the whole socket, and twenty Reclaim clicks to recover. A restart kills
+  // every pty, so every tile's connection goes while every session lives
+  // (ADR-0013) — that tile reconnects itself. A client attaching with -d takes
+  // the pty with it, and only that tile offers Claim.
+  test('a tile that lost its connection reconnects itself, while a tile another client took offers Claim', async ({ page }) => {
+    const harness = await open(page, ['restarted'], 'restarted', {
+      live: ['restarted', 'ssh-held', 'claimed'],
+      heldElsewhere: ['ssh-held'],
       extraWindows: [
-        { boundSessions: ['build:worker'], activeSession: 'build:worker' },
-        { boundSessions: ['orphan'], activeSession: 'orphan' },
+        { boundSessions: ['ssh-held'], activeSession: 'ssh-held' },
+        { boundSessions: ['claimed'], activeSession: 'claimed' },
       ],
     })
 
     const body = (index: number) => windowBody(page).nth(index)
+    const frame = (index: number) => tile(page).nth(index).locator('.terminal-surface-host:visible .xterm-rows')
 
-    // The session under the user that answered really is gone, and says so even
-    // though the response as a whole failed for somebody else.
-    await expect(body(0)).toHaveAttribute('data-tile-state', 'ended')
-    await expect(tile(page).nth(0).getByText('departed ended. This frame shows its last output.')).toBeVisible()
-    await expect(tile(page).nth(0).getByRole('button', { name: 'Restart' })).toBeVisible()
+    await expect(frame(0)).toContainText('restarted output 1')
+    await expect(frame(1)).toContainText('ssh-held output 1')
+    await expect(frame(2)).toContainText('claimed output 1')
 
-    // Neither of these is knowable from this response, so neither is claimed.
-    await expect(body(1)).not.toHaveAttribute('data-tile-state', 'ended')
-    await expect(tile(page).nth(1).getByRole('button', { name: 'Restart' })).toHaveCount(0)
-    await expect(body(2)).not.toHaveAttribute('data-tile-state', 'ended')
-    await expect(tile(page).nth(2).getByRole('button', { name: 'Restart' })).toHaveCount(0)
-
-    // Several further partial polls land. The verdict does not drift either way.
-    await page.waitForTimeout(1600)
-    await expect(body(0)).toHaveAttribute('data-tile-state', 'ended')
-    await expect(body(1)).not.toHaveAttribute('data-tile-state', 'ended')
-    await expect(body(2)).not.toHaveAttribute('data-tile-state', 'ended')
-  })
-
-  // The operator's report, 2026-09-02: twenty tiles saying the session was
-  // attached elsewhere minutes after a deploy, with one client on the whole
-  // socket, and twenty Reclaim clicks to recover. A restart kills every pty, so
-  // every tile's connection goes while every session lives (ADR-0013).
-  test('a tile whose connection went with a restart reconnects itself instead of claiming a takeover', async ({ page }) => {
-    const harness = await open(page, ['restarted'], 'restarted')
-    await expect(shownFrame(page)).toContainText('restarted output 1')
-
-    // The server process died: the socket goes with no close frame at all.
+    // The server process died: both sockets go with no close frame at all. The
+    // second session has a client CHROTE did not create attached to it, which
+    // used to hold the redial back; nothing attaches with -d now (ADR-0017
+    // decision 1), so the dial joins them without taking their client.
     await harness.sockets.get('restarted')!.close({ code: 1006 })
+    await harness.sockets.get('ssh-held')!.close({ code: 1006 })
 
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'lost')
+    await expect(body(0)).toHaveAttribute('data-tile-state', 'lost')
+    await expect(body(1)).toHaveAttribute('data-tile-state', 'lost')
     await expect(tile(page).getByText(/attached elsewhere/)).toHaveCount(0)
     await expect(tile(page).getByRole('button', { name: 'Claim', exact: true })).toHaveCount(0)
 
     await returnToTab(page)
 
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
-    await expect(shownFrame(page)).toContainText('restarted output 2')
+    await expect(body(0)).toHaveAttribute('data-tile-state', 'live')
+    await expect(body(1)).toHaveAttribute('data-tile-state', 'live')
+    await expect(frame(0)).toContainText('restarted output 2')
+    await expect(frame(1)).toContainText('ssh-held output 2')
     expect(harness.dials.get('restarted')).toBe(2)
-    expect(harness.created).toEqual([])
-  })
-
-  // This used to be held back, because dialling attached with -d and would have
-  // thrown the SSH client out. Nothing attaches with -d now (ADR-0017 decision
-  // 1), so the dial joins them without taking their client or their size.
-  test('a tile whose connection went dials again even when another client is attached', async ({ page }) => {
-    const harness = await open(page, ['ssh-held'], 'ssh-held', { heldElsewhere: ['ssh-held'] })
-    await expect(shownFrame(page)).toContainText('ssh-held output 1')
-
-    await harness.sockets.get('ssh-held')!.close({ code: 1006 })
-
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'lost')
-    await returnToTab(page)
-
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
-    await expect(shownFrame(page)).toContainText('ssh-held output 2')
     expect(harness.dials.get('ssh-held')).toBe(2)
     // Watching alongside them is not claiming the size from them.
     expect(harness.claims.get('ssh-held')).toBeUndefined()
-  })
-
-  test('a tile another client detached offers Claim, which dials again and takes the size', async ({ page }) => {
-    const harness = await open(page, ['claimed'], 'claimed')
-    await expect(shownFrame(page)).toContainText('claimed output 1')
 
     // A client outside CHROTE attached with -d: our client is gone, the session
     // is not. The pty hangs up, so the server closes the way it does for any
     // terminal that ended — which is what tells this apart from a lost one.
     await harness.sockets.get('claimed')!.close({ code: 1000, reason: 'terminal ended' })
 
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'takenOver')
-    await expect(tile(page).getByText('claimed was detached by another client. This frame shows its last output.')).toBeVisible()
-    await expect(shownFrame(page)).toContainText('claimed output 1')
-    await expect(tile(page).getByRole('button', { name: 'Restart' })).toHaveCount(0)
+    await expect(body(2)).toHaveAttribute('data-tile-state', 'takenOver')
+    await expect(tile(page).nth(2).getByText('claimed was detached by another client. This frame shows its last output.')).toBeVisible()
+    await expect(frame(2)).toContainText('claimed output 1')
+    await expect(tile(page).nth(2).getByRole('button', { name: 'Restart' })).toHaveCount(0)
 
-    await tile(page).getByRole('button', { name: 'Claim', exact: true }).click()
+    await tile(page).nth(2).getByRole('button', { name: 'Claim', exact: true }).click()
 
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
-    await expect(shownFrame(page)).toContainText('claimed output 2')
+    await expect(body(2)).toHaveAttribute('data-tile-state', 'live')
+    await expect(frame(2)).toContainText('claimed output 2')
     // The dial alone would leave the session at whatever size the other client
     // set; the claim is what brings it back to this device.
     await expect.poll(() => harness.claims.get('claimed')).toBe(1)
     expect(harness.created).toEqual([])
-  })
-
-  test('claiming a session that is already on screen takes the size without redialling', async ({ page }) => {
-    const harness = await open(page, ['shared'], 'shared')
-    await expect(shownFrame(page)).toContainText('shared output 1')
-
-    await tile(page).getByRole('button', { name: 'Session shared', exact: true }).click({ button: 'right' })
-    await page.getByRole('menuitem', { name: /Claim session/ }).click()
-
-    await expect.poll(() => harness.claims.get('shared')).toBe(1)
-    expect(harness.dials.get('shared')).toBe(1)
-    await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
   })
 })

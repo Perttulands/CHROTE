@@ -21,7 +21,26 @@ test('built server serves embedded assets and preserves terminal and Files workf
   expect(scriptResponse.headers()['content-type']).toMatch(/javascript/)
   expect((await scriptResponse.body()).byteLength).toBeGreaterThan(1000)
 
+  // Both faces come from this host. The mocked suite could only prove the dev
+  // server served them; only the built binary answers for what ships, so the
+  // check lives here.
+  const externalRequests: string[] = []
+  page.on('request', request => {
+    const requested = new URL(request.url())
+    if (requested.host !== new URL(indexResponse.url()).host) externalRequests.push(request.url())
+  })
+
   await page.goto('/')
+
+  expect(externalRequests, 'no request may leave this host').toEqual([])
+  const bodyFont = await page.evaluate(() => getComputedStyle(document.body).fontFamily)
+  expect(bodyFont).toContain('JetBrains Mono')
+  expect(bodyFont).toContain('CHROTE Term Symbols')
+  for (const face of ['JetBrainsMono-Regular.woff2', 'JetBrainsMono-Bold.woff2', 'chrote-term-symbols.woff2']) {
+    const fontResponse = await request.get(`/fonts/${face}`)
+    expect(fontResponse.status(), face).toBe(200)
+  }
+
   await page.getByRole('button', { name: 'Terminal', exact: true }).click()
   const terminal1Dock = page.locator('.terminal-workspace-dock[data-workspace="terminal1"][data-active="true"]')
   await terminal1Dock.getByRole('button', { name: 'Sessions sidecar' }).click()

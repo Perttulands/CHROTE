@@ -30,47 +30,82 @@ func postCreateSession(t *testing.T, handler *TmuxHandler, body string) *httptes
 	return recorder
 }
 
+// Launching a harness is one create followed by one typed line and one Enter,
+// on the socket and in the folder the request named. The whole argv is compared
+// because the typed line is what the operator ends up staring at, and a
+// requested flags line has to replace the harness defaults rather than join them.
 func TestCreateSessionStartsHarnessInRequestedFolder(t *testing.T) {
-	_, argsPath := installFakeTmux(t)
-	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/srv/default-work")
+	for _, testCase := range []struct {
+		name        string
+		body        string
+		session     string
+		wantCwd     string
+		wantHarness string
+		wantTyped   string
+		wantFlags   string
+	}{
+		{
+			name:        "a named folder and the harness's own default flags",
+			body:        `{"name":"claude-2","cwd":"/srv/work/one","harness":"claude-code"}`,
+			session:     "claude-2",
+			wantCwd:     "/srv/work/one",
+			wantHarness: "claude-code",
+			wantTyped:   "claude --harness-flag",
+			wantFlags:   "--harness-flag",
+		},
+		{
+			name:        "a requested line replaces the harness defaults",
+			body:        `{"name":"claude-3","harness":"claude-code","flags":"--model fast --verbose"}`,
+			session:     "claude-3",
+			wantCwd:     "/srv/default-work",
+			wantHarness: "claude-code",
+			wantTyped:   "claude --model fast --verbose",
+			wantFlags:   "--model fast --verbose",
+		},
+		{
+			name:        "an empty line types the binary alone",
+			body:        `{"name":"claude-4","harness":"claude-code","flags":""}`,
+			session:     "claude-4",
+			wantCwd:     "/srv/default-work",
+			wantHarness: "claude-code",
+			wantTyped:   "claude",
+			wantFlags:   "",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, argsPath := installFakeTmux(t)
+			t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
+			t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/srv/default-work")
 
-	handler := NewTmuxHandlerWithLaunchConfig(launchTestConfig(t))
-	recorder := postCreateSession(t, handler, `{"name":"claude-2","cwd":"/srv/work/one","harness":"claude-code"}`)
+			handler := NewTmuxHandlerWithLaunchConfig(launchTestConfig(t))
+			recorder := postCreateSession(t, handler, testCase.body)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	want := []string{
-		"-S /tmp/tmux-a new-session -d -P -F #{session_id} -e CHROTE_CREATION_TOKEN=<token> -s claude-2 -c /srv/work/one",
-		"-S /tmp/tmux-a -C attach-session -t $42",
-		"-S /tmp/tmux-a set-option -g mouse on",
-		"-S /tmp/tmux-a unbind-key -q -n MouseDown3Pane",
-		"-S /tmp/tmux-a unbind-key -q -n MouseDown3Status",
-		"-S /tmp/tmux-a unbind-key -q -n MouseDown3StatusLeft",
-		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3Pane",
-		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3Status",
-		"-S /tmp/tmux-a unbind-key -q -n M-MouseDown3StatusLeft",
-		"-S /tmp/tmux-a send-keys -t $42 -l claude --harness-flag",
-		"-S /tmp/tmux-a send-keys -t $42 Enter",
-	}
-	got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath))
-	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("tmux calls = %#v, want %#v", got, want)
-	}
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+			want := append(tmuxCreationCalls("/tmp/tmux-a", testCase.session, testCase.wantCwd, "on"),
+				"-S /tmp/tmux-a send-keys -t $42 -l "+testCase.wantTyped,
+				"-S /tmp/tmux-a send-keys -t $42 Enter",
+			)
+			got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath))
+			if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+				t.Fatalf("tmux calls = %#v, want %#v", got, want)
+			}
 
-	var response map[string]any
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode create response: %v; body=%s", err, recorder.Body.String())
-	}
-	if response["cwd"] != "/srv/work/one" || response["harness"] != "claude-code" {
-		t.Fatalf("response = %#v, want cwd /srv/work/one and harness claude-code", response)
-	}
-	if response["flags"] != "--harness-flag" {
-		t.Fatalf("response = %#v, want the harness's default flags reported back", response)
-	}
-	if _, warned := response["warning"]; warned {
-		t.Fatalf("response warned about a command that was sent: %#v", response)
+			var response map[string]any
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode create response: %v; body=%s", err, recorder.Body.String())
+			}
+			if response["cwd"] != testCase.wantCwd || response["harness"] != testCase.wantHarness {
+				t.Fatalf("response = %#v, want cwd %q and harness %q", response, testCase.wantCwd, testCase.wantHarness)
+			}
+			if response["flags"] != testCase.wantFlags {
+				t.Fatalf("response = %#v, want flags %q reported back", response, testCase.wantFlags)
+			}
+			if _, warned := response["warning"]; warned {
+				t.Fatalf("response warned about a command that was sent: %#v", response)
+			}
+		})
 	}
 }
 
@@ -99,62 +134,6 @@ func TestCreateSessionWithoutHarnessSendsNoKeysAndReportsTheShell(t *testing.T) 
 	}
 	if response["flags"] != "" {
 		t.Fatalf("response = %#v, want no flags for the bare shell", response)
-	}
-}
-
-func TestCreateSessionTypesTheRequestedFlagsLine(t *testing.T) {
-	tests := []struct {
-		name      string
-		body      string
-		wantTyped string
-		wantFlags string
-	}{
-		{
-			name:      "a requested line replaces the harness defaults",
-			body:      `{"name":"claude-3","harness":"claude-code","flags":"--model fast --verbose"}`,
-			wantTyped: "claude --model fast --verbose",
-			wantFlags: "--model fast --verbose",
-		},
-		{
-			name:      "an empty line types the binary alone",
-			body:      `{"name":"claude-4","harness":"claude-code","flags":""}`,
-			wantTyped: "claude",
-			wantFlags: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, argsPath := installFakeTmux(t)
-			t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
-			t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/srv/default-work")
-
-			handler := NewTmuxHandlerWithLaunchConfig(launchTestConfig(t))
-			recorder := postCreateSession(t, handler, tt.body)
-
-			if recorder.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-			}
-			wantCall := "-S /tmp/tmux-a send-keys -t $42 -l " + tt.wantTyped
-			calls := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath))
-			typed := false
-			for _, call := range calls {
-				if call == wantCall {
-					typed = true
-				}
-			}
-			if !typed {
-				t.Fatalf("tmux calls = %#v, want one typing %q", calls, wantCall)
-			}
-
-			var response map[string]any
-			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-				t.Fatalf("decode create response: %v; body=%s", err, recorder.Body.String())
-			}
-			if response["flags"] != tt.wantFlags {
-				t.Fatalf("response = %#v, want flags %q reported back", response, tt.wantFlags)
-			}
-		})
 	}
 }
 

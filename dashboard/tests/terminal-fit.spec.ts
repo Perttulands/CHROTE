@@ -59,16 +59,15 @@ async function openTerminalWithFontSize(page: Page, fontSize: number): Promise<H
 }
 
 test.describe('Terminal auto-fit', () => {
-  test('announces a grid fitted to the frame, with no manual Refit', async ({ page }) => {
-    const grid = await openTerminalWithFontSize(page, 14)
+  // Both halves on one page: a terminal must reach tmux fitted to its frame,
+  // and it must apply the configured font before it measures that fit.
+  test('announces a grid fitted to the frame, at the configured font, with no manual Refit', async ({ page }) => {
+    const small = await openTerminalWithFontSize(page, 14)
 
     // xterm's untouched default is 80x24; a fitted full-width tile is much wider.
-    expect(grid.columns).toBeGreaterThan(80)
-    expect(grid.rows).toBeGreaterThan(24)
-  })
+    expect(small.columns).toBeGreaterThan(80)
+    expect(small.rows).toBeGreaterThan(24)
 
-  test('applies the configured font size before it measures the grid', async ({ page }) => {
-    const small = await openTerminalWithFontSize(page, 14)
     const large = await openTerminalWithFontSize(page, 28)
 
     // Fitting with stale cell metrics was the clipped-input-row bug: a bigger

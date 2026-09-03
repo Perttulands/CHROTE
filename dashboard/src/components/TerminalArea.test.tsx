@@ -99,7 +99,7 @@ describe('TerminalArea layout controls', () => {
     expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveStyle({ display: 'none' })
   })
 
-  it('consumes two increasing matching requests while ignoring stale and other-workspace requests', () => {
+  it('takes every increasing matching reveal request, on any viewport, and ignores the rest', () => {
     sessionState.isMobile = true
     sessionState.windowCount = 4
 
@@ -159,17 +159,16 @@ describe('TerminalArea layout controls', () => {
     }
     rerender(<TerminalArea workspaceId="terminal1" />)
     expect(viewControls().getByRole('button', { name: 'View window 2' })).toHaveClass('active')
-  })
 
-  it('keeps desktop windows visible while consuming a matching reveal target for later mobile use', () => {
-    sessionState.windowCount = 4
+    // On a desktop every window is on screen already, so a request changes
+    // nothing visible. It is still taken, and read once the viewport narrows.
+    sessionState.isMobile = false
     sessionState.windowRevealRequest = {
       workspaceId: 'terminal1',
       windowId: 'terminal1-window-3',
       requestId: 8,
     }
-
-    const { rerender } = render(<TerminalArea workspaceId="terminal1" />)
+    rerender(<TerminalArea workspaceId="terminal1" />)
     expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveStyle({ display: 'flex' })
     expect(screen.getByTestId('terminal-window-terminal1-window-3')).toHaveStyle({ display: 'flex' })
 

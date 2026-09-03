@@ -127,16 +127,6 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     })
   })
 
-  it('keeps an open desktop sidecar in layout flow without an overlay toggle', () => {
-    const { container } = renderDock()
-
-    fireEvent.click(screen.getByRole('button', { name: /Sessions sidecar/i }))
-
-    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'true')
-    expect(screen.queryByRole('button', { name: 'Pin sessions' })).not.toBeInTheDocument()
-    expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
-  })
-
   it('opens and toggles each sidecar independently from a stable switcher', () => {
     const { container } = renderDock()
     const sessions = screen.getByRole('button', { name: /Sessions sidecar/i })
@@ -264,11 +254,15 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     }
   })
 
-  it('reopens desktop sidecars in flow without rewriting stored pin preferences', () => {
-    renderDock()
+  it('opens desktop sidecars in flow, and reopens them without rewriting stored preferences', () => {
+    const { container } = renderDock()
     const sessions = screen.getByRole('button', { name: /Sessions sidecar/i })
     fireEvent.click(sessions)
+
+    // In flow means no overlay: nothing to pin, and nothing to dismiss through.
     expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'true')
+    expect(screen.queryByRole('button', { name: 'Pin sessions' })).not.toBeInTheDocument()
+    expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Close sessions' }))
     expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
@@ -298,7 +292,6 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'false')
     expect(screen.queryByRole('button', { name: 'Pin sessions' })).not.toBeInTheDocument()
     expect(container.querySelector('.terminal-sidecar-dismiss')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Sessions sidecar' }).querySelector('.terminal-sidecar-label')).toBeInTheDocument()
 
     expect(JSON.parse(localStorage.getItem('chrote.sessionsDock.v1') || '{}')).toMatchObject({
       state: { open: true, pinned: true },

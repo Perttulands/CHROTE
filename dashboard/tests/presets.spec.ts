@@ -1,6 +1,6 @@
 import { test, expect, Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
-import { openSessionsSidecar } from './helpers'
+import { dragAndDrop, openSessionsSidecar } from './helpers'
 
 // Presets live in the active terminal tab's own menu; the caret on the tab is
 // its trigger, and there is no panel and no pseudo-tab.
@@ -21,34 +21,6 @@ async function savePreset(page: Page, name: string) {
 // Helper: the presets the Restore submenu is currently offering.
 function restoreRows(page: Page) {
   return page.locator('.menu-submenu .menu-row')
-}
-
-// Helper: drag a session into a window (simplified — uses mouse events for dnd-kit)
-async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: string) {
-  const source = page.locator(sourceSelector).first()
-  const target = page.locator(targetSelector).first()
-
-  const sourceBox = await source.boundingBox()
-  const targetBox = await target.boundingBox()
-
-  if (!sourceBox || !targetBox) {
-    throw new Error('Could not find source or target element')
-  }
-
-  const startX = sourceBox.x + sourceBox.width / 2
-  const startY = sourceBox.y + sourceBox.height / 2
-  const endX = targetBox.x + targetBox.width / 2
-  const endY = targetBox.y + targetBox.height / 2
-
-  await page.mouse.move(startX, startY)
-  await page.mouse.down()
-  await page.mouse.move(startX + 10, startY + 10, { steps: 5 })
-  await page.mouse.move(endX, endY, { steps: 10 })
-  // drag settle — no event to wait for
-  await page.waitForTimeout(100) // drag settle — no event to wait for
-  await page.mouse.up()
-  // drag settle — no event to wait for
-  await page.waitForTimeout(100) // drag settle — no event to wait for
 }
 
 // Helper: seed localStorage with N presets so we can test the limit without saving 10 times via UI
@@ -93,23 +65,61 @@ test.describe('Layout Presets', () => {
     await openSessionsSidecar(page)
   })
 
-  test('names a preset in the menu and keeps it across a reload', async ({ page }) => {
+  // One journey through the whole preset lifecycle, because every step needs
+  // the dashboard mounted and a layout worth saving: name one, keep it across
+  // a reload, restore it over a different binding, delete it, and hit the
+  // ceiling. Saving is the only way a preset comes into being, so the order is
+  // the operator's order.
+  test('names a preset, keeps it across a reload, restores it, deletes it, and states the ceiling', async ({ page }) => {
     await openTabMenu(page)
     await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
     await expect(restoreRows(page)).toHaveText(['No presets'])
     await page.keyboard.press('Escape')
 
-    await savePreset(page, 'My Layout')
+    await page.waitForSelector('.session-item')
+    await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window:visible >> nth=0')
+    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('jack')
+
+    await savePreset(page, 'With Jack')
 
     await openTabMenu(page)
     await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
-    await expect(restoreRows(page)).toHaveText(['My Layout'])
+    await expect(restoreRows(page)).toHaveText(['With Jack'])
     await page.keyboard.press('Escape')
 
+    // Replace the saved binding before restoring, so the preset has to put the
+    // layout back rather than merely leaving it alone.
+    await page.locator('.terminal-window:visible').nth(0).locator('.tag-remove').click()
+    const joeRow = page.locator('.session-item:has-text("joe")').first()
+    await joeRow.getByRole('button', { name: /Session actions/ }).click()
+    await page.getByRole('menuitem', { name: /Attach to window/ }).click()
+    await page.locator('.menu-submenu').getByRole('menuitem', { name: 'Window 1', exact: true }).click()
+    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('joe')
+
     await page.reload()
+
     await openTabMenu(page)
     await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
-    await expect(restoreRows(page)).toHaveText(['My Layout'])
+    await expect(restoreRows(page)).toHaveText(['With Jack'])
+    await restoreRows(page).filter({ hasText: 'With Jack' }).click()
+
+    // The menu closes behind the action it ran.
+    await expect(page.locator('.menu-sheet')).toHaveCount(0)
+    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('jack')
+    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).not.toContainText('joe')
+
+    await savePreset(page, 'Second')
+
+    await openTabMenu(page)
+    await page.locator('.menu-row', { hasText: 'Delete preset' }).click()
+    await page.locator('.menu-submenu .menu-row', { hasText: 'With Jack' }).click()
+    // The first press arms the row; nothing is gone until the second.
+    await page.locator('.menu-submenu .menu-row', { hasText: 'Confirm delete With Jack' }).click()
+    await expect(page.locator('.menu-sheet')).toHaveCount(0)
+
+    await openTabMenu(page)
+    await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
+    await expect(restoreRows(page)).toHaveText(['Second'])
     await page.keyboard.press('Escape')
 
     // The limit is stated on the status line, where every announcement lands.
@@ -118,48 +128,4 @@ test.describe('Layout Presets', () => {
     await savePreset(page, 'One More')
     await expect(page.locator('.status-line')).toContainText('Maximum 10 presets reached')
   })
-
-  test('restores a saved layout from the tab menu', async ({ page }) => {
-    await page.waitForSelector('.session-item')
-
-    // Bind a session to window 0
-    await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window:visible >> nth=0')
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('jack')
-
-    await savePreset(page, 'With Jack')
-
-    // Replace the saved binding before loading so the preset must cleanly restore it.
-    await page.locator('.terminal-window:visible').nth(0).locator('.tag-remove').click()
-    const joeRow = page.locator('.session-item:has-text("joe")').first()
-    await joeRow.getByRole('button', { name: /Session actions/ }).click()
-    await page.getByRole('menuitem', { name: /Attach to window/ }).click()
-    await page.locator('.menu-submenu').getByRole('menuitem', { name: 'Window 1', exact: true }).click()
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('joe')
-
-    await openTabMenu(page)
-    await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
-    await restoreRows(page).filter({ hasText: 'With Jack' }).click()
-
-    // The menu closes behind the action it ran.
-    await expect(page.locator('.menu-sheet')).toHaveCount(0)
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('jack')
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).not.toContainText('joe')
-  })
-
-  test('deletes a preset from the tab menu, confirming in the row', async ({ page }) => {
-    await savePreset(page, 'First')
-    await savePreset(page, 'Second')
-
-    await openTabMenu(page)
-    await page.locator('.menu-row', { hasText: 'Delete preset' }).click()
-    await page.locator('.menu-submenu .menu-row', { hasText: 'First' }).click()
-    // The first press arms the row; nothing is gone until the second.
-    await page.locator('.menu-submenu .menu-row', { hasText: 'Confirm delete First' }).click()
-    await expect(page.locator('.menu-sheet')).toHaveCount(0)
-
-    await openTabMenu(page)
-    await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
-    await expect(restoreRows(page)).toHaveText(['Second'])
-  })
-
 })

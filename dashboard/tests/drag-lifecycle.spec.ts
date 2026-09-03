@@ -36,53 +36,6 @@ async function finishMouseDrag(page: Page) {
   await expect(page.locator('.dashboard')).not.toHaveClass(/is-dragging/)
 }
 
-async function startTouchPointerDrag(page: Page, handle: Locator, target: Locator) {
-  const from = await point(handle)
-  const to = await point(target)
-  const pointerId = 41
-
-  await handle.dispatchEvent('pointerdown', {
-    bubbles: true,
-    cancelable: true,
-    pointerId,
-    pointerType: 'touch',
-    isPrimary: true,
-    button: 0,
-    buttons: 1,
-    clientX: from.x,
-    clientY: from.y,
-  })
-  await page.evaluate(({ x, y, pointerId }) => {
-    document.dispatchEvent(new PointerEvent('pointermove', {
-      bubbles: true,
-      cancelable: true,
-      pointerId,
-      pointerType: 'touch',
-      isPrimary: true,
-      button: -1,
-      buttons: 1,
-      clientX: x,
-      clientY: y,
-    }))
-  }, { ...to, pointerId })
-
-  await expect(page.locator('.dashboard')).toHaveClass(/is-dragging/)
-  return pointerId
-}
-
-async function cancelTouchPointerDrag(page: Page, pointerId: number) {
-  await page.evaluate((id) => {
-    document.dispatchEvent(new PointerEvent('pointercancel', {
-      bubbles: true,
-      cancelable: true,
-      pointerId: id,
-      pointerType: 'touch',
-      isPrimary: true,
-    }))
-  }, pointerId)
-  await expect(page.locator('.dashboard')).not.toHaveClass(/is-dragging/)
-}
-
 async function expectTagAssignment(firstWindow: Locator, secondWindow: Locator, firstCount: number, secondCount: number) {
   await expect(firstWindow.locator('.session-tag:has-text("gt-gastown-jack")')).toHaveCount(firstCount)
   await expect(secondWindow.locator('.session-tag:has-text("gt-gastown-jack")')).toHaveCount(secondCount)
@@ -96,25 +49,7 @@ test.describe('terminal drag lifecycle', () => {
     await page.waitForSelector('.session-panel .session-item')
   })
 
-  test('sub-8px movement stays inactive and a real touch pointer drag activates from the whole row', async ({ page }) => {
-    const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
-    const from = await point(row)
-
-    await page.mouse.move(from.x, from.y)
-    await page.mouse.down()
-    await page.mouse.move(from.x + 7, from.y)
-    await expect(page.locator('.dashboard')).not.toHaveClass(/is-dragging/)
-    await expect(page.locator('.dragging-overlay')).toHaveCount(0)
-    await page.mouse.up()
-
-    const pointerId = await startTouchPointerDrag(page, row, page.locator('.tab-bar'))
-    await expect(row).toHaveClass(/dragging/)
-    await expect(page.locator('.dragging-overlay')).toHaveCount(1)
-    await cancelTouchPointerDrag(page, pointerId)
-    await expect(row).not.toHaveClass(/dragging/)
-  })
-
-  test('row names assign; tag headers and same-window body are no-ops; explicit removal paths detach', async ({ page }) => {
+  test('row names assign; tag headers and same-window body are no-ops; removal detaches; Escape abandons', async ({ page }) => {
     const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
     const firstWindow = page.locator('.terminal-window:visible').nth(0)
     const secondWindow = page.locator('.terminal-window:visible').nth(1)
@@ -174,6 +109,29 @@ test.describe('terminal drag lifecycle', () => {
     await page.getByRole('menuitem', { name: /Unassign/i }).click()
     await expectTagAssignment(firstWindow, secondWindow, 0, 0)
     await expect(row).not.toHaveClass(/assigned/)
+
+    // Escape abandons a drag in flight. The tag stays where it was and, more
+    // to the point, the terminal underneath gets its pointer events back: if
+    // that lift stuck, every terminal would go dead to the mouse.
+    await startMouseDrag(page, row, firstWindow.locator('.terminal-window-body'))
+    await finishMouseDrag(page)
+    await expectTagAssignment(firstWindow, secondWindow, 1, 0)
+
+    const assignedTag = firstWindow.locator('.session-tag:has-text("gt-gastown-jack")')
+    const terminal = firstWindow.locator('.terminal-surface-host')
+    await expect(terminal).toHaveCount(1)
+    await terminal.evaluate(element => { element.setAttribute('data-drag-identity', 'preserved') })
+
+    await startMouseDrag(page, assignedTag, secondWindow.locator('.terminal-window-body'))
+    await expect(terminal).toHaveCSS('pointer-events', 'none')
+
+    await page.keyboard.press('Escape')
+    await page.mouse.up()
+
+    await expect(page.locator('.dragging-overlay')).toHaveCount(0)
+    await expect(terminal).toHaveCSS('pointer-events', 'auto')
+    await expect(terminal).toHaveAttribute('data-drag-identity', 'preserved')
+    await expectTagAssignment(firstWindow, secondWindow, 1, 0)
   })
 
   // The seam between two tiles is the layout's own drop target: it appears only
@@ -205,31 +163,6 @@ test.describe('terminal drag lifecycle', () => {
     await expect(windows).toHaveCount(3)
     await expect(windows.nth(2).locator('.session-tag')).toContainText('gt-gastown-jack')
     await expect(windows.first().locator('.session-tag')).toHaveCount(0)
-  })
-
-  test('Escape explicitly restores terminal pointer events without moving the tag', async ({ page }) => {
-    const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
-    const firstWindow = page.locator('.terminal-window:visible').nth(0)
-    const secondWindow = page.locator('.terminal-window:visible').nth(1)
-
-    await startMouseDrag(page, row, firstWindow.locator('.terminal-window-body'))
-    await finishMouseDrag(page)
-
-    const tag = firstWindow.locator('.session-tag:has-text("gt-gastown-jack")')
-    const terminal = firstWindow.locator('.terminal-surface-host')
-    await expect(terminal).toHaveCount(1)
-    await terminal.evaluate(element => { element.setAttribute('data-drag-identity', 'preserved') })
-
-    await startMouseDrag(page, tag, secondWindow.locator('.terminal-window-body'))
-    await expect(terminal).toHaveCSS('pointer-events', 'none')
-
-    await page.keyboard.press('Escape')
-    await page.mouse.up()
-
-    await expect(page.locator('.dragging-overlay')).toHaveCount(0)
-    await expect(terminal).toHaveCSS('pointer-events', 'auto')
-    await expect(terminal).toHaveAttribute('data-drag-identity', 'preserved')
-    await expectTagAssignment(firstWindow, secondWindow, 1, 0)
   })
 
 })

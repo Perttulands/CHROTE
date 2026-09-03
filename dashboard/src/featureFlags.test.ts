@@ -8,12 +8,10 @@ describe('feature flag mechanism', () => {
     localStorage.clear()
   })
 
-  it('returns the configured default when the flag is unset', () => {
+  it('answers the configured default until the operator persists a choice either way', () => {
     expect(featureFlagKey('serverStatusTab')).toBe('chrote-server-status-tab')
     expect(isFeatureEnabled('serverStatusTab')).toBe(true)
-  })
 
-  it('honors a persisted opt-out and a persisted opt-in', () => {
     setFeatureEnabled('serverStatusTab', false)
     expect(isFeatureEnabled('serverStatusTab')).toBe(false)
 

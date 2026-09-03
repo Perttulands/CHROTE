@@ -23,7 +23,7 @@ function firePreloadError(target: EventTarget): Event {
 }
 
 describe('installChunkReloadRecovery', () => {
-  it('reloads once on first chunk failure, cancels the event, and records the attempt', () => {
+  it('reloads once for a failing page load, cancels every such event, and records the attempt', () => {
     const target = new EventTarget()
     const storage = makeStorage()
     const reload = vi.fn()
@@ -34,14 +34,9 @@ describe('installChunkReloadRecovery', () => {
     expect(reload).toHaveBeenCalledTimes(1)
     expect(event.defaultPrevented).toBe(true)
     expect(storage.map.get(CHUNK_RELOAD_STORAGE_KEY)).toBe('1000')
-  })
 
-  it('swallows follow-on failures while the reload is in flight without reloading again', () => {
-    const target = new EventTarget()
-    const reload = vi.fn()
-    installChunkReloadRecovery({ target, storage: makeStorage(), reload, now: () => 1000 })
-
-    firePreloadError(target)
+    // More chunks fail while the reload is already on its way. They are
+    // swallowed rather than reloading the page again underneath it.
     const second = firePreloadError(target)
 
     expect(reload).toHaveBeenCalledTimes(1)

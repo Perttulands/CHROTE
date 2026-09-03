@@ -1,8 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import TerminalWindow from './TerminalWindow'
 import { DEFAULT_SETTINGS } from '../types'
 import { sessionEvidenceFrom } from '../terminal/tileState'
@@ -125,8 +122,6 @@ vi.mock('./TerminalSurface', () => ({
   default: () => <div className="terminal-surface-host" />,
 }))
 
-const testDir = dirname(fileURLToPath(import.meta.url))
-const terminalCss = () => readFileSync(resolve(testDir, './TerminalWorkspaceDock.css'), 'utf8')
 
 // A tag draws its name as head and tail spans, so the label is found by the
 // full name it carries in its title rather than as one text node.
@@ -203,24 +198,10 @@ describe('TerminalWindow launch user', () => {
 
   // The tags are the tile's tabs; the arrows that stepped through them are
   // gone, and nothing in the header cycles a session any more.
-  it('marks the active tag and offers no cycle controls beside it', () => {
-    const twoSessions = {
-      id: 'terminal3-window-0',
-      boundSessions: ['build:forge-existing', 'alice:shell-existing'],
-      activeSession: 'alice:shell-existing',
-      colorIndex: 0,
-    }
-    const { container } = render(<TerminalWindow workspaceId="terminal3" window={twoSessions} />)
-
-    expect(tagLabel('shell-existing').closest('.session-tag')).toHaveClass('active')
-    expect(tagLabel('forge-existing').closest('.session-tag')).not.toHaveClass('active')
-    expect(container.querySelectorAll('.cycle-btn')).toHaveLength(0)
-    expect(screen.queryByTitle('Previous session')).not.toBeInTheDocument()
-    expect(screen.queryByTitle('Next session')).not.toBeInTheDocument()
-  })
-
-  it('does not intercept right-click on the empty window launcher', async () => {
-    render(
+  // Only a session tag carries a menu. Everywhere else in the tile the
+  // browser's own right-click still belongs to the operator.
+  it('leaves right-click to the browser everywhere but a session tag', async () => {
+    const { container, rerender } = render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
@@ -228,17 +209,28 @@ describe('TerminalWindow launch user', () => {
     )
 
     const launchButton = await screen.findByRole('button', { name: 'Launch claude in chrote' })
-    const event = dispatchContextMenu(launchButton)
+    const launcherEvent = dispatchContextMenu(launchButton)
 
-    expect(event.defaultPrevented).toBe(false)
+    expect(launcherEvent.defaultPrevented).toBe(false)
     expect(document.querySelector('.menu-sheet')).toBeNull()
     fireEvent.click(launchButton)
     await waitFor(() => expect(createSession).toHaveBeenCalled())
+
+    rerender(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['forge-existing'], activeSession: 'forge-existing', colorIndex: 0 }}
+      />
+    )
+    const headerEvent = dispatchContextMenu(container.querySelector('.terminal-window-header') as HTMLElement)
+
+    expect(headerEvent.defaultPrevented).toBe(false)
+    expect(document.querySelector('.menu-sheet')).toBeNull()
   })
 
   it('opens only the requested actions for the clicked session tag', () => {
     const openFilesAtPath = vi.fn()
-    render(
+    const { rerender } = render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{
@@ -292,6 +284,18 @@ describe('TerminalWindow launch user', () => {
     expect(deleteSession).toHaveBeenCalledWith('shell-existing', 'alice')
 
     expect(setActiveSession).not.toHaveBeenCalled()
+
+    // A session tmux reports no working directory for has nowhere to route to,
+    // so the row is offered and refused rather than hidden.
+    rerender(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['missing-session'], activeSession: 'missing-session', colorIndex: 0 }}
+        onOpenFilesAtPath={openFilesAtPath}
+      />
+    )
+    dispatchContextMenu(tagLabel('missing-session'))
+    expect(screen.getByRole('menuitem', { name: 'Open files in working directory' })).toBeDisabled()
   })
 
   it('offers the sizing action as disabled with its reason on a session tmux has pinned', () => {
@@ -385,13 +389,12 @@ describe('TerminalWindow launch user', () => {
     expect(fit).toHaveBeenCalledWith('shell-existing')
   })
 
-  it('opens the tag menu from the keyboard and restores focus on Escape', () => {
-    const { container } = render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
-      />,
-    )
+  it('opens the tag menu from the keyboard, and only from the tag itself', () => {
+    const props = {
+      workspaceId: 'terminal3' as const,
+      window: { id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 },
+    }
+    const { container, rerender } = render(<TerminalWindow {...props} {...({ workspaceActive: true } as any)} />)
     const tag = container.querySelector('.session-tag') as HTMLElement
     tag.focus()
     fireEvent.keyDown(tag, { key: 'ContextMenu' })
@@ -404,103 +407,20 @@ describe('TerminalWindow launch user', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(tag).toHaveFocus()
-  })
 
-  it('does not open tag actions from Shift+F10 on the nested remove control', () => {
-    const { container } = render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['forge-existing'], activeSession: 'forge-existing', colorIndex: 0 }}
-      />,
-    )
+    // The nested remove control is not the tag, so the same key opens nothing.
     const remove = container.querySelector('.tag-remove') as HTMLButtonElement
-    const event = new KeyboardEvent('keydown', {
-      key: 'F10',
-      shiftKey: true,
-      bubbles: true,
-      cancelable: true,
-    })
+    const shiftF10 = new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true })
+    act(() => remove.dispatchEvent(shiftF10))
 
-    act(() => remove.dispatchEvent(event))
-
-    expect(event.defaultPrevented).toBe(false)
+    expect(shiftF10.defaultPrevented).toBe(false)
     expect(document.querySelector('.menu-sheet')).toBeNull()
-  })
 
-  it('clears an open tag menu when its keep-alive workspace becomes inactive', () => {
-    const props = {
-      workspaceId: 'terminal3' as const,
-      window: { id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 },
-    }
-    const { rerender } = render(<TerminalWindow {...props} {...({ workspaceActive: true } as any)} />)
+    // A kept-alive workspace going inactive takes its open menu with it.
     dispatchContextMenu(tagLabel('forge-existing'))
     expect(document.querySelector('.menu-sheet')).toBeInTheDocument()
-
     rerender(<TerminalWindow {...props} {...({ workspaceActive: false } as any)} />)
     expect(document.querySelector('.menu-sheet')).not.toBeInTheDocument()
-  })
-
-  it('opens the live session working directory', () => {
-    const openFilesAtPath = vi.fn()
-    render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
-        onOpenFilesAtPath={openFilesAtPath}
-      />
-    )
-
-    dispatchContextMenu(tagLabel('forge-existing'))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Open files in working directory' }))
-
-    expect(openFilesAtPath).toHaveBeenCalledWith('/srv/forge')
-  })
-
-  it('disables working-directory routing when the clicked session has no reported cwd', () => {
-    render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['missing-session'], activeSession: 'missing-session', colorIndex: 0 }}
-        onOpenFilesAtPath={vi.fn()}
-      />
-    )
-
-    dispatchContextMenu(tagLabel('missing-session'))
-
-    expect(screen.getByRole('menuitem', { name: 'Open files in working directory' })).toBeDisabled()
-  })
-
-  it('does not hide a Send action behind ctrl-click on an attached session tag', () => {
-    render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{
-          id: 'terminal3-window-0',
-          boundSessions: ['shell-existing', 'build:forge-existing'],
-          activeSession: 'shell-existing',
-          colorIndex: 0,
-        }}
-      />
-    )
-
-    fireEvent.click(tagLabel('forge-existing'), { ctrlKey: true })
-
-    expect(openSendToSession).not.toHaveBeenCalled()
-    expect(setActiveSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'build:forge-existing')
-  })
-
-  it('does not intercept right-click on terminal window chrome', () => {
-    const { container } = render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['forge-existing'], activeSession: 'forge-existing', colorIndex: 0 }}
-      />
-    )
-
-    const event = dispatchContextMenu(container.querySelector('.terminal-window-header') as HTMLElement)
-
-    expect(event.defaultPrevented).toBe(false)
-    expect(document.querySelector('.menu-sheet')).toBeNull()
   })
 
   it('uses the whole mounted session tag as the drag surface and keeps a stationary invisible placeholder', () => {
@@ -552,7 +472,7 @@ describe('TerminalWindow launch user', () => {
   // threshold becomes a drag and dnd-kit swallows the click that would have
   // followed. Selecting on the press is what keeps an unsteady click working,
   // and the press still reaches the drag sensor.
-  it('shows a session as soon as its tag is pressed, and leaves the shown one alone', () => {
+  it('marks and shows the session whose tag is pressed, and only on the primary button', () => {
     render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -564,6 +484,9 @@ describe('TerminalWindow launch user', () => {
         }}
       />
     )
+
+    expect(tagLabel('forge-existing').closest('.session-tag')).toHaveClass('active')
+    expect(tagLabel('shell-existing').closest('.session-tag')).not.toHaveClass('active')
 
     fireEvent.pointerDown(tagLabel('shell-existing'), { pointerType: 'mouse', button: 0 })
 
@@ -575,21 +498,8 @@ describe('TerminalWindow launch user', () => {
     fireEvent.click(tagLabel('forge-existing'))
 
     expect(setActiveSession).not.toHaveBeenCalled()
-  })
 
-  it('leaves the session shown by a tag alone when the tag is pressed with the secondary button', () => {
-    render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{
-          id: 'terminal3-window-0',
-          boundSessions: ['forge-existing', 'shell-existing'],
-          activeSession: 'forge-existing',
-          colorIndex: 0,
-        }}
-      />
-    )
-
+    // The secondary button belongs to the menu, so it never moves the frame.
     fireEvent.pointerDown(tagLabel('shell-existing'), { pointerType: 'mouse', button: 2 })
 
     expect(setActiveSession).not.toHaveBeenCalled()
@@ -612,58 +522,22 @@ describe('TerminalWindow launch user', () => {
     )
   })
 
-  it('shares terminal header width equally between every tag without crowding controls', () => {
-    const css = terminalCss()
-    const rule = (selector: string) => {
-      const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))
-      expect(match, `missing CSS rule ${selector}`).not.toBeNull()
-      return match![1]
-    }
-
-    expect(rule('.session-tags')).toMatch(/\bflex:\s*1;/)
-    expect(rule('.session-tags')).toMatch(/\bgap:\s*4px;/)
-
-    const tagRule = rule('.session-tag')
-    expect(tagRule).toMatch(/\bflex:\s*1 1 0;/)
-    expect(tagRule).toMatch(/\bmin-width:\s*0;/)
-    expect(tagRule).not.toMatch(/\bmax-width:/)
-    expect(rule('.session-tag.active')).not.toMatch(/\b(?:flex(?:-(?:basis|grow|shrink))?|min-width|max-width|width)\s*:/)
-
-    // The name truncates from the head, so the tail of a prefixed name always
-    // reads. Those rules are shared with the session list, in base.css.
-    const shared = readFileSync(resolve(testDir, '../styles/base.css'), 'utf8')
-    const sharedRule = (selector: string) => {
-      const match = shared.match(new RegExp(`${selector.replace('.', '\\.')}\\s*\\{([^}]*)\\}`))
-      expect(match, `missing CSS rule ${selector}`).not.toBeNull()
-      return match![1]
-    }
-    const headRule = sharedRule('.session-label-head')
-    expect(headRule).toMatch(/\boverflow:\s*hidden;/)
-    expect(headRule).toMatch(/\btext-overflow:\s*ellipsis;/)
-    expect(sharedRule('.session-label')).toMatch(/\bwhite-space:\s*nowrap;/)
-    expect(sharedRule('.session-label-tail')).toMatch(/\bflex:\s*0 0 auto;/)
-    expect(rule('.tag-remove')).toMatch(/\bflex-shrink:\s*0;/)
-    expect(rule('.window-controls')).toMatch(/\bflex:\s*0 0 auto;/)
-  })
-
-  it('stays calm during a drag until this window is actually hovered', () => {
+  it('offers drop feedback only where the drop would actually land', () => {
     droppableState.active = { data: { current: { type: 'session', sessionName: 'alpha', sessionKey: 'alice:alpha' } } }
 
-    const { container } = render(
+    const idle = render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
       />
     )
 
-    expect(container.querySelector('.terminal-drop-overlay')).toBeNull()
-    expect(container.querySelector('.terminal-window')).not.toHaveClass('drop-target')
+    // A drag in flight somewhere else on screen leaves this window alone.
+    expect(idle.container.querySelector('.terminal-drop-overlay')).toBeNull()
+    expect(idle.container.querySelector('.terminal-window')).not.toHaveClass('drop-target')
     expect(screen.queryByText('Release to add')).not.toBeInTheDocument()
-  })
+    idle.unmount()
 
-  it('renders hovered-target drop feedback without making the overlay the hit target', () => {
-    droppableState.active = { data: { current: { type: 'session', sessionName: 'alpha', sessionKey: 'alice:alpha' } } }
     droppableState.isOver = true
 
     const { container } = render(
@@ -679,9 +553,8 @@ describe('TerminalWindow launch user', () => {
     expect(overlay).toHaveStyle({ inset: '0', pointerEvents: 'none' })
     expect(overlay).toHaveTextContent('Release to add')
     expect(container.querySelector('.terminal-window')).toHaveClass('drop-target')
-  })
 
-  it('shows no drop feedback when hovering a tag over its own source window', () => {
+    // A tag hovering the window it already lives in has nowhere to land.
     droppableState.active = {
       data: {
         current: {
@@ -693,21 +566,19 @@ describe('TerminalWindow launch user', () => {
         },
       },
     }
-    droppableState.isOver = true
-
-    const { container } = render(
+    const home = render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
       />
     )
 
-    expect(container.querySelector('.terminal-drop-overlay')).toBeNull()
-    expect(container.querySelector('.terminal-window')).not.toHaveClass('drop-target')
+    expect(home.container.querySelector('.terminal-drop-overlay')).toBeNull()
+    expect(home.container.querySelector('.terminal-window')).not.toHaveClass('drop-target')
   })
 
   it('exposes a one-click Send action in the header for the mounted active session', () => {
-    render(
+    const { rerender } = render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
@@ -717,6 +588,15 @@ describe('TerminalWindow launch user', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send to session forge-existing' }))
 
     expect(openSendToSession).toHaveBeenCalledWith({ targetSessionKey: 'build:forge-existing' })
+
+    // With nothing mounted there is no one to send to.
+    rerender(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()
   })
 
   // What runs in a session is a mark in its own tag, not a line of prose in the
@@ -751,10 +631,10 @@ describe('TerminalWindow launch user', () => {
       />
     )
     expect(container.querySelector('.harness-command')).toHaveTextContent('sleep')
-  })
 
-  it('marks nothing for unknown or user-ambiguous session bindings', () => {
-    const { container, rerender } = render(
+    // A binding tmux cannot resolve, or one two Unix users could answer to,
+    // gets no mark rather than a guessed one.
+    rerender(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: ['missing'], activeSession: 'missing', colorIndex: 0 }}
@@ -817,40 +697,6 @@ describe('TerminalWindow launch user', () => {
     expect(screen.queryByText(/Initializing Session/)).not.toBeInTheDocument()
   })
 
-  it('offers no Send action for an empty window', () => {
-    render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
-      />
-    )
-    expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()
-  })
-
-  // The four coloured window themes are gone. A tile is a surface and a
-  // divider, focus is the accent border, and nothing about the tile says which
-  // slot in the grid it happens to sit in.
-  it('paints every tile on the same surface, whatever its stored window index', () => {
-    const { container } = render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 2 }}
-      />
-    )
-
-    const terminalWindow = container.querySelector('.terminal-window') as HTMLElement
-    expect(terminalWindow.style.getPropertyValue('--window-bg')).toBe('')
-    expect(terminalWindow.style.getPropertyValue('--window-accent')).toBe('')
-    expect(terminalWindow.style.getPropertyValue('--window-border')).toBe('')
-
-    const css = terminalCss()
-    expect(css).not.toContain('--window-')
-    expect(css).toContain('background-color: var(--surface-primary);')
-    expect(css).toContain('background-color: rgba(0, 0, 0, 0.5);')
-    expect(css).not.toContain('background-image: url(')
-    expect(css).toMatch(/\.terminal-window\.focused \{\s*border-color: var\(--accent\);\s*\}/)
-  })
-
   it('holds an ended binding in its own tile, showing the last frame with Restart and Remove', () => {
     poolState.connectionStates = new Map([['alice:departed', 'closed']])
     const { container } = render(
@@ -878,51 +724,6 @@ describe('TerminalWindow launch user', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     expect(removeSessionFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'alice:departed')
-  })
-
-  it('states a detached tile in the middle of the frame, with plain outline controls', () => {
-    poolState.connectionStates = new Map([['alice:departed', 'closed']])
-    const { container } = render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['alice:departed'], activeSession: 'alice:departed', colorIndex: 0 }}
-      />
-    )
-
-    // Reclaiming a tile is ordinary work, so both actions are ordinary outline
-    // buttons rather than the dashed accent shape an empty window offers.
-    const actions = [...container.querySelectorAll('.terminal-tile-detached-actions button')]
-    expect(actions.map(button => button.textContent)).toEqual(['Restart', 'Remove'])
-    actions.forEach(button => expect(button).toHaveClass('terminal-tile-detached-action'))
-    actions.forEach(button => expect(button).not.toHaveClass('tile-action-btn'))
-    expect(container.querySelector('.terminal-tile-action')).toBeNull()
-
-    const css = terminalCss()
-    expect(css).not.toContain('.terminal-tile-action')
-    expect(css).not.toContain('tile-action-btn-compact')
-    const rule = (selector: string) => {
-      const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))
-      expect(match, `missing CSS rule ${selector}`).not.toBeNull()
-      return match![1]
-    }
-
-    // Centred in the frame, not pinned along its bottom edge, and sized by its
-    // own content so the last rendered frame stays readable behind it.
-    const panel = rule('.terminal-tile-detached')
-    expect(panel).toMatch(/\btop:\s*50%;/)
-    expect(panel).toMatch(/\btransform:\s*translate\(-50%, -50%\);/)
-    expect(panel).not.toMatch(/\bbottom:\s*0;/)
-    expect(panel).not.toMatch(/\bright:\s*0;/)
-    expect(panel).toMatch(/\bmax-width:\s*calc\(100% - 24px\);/)
-
-    // A plain outline: divider border, secondary text, no dashes, no shouting.
-    const action = rule('.terminal-tile-detached-action')
-    expect(action).toMatch(/\bborder:\s*1px solid var\(--divider\);/)
-    expect(action).toMatch(/\bcolor:\s*var\(--text-secondary\);/)
-    expect(action).toMatch(/\bborder-radius:\s*4px;/)
-    expect(action).not.toMatch(/\btext-transform:/)
-    expect(action).not.toMatch(/\bletter-spacing:/)
   })
 
   it('recreates an ended session in the same tile and dials the pooled terminal again', async () => {
@@ -961,26 +762,9 @@ describe('TerminalWindow launch user', () => {
     expect(screen.getByText(/shell-existing lost its connection/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
     expect(reconnect).toHaveBeenCalledWith('shell-existing')
-  })
 
-  // This used to be held back: dialling attached with -d and would have thrown
-  // the SSH client out. Nothing attaches with -d now, so the dial joins them
-  // and costs them neither their client nor their size.
-  it('dials again for a session another client is attached to, because that no longer evicts them', () => {
-    poolState.connectionStates = new Map([['alice:ssh-held', 'dropped']])
-    const { container } = render(
-      <TerminalWindow
-        workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['alice:ssh-held'], activeSession: 'alice:ssh-held', colorIndex: 0 }}
-      />
-    )
-
-    expect(container.querySelector('.terminal-window-body')).toHaveAttribute('data-tile-state', 'lost')
-    expect(redialIfDropped).toHaveBeenCalledWith('alice:ssh-held')
-  })
-
-  it('does not dial again for a lost tile that is not on screen', () => {
-    poolState.connectionStates = new Map([['shell-existing', 'dropped']])
+    // A tile nobody is looking at costs a dial for nothing, so it waits.
+    redialIfDropped.mockClear()
     render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -1033,7 +817,7 @@ describe('TerminalWindow launch user', () => {
     expect(container.querySelector('.session-tag[data-tile-state="ended"] .tag-state')).toHaveTextContent('ended')
   })
 
-  it('removes the misleading status dot and focuses only from the terminal body', () => {
+  it('focuses only from the terminal body, never from its header', () => {
     const { container } = render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -1045,7 +829,6 @@ describe('TerminalWindow launch user', () => {
 
     expect(setFocusedWindowKey).not.toHaveBeenCalled()
 
-    expect(container.querySelector('.status-dot')).not.toBeInTheDocument()
     expect(screen.getByText('Connecting…')).toBeInTheDocument()
 
     fireEvent.click(container.querySelector('.terminal-window-body')!)

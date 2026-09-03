@@ -1,77 +1,47 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
+// The dashboard reads /api/health flat, with no data envelope, and it reads
+// every key on every response: an unstamped build has to serve an empty commit
+// rather than omit the field. The request travels through the mux because a
+// health endpoint nothing routes to is a health endpoint nobody can reach.
 func TestHealthHandler_Health(t *testing.T) {
-	handler := NewHealthHandlerWithBuildInfo("2.0.0-alpha.2-dev", "")
+	for _, testCase := range []struct {
+		name    string
+		version string
+		commit  string
+	}{
+		{name: "an unstamped build still serves the commit key", version: "2.0.0-alpha.2-dev", commit: ""},
+		{name: "a stamped build reports the commit it was built from", version: "test-version", commit: "abc123def456"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			NewHealthHandlerWithBuildInfo(testCase.version, testCase.commit).RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	recorder := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+			recorder := httptest.NewRecorder()
+			mux.ServeHTTP(recorder, req)
 
-	handler.Health(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Errorf("Status code = %d, expected %d", recorder.Code, http.StatusOK)
-	}
-
-	var response map[string]interface{}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-
-	if response["status"] != "ok" {
-		t.Errorf("status = %q, expected 'ok'", response["status"])
-	}
-
-	if _, ok := response["timestamp"]; !ok {
-		t.Error("Response should include timestamp")
-	}
-
-	// Unstamped builds must still serve the key, as an empty string.
-	if commit, ok := response["commit"]; !ok || commit != "" {
-		t.Errorf("commit = %v (present=%v), expected empty string present", commit, ok)
-	}
-}
-
-func TestHealthHandler_Health_ReportsBuildCommit(t *testing.T) {
-	handler := NewHealthHandlerWithBuildInfo("test-version", "abc123def456")
-
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	recorder := httptest.NewRecorder()
-
-	handler.Health(recorder, req)
-
-	var response map[string]interface{}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-
-	if response["commit"] != "abc123def456" {
-		t.Errorf("commit = %q, expected %q", response["commit"], "abc123def456")
-	}
-	if response["version"] != "test-version" {
-		t.Errorf("version = %q, expected %q", response["version"], "test-version")
-	}
-}
-
-func TestHealthHandler_RegisterRoutes(t *testing.T) {
-	handler := NewHealthHandlerWithBuildInfo("2.0.0-alpha.2-dev", "")
-	mux := http.NewServeMux()
-
-	// This should not panic
-	handler.RegisterRoutes(mux)
-
-	// Test the route is registered
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Errorf("Route not registered correctly, got status %d", recorder.Code)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+			response := decodeJSONMap(t, recorder)
+			assertTopLevelKeys(t, response, []string{"commit", "status", "timestamp", "version"})
+			assertNoTopLevelKey(t, response, "data")
+			if response["status"] != "ok" {
+				t.Errorf("status = %v, want ok", response["status"])
+			}
+			if response["commit"] != testCase.commit {
+				t.Errorf("commit = %v, want %q", response["commit"], testCase.commit)
+			}
+			if response["version"] != testCase.version {
+				t.Errorf("version = %v, want %q", response["version"], testCase.version)
+			}
+		})
 	}
 }

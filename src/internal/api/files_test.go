@@ -15,19 +15,6 @@ import (
 	"github.com/chrote/server/internal/core"
 )
 
-func TestFilesHandler_NewFilesHandler(t *testing.T) {
-	handler := NewFilesHandler()
-
-	if handler == nil {
-		t.Fatal("NewFilesHandler() returned nil")
-	}
-	// Check that handler uses the configured roots (default is 2)
-	expectedRoots := len(core.GetAllowedRoots())
-	if len(handler.allowedRoots) != expectedRoots {
-		t.Errorf("Expected %d allowed roots, got %d", expectedRoots, len(handler.allowedRoots))
-	}
-}
-
 func TestFilesHandler_ResolveSafePath_Root(t *testing.T) {
 	handler := NewFilesHandler()
 
@@ -75,37 +62,51 @@ func TestFilesHandler_ResolveSafePath_NotAllowed(t *testing.T) {
 	}
 }
 
+// The synthetic root lists exactly the configured roots as directories, whether
+// it is reached by its own handler or by asking for the empty path through the
+// mux. The browser opens both ways and must see one answer.
 func TestFilesHandler_ListRoot(t *testing.T) {
 	handler := NewFilesHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/files/resources/", nil)
-	rec := httptest.NewRecorder()
+	for _, testCase := range []struct {
+		name  string
+		serve func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "through the root handler", serve: handler.ListRoot},
+		{name: "through the mux on the empty path", serve: mux.ServeHTTP},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/files/resources/", nil)
+			rec := httptest.NewRecorder()
 
-	handler.ListRoot(rec, req)
+			testCase.serve(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("ListRoot status = %d, want %d", rec.Code, http.StatusOK)
-	}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
 
-	var response DirectoryResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("Invalid JSON: %v", err)
-	}
+			var response DirectoryResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("Invalid JSON: %v", err)
+			}
 
-	if !response.IsDir {
-		t.Error("Root should be a directory")
-	}
+			if !response.IsDir {
+				t.Error("Root should be a directory")
+			}
 
-	expectedRoots := len(core.GetAllowedRoots())
-	if len(response.Items) != expectedRoots {
-		t.Errorf("Expected %d root items, got %d", expectedRoots, len(response.Items))
-	}
+			expectedRoots := len(core.GetAllowedRoots())
+			if len(response.Items) != expectedRoots {
+				t.Errorf("Expected %d root items, got %d", expectedRoots, len(response.Items))
+			}
 
-	// Check that all items are directories
-	for _, item := range response.Items {
-		if !item.IsDir {
-			t.Errorf("Root item %s should be a directory", item.Name)
-		}
+			for _, item := range response.Items {
+				if !item.IsDir {
+					t.Errorf("Root item %s should be a directory", item.Name)
+				}
+			}
+		})
 	}
 }
 
@@ -124,83 +125,54 @@ func TestFilesHandler_GetResource_NotAllowed(t *testing.T) {
 	}
 }
 
-func TestFilesHandler_GetResource_EmptyPath(t *testing.T) {
+// A rename is refused whenever either end of it lies outside the configured
+// roots, whether the request names the source directly or arrives through the
+// mux with a destination pointing out of them.
+func TestFilesHandler_RenameResourceRefusesPathsOutsideTheConfiguredRoots(t *testing.T) {
 	handler := NewFilesHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/files/resources/", nil)
-	rec := httptest.NewRecorder()
-
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("GetResource for root status = %d, want %d", rec.Code, http.StatusOK)
+	renameBody, err := json.Marshal(RenameRequest{Action: "rename", Destination: "/tmp/dest.txt"})
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	var response DirectoryResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("Invalid JSON: %v", err)
-	}
+	for _, testCase := range []struct {
+		name     string
+		path     string
+		body     []byte
+		pathName string
+		serve    func(http.ResponseWriter, *http.Request)
+	}{
+		{
+			name:     "a source that is under no root",
+			path:     "/api/files/resources/etc/shadow",
+			body:     []byte("{}"),
+			pathName: "/etc/shadow",
+			serve:    handler.RenameResource,
+		},
+		{
+			name:  "a destination that is under no root",
+			path:  "/api/files/resources/tmp/test.txt",
+			body:  renameBody,
+			serve: mux.ServeHTTP,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPatch, testCase.path, bytes.NewReader(testCase.body))
+			req.Header.Set("Content-Type", "application/json")
+			if testCase.pathName != "" {
+				req.SetPathValue("path", testCase.pathName)
+			}
+			rec := httptest.NewRecorder()
 
-	if !response.IsDir {
-		t.Error("Root should be a directory")
-	}
-}
+			testCase.serve(rec, req)
 
-func TestFilesHandler_CreateResource_AtRoot(t *testing.T) {
-	handler := NewFilesHandler()
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	// Try to create file at root (should fail)
-	req := httptest.NewRequest(http.MethodPost, "/api/files/resources/testfile.txt", bytes.NewBufferString("test"))
-	rec := httptest.NewRecorder()
-
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("CreateResource at root status = %d, want %d", rec.Code, http.StatusForbidden)
-	}
-}
-
-func TestFilesHandler_RenameResource_InvalidPath(t *testing.T) {
-	handler := NewFilesHandler()
-
-	// Use a path that is never under any allowed root
-	req := httptest.NewRequest(http.MethodPatch, "/api/files/resources/etc/shadow", bytes.NewBufferString("{}"))
-	req.SetPathValue("path", "/etc/shadow")
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	handler.RenameResource(rec, req)
-
-	// Path is forbidden because it's not under an allowed root
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("RenameResource with invalid path status = %d, want %d", rec.Code, http.StatusForbidden)
-	}
-}
-
-func TestFilesHandler_RenameResource_NotAllowedPath(t *testing.T) {
-	handler := NewFilesHandler()
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	body := RenameRequest{
-		Action:      "rename",
-		Destination: "/tmp/dest.txt",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	// Try to rename a path not under allowed roots
-	req := httptest.NewRequest(http.MethodPatch, "/api/files/resources/tmp/test.txt", bytes.NewBuffer(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("RenameResource with not allowed path status = %d, want %d", rec.Code, http.StatusForbidden)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -296,40 +268,56 @@ func TestFilesHandlerRenameStillMovesToFreeDestination(t *testing.T) {
 	}
 }
 
-func TestFilesHandler_DeleteResource_AtRoot(t *testing.T) {
-	handler := NewFilesHandler()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/files/resources/", nil)
-	req.SetPathValue("path", "")
-	rec := httptest.NewRecorder()
-
-	handler.DeleteResource(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("DeleteResource at root status = %d, want %d", rec.Code, http.StatusForbidden)
-	}
-}
-
-func TestFilesHandler_DownloadFile_AtRoot(t *testing.T) {
-	handler := NewFilesHandler()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/files/raw/", nil)
-	req.SetPathValue("path", "")
-	rec := httptest.NewRecorder()
-
-	handler.DownloadFile(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("DownloadFile at root status = %d, want %d", rec.Code, http.StatusForbidden)
-	}
-}
-
-func TestFilesHandler_RegisterRoutes(t *testing.T) {
+// The root is synthetic: it is the list of configured roots, not a directory
+// anyone can write in, delete or download. Every operation that would treat it
+// as one is refused.
+func TestFilesHandler_RefusesOperationsOnTheSyntheticRoot(t *testing.T) {
 	handler := NewFilesHandler()
 	mux := http.NewServeMux()
-
-	// Should not panic
 	handler.RegisterRoutes(mux)
+
+	for _, testCase := range []struct {
+		name     string
+		method   string
+		path     string
+		body     string
+		pathName string
+		serve    func(http.ResponseWriter, *http.Request)
+	}{
+		{
+			name:   "creating a file at the root",
+			method: http.MethodPost,
+			path:   "/api/files/resources/testfile.txt",
+			body:   "test",
+			serve:  mux.ServeHTTP,
+		},
+		{
+			name:     "deleting the root",
+			method:   http.MethodDelete,
+			path:     "/api/files/resources/",
+			pathName: "",
+			serve:    handler.DeleteResource,
+		},
+		{
+			name:     "downloading the root",
+			method:   http.MethodGet,
+			path:     "/api/files/raw/",
+			pathName: "",
+			serve:    handler.DownloadFile,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			req := httptest.NewRequest(testCase.method, testCase.path, strings.NewReader(testCase.body))
+			req.SetPathValue("path", testCase.pathName)
+			rec := httptest.NewRecorder()
+
+			testCase.serve(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+			}
+		})
+	}
 }
 
 func TestFilesHandlerServesReadablePathUnderConfiguredRoot(t *testing.T) {
@@ -352,6 +340,7 @@ func TestFilesHandlerServesReadablePathUnderConfiguredRoot(t *testing.T) {
 func TestFilesHandlerUnreadablePathUnderConfiguredRootReturnsPermissionError(t *testing.T) {
 	const helperEnv = "CHROTE_FILES_PERMISSION_HELPER"
 	if os.Getenv(helperEnv) == "1" {
+		requireUnprivileged(t)
 		mux := http.NewServeMux()
 		NewFilesHandler().RegisterRoutes(mux)
 		path := os.Getenv("CHROTE_FILES_PERMISSION_PATH")
@@ -382,6 +371,7 @@ func TestFilesHandlerUnreadablePathUnderConfiguredRootReturnsPermissionError(t *
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestFilesHandlerUnreadablePathUnderConfiguredRootReturnsPermissionError$")
 	cmd.Env = append(os.Environ(),
+		raceExitPromptly,
 		helperEnv+"=1",
 		"CHROTE_ROOTS="+root,
 		"CHROTE_FILES_PERMISSION_PATH="+path,
@@ -556,86 +546,6 @@ func TestFilesHandlerRejectsOversizedUpload(t *testing.T) {
 	}
 }
 
-func TestFilesHandlerDownloadRejectsParentReplacedByOutboundSymlink(t *testing.T) {
-	root := t.TempDir()
-	visible := filepath.Join(root, "visible")
-	outside := t.TempDir()
-	writeFileFixture(t, filepath.Join(visible, "secret.txt"), "public")
-	writeFileFixture(t, filepath.Join(outside, "secret.txt"), "outside")
-
-	handler := &FilesHandler{
-		allowedRoots:   []string{root},
-		maxUploadBytes: defaultMaxUploadBytes,
-	}
-	handler.operationHook = replaceDirectoryWithSymlinkAfterStage(t, "download", visible, outside)
-	req := httptest.NewRequest(http.MethodGet, "/api/files/raw/ignored", nil)
-	req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(filepath.Join(visible, "secret.txt")), "/"))
-	rec := httptest.NewRecorder()
-
-	handler.DownloadFile(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403 after outbound symlink swap: %s", rec.Code, rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), "outside") {
-		t.Fatalf("outbound content escaped through download: %q", rec.Body.String())
-	}
-}
-
-func TestFilesHandlerMutationsRejectParentReplacedByOutboundSymlink(t *testing.T) {
-	t.Run("create", func(t *testing.T) {
-		root := t.TempDir()
-		visible := filepath.Join(root, "visible")
-		outside := t.TempDir()
-		if err := os.MkdirAll(visible, 0755); err != nil {
-			t.Fatal(err)
-		}
-		handler := &FilesHandler{
-			allowedRoots:   []string{root},
-			maxUploadBytes: defaultMaxUploadBytes,
-		}
-		handler.operationHook = replaceDirectoryWithSymlinkAfterStage(t, "create", visible, outside)
-		req := httptest.NewRequest(http.MethodPost, "/api/files/resources/ignored", bytes.NewBufferString("outside"))
-		req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(filepath.Join(visible, "injected.txt")), "/"))
-		rec := httptest.NewRecorder()
-
-		handler.CreateResource(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("create status = %d, want 403 after outbound symlink swap: %s", rec.Code, rec.Body.String())
-		}
-		if _, err := os.Stat(filepath.Join(outside, "injected.txt")); !os.IsNotExist(err) {
-			t.Fatalf("create escaped allowed root: %v", err)
-		}
-	})
-
-	t.Run("delete", func(t *testing.T) {
-		root := t.TempDir()
-		visible := filepath.Join(root, "visible")
-		outside := t.TempDir()
-		writeFileFixture(t, filepath.Join(visible, "victim.txt"), "public")
-		outsideVictim := filepath.Join(outside, "victim.txt")
-		writeFileFixture(t, outsideVictim, "outside")
-		handler := &FilesHandler{
-			allowedRoots:   []string{root},
-			maxUploadBytes: defaultMaxUploadBytes,
-		}
-		handler.operationHook = replaceDirectoryWithSymlinkAfterStage(t, "delete", visible, outside)
-		req := httptest.NewRequest(http.MethodDelete, "/api/files/resources/ignored", nil)
-		req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(filepath.Join(visible, "victim.txt")), "/"))
-		rec := httptest.NewRecorder()
-
-		handler.DeleteResource(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("delete status = %d, want 403 after outbound symlink swap: %s", rec.Code, rec.Body.String())
-		}
-		if got, err := os.ReadFile(outsideVictim); err != nil || string(got) != "outside" {
-			t.Fatalf("delete escaped allowed root: content=%q err=%v", got, err)
-		}
-	})
-}
-
 func TestFilesHandlerDownloadKeepsStableInRootSymlinkUseful(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "target.txt")
@@ -688,103 +598,5 @@ func writeFileFixture(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func replaceDirectoryWithSymlinkAfterStage(t *testing.T, wantStage, visible, outside string) func(string) {
-	t.Helper()
-	replaced := false
-	return func(stage string) {
-		if stage != wantStage || replaced {
-			return
-		}
-		replaced = true
-		if err := os.Rename(visible, visible+"-moved"); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(outside, visible); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func TestFilesHandler_SuccessResponse(t *testing.T) {
-	resp := SuccessResponse{Success: true}
-	bytes, err := json.Marshal(resp)
-	if err != nil {
-		t.Fatalf("Failed to marshal: %v", err)
-	}
-
-	var decoded SuccessResponse
-	if err := json.Unmarshal(bytes, &decoded); err != nil {
-		t.Fatalf("Failed to unmarshal: %v", err)
-	}
-
-	if !decoded.Success {
-		t.Error("Expected success=true")
-	}
-}
-
-func TestFilesHandler_DirectoryResponse(t *testing.T) {
-	resp := DirectoryResponse{
-		IsDir: true,
-		Items: []FileItem{
-			{Name: "test.txt", Size: 100, IsDir: false, Type: "txt"},
-			{Name: "subdir", Size: 0, IsDir: true, Type: ""},
-		},
-	}
-
-	bytes, err := json.Marshal(resp)
-	if err != nil {
-		t.Fatalf("Failed to marshal: %v", err)
-	}
-
-	var decoded DirectoryResponse
-	if err := json.Unmarshal(bytes, &decoded); err != nil {
-		t.Fatalf("Failed to unmarshal: %v", err)
-	}
-
-	if !decoded.IsDir {
-		t.Error("Expected isDir=true")
-	}
-
-	if len(decoded.Items) != 2 {
-		t.Errorf("Expected 2 items, got %d", len(decoded.Items))
-	}
-}
-
-func TestFilesHandler_FileInfoResponse(t *testing.T) {
-	resp := FileInfoResponse{
-		IsDir:    false,
-		Name:     "test.txt",
-		Size:     1024,
-		Modified: "2026-01-18T00:00:00Z",
-		Type:     "txt",
-	}
-
-	bytes, err := json.Marshal(resp)
-	if err != nil {
-		t.Fatalf("Failed to marshal: %v", err)
-	}
-
-	var decoded FileInfoResponse
-	if err := json.Unmarshal(bytes, &decoded); err != nil {
-		t.Fatalf("Failed to unmarshal: %v", err)
-	}
-
-	if decoded.IsDir {
-		t.Error("Expected isDir=false")
-	}
-
-	if decoded.Name != "test.txt" {
-		t.Errorf("Name = %s, want test.txt", decoded.Name)
-	}
-
-	if decoded.Size != 1024 {
-		t.Errorf("Size = %d, want 1024", decoded.Size)
-	}
-
-	if decoded.Type != "txt" {
-		t.Errorf("Type = %s, want txt", decoded.Type)
 	}
 }

@@ -174,6 +174,11 @@ cleanup() {
   if ! assert_server_released "^${installed_binary:-}" "${port:-}"; then
     status=1
   fi
+  # Anything that ran under this fake HOME may have left a Go module cache in
+  # it, and Go marks those directories read-only. rm then fails, and under
+  # `set -e` the smoke exits non-zero after having already printed PASS --
+  # a green gate reported as red. Take write permission back first.
+  chmod -R u+w "$tmp" 2>/dev/null || true
   rm -rf "$tmp"
   exit "$status"
 }

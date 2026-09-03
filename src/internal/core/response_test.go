@@ -7,44 +7,6 @@ import (
 	"testing"
 )
 
-func TestNewSuccessResponse(t *testing.T) {
-	data := map[string]string{"key": "value"}
-	response := NewSuccessResponse(data)
-
-	if !response.Success {
-		t.Error("Success should be true")
-	}
-	if response.Error != nil {
-		t.Error("Error should be nil for success response")
-	}
-	if response.Data == nil {
-		t.Error("Data should not be nil")
-	}
-	if response.Timestamp == "" {
-		t.Error("Timestamp should not be empty")
-	}
-}
-
-func TestNewErrorResponse(t *testing.T) {
-	response := NewErrorResponse("TEST_ERROR", "Test error message")
-
-	if response.Success {
-		t.Error("Success should be false")
-	}
-	if response.Error == nil {
-		t.Error("Error should not be nil")
-	}
-	if response.Error.Code != "TEST_ERROR" {
-		t.Errorf("Error code = %q, expected TEST_ERROR", response.Error.Code)
-	}
-	if response.Error.Message != "Test error message" {
-		t.Errorf("Error message = %q, expected 'Test error message'", response.Error.Message)
-	}
-	if response.Timestamp == "" {
-		t.Error("Timestamp should not be empty")
-	}
-}
-
 func TestWriteJSON(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	data := map[string]string{"test": "data"}
@@ -69,6 +31,8 @@ func TestWriteJSON(t *testing.T) {
 	}
 }
 
+// The envelope is asserted on the wire rather than on the struct, because the
+// serialised shape is what the dashboard reads.
 func TestWriteSuccess(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	data := map[string]string{"result": "ok"}
@@ -85,6 +49,15 @@ func TestWriteSuccess(t *testing.T) {
 	}
 	if !result.Success {
 		t.Error("Response success should be true")
+	}
+	if result.Error != nil {
+		t.Errorf("Error = %#v, expected nil on a success envelope", result.Error)
+	}
+	if result.Data == nil {
+		t.Error("Data should not be nil")
+	}
+	if result.Timestamp == "" {
+		t.Error("Timestamp should not be empty")
 	}
 }
 
@@ -105,10 +78,16 @@ func TestWriteError(t *testing.T) {
 		t.Error("Response success should be false")
 	}
 	if result.Error == nil {
-		t.Error("Error should not be nil")
+		t.Fatal("Error should not be nil")
 	}
 	if result.Error.Code != "BAD_REQUEST" {
 		t.Errorf("Error code = %q, expected BAD_REQUEST", result.Error.Code)
+	}
+	if result.Error.Message != "Invalid input" {
+		t.Errorf("Error message = %q, expected 'Invalid input'", result.Error.Message)
+	}
+	if result.Timestamp == "" {
+		t.Error("Timestamp should not be empty")
 	}
 }
 
