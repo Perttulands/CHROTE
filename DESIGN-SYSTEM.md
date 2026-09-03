@@ -117,9 +117,11 @@ An empty window is the launcher, drawn over the theme's art for that slot. It
 offers the four choices a launch needs: harness, folder, Unix user, and name.
 The Sessions panel's plus opens the same launcher.
 
-- Harnesses and their flags are operator configuration read through
-  `GET /api/launch`. The commands stay on the server; there is no free-text
-  command field.
+- Harnesses, their default flags and their flag catalogues are operator
+  configuration read through `GET /api/launch`. The binary stays on the server.
+  Flags are an editable line prefilled with the harness's defaults, a preview
+  shows the exact line that will be typed, and a panel lists every flag the
+  harness's own `--help` describes, searchable, click to add or remove.
 - Folders are the configured pinned list, the working directories of live
   sessions as recents, and a browse control.
 - The name is derived from folder and harness, suffixed on collision, and

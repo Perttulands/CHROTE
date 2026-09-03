@@ -188,23 +188,41 @@ visible instead of looking deliberate.
 
 ### `CHROTE_LAUNCH_CONFIG`
 
-A JSON file naming what a new session may start and where.
+A JSON file naming what a new session may start, with which flags, and where.
 
 ```json
 {
   "harnesses": [
-    {"id": "example-agent", "label": "Example Agent", "command": "example-agent --flag"},
+    {
+      "id": "example-agent",
+      "label": "Example Agent",
+      "command": "example-agent",
+      "defaultFlags": "--flag",
+      "flags": [
+        {"name": "--flag", "description": "What the flag does"},
+        {"name": "--model", "short": "-m", "value": "<model>", "description": "Model to use"},
+        {"name": "--mode", "value": "<MODE>", "values": ["a", "b"], "description": "One of two modes"}
+      ]
+    },
     {"id": "shell", "label": "Shell", "command": ""}
   ],
   "folders": ["/absolute/path/to/project", "~"]
 }
 ```
 
-Ids match `[a-z0-9-]+` and are unique. `shell` is the bare login shell and must
-have an empty command; it is offered whether or not the file lists it. A folder
-is absolute, or starts with `~` and resolves against the target Unix user's
-home. Commands never reach the browser: `GET /api/launch` returns ids, labels
-and folders, and a session is created by naming a harness id.
+Ids match `[a-z0-9-]+` and are unique. `command` is the binary; `defaultFlags`
+is the line the launcher prefills, which the operator may edit before launching;
+`flags` is an optional catalogue the launcher's panel lists and searches, where
+only `name` and `description` are required. An entry that still carries flags
+inside `command` is split on load: first token as the binary, the rest as
+`defaultFlags`. `shell` is the bare login shell with an empty command, no
+default flags and no catalogue; it is offered whether or not the file lists it.
+A folder is absolute, or starts with `~` and resolves against the target Unix
+user's home. `GET /api/launch` returns each harness's id, label, binary,
+default flags and catalogue, and the folders. A session is created by naming a
+harness id and, optionally, a one-line `flags` string; the server types
+`binary flags` into the new session. Control characters in `flags` are
+refused.
 
 Unset: the launcher offers `Shell` in `~`. Set but unreadable or invalid: the
 server refuses to start and logs the reason, instead of running a launcher that
