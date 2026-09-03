@@ -84,9 +84,13 @@ function SessionPanel({
     })
   }, [groupedSessions, searchTerm])
 
-  // The dismiss layer under a DismissiblePanel closes the launcher on an
-  // outside pointer and on Escape, so the panel needs no listeners of its own.
-  const closeLauncher = () => setLauncher({ show: false, x: 0, y: 0 })
+  // The launcher is a glance until something has been typed into it: then a
+  // press outside is an ordinary press, and only Escape or a launch closes it.
+  const [launcherTyped, setLauncherTyped] = useState(false)
+  const closeLauncher = () => {
+    setLauncher({ show: false, x: 0, y: 0 })
+    setLauncherTyped(false)
+  }
 
   const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!onWidthChange) return
@@ -153,7 +157,7 @@ function SessionPanel({
       </div>
 
       {!isCollapsed && launcher.show && (
-        <DismissiblePanel onDismiss={closeLauncher} panelPosition="fixed">
+        <DismissiblePanel onDismiss={closeLauncher} panelPosition="fixed" kind={launcherTyped ? 'work' : 'glance'}>
           <div
             ref={launcherPosition.ref}
             role="dialog"
@@ -161,7 +165,7 @@ function SessionPanel({
             className="session-launcher-popup"
             style={launcherPosition.style}
           >
-            <Launcher workspaceId={activeWorkspaceId} onLaunched={closeLauncher} />
+            <Launcher workspaceId={activeWorkspaceId} onLaunched={closeLauncher} onTypedChange={setLauncherTyped} />
           </div>
         </DismissiblePanel>
       )}

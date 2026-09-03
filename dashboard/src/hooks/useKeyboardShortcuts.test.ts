@@ -2,13 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 
-const closeFloatingModal = vi.fn()
-const mockUseSession = vi.fn()
-
-vi.mock('../context/SessionContext', () => ({
-  useSession: () => mockUseSession(),
-}))
-
 function mount(onShowKeys = vi.fn()) {
   renderHook(() => useKeyboardShortcuts({ onShowKeys, isKeysPanelOpen: false }))
   return onShowKeys
@@ -18,7 +11,6 @@ describe('useKeyboardShortcuts', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     document.body.innerHTML = ''
-    mockUseSession.mockReturnValue({ floatingSession: null, closeFloatingModal })
   })
 
   it('leaves browser and terminal shortcuts alone', () => {
@@ -58,6 +50,11 @@ describe('useKeyboardShortcuts', () => {
     document.body.appendChild(terminalBody)
     terminalBody.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))
     expect(onShowKeys).toHaveBeenCalledTimes(1)
+
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))
+    expect(onShowKeys).toHaveBeenCalledTimes(1)
   })
 
   it('opens the active Sessions sidecar and focuses its search when slash is pressed while closed', async () => {
@@ -84,33 +81,5 @@ describe('useKeyboardShortcuts', () => {
     expect(slash.defaultPrevented).toBe(true)
     expect(click).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(dock.querySelector('.session-search-input')).toHaveFocus())
-  })
-
-  it('closes Peek on Escape without handling other keys while typing', () => {
-    mockUseSession.mockReturnValue({ floatingSession: 'alice:shell', closeFloatingModal })
-    const onShowKeys = mount()
-    const input = document.createElement('input')
-    document.body.appendChild(input)
-
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))
-    expect(onShowKeys).not.toHaveBeenCalled()
-
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
-    expect(closeFloatingModal).toHaveBeenCalledTimes(1)
-  })
-
-  it('leaves Escape to the shell when it is typed into a terminal', () => {
-    mockUseSession.mockReturnValue({ floatingSession: 'alice:shell', closeFloatingModal })
-    mount()
-    const peekBody = document.createElement('div')
-    peekBody.className = 'peek-body'
-    const terminalInput = document.createElement('textarea')
-    terminalInput.className = 'xterm-helper-textarea'
-    peekBody.appendChild(terminalInput)
-    document.body.appendChild(peekBody)
-
-    terminalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
-
-    expect(closeFloatingModal).not.toHaveBeenCalled()
   })
 })

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TerminalWorkspaceDock from './TerminalWorkspaceDock'
+import { registerSurface } from '../keys/dismiss'
 import {
   readSessionsDockState,
   writeSessionsDockState,
@@ -203,7 +204,7 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
 
     expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'true')
     expect(desktop.container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.getByTestId('sessions-panel')).toBeInTheDocument()
 
     desktop.unmount()
@@ -213,7 +214,7 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Sessions sidecar/i }))
     expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'false')
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /Files sidecar/i }))
@@ -221,37 +222,21 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     expect(screen.queryByTestId('files-panel')).not.toBeInTheDocument()
   })
 
-  it('ignores hidden keep-alive dialogs for Escape while deferring to a visible dialog', () => {
+  it('leaves a narrow overlay open while a surface above it takes Escape first', () => {
     mocks.narrow = true
     const { container } = renderDock()
-    const hiddenHost = document.createElement('div')
-    const dialog = document.createElement('section')
-    hiddenHost.style.display = 'none'
-    dialog.setAttribute('role', 'dialog')
-    Object.defineProperty(dialog, 'getClientRects', {
-      configurable: true,
-      value: () => [{ width: 100, height: 100 }],
-    })
-    hiddenHost.append(dialog)
-    document.body.append(hiddenHost)
+    fireEvent.click(screen.getByRole('button', { name: /Sessions sidecar/i }))
 
-    try {
-      fireEvent.click(screen.getByRole('button', { name: /Sessions sidecar/i }))
-      fireEvent.keyDown(window, { key: 'Escape' })
-      expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
+    const above = vi.fn()
+    const retire = registerSurface({ kind: 'glance', close: above, contains: () => false })
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(above).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('sessions-panel')).toBeInTheDocument()
 
-      fireEvent.click(screen.getByRole('button', { name: /Sessions sidecar/i }))
-      hiddenHost.style.display = 'block'
-      fireEvent.keyDown(window, { key: 'Escape' })
-      expect(screen.getByTestId('sessions-panel')).toBeInTheDocument()
-
-      hiddenHost.remove()
-      fireEvent.keyDown(window, { key: 'Escape' })
-      expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
-      expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
-    } finally {
-      hiddenHost.remove()
-    }
+    retire()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
+    expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
   })
 
   it('opens desktop sidecars in flow, and reopens them without rewriting stored preferences', () => {

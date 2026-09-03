@@ -945,6 +945,21 @@
   max-height: 100%;
 }
 
+/* The picture is a control: a press on it opens the image glance. */
+.fb-image-look {
+  display: flex;
+  max-width: 100%;
+  max-height: 100%;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.fb-image-look:focus-visible {
+  outline: 1px solid var(--accent);
+}
+
 .fb-media-preview audio {
   width: min(520px, 100%);
 }

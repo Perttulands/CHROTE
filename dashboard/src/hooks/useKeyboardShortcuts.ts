@@ -1,5 +1,4 @@
 import { useEffect } from 'react'
-import { useSession } from '../context/SessionContext'
 import { focusSessionSearch } from '../keys/focusSessionSearch'
 
 interface KeyboardShortcutsConfig {
@@ -21,22 +20,15 @@ function isDashboardChrome(target: HTMLElement): boolean {
 /**
  * The two plain keys that still work without the leader, outside a terminal:
  * `/` for the session search and `?` for the keys panel. Everything else the
- * dashboard answers to is a chord, registered in src/keys.
+ * dashboard answers to is a chord, registered in src/keys, and Escape belongs
+ * to the dismissal owner there.
  */
 export function useKeyboardShortcuts({ onShowKeys, isKeysPanelOpen }: KeyboardShortcutsConfig) {
-  const { closeFloatingModal, floatingSession } = useSession()
-
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof HTMLElement
         ? event.target
         : (document.activeElement instanceof HTMLElement ? document.activeElement : document.body)
-
-      if (event.key === 'Escape' && floatingSession && !isTerminal(target)) {
-        event.preventDefault()
-        closeFloatingModal()
-        return
-      }
 
       if (isKeysPanelOpen || !isDashboardChrome(target)) return
 
@@ -53,5 +45,5 @@ export function useKeyboardShortcuts({ onShowKeys, isKeysPanelOpen }: KeyboardSh
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [closeFloatingModal, floatingSession, isKeysPanelOpen, onShowKeys])
+  }, [isKeysPanelOpen, onShowKeys])
 }

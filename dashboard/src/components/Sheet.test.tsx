@@ -1,6 +1,11 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import Sheet from './Sheet'
+import { resetSurfacesForTest } from '../keys/dismiss'
+
+afterEach(() => {
+  resetSurfacesForTest()
+})
 
 describe('Sheet', () => {
   it('docks to the edge it is given, at the extent it is given', () => {
@@ -21,22 +26,25 @@ describe('Sheet', () => {
     expect(bottom.style.width).toBe('')
   })
 
-  it('lays no backdrop over the work behind it, and a click outside is just a click', () => {
-    const onClose = vi.fn()
-    render(<Sheet open edge="left" extent="50%" label="Peek main" onClose={onClose}>body</Sheet>)
-
-    expect(document.querySelector('.floating-panel-dismiss-layer')).toBeNull()
-
-    fireEvent.pointerDown(document.body)
-    fireEvent.click(document.body)
-    expect(onClose).not.toHaveBeenCalled()
-  })
-
-  it('closes on Escape, from wherever the cursor is', () => {
+  it('stays through a press outside as a work surface, and closes on Escape', () => {
     const onClose = vi.fn()
     render(<Sheet open edge="right" extent="380px" label="Send" onClose={onClose}>body</Sheet>)
 
+    fireEvent.pointerDown(document.body)
+    expect(onClose).not.toHaveBeenCalled()
+
     fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes on a press outside as a glance, and not on one inside', () => {
+    const onClose = vi.fn()
+    render(<Sheet open edge="left" extent="50%" kind="glance" label="Peek main" onClose={onClose}>body</Sheet>)
+
+    fireEvent.pointerDown(screen.getByText('body'))
+    expect(onClose).not.toHaveBeenCalled()
+
+    fireEvent.pointerDown(document.body)
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 

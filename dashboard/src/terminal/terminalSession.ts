@@ -12,6 +12,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { connectTtyd, type TtydConnection } from './ttydProtocol'
 import { createBeadLinkProvider } from './beadLinks'
+import { createPathLinkProvider } from './pathLinks'
 import { ensureBeadProjects } from '../beads/beadIds'
 import { terminalKeyEvent } from '../keys/chords'
 import { copyAndAnnounce, type CopyAnnouncer } from '../utils/clipboard'
@@ -68,7 +69,20 @@ export interface TerminalSession {
    * local storage — so every live terminal takes it when it lands.
    */
   applyAppearance(terminalTheme: TerminalTheme, fontFamily: string): void
+  /**
+   * The grid as drawn: its columns and rows, and the CSS size of one cell.
+   * Null while the terminal is not open or not on screen, because a hidden
+   * grid measures nothing. Peek sizes itself by this.
+   */
+  grid(): TerminalGrid | null
   dispose(): void
+}
+
+export interface TerminalGrid {
+  cols: number
+  rows: number
+  cellWidth: number
+  cellHeight: number
 }
 
 export interface TerminalSessionOptions {
@@ -144,6 +158,11 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   // is a terminal to print them in.
   terminal.registerLinkProvider(createBeadLinkProvider(terminal))
   void ensureBeadProjects()
+
+  // And the path of the file the agent changed, the test that failed, the log
+  // it wrote: activation hands it to Files, which reports plainly if it is not
+  // there. Nothing is checked or fetched to offer the link.
+  terminal.registerLinkProvider(createPathLinkProvider(terminal))
 
   // The leader is the one keystroke a focused terminal does not own. Returning
   // false here is what keeps it out of the pty: xterm neither writes it nor
@@ -286,6 +305,20 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
       terminal.options.theme = xtermTheme(terminalTheme)
       terminal.options.fontFamily = fontFamily
       fit()
+    },
+    grid() {
+      // xterm sizes its screen element to exactly cols by rows cells, so the
+      // cell is read from the element rather than from anything private.
+      if (!opened || !isMeasurable() || terminal.cols === 0 || terminal.rows === 0) return null
+      const screen = element.querySelector<HTMLElement>('.xterm-screen')
+      const rect = screen?.getBoundingClientRect()
+      if (!rect || rect.width < MIN_VISIBLE_PX || rect.height < MIN_VISIBLE_PX) return null
+      return {
+        cols: terminal.cols,
+        rows: terminal.rows,
+        cellWidth: rect.width / terminal.cols,
+        cellHeight: rect.height / terminal.rows,
+      }
     },
     dispose() {
       disposed = true
