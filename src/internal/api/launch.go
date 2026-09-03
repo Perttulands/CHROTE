@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/chrote/server/internal/core"
 )
@@ -23,15 +25,38 @@ const shellHarnessID = "shell"
 // passwd entry, never against its own $HOME: CHROTE runs as its own account.
 const homeDirToken = "~"
 
+// maxLaunchFlagsBytes bounds the flags line a request may carry. It is a
+// generous single command line; anything longer is a mistake, not a launch.
+const maxLaunchFlagsBytes = 4096
+
+// flagsNotOneLineMessage is what the operator is told when the flags line is
+// not one line. A control character and an over-long line are the same
+// mistake: what arrived is not something that can be typed at a prompt.
+const flagsNotOneLineMessage = "flags must be one line"
+
 var launchHarnessIDPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
+// LaunchFlag is one option a harness's binary accepts, as that binary's own
+// --help printed it. The catalogue is a browsable reference for composing a
+// flags line; it constrains nothing, because the line the operator sends is
+// what runs.
+type LaunchFlag struct {
+	Name        string   `json:"name"`
+	Short       string   `json:"short,omitempty"`
+	Value       string   `json:"value,omitempty"`
+	Description string   `json:"description"`
+	Values      []string `json:"values,omitempty"`
+}
+
 // LaunchHarness is one thing the operator can start in a new session. The
-// command is server-side configuration and never reaches the browser; the
-// browser asks for a harness by id.
+// command is the binary alone; the flags a launch types are the operator's
+// configured defaults or the line the request carried.
 type LaunchHarness struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	Command string `json:"command"`
+	ID           string       `json:"id"`
+	Label        string       `json:"label"`
+	Command      string       `json:"command"`
+	DefaultFlags string       `json:"defaultFlags,omitempty"`
+	Flags        []LaunchFlag `json:"flags,omitempty"`
 }
 
 // LaunchConfig is what the launcher may offer: which harnesses can be started
@@ -42,11 +67,16 @@ type LaunchConfig struct {
 	Folders   []string        `json:"folders"`
 }
 
-// LaunchHarnessOption is the browser's view of a harness: what to show and
-// what to send back.
+// LaunchHarnessOption is the browser's view of a harness: what to show, what
+// to send back, and what the launcher needs to offer a flags line. The binary
+// is the first token of the configured command; nothing else about that
+// command leaves the server.
 type LaunchHarnessOption struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	ID           string       `json:"id"`
+	Label        string       `json:"label"`
+	Binary       string       `json:"binary"`
+	DefaultFlags string       `json:"defaultFlags"`
+	Flags        []LaunchFlag `json:"flags"`
 }
 
 // LaunchOptionsResponse is the body of GET /api/launch.
@@ -101,8 +131,25 @@ func validateLaunchConfig(config LaunchConfig) error {
 		if strings.TrimSpace(harness.Label) == "" {
 			return fmt.Errorf("harness %q has no label", id)
 		}
-		if id == shellHarnessID && strings.TrimSpace(harness.Command) != "" {
-			return fmt.Errorf("harness %q must have an empty command; it is the bare login shell", id)
+		if id == shellHarnessID {
+			if strings.TrimSpace(harness.Command) != "" {
+				return fmt.Errorf("harness %q must have an empty command; it is the bare login shell", id)
+			}
+			if strings.TrimSpace(harness.DefaultFlags) != "" {
+				return fmt.Errorf("harness %q must have no default flags; it is the bare login shell", id)
+			}
+			if len(harness.Flags) > 0 {
+				return fmt.Errorf("harness %q must have no flag catalogue; it is the bare login shell", id)
+			}
+		}
+		for flagIndex, flag := range harness.Flags {
+			name := strings.TrimSpace(flag.Name)
+			if !strings.HasPrefix(name, "-") {
+				return fmt.Errorf("harness %q flag %d has name %q, which must start with a dash", id, flagIndex, flag.Name)
+			}
+			if strings.TrimSpace(flag.Description) == "" {
+				return fmt.Errorf("harness %q flag %q has no description", id, name)
+			}
 		}
 	}
 	for index, folder := range config.Folders {
@@ -122,6 +169,10 @@ func withLaunchDefaults(config LaunchConfig) LaunchConfig {
 		harness.ID = strings.TrimSpace(harness.ID)
 		harness.Label = strings.TrimSpace(harness.Label)
 		harness.Command = strings.TrimSpace(harness.Command)
+		harness.DefaultFlags = strings.TrimSpace(harness.DefaultFlags)
+		if harness.DefaultFlags == "" {
+			harness.Command, harness.DefaultFlags = splitCommandLine(harness.Command)
+		}
 		if harness.ID == shellHarnessID {
 			hasShell = true
 		}
@@ -140,11 +191,35 @@ func withLaunchDefaults(config LaunchConfig) LaunchConfig {
 	return LaunchConfig{Harnesses: harnesses, Folders: folders}
 }
 
-// options is what the browser is allowed to know: ids, labels and folders.
+// splitCommandLine separates a configured command into the binary that runs
+// and the flags that follow it. Configurations written before flags existed
+// hold both in one string, so the first token is the binary and the rest is
+// that harness's default flags.
+func splitCommandLine(command string) (string, string) {
+	command = strings.TrimSpace(command)
+	index := strings.IndexFunc(command, unicode.IsSpace)
+	if index < 0 {
+		return command, ""
+	}
+	return command[:index], strings.TrimSpace(command[index:])
+}
+
+// options is what the browser is allowed to know: ids, labels, folders, and
+// the flags line each harness starts from.
 func (c LaunchConfig) options() LaunchOptionsResponse {
 	harnesses := make([]LaunchHarnessOption, 0, len(c.Harnesses))
 	for _, harness := range c.Harnesses {
-		harnesses = append(harnesses, LaunchHarnessOption{ID: harness.ID, Label: harness.Label})
+		flags := harness.Flags
+		if flags == nil {
+			flags = []LaunchFlag{}
+		}
+		harnesses = append(harnesses, LaunchHarnessOption{
+			ID:           harness.ID,
+			Label:        harness.Label,
+			Binary:       harness.Command,
+			DefaultFlags: harness.DefaultFlags,
+			Flags:        flags,
+		})
 	}
 	folders := append([]string(nil), c.Folders...)
 	if folders == nil {
@@ -153,19 +228,63 @@ func (c LaunchConfig) options() LaunchOptionsResponse {
 	return LaunchOptionsResponse{Harnesses: harnesses, Folders: folders}
 }
 
-// resolveHarness turns a requested harness id into the id to report and the
-// command to run. An absent id and the shell run nothing.
-func (c LaunchConfig) resolveHarness(requested string) (string, string, error) {
+// resolvedLaunch is what a create-session request settled on before anything
+// was created: which harness answered, the line to type, and the flags line
+// that produced it. An empty command types nothing.
+type resolvedLaunch struct {
+	harnessID string
+	command   string
+	flags     string
+}
+
+// resolveHarness turns a requested harness id and flags line into what the new
+// session starts. An absent id and the shell run nothing. Absent flags mean
+// the harness's configured defaults; an empty flags line means the operator
+// asked for none.
+func (c LaunchConfig) resolveHarness(requested string, requestedFlags *string) (resolvedLaunch, error) {
 	id := strings.TrimSpace(requested)
 	if id == "" {
 		id = shellHarnessID
 	}
 	for _, harness := range c.Harnesses {
-		if harness.ID == id {
-			return harness.ID, harness.Command, nil
+		if harness.ID != id {
+			continue
+		}
+		flags := harness.DefaultFlags
+		if requestedFlags != nil {
+			if err := validateLaunchFlags(*requestedFlags); err != nil {
+				return resolvedLaunch{}, err
+			}
+			flags = strings.TrimSpace(*requestedFlags)
+		}
+		if harness.Command == "" {
+			if flags != "" {
+				return resolvedLaunch{}, fmt.Errorf("harness %q starts no command, so it takes no flags", harness.ID)
+			}
+			return resolvedLaunch{harnessID: harness.ID}, nil
+		}
+		command := harness.Command
+		if flags != "" {
+			command += " " + flags
+		}
+		return resolvedLaunch{harnessID: harness.ID, command: command, flags: flags}, nil
+	}
+	return resolvedLaunch{}, fmt.Errorf("unknown harness %q", requested)
+}
+
+// validateLaunchFlags refuses anything that is not one command line. A control
+// character would type an extra key into the session rather than a flag, and a
+// line past the bound is not a launch anybody meant.
+func validateLaunchFlags(flags string) error {
+	if len(flags) > maxLaunchFlagsBytes {
+		return errors.New(flagsNotOneLineMessage)
+	}
+	for index := 0; index < len(flags); index++ {
+		if flags[index] < 0x20 || flags[index] == 0x7f {
+			return errors.New(flagsNotOneLineMessage)
 		}
 	}
-	return "", "", fmt.Errorf("unknown harness %q", requested)
+	return nil
 }
 
 // resolveLaunchCwd decides the directory a new session starts in. An empty
