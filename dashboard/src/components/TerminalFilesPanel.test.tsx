@@ -338,6 +338,43 @@ describe('TerminalFilesPanel', () => {
     await waitFor(() => expect(readWorkspaceFilesState('terminal1').currentPath).toBe('/srv/chrote'))
   })
 
+  // A path from a terminal link is a file more often than a folder: the
+  // panel opens it in the viewer with the tree at its parent, and a path the
+  // parent does not list goes to the viewer too, which is where the failure to
+  // read it is reported in plain words.
+  it('opens a requested file in the viewer, and reports a requested path that is not there', async () => {
+    const props = {
+      workspaceId: 'terminal1' as const,
+      collapsed: false,
+      width: 320,
+      pinned: true,
+      canPin: true,
+      panelId: 'terminal1-files-sidecar',
+      onTogglePin: vi.fn(),
+      onClose: vi.fn(),
+      onWidthChange: vi.fn(),
+      onOpenInFiles: vi.fn(),
+      // The dock clears the request as soon as it is acknowledged, before
+      // the listing that resolves it has answered.
+      onNavigateRequestHandled: vi.fn(),
+    }
+    const { rerender } = render(<TerminalFilesPanel {...props} />)
+
+    rerender(<TerminalFilesPanel {...props} navigateRequest={{ path: '/srv/chrote/README.md', requestId: 1 }} />)
+    await waitFor(() => expect(props.onNavigateRequestHandled).toHaveBeenCalledWith(1))
+    rerender(<TerminalFilesPanel {...props} navigateRequest={null} />)
+
+    expect(await screen.findByTitle('/srv/chrote/README.md')).toBeInTheDocument()
+    expect(readWorkspaceFilesState('terminal1').currentPath).toBe('/srv/chrote')
+    expect(readWorkspaceFilesState('terminal1').openPath).toBe('/srv/chrote/README.md')
+
+    mockedReadTextFile.mockRejectedValueOnce(new Error('Not found'))
+    rerender(<TerminalFilesPanel {...props} navigateRequest={{ path: '/srv/chrote/missing.txt', requestId: 2 }} />)
+
+    expect(await screen.findByTitle('/srv/chrote/missing.txt')).toBeInTheDocument()
+    expect(await screen.findByText(/Not found/)).toBeInTheDocument()
+  })
+
   it('invalidates the FileTree cache when Refresh is clicked', async () => {
     renderPanel()
 

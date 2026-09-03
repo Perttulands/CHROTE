@@ -78,6 +78,47 @@ async function urlPoint(page: Page, columns: number) {
   return { x: box.x + cell * column, y: box.y + box.height / 2 }
 }
 
+const PRINTED_PATH = '/tmp/notes.txt'
+
+/**
+ * A terminal that prints one absolute path, and a Files API that lists its
+ * parent and serves its bytes (bead: chrote-wgqp.7).
+ */
+async function openTerminalWithPath(page: Page) {
+  await mockApiRoutes(page)
+  // The viewer asks once whether the file sits in a repository.
+  await page.route('**/api/files/diff*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ path: PRINTED_PATH, repository: '', diff: '', truncated: false }),
+  }))
+  await page.route(/\/api\/files\/resources\/tmp\/?$/, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        isDir: true,
+        items: [{ name: 'notes.txt', size: 17, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'text/plain' }],
+      }),
+    })
+  })
+  const grid = { columns: 0 }
+  await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
+    ws.onMessage(message => {
+      const text = typeof message === 'string' ? message : message.toString('utf8')
+      if (!text.startsWith('{')) return
+      grid.columns = (JSON.parse(text) as { columns: number }).columns
+      ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(`see ${PRINTED_PATH} for the run`)]))
+    })
+  })
+  await page.addInitScript((state) => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
+  }, seededState())
+  await page.goto('/')
+  await expect(page.locator('.terminal-window-body .xterm-rows')).toContainText(PRINTED_PATH)
+  return grid
+}
+
 test.describe('Terminal links', () => {
   test('a printed URL is hoverable and opens in a new tab', async ({ page }) => {
     const grid = await openTerminalWithUrl(page)
@@ -89,5 +130,23 @@ test.describe('Terminal links', () => {
     await page.mouse.click(point.x, point.y)
 
     await expect.poll(() => page.evaluate(() => window.__openedUrls)).toEqual([PRINTED_URL])
+  })
+
+  test('a printed absolute path opens the file in the Files panel', async ({ page }) => {
+    const grid = await openTerminalWithPath(page)
+    const row = page.locator('.terminal-window-body .xterm-rows > div').first()
+    const box = (await row.boundingBox())!
+    const cell = box.width / grid.columns
+    // 'see ' is four cells, and the path runs from there.
+    const point = { x: box.x + cell * (4 + PRINTED_PATH.length / 2), y: box.y + box.height / 2 }
+
+    await page.mouse.move(point.x, point.y)
+    await expect(page.locator('.terminal-window-body .xterm-screen.xterm-cursor-pointer')).toBeVisible()
+    await page.mouse.click(point.x, point.y)
+
+    const panel = page.locator('.terminal-files-panel')
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('.files-panel-viewer-path')).toHaveAttribute('title', PRINTED_PATH)
+    await expect(panel.locator('[data-ui="files.viewer"]')).toContainText('mock file content')
   })
 })

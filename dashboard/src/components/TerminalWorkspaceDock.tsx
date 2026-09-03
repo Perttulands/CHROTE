@@ -23,6 +23,8 @@ interface TerminalWorkspaceDockProps {
   sessionsForcedPinned: boolean
   onFilesOpenChange: (workspaceId: WorkspaceId, open: boolean) => void
   onOpenInFiles: (path: string) => void
+  /** A path asked for from a terminal link, routed here while this dock is the active tab. */
+  openFilesRequest?: { path: string; nonce: number } | null
 }
 
 // An overlay sidecar is a glance over the terminals: what belongs to it is
@@ -37,6 +39,7 @@ function TerminalWorkspaceDock({
   onSessionsDockStateChange,
   onFilesOpenChange,
   onOpenInFiles,
+  openFilesRequest = null,
 }: TerminalWorkspaceDockProps) {
   const { sessions } = useSession()
   const dockRef = useRef<HTMLDivElement>(null)
@@ -102,6 +105,11 @@ function TerminalWorkspaceDock({
   const handleFilesNavigateRequest = useCallback((requestId: number) => {
     setFilesNavigateRequest(previous => previous?.requestId === requestId ? null : previous)
   }, [])
+
+  // A path from a terminal link takes the same way in as the tag's own menu.
+  useEffect(() => {
+    if (openFilesRequest) openFilesAtPath(openFilesRequest.path)
+  }, [openFilesRequest, openFilesAtPath])
 
   const closeAllSidecars = useCallback(() => {
     closeSessions()

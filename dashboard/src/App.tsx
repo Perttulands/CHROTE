@@ -18,6 +18,7 @@ import KeyEcho from './keys/KeyEcho'
 import DevMode from './dev/DevMode'
 import { closeLeaderWindow, useLeader } from './keys/chords'
 import { TerminalPoolProvider } from './components/TerminalPool'
+import { useOpenInFilesRequest } from './terminal/openInFiles'
 import { SessionCommandMark, SessionLabel } from './components/sessionLabel'
 import {
   readSessionsDockState,
@@ -277,6 +278,17 @@ function DashboardContent() {
     }
   }, [windowRevealRequest])
 
+  // A path activated in a terminal goes to the Files panel of the terminal
+  // tab the operator is on; on any other tab, to the Files tab.
+  const openInFilesRequest = useOpenInFilesRequest()
+  const openInFilesOnTerminalTab = isTerminalWorkspaceId(activeTab, mountedWorkspaceIds)
+  useEffect(() => {
+    if (!openInFilesRequest || openInFilesOnTerminalTab) return
+    handleOpenProjectInFiles(openInFilesRequest.path)
+    // Each request is answered once, where the operator was when it was made.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openInFilesRequest])
+
   // The leader is discovery: it toggles the keys panel and shuts its own
   // window, because from here the next key is search text rather than a chord.
   const { leaderOpen } = useLeader()
@@ -392,6 +404,7 @@ function DashboardContent() {
               sessionsForcedPinned={sessionsForcedPinned}
               onFilesOpenChange={handleFilesOpenChange}
               onOpenInFiles={handleOpenProjectInFiles}
+              openFilesRequest={activeTab === workspaceId ? openInFilesRequest : null}
             />
           ))}
           {persistFilesTabState ? (

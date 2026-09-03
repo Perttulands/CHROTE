@@ -12,6 +12,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { connectTtyd, type TtydConnection } from './ttydProtocol'
 import { createBeadLinkProvider } from './beadLinks'
+import { createPathLinkProvider } from './pathLinks'
 import { ensureBeadProjects } from '../beads/beadIds'
 import { terminalKeyEvent } from '../keys/chords'
 import { copyTextToClipboard } from '../utils/clipboard'
@@ -155,6 +156,11 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   // is a terminal to print them in.
   terminal.registerLinkProvider(createBeadLinkProvider(terminal))
   void ensureBeadProjects()
+
+  // And the path of the file the agent changed, the test that failed, the log
+  // it wrote: activation hands it to Files, which reports plainly if it is not
+  // there. Nothing is checked or fetched to offer the link.
+  terminal.registerLinkProvider(createPathLinkProvider(terminal))
 
   // The leader is the one keystroke a focused terminal does not own. Returning
   // false here is what keeps it out of the pty: xterm neither writes it nor
