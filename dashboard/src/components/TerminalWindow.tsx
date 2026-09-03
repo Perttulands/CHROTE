@@ -320,13 +320,12 @@ function DetachedTile({ state, sessionName, restarting, onRestore, onRestart, on
 interface TerminalWindowProps {
   workspaceId: WorkspaceId
   window: TerminalWindowType
-  refitNonce?: number
   style?: React.CSSProperties
   onOpenFilesAtPath?: (path: string) => void
   workspaceActive?: boolean
 }
 
-function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, style, onOpenFilesAtPath, workspaceActive = true }: TerminalWindowProps) {
+function TerminalWindow({ workspaceId, window: windowConfig, style, onOpenFilesAtPath, workspaceActive = true }: TerminalWindowProps) {
   const windowRef = useRef<HTMLDivElement>(null)
   const { setNodeRef: setDropNodeRef, isOver, active } = useDroppable({
     id: `drop-${workspaceId}-${windowConfig.id}`,
@@ -345,7 +344,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
   const {
     removeSessionFromWindow,
     setActiveSession,
-    cycleSession,
     focusedWindowKey,
     setFocusedWindowKey,
     openSendToSession,
@@ -388,14 +386,14 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     activeTerminal?.redialIfDropped()
   }, [windowOnScreen, activeSession, activeTerminal])
 
-  // The Refit control and the workspace-level refit both land here. Each
-  // surface already refits itself on container resize; this is the explicit
-  // operator request. Retired by chrote-xl5 once auto-fit is proven.
+  // A terminal that has just become this tile's active one measures itself
+  // against the frame it landed in. Every surface also refits on container
+  // resize; no control asks for either any more.
   useEffect(() => {
     if (!activeTerminal) return
     const frame = requestAnimationFrame(() => activeTerminal.fit())
     return () => cancelAnimationFrame(frame)
-  }, [activeTerminal, refitNonce])
+  }, [activeTerminal])
 
   useEffect(() => {
     if (isFocused) activeTerminal?.focus()
@@ -462,24 +460,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
         </div>
 
         <div className="window-controls">
-          {hasSessions && windowConfig.boundSessions.length > 1 && (
-            <>
-              <button
-                className="cycle-btn"
-                onClick={() => cycleSession(workspaceId, windowConfig.id, 'prev')}
-                title="Previous session"
-              >
-                ←
-              </button>
-              <button
-                className="cycle-btn"
-                onClick={() => cycleSession(workspaceId, windowConfig.id, 'next')}
-                title="Next session"
-              >
-                →
-              </button>
-            </>
-          )}
           {activeSession && (
             <button
               className="window-send-btn"

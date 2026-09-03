@@ -394,9 +394,7 @@ function ScheduledTasksView({
           collapsed={false}
           width={sessionsDockState.width}
           pinned={sessionsPinned}
-          canPin={!sessionsForcedPinned}
           panelId="scheduled-sessions-sidecar"
-          onTogglePin={() => updateSessionsDockState({ pinned: !sessionsDockState.pinned })}
           onClose={() => updateSessionsDockState({ open: false })}
           onWidthChange={width => updateSessionsDockState({ width })}
           searchTerm={sessionsDockState.searchTerm}

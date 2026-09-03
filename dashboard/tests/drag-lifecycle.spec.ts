@@ -176,6 +176,37 @@ test.describe('terminal drag lifecycle', () => {
     await expect(row).not.toHaveClass(/assigned/)
   })
 
+  // The seam between two tiles is the layout's own drop target: it appears only
+  // while a session is in the air, and dropping there makes the window it needs.
+  test('a drop in the seam between tiles adds a window and lands the session in it', async ({ page }) => {
+    const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
+    const windows = page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-window')
+    await expect(windows).toHaveCount(2)
+    await expect(page.locator('.terminal-window-gap')).toHaveCount(0)
+
+    const from = await point(row)
+    const firstBox = await windows.first().boundingBox()
+    const secondBox = await windows.nth(1).boundingBox()
+    if (!firstBox || !secondBox) throw new Error('the tiles have no bounding box')
+    const seam = {
+      x: (firstBox.x + firstBox.width + secondBox.x) / 2,
+      y: firstBox.y + firstBox.height / 2,
+    }
+
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(from.x + 12, from.y + 12, { steps: 4 })
+    await page.mouse.move(seam.x, seam.y, { steps: 8 })
+    await expect(page.locator('.terminal-window-gap')).toHaveCount(1)
+    await expect(page.locator('.terminal-window-gap.over')).toHaveCount(1)
+
+    await page.mouse.up()
+    await expect(page.locator('.terminal-window-gap')).toHaveCount(0)
+    await expect(windows).toHaveCount(3)
+    await expect(windows.nth(2).locator('.session-tag')).toContainText('gt-gastown-jack')
+    await expect(windows.first().locator('.session-tag')).toHaveCount(0)
+  })
+
   test('Escape explicitly restores terminal pointer events without moving the tag', async ({ page }) => {
     const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
     const firstWindow = page.locator('.terminal-window:visible').nth(0)

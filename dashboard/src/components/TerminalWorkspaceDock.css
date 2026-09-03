@@ -91,6 +91,38 @@
   letter-spacing: 0.5px;
 }
 
+/* The layout is read, not pressed: its number, then the two chords that
+   change it, at the far end of the row the sidecar switcher starts. */
+.layout-state {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.layout-count {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.layout-chords {
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mobile-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  overflow-x: auto;
+}
+
 .layout-btn {
   width: 28px;
   height: 28px;
@@ -116,12 +148,36 @@
 
 /* Terminal Grid Layouts */
 .terminal-grid {
+  position: relative;
   flex: 1;
   display: grid;
   gap: 4px;
   padding: 4px;
   min-height: 0;
   overflow: hidden;
+}
+
+/* The seam between two tiles, drawn only while a session is in the air. The
+   hit area is wider than the line so it can be aimed at; it takes no pointer
+   events, so the tiles under its edges keep every click. */
+.terminal-window-gap {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.terminal-window-gap::before {
+  content: '';
+  width: 4px;
+  height: 100%;
+  background-color: var(--accent-light);
+}
+
+.terminal-window-gap.over::before {
+  width: 8px;
+  background-color: var(--accent);
 }
 
 .terminal-grid.grid-1 {
@@ -261,7 +317,6 @@
   flex: 0 0 auto;
 }
 
-.cycle-btn,
 .window-send-btn {
   background: transparent;
   border: 1px solid var(--divider);
@@ -272,7 +327,6 @@
   transition: all 0.15s ease;
 }
 
-.cycle-btn:hover,
 .window-send-btn:hover {
   color: var(--text-primary);
   border-color: var(--accent);

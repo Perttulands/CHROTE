@@ -116,11 +116,6 @@ function TerminalWorkspaceDock({
     closeFiles()
   }, [closeFiles, closeSessions])
 
-  const toggleSessionsPin = useCallback(() => {
-    if (isNarrow) return
-    onSessionsDockStateChange(previous => ({ ...previous, pinned: !previous.pinned }))
-  }, [isNarrow, onSessionsDockStateChange])
-
   const toggleFilesPin = useCallback(() => {
     if (isNarrow) return
     setFilesDockState(previous => ({ ...previous, pinned: !previous.pinned }))
@@ -194,9 +189,7 @@ function TerminalWorkspaceDock({
           collapsed={false}
           width={sessionsDockState.width}
           pinned={sessionsPinned}
-          canPin={false}
           panelId={sessionsPanelId}
-          onTogglePin={toggleSessionsPin}
           onClose={closeSessions}
           onWidthChange={width => onSessionsDockStateChange(previous => ({ ...previous, width }))}
           searchTerm={sessionsDockState.searchTerm}

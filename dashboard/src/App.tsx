@@ -74,6 +74,14 @@ interface WindowDropData {
   windowId: string
 }
 
+interface WindowGapDropData {
+  type: 'window-gap'
+  workspaceId: WorkspaceId
+}
+
+/** The layout never grows past the four windows the grid classes describe. */
+const MAX_WINDOWS = 4
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
@@ -129,6 +137,14 @@ function readWindowDropData(value: unknown): WindowDropData | null {
   return { type: 'window', workspaceId: data.workspaceId, windowId: data.windowId }
 }
 
+function readWindowGapDropData(value: unknown): WindowGapDropData | null {
+  if (!value || typeof value !== 'object') return null
+  const data = value as Record<string, unknown>
+  if (data.type !== 'window-gap' || !isTerminalWorkspaceId(data.workspaceId)) return null
+
+  return { type: 'window-gap', workspaceId: data.workspaceId }
+}
+
 // Dragged item overlay component. It is drawn from the same pieces as the tag
 // and the row it was picked up from, so the ghost is the thing itself.
 function DraggedSessionOverlay({ drag }: { drag: ActiveDrag }) {
@@ -167,6 +183,7 @@ function DashboardContent() {
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
   const {
     addSessionToWindow,
+    setWindowCount,
     settings,
     windowRevealRequest,
     workspaces,
@@ -228,6 +245,9 @@ function DashboardContent() {
   }, [])
   const openSessionsPanel = useCallback(() => {
     setSessionsDockState(previous => previous.open ? previous : { ...previous, open: true })
+  }, [])
+  const toggleSessionsPinned = useCallback(() => {
+    setSessionsDockState(previous => ({ ...previous, pinned: !previous.pinned }))
   }, [])
   const handleTabChange = useCallback((tab: Tab) => {
     setActiveTab(tab)
@@ -309,8 +329,22 @@ function DashboardContent() {
     }
 
     const dragData = readDragData(active.data.current)
+    if (!dragData) return
+
+    // The seam between tiles is a window that does not exist yet: the drop
+    // makes it and lands the session in it, in that order.
+    const gapData = readWindowGapDropData(over.data.current)
+    if (gapData) {
+      const workspace = workspaces[gapData.workspaceId]
+      const added = workspace?.windows[workspace.windowCount]
+      if (!workspace || !added || workspace.windowCount >= MAX_WINDOWS) return
+      setWindowCount(gapData.workspaceId, workspace.windowCount + 1)
+      addSessionToWindow(gapData.workspaceId, added.id, dragData.sessionName, dragData.unixUser)
+      return
+    }
+
     const targetData = readWindowDropData(over.data.current)
-    if (!dragData || !targetData) return
+    if (!targetData) return
 
     if (dragData.type === 'session') {
       addSessionToWindow(targetData.workspaceId, targetData.windowId, dragData.sessionName, dragData.unixUser)
@@ -329,6 +363,8 @@ function DashboardContent() {
           activeTab={activeTab}
           onTabChange={handleTabChange}
           onShowKeys={handleShowKeys}
+          sessionsPinned={sessionsDockState.pinned}
+          onToggleSessionsPinned={toggleSessionsPinned}
         />
 
         <div className="dashboard-content">

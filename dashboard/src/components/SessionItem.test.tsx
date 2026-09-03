@@ -10,7 +10,7 @@ const mockState = vi.hoisted(() => ({
   openFloatingModal: vi.fn(),
   openSendToSession: vi.fn(),
   handleSessionClick: vi.fn(),
-  focusSessionAssignment: vi.fn(),
+  focusedWindowKey: null as string | null,
   addSessionToWindow: vi.fn(),
   removeSessionFromWindow: vi.fn(),
   renameSession: vi.fn(),
@@ -34,10 +34,10 @@ vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
     assignedSessions: mockState.assignedSessions,
     handleSessionClick: mockState.handleSessionClick,
-    focusSessionAssignment: mockState.focusSessionAssignment,
+    focusedWindowKey: mockState.focusedWindowKey,
     deleteSession: vi.fn(),
     workspaces: {
-      terminal1: { windows: [{ id: 'terminal1-window-0', colorIndex: 0 }], windowCount: 1 },
+      terminal1: { windows: [{ id: 'terminal1-window-0', colorIndex: 0, activeSession: 'alice:alice-shell' }], windowCount: 1 },
       terminal2: { windows: [], windowCount: 0 },
       terminal3: { windows: [], windowCount: 0 },
     },
@@ -62,7 +62,7 @@ describe('SessionItem user badge and context actions', () => {
     mockState.openFloatingModal.mockClear()
     mockState.openSendToSession.mockClear()
     mockState.handleSessionClick.mockClear()
-    mockState.focusSessionAssignment.mockClear()
+    mockState.focusedWindowKey = null
     mockState.addSessionToWindow.mockClear()
     mockState.removeSessionFromWindow.mockClear()
     mockState.renameSession.mockClear()
@@ -100,7 +100,6 @@ describe('SessionItem user badge and context actions', () => {
 
     expect(container.querySelector('.harness-mark, .harness-command')).toBeNull()
     expect(container.textContent).not.toContain('bash')
-    expect(screen.queryByRole('button', { name: /Focus assigned window/ })).not.toBeInTheDocument()
 
     rerender(<SessionItem session={{ ...shell, currentCommand: 'claude' }} />)
     expect(container.querySelector('[data-harness="claude-code"]')).not.toBeNull()
@@ -206,7 +205,7 @@ describe('SessionItem user badge and context actions', () => {
     expect(rowLabel('alice-shell')).toBeInTheDocument()
   })
 
-  it('places the Unix user badge before the attached terminal/window badge', () => {
+  it('opens the row menu without a location chip in front of the name', () => {
     mockState.assignedSessions.set('alice-shell', {
       workspaceId: 'terminal1',
       windowId: 'window-1',
@@ -229,11 +228,27 @@ describe('SessionItem user badge and context actions', () => {
     const rowText = Array.from(container.querySelector('.session-item')?.children ?? [])
       .map(child => child.textContent)
 
-    expect(rowText.slice(0, 3)).toEqual(['A', 'T1 W1', 'alice-shell'])
+    // Badge, then mark, then the name: no chip repeats the tile's address.
+    expect(rowText.slice(0, 2)).toEqual(['A', 'alice-shell'])
+    expect(container.querySelector('.window-location-chip')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Focus assigned window/ })).not.toBeInTheDocument()
+  })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Focus assigned window T1 W1' }))
-    expect(mockState.focusSessionAssignment).toHaveBeenCalledWith('alice-shell')
-    expect(mockState.handleSessionClick).not.toHaveBeenCalled()
+  // Where the operator is typing, said once: the row of the session the focused
+  // tile is showing carries the mark, and every other row stays plain.
+  it('marks the row whose session the focused tile is showing', () => {
+    const session: TmuxSession = { name: 'alice-shell', windows: 1, attached: true, group: 'main', unixUser: 'alice' }
+    const { container, rerender } = render(<SessionItem session={session} />)
+
+    expect(container.querySelector('.session-item')).not.toHaveClass('in-focused-tile')
+
+    mockState.focusedWindowKey = 'terminal1-terminal1-window-0'
+    rerender(<SessionItem session={session} />)
+    expect(container.querySelector('.session-item')).toHaveClass('in-focused-tile')
+    expect(container.querySelector('.session-item')).toHaveAttribute('aria-current', 'true')
+
+    rerender(<SessionItem session={{ ...session, name: 'other-shell' }} />)
+    expect(container.querySelector('.session-item')).not.toHaveClass('in-focused-tile')
   })
 
   it('offers peek and attach actions in the session context menu', () => {
