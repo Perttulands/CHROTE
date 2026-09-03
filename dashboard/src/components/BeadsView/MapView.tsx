@@ -26,6 +26,19 @@ const ROW_INDENT = 22
 const TYPE_COLUMN = 78
 const TITLE_COLUMN = 334
 
+/**
+ * Expand all or Collapse all, given on a row and followed by every row beneath
+ * it. Orders are told apart by when they were given, so a row follows the
+ * newest one above it until the operator folds the row himself, and a later
+ * order overrides that fold again.
+ */
+interface FoldOrder {
+  expanded: boolean
+  nonce: number
+}
+
+let lastOrder = 0
+
 function BlockedBy({ ids, depth, projectPath }: { ids: string[]; depth: number; projectPath: string }) {
   return (
     <div className="bead-row-blocked" style={{ paddingLeft: `${TITLE_COLUMN + depth * ROW_INDENT}px` }}>
@@ -40,18 +53,40 @@ function BlockedBy({ ids, depth, projectPath }: { ids: string[]; depth: number; 
   )
 }
 
-function MapNode({ node, depth, expandAll }: { node: BeadTreeNode; depth: number; expandAll: boolean }) {
-  const [collapsed, setCollapsed] = useState(false)
+interface MapNodeProps {
+  node: BeadTreeNode
+  depth: number
+  expandAll: boolean
+  /** The newest order from a row above, if one was given. */
+  order?: FoldOrder
+}
+
+function MapNode({ node, depth, expandAll, order }: MapNodeProps) {
+  // The row's own fold, and the last order it was folded after: an order given
+  // since then wins until the row is touched again.
+  const [own, setOwn] = useState({ collapsed: false, after: 0 })
+  const [given, setGiven] = useState<FoldOrder | null>(null)
+  const orderNonce = order?.nonce ?? 0
+  const collapsed = order !== undefined && own.after < orderNonce ? !order.expanded : own.collapsed
   const expanded = expandAll || !collapsed
   const foldable = node.children.length > 0
   const { row } = node
+
+  const setExpanded = (open: boolean) => setOwn({ collapsed: !open, after: orderNonce })
+  const setSubtreeExpanded = (open: boolean) => {
+    lastOrder += 1
+    setOwn({ collapsed: !open, after: lastOrder })
+    setGiven({ expanded: open, nonce: lastOrder })
+  }
+  // What the children follow: the newest order, whether given here or above.
+  const passed = given !== null && given.nonce > orderNonce ? given : order
 
   return (
     <>
       <BeadRow
         row={row}
         depth={depth}
-        fold={foldable ? { count: node.children.length, expanded, setExpanded: open => setCollapsed(!open) } : undefined}
+        fold={foldable ? { count: node.children.length, expanded, setExpanded, setSubtreeExpanded } : undefined}
       />
       {row.blocked && row.blockedBy && row.blockedBy.length > 0 && (
         <BlockedBy ids={row.blockedBy} depth={depth} projectPath={row.projectPath} />
@@ -63,7 +98,7 @@ function MapNode({ node, depth, expandAll }: { node: BeadTreeNode; depth: number
         </div>
       )}
       {expanded && node.children.map(child => (
-        <MapNode key={beadRowKey(child.row)} node={child} depth={depth + 1} expandAll={expandAll} />
+        <MapNode key={beadRowKey(child.row)} node={child} depth={depth + 1} expandAll={expandAll} order={passed} />
       ))}
     </>
   )

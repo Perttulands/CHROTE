@@ -52,6 +52,19 @@ test.describe('Beads', () => {
     await expect(epic.locator('.bead-row-fold')).toHaveText('▾1')
   })
 
+  // The row's menu from a real right-click, and the copy it runs landing on
+  // the clipboard from a menu click: the toast is the receipt.
+  test('copies a Bead\'s id from its row\'s menu', async ({ page }) => {
+    await openBeadsTab(page)
+
+    await page.locator('.bead-row', { hasText: 'Fix login bug' }).click({ button: 'right' })
+    const menu = page.getByRole('menu', { name: 'Actions for test-ep1.1' })
+    await menu.getByRole('menuitem', { name: 'Copy id', exact: true }).click()
+
+    await expect(page.locator('.toast')).toHaveText('Copied test-ep1.1')
+    await expect(menu).toHaveCount(0)
+  })
+
   test('splits ready from in progress, and lists what has gone stale', async ({ page }) => {
     await openBeadsTab(page)
 
