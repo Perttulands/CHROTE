@@ -231,11 +231,33 @@ export async function mockThemeApiRoute(page: Page) {
   })
 }
 
-/** What the launcher may offer in a mocked journey: two harnesses and two folders. */
+/**
+ * What the launcher may offer in a mocked journey: two harnesses and two
+ * folders. The catalogue carries one of each kind the contract names — a bare
+ * boolean, a boolean with a short form, a value flag with possible values, and
+ * a value flag with a free placeholder — so a journey can exercise all four.
+ */
 export const mockLaunchOptions = {
   harnesses: [
-    { id: 'claude-code', label: 'Claude Code' },
-    { id: 'shell', label: 'Shell' },
+    {
+      id: 'claude-code',
+      label: 'Claude Code',
+      binary: 'claude',
+      defaultFlags: '--dangerously-skip-permissions',
+      flags: [
+        { name: '--continue', short: '-c', description: 'Continue the most recent conversation' },
+        { name: '--verbose', description: 'Override verbose mode setting from config' },
+        {
+          name: '--model',
+          short: '-m',
+          value: '<model>',
+          description: 'Model for the current session',
+          values: ['sonnet', 'opus'],
+        },
+        { name: '--add-dir', value: '<directories...>', description: 'Additional directories to allow tool access to' },
+      ],
+    },
+    { id: 'shell', label: 'Shell', binary: '', defaultFlags: '', flags: [] },
   ],
   folders: ['/srv/chrote', '~'],
 }

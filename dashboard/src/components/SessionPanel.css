@@ -190,6 +190,13 @@
   position: fixed;
 }
 
+/* A popover has no room to grow sideways without leaving the screen, so the
+   flags catalogue stacks under the launcher body here however wide the
+   window is. */
+.session-launcher-popup .launcher.flags-open {
+  width: 420px;
+}
+
 /* Where a session is assigned, as an outline chip: T1 W2. */
 .window-badge.window-location-chip {
   display: inline-flex;
