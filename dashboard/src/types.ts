@@ -122,6 +122,7 @@ export interface UserSettings {
   mouseScroll: boolean               // tmux mouse mode: scroll wheel scrolls history
   hideScrollbar: boolean             // Hide the dead xterm scrollbar gutter in terminals
   keysEnabled: boolean               // Leader chords intercept keys; off hands every key to the pty
+  tableWidth: number                 // The table's column at the right, in px; device-local
   beadsProjectPaths?: string[]       // Manually added beads project paths
 }
 
@@ -137,6 +138,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   mouseScroll: true,
   hideScrollbar: true,
   keysEnabled: true,
+  tableWidth: 400,
 }
 
 export interface TmuxSession {

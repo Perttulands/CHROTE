@@ -1,0 +1,95 @@
+/* The table's column: a flex sibling at the right of the tab, hairlined on
+   the edge it faces, resizable at that edge, never a layer over the content. */
+
+.table-column {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  /* The remembered width, until the content beside it would drop under 480px;
+     then the column gives way, but never past its minimum. */
+  width: clamp(320px, calc(100% - 480px), var(--table-width, 400px));
+  min-width: 0;
+  background-color: var(--surface-primary);
+  border-left: 1px solid var(--divider);
+  overflow: hidden;
+  outline: none;
+}
+
+/* The handle sits on the hairline. It takes colour only while it is the thing
+   in hand: under the pointer, focused from the keyboard, or being dragged. */
+.table-column-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.table-column-handle:hover {
+  background-color: var(--text-dim);
+}
+
+.table-column-handle:focus-visible,
+.table-column-handle.dragging {
+  background-color: var(--accent);
+}
+
+/* The one-line header every table content starts with: its actions, each
+   with its chord, and Close at the far right. */
+.table-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--divider);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.table-header-spacer {
+  flex: 1;
+}
+
+.table-action {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.table-action:hover {
+  color: var(--accent);
+}
+
+.table-chord {
+  margin-left: 6px;
+  color: var(--text-dim);
+}
+
+/* Below 900px the tab has no column to give: the table overlays it whole,
+   and there is nothing to drag. */
+@media (max-width: 899px) {
+  .table-column {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    z-index: 1400;
+    border-left: none;
+  }
+
+  .table-column-handle {
+    display: none;
+  }
+}

@@ -1,29 +1,26 @@
 /**
- * The Bead card: one Bead, beside whatever named it.
+ * The Bead card: one Bead, on the table.
  *
  * It opens from a Bead id clicked in a terminal, from a row of the Beads tab,
- * and from an id inside another Bead's text. It docks at the right as a sheet,
- * so the session that printed the id stays readable next to what it means.
+ * and from an id inside another Bead's text. The table's column at the right
+ * of the tab shows it, so the session that printed the id, or the map that
+ * listed it, stays readable next to what it means.
  *
  * The card only reads. Writing Beads stays with `bd` and the agents; what the
  * operator can do from here is hand the Bead to one of them.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Sheet from './Sheet'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Markdown from './Markdown'
 import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
 import { copyTextToClipboard } from '../utils/clipboard'
 import { registerChords, type Chord } from '../keys/chords'
-import { closeBeadCard, openBeadCard, useBeadCardRequest } from '../beads/beadCard'
+import { backInBeadCard, closeBeadCard, followBeadFromCard, useBeadCardRequest } from '../beads/beadCard'
 import { beadIdPattern, beadProjectPath, ensureBeadProjects } from '../beads/beadIds'
 import { fetchBead, type BeadDetail, type BeadLink } from '../beads/beadsApi'
 import { beadGlyph, beadStatusLabel, formatBeadTime } from '../beads/beadStatus'
 import './BeadCard.css'
-
-/** The card takes this much of the workspace, as the wave-2 contract states. */
-export const BEAD_CARD_WIDTH = '480px'
 
 export function beadReference(bead: { id: string; title: string }): string {
   return `bead ${bead.id}: ${bead.title}`
@@ -65,7 +62,6 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
   const { settings, openSendToSession } = useSession()
   const { announce } = useStatus()
   const request = useBeadCardRequest()
-  const [history, setHistory] = useState<string[]>([])
   const [bead, setBead] = useState<BeadDetail | null>(null)
   const [projectPath, setProjectPath] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -73,17 +69,7 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
 
   const manualPaths = useMemo(() => settings.beadsProjectPaths || [], [settings.beadsProjectPaths])
   const id = request?.id ?? null
-
-  // A request from outside is a new card; one the card made for itself — a
-  // link followed, a step back — carries the trail it just extended.
-  const followed = useRef(false)
-  useEffect(() => {
-    if (followed.current) {
-      followed.current = false
-      return
-    }
-    setHistory([])
-  }, [request?.nonce])
+  const behind = request?.trail.length ?? 0
 
   useEffect(() => {
     if (!id) {
@@ -116,19 +102,11 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
     return () => { current = false }
   }, [id, request?.nonce, request?.projectPath, manualPaths])
 
+  // A link followed from the card extends the trail, so Back and Escape can
+  // retrace it; the trail is the table's, and outlives this mount.
   const open = useCallback((next: string) => {
-    followed.current = true
-    setHistory(previous => (id ? [...previous, id] : previous))
-    openBeadCard(next, projectPath ?? undefined)
-  }, [id, projectPath])
-
-  const back = useCallback(() => {
-    const previous = history[history.length - 1]
-    if (!previous) return
-    followed.current = true
-    setHistory(rest => rest.slice(0, -1))
-    openBeadCard(previous, projectPath ?? undefined)
-  }, [history, projectPath])
+    followBeadFromCard(next, projectPath ?? undefined)
+  }, [projectPath])
 
   const send = useCallback(() => {
     if (!bead) return
@@ -153,62 +131,64 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
     return registerChords(chords)
   }, [bead, openSendToSession])
 
-  // The back step is the one thing Escape must not skip past: a card reached
-  // from another card returns to it, and only then does Escape close.
-  const dismiss = useCallback(() => {
-    if (history.length > 0) {
-      back()
-      return
-    }
-    closeBeadCard()
-  }, [back, history.length])
-
   if (!request) return null
 
-  const header = (
-    <>
-      <span className="bead-card-id">{request.id}</span>
-      {history.length > 0 && (
-        <button type="button" className="bead-card-action" onClick={back}>Back</button>
-      )}
-      <span className="bead-card-header-spacer" />
-      {bead && projectPath && onOpenInBeads && (
-        <button type="button" className="bead-card-action" onClick={() => onOpenInBeads(projectPath, bead.id)}>
-          Open in Beads
-        </button>
-      )}
-      {bead && <button type="button" className="bead-card-action" onClick={send}>Send</button>}
-      <button
-        type="button"
-        className="bead-card-action"
-        onClick={() => {
-          void copyTextToClipboard(request.id)
-          announce(`Copied ${request.id}`, 'success')
-        }}
-      >
-        Copy id
-      </button>
-      <button type="button" className="bead-card-close" onClick={closeBeadCard} aria-label="Close Bead card">×</button>
-    </>
-  )
+  const canOpenInBeads = Boolean(bead && projectPath && onOpenInBeads)
 
   return (
-    <Sheet open edge="right" extent={BEAD_CARD_WIDTH} label={`Bead ${request.id}`} onClose={dismiss} header={header}>
-      <div className="bead-card-body" data-ui="beads.card">
+    <div className="bead-card" data-ui="beads.card">
+      {/* The actions keep their places while the Bead loads: a control the
+          operator is reaching for does not move because its data arrived. */}
+      <div className="table-header">
+        {onOpenInBeads && (
+          <button
+            type="button"
+            className="table-action"
+            disabled={!canOpenInBeads}
+            onClick={() => { if (bead && projectPath) onOpenInBeads(projectPath, bead.id) }}
+          >
+            Open in Beads
+          </button>
+        )}
+        <button type="button" className="table-action" aria-keyshortcuts="Alt+S" disabled={!bead} onClick={send}>
+          Send<span className="table-chord" aria-hidden="true">Alt+S</span>
+        </button>
+        <button
+          type="button"
+          className="table-action"
+          onClick={() => {
+            void copyTextToClipboard(request.id)
+            announce(`Copied ${request.id}`, 'success')
+          }}
+        >
+          Copy id
+        </button>
+        {behind > 0 && (
+          <button type="button" className="table-action" onClick={backInBeadCard}>Back</button>
+        )}
+        <span className="table-header-spacer" />
+        <button type="button" className="table-action" aria-keyshortcuts="Escape" onClick={closeBeadCard}>
+          Close<span className="table-chord" aria-hidden="true">Esc</span>
+        </button>
+      </div>
+      <div className="bead-card-body">
+        <p className="bead-card-meta">
+          <span className="bead-card-id">{request.id}</span>
+          {bead && (
+            <>
+              {' · '}{bead.type || 'task'}
+              {' · '}<span>{beadStatusLabel(bead.status, bead.blockedBy.some(link => link.status !== 'closed'))}</span>
+              {' · '}P{bead.priority}
+              {' · '}updated {formatBeadTime(bead.updated)}
+            </>
+          )}
+        </p>
         {loading && !bead && <p className="bead-card-note">Reading {request.id}…</p>}
         {error && <p className="bead-card-error">{error}</p>}
         {bead && (
           <>
             <h2 className="bead-card-title">{bead.title}</h2>
             <dl className="bead-card-fields">
-              <dt>Status</dt>
-              <dd>{beadStatusLabel(bead.status, bead.blockedBy.some(link => link.status !== 'closed'))}</dd>
-              <dt>Type</dt>
-              <dd>{bead.type || 'task'}</dd>
-              <dt>Priority</dt>
-              <dd>{bead.priority}</dd>
-              <dt>Updated</dt>
-              <dd>{formatBeadTime(bead.updated)}</dd>
               <dt>Parent</dt>
               <dd><BeadLinks links={bead.parents} onOpen={open} /></dd>
               <dt>Children</dt>
@@ -225,6 +205,6 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
           </>
         )}
       </div>
-    </Sheet>
+    </div>
   )
 }

@@ -72,8 +72,8 @@ afterEach(() => {
 
 describe('the Bead card', () => {
   it('shows nothing until a Bead is asked for', () => {
-    render(<BeadCard />)
-    expect(screen.queryByRole('dialog')).toBeNull()
+    const { container } = render(<BeadCard />)
+    expect(container).toBeEmptyDOMElement()
   })
 
   it('reads the Bead from the store its prefix names', async () => {
@@ -82,7 +82,7 @@ describe('the Bead card', () => {
 
     expect(await screen.findByText('Title of chrote-5grx.15')).toBeInTheDocument()
     expect(mockState.fetchBead).toHaveBeenCalledWith('/srv/chrote', 'chrote-5grx.15')
-    expect(screen.getByRole('dialog', { name: 'Bead chrote-5grx.15' })).toBeInTheDocument()
+    expect(screen.getByText('chrote-5grx.15')).toBeInTheDocument()
     expect(screen.getByText('in progress')).toBeInTheDocument()
     expect(screen.getByText('The card opens from a terminal id.')).toBeInTheDocument()
     expect(screen.getByText('Approved on the mock.')).toBeInTheDocument()

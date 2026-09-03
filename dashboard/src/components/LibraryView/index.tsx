@@ -21,6 +21,7 @@ import { openBeadCard } from '../../beads/beadCard'
 import { fetchBeadWork, type BeadRow } from '../../beads/beadsApi'
 import { isBeadClosed } from '../../beads/beadStatus'
 import { registerChords } from '../../keys/chords'
+import TableColumn from '../TableColumn'
 import {
   fetchChanges,
   fetchPage,
@@ -453,6 +454,8 @@ export default function LibraryView() {
             </div>
           </section>
         </div>
+
+        <TableColumn />
       </div>
 
       <Desk

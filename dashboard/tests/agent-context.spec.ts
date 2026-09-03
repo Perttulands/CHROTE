@@ -6,9 +6,9 @@ import { openSessionsSidecar } from './helpers'
  * Journey 4: understand what an agent sees.
  *
  * The browser is the point here — the way in is a session's own menu, and the
- * answer is a sheet that docks beside the tiles rather than over them. What the
- * stack contains is a unit test's business; what this proves is that the
- * question can be asked of a running agent and answered in one step.
+ * answer goes on the table, in the column beside the tiles rather than over
+ * them. What the stack contains is a unit test's business; what this proves is
+ * that the question can be asked of a running agent and answered in one step.
  */
 
 const AGENT = 'gt-gastown-jack'
@@ -72,7 +72,7 @@ test.describe('what an agent sees', () => {
     await page.getByRole('button', { name: `Session actions for ${AGENT}` }).click()
     await page.getByText('What this agent sees').click()
 
-    const sheet = page.getByRole('dialog', { name: `What ${AGENT} sees` })
+    const sheet = page.getByRole('complementary', { name: `What ${AGENT} sees` })
     await expect(sheet).toBeVisible()
     await expect(sheet.getByRole('heading', { name: 'Instructions' })).toBeVisible()
     await expect(sheet.getByRole('heading', { name: 'Skills' })).toBeVisible()

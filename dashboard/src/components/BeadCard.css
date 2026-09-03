@@ -1,48 +1,32 @@
-/* The Bead card: a right sheet, text and hairlines, no chrome of its own. */
+/* The Bead card: table content, text and hairlines, no chrome of its own. */
 
-.bead-card-id {
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.bead-card-header-spacer {
+.bead-card {
   flex: 1;
-}
-
-.bead-card-action {
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.bead-card-action:hover {
-  color: var(--text-primary);
-}
-
-.bead-card-close {
-  padding: 0 0 0 4px;
-  border: none;
-  background: none;
-  color: var(--text-dim);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.bead-card-close:hover {
-  color: var(--text-primary);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .bead-card-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 14px 15px 24px;
+  padding: 12px 15px 24px;
+}
+
+/* One line of facts before the title: the id, then what kind of thing it is,
+   where it stands, how much it matters, and when it last moved. */
+.bead-card-meta {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.bead-card-id {
+  color: var(--text-primary);
+  font-size: 13px;
 }
 
 .bead-card-title {

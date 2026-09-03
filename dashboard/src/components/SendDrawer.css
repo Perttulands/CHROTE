@@ -1,35 +1,58 @@
-/* The Send drawer: a column of the workspace, not a window over it. */
+/* The Send drawer: a surface over the right edge of the workspace. It lies
+   above the table's column and takes nothing from the grid, so nothing beneath
+   it moves while a message is written, and closing it reveals what was there. */
 
-/* The room the docked drawer takes out of the terminal grid. It is a flex
-   sibling of the docks, so the tiles reflow into what is left and the target
-   tile stays whole rather than being covered by the surface addressing it. */
-.send-drawer-gutter {
-  flex: 0 0 380px;
-  min-width: 0;
+.send-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: 100%;
+  z-index: 1500;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--surface-primary);
+  border-left: 1px solid var(--divider);
+  overflow: hidden;
+}
+
+.send-drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--divider);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .send-drawer-title {
   flex: 1;
   color: var(--text-secondary);
-  font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .send-drawer-close {
   flex: none;
-  padding: 0 2px;
+  padding: 0;
   background: transparent;
   border: none;
-  color: var(--text-dim);
-  font-family: inherit;
-  font-size: 14px;
-  line-height: 1;
+  color: var(--text-primary);
+  font: inherit;
   cursor: pointer;
 }
 
 .send-drawer-close:hover {
-  color: var(--text-primary);
+  color: var(--accent);
+}
+
+.send-drawer-chord {
+  margin-left: 6px;
+  color: var(--text-dim);
 }
 
 .send-drawer-body {
