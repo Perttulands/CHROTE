@@ -1,10 +1,12 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import LibraryView from './LibraryView'
 import { resetBeadCardForTest, useBeadCardRequest } from '../beads/beadCard'
 import { resetChordsForTest } from '../keys/chords'
+import { DEFAULT_SETTINGS } from '../types'
 import type {
   LibraryChange,
+  LibraryGraph,
   LibraryPage,
   LibraryPageContent,
   LibrarySearchResult,
@@ -20,6 +22,7 @@ const mockState = vi.hoisted(() => ({
   gitError: '',
   pages: new Map<string, LibraryPage[]>(),
   page: new Map<string, LibraryPageContent>(),
+  graph: null as LibraryGraph | null,
   results: [] as LibrarySearchResult[],
   saved: [] as { path: string; content: string; summary: string }[],
   saveError: null as Error | null,
@@ -27,7 +30,7 @@ const mockState = vi.hoisted(() => ({
 }))
 
 vi.mock('../context/SessionContext', () => ({
-  useSession: () => ({ openSendToSession: mockState.openSendToSession }),
+  useSession: () => ({ settings: DEFAULT_SETTINGS, openSendToSession: mockState.openSendToSession }),
 }))
 
 vi.mock('../context/StatusContext', () => ({
@@ -51,6 +54,7 @@ vi.mock('../library/libraryApi', async () => {
     fetchShelves: () => (mockState.shelvesError ? Promise.reject(mockState.shelvesError) : Promise.resolve(mockState.shelves)),
     fetchChanges: () => Promise.resolve({ changes: mockState.changes, error: mockState.gitError }),
     fetchShelfPages: (shelf: string) => Promise.resolve({ pages: mockState.pages.get(shelf) ?? [], error: mockState.gitError }),
+    fetchGraph: () => Promise.resolve(mockState.graph),
     fetchPage: (path: string) => {
       const found = mockState.page.get(path)
       return found ? Promise.resolve(found) : Promise.reject(new Error('No such page'))
@@ -108,7 +112,24 @@ beforeEach(() => {
       content: '# Workflow Preferences\n\nPrefer small, verifiable changes.\n',
       history: [{ hash: 'aaaaaaa1', time: NOW, author: 'The Operator', message: 'Record a workflow preference' }],
     }],
+    ['knowledge/testing.md', {
+      path: 'knowledge/testing.md',
+      title: 'Test isolation',
+      author: 'The Operator',
+      updated: NOW,
+      content: '# Test isolation\n\nA serious lab gets a durable path.\n',
+      history: [],
+    }],
   ])
+  mockState.graph = {
+    pages: [
+      { path: 'knowledge/testing.md', shelf: 'knowledge', title: 'Test isolation', words: 60, updated: NOW, candidate: false },
+      { path: 'preferences/tools.md', shelf: 'preferences', title: 'Tool Preferences', words: 30, updated: NOW, candidate: false },
+      { path: 'preferences/workflow.md', shelf: 'preferences', title: 'Workflow Preferences', words: 200, updated: NOW, candidate: false },
+    ],
+    links: [['knowledge/testing.md', 'preferences/workflow.md'], ['preferences/workflow.md', 'preferences/tools.md']],
+    tags: [['preferences/tools.md', 'preferences/workflow.md', 'tooling']],
+  }
   mockState.results = [
     { path: 'knowledge/testing.md', title: 'Test isolation', line: 3, snippet: 'A serious lab gets a durable path.' },
   ]
@@ -123,25 +144,38 @@ beforeEach(() => {
 })
 
 /**
- * The shelves appear twice on purpose — as the rail at the left and as the
- * cards in the room — so every query says which column it means.
+ * A page's name appears in more than one place on purpose — in the rail, on
+ * the map, in a listing — so every query says which region it means.
  */
-function column(name: 'library-left' | 'library-room' | 'library-right') {
+function region(name: 'library-left' | 'library-room' | 'library-map' | 'library-strip') {
   const found = document.querySelector<HTMLElement>(`.${name}`)
-  if (!found) throw new Error(`the ${name} column is not on screen`)
+  if (!found) throw new Error(`the ${name} region is not on screen`)
   return within(found)
 }
 
+/** A page on the map, by the name it carries. */
+function mapNode(title: string) {
+  return region('library-map').getByRole('button', { name: title })
+}
+
+/** The library, landed on its map. */
 async function openLibrary() {
   render(<LibraryView />)
-  await screen.findByText('Reading room')
+  await screen.findByText('The map')
+  await waitFor(() => region('library-map'))
 }
 
 /** Step into a shelf from the rail, then open one of its pages. */
 async function openWorkflowPage() {
-  fireEvent.click(column('library-left').getByRole('button', { name: /^preferences/ }))
-  fireEvent.click(await column('library-room').findByText('Workflow Preferences'))
+  fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+  fireEvent.click(await region('library-room').findByText('Workflow Preferences'))
   await screen.findByText('Prefer small, verifiable changes.')
+}
+
+function pressAltR() {
+  act(() => {
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', altKey: true, bubbles: true, cancelable: true }))
+  })
 }
 
 describe('LibraryView', () => {
@@ -160,28 +194,61 @@ describe('LibraryView', () => {
     expect(await screen.findByText('The corpus is not readable')).toBeInTheDocument()
   })
 
-  it('opens on the shelves, their counts and what last touched each', async () => {
+  it('lands on the map with the shelves labelled and its links counted', async () => {
     await openLibrary()
 
-    expect(await screen.findByText('20 pages on 2 shelves · last change 1 hour ago')).toBeInTheDocument()
-    expect(column('library-left').getByRole('button', { name: /^knowledge\s*13$/ })).toBeInTheDocument()
-    expect(column('library-room').getByText('Curate the knowledge shelf')).toBeInTheDocument()
+    expect(screen.getByText('3 pages · 2 shelves · 2 links · 1 shared tag')).toBeInTheDocument()
+    expect(region('library-map').getByText('knowledge · 1')).toBeInTheDocument()
+    expect(region('library-map').getByText('preferences · 2')).toBeInTheDocument()
+    expect(mapNode('Workflow Preferences')).toBeInTheDocument()
     await waitFor(() => expect(mockState.announce).toHaveBeenCalledWith('Library loaded · 20 pages on 2 shelves', 'info'))
   })
 
-  it('opens on the corpus\'s own README when it has one', async () => {
-    mockState.page.set('README.md', {
-      path: 'README.md',
-      title: 'The corpus',
-      updated: NOW,
-      author: 'The Operator',
-      content: '# The corpus\n\nWhat this library holds.\n',
-      history: [],
-    })
-    render(<LibraryView />)
+  it('lights a page and its neighbours under the pointer', async () => {
+    await openLibrary()
 
-    expect(await screen.findByText('What this library holds.')).toBeInTheDocument()
-    expect(screen.queryByText('Reading room')).not.toBeInTheDocument()
+    fireEvent.mouseEnter(mapNode('Test isolation'))
+
+    // The lit dot is drawn by class; there is no other way to read it off the
+    // SVG, and the class is what the stylesheet colours.
+    expect(mapNode('Test isolation')).toHaveClass('hot')
+    expect(mapNode('Workflow Preferences')).toHaveClass('hot')
+    expect(mapNode('Tool Preferences')).not.toHaveClass('hot')
+  })
+
+  it('opens a page from the map and shows its neighbours in the strip above it', async () => {
+    await openLibrary()
+
+    fireEvent.click(mapNode('Workflow Preferences'))
+
+    expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
+    expect(screen.getByText('Near this page')).toBeInTheDocument()
+    expect(region('library-strip').getByRole('button', { name: 'Test isolation' })).toBeInTheDocument()
+    expect(region('library-strip').getByRole('button', { name: 'Tool Preferences' })).toBeInTheDocument()
+  })
+
+  it('turns the map over with Alt+R and back', async () => {
+    await openLibrary()
+    fireEvent.click(mapNode('Workflow Preferences'))
+    await screen.findByText('Prefer small, verifiable changes.')
+
+    pressAltR()
+    expect(screen.getByText('The map')).toBeInTheDocument()
+    expect(screen.queryByText('Prefer small, verifiable changes.')).not.toBeInTheDocument()
+    // The open page stays on the table: it and its neighbours are lit.
+    expect(mapNode('Workflow Preferences')).toHaveClass('hot')
+
+    pressAltR()
+    expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
+  })
+
+  it('lights the pages whose names hold what is being typed', async () => {
+    await openLibrary()
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search the library' }), { target: { value: 'isolation' } })
+
+    expect(mapNode('Test isolation')).toHaveClass('hot')
+    expect(mapNode('Tool Preferences')).not.toHaveClass('hot')
   })
 
   it('lists only the proposals still in flight', async () => {
@@ -199,18 +266,49 @@ describe('LibraryView', () => {
     expect(screen.getByTestId('card-request')).toHaveTextContent('ctx-c2f')
   })
 
-  it('steps from a shelf to a page and shows its history and its shelf', async () => {
+  it('steps from a shelf to a page and shows its history beneath the head', async () => {
     await openLibrary()
 
-    fireEvent.click(column('library-left').getByRole('button', { name: /^preferences/ }))
-    expect(await column('library-room').findByText('Tool Preferences')).toBeInTheDocument()
+    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+    expect(await region('library-room').findByText('Tool Preferences')).toBeInTheDocument()
 
-    fireEvent.click(column('library-room').getByText('Workflow Preferences'))
+    fireEvent.click(region('library-room').getByText('Workflow Preferences'))
 
     expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
     expect(screen.getByText('preferences/workflow.md · changed 1 hour ago by The Operator')).toBeInTheDocument()
-    expect(screen.getByText('aaaaaaa')).toBeInTheDocument()
-    expect(screen.getByText('On preferences')).toBeInTheDocument()
+    const history = document.querySelector<HTMLElement>('.library-history-strip')
+    expect(history).toHaveTextContent('aaaaaaa')
+    expect(history).toHaveTextContent('Record a workflow preference')
+  })
+
+  it('shows three commits and expands to the rest', async () => {
+    const workflow = mockState.page.get('preferences/workflow.md')!
+    mockState.page.set('preferences/workflow.md', {
+      ...workflow,
+      history: ['1111111', '2222222', '3333333', '4444444', '5555555'].map(hash => ({
+        hash, time: NOW, author: 'The Operator', message: `Commit ${hash}`,
+      })),
+    })
+    await openLibrary()
+    await openWorkflowPage()
+
+    expect(screen.getByText('3333333')).toBeInTheDocument()
+    expect(screen.queryByText('4444444')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '… 2 more' }))
+
+    expect(screen.getByText('5555555')).toBeInTheDocument()
+  })
+
+  it('lists the pages that link here beneath the body, and follows one', async () => {
+    await openLibrary()
+    await openWorkflowPage()
+
+    const linkedFrom = document.querySelector<HTMLElement>('.library-linked-from')
+    expect(linkedFrom).toHaveTextContent('Linked from')
+    fireEvent.click(within(linkedFrom!).getByRole('button', { name: 'Test isolation' }))
+
+    expect(await screen.findByText('A serious lab gets a durable path.')).toBeInTheDocument()
   })
 
   it('carries the open page as the reference to the desk and the drawer', async () => {
@@ -226,7 +324,7 @@ describe('LibraryView', () => {
   it('opens a page straight from an arrival', async () => {
     await openLibrary()
 
-    fireEvent.click(column('library-left').getByText('Record a workflow preference'))
+    fireEvent.click(region('library-left').getByText('Record a workflow preference'))
 
     expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
   })
@@ -235,12 +333,12 @@ describe('LibraryView', () => {
     await openLibrary()
 
     const search = screen.getByRole('searchbox', { name: 'Search the library' })
-    fireEvent.change(search, { target: { value: 'isolation' } })
+    fireEvent.change(search, { target: { value: 'durable' } })
     fireEvent.keyDown(search, { key: 'Enter' })
 
-    expect(await screen.findByText('Test isolation')).toBeInTheDocument()
-    expect(screen.getByText('A serious lab gets a durable path.')).toBeInTheDocument()
-    await waitFor(() => expect(mockState.announce).toHaveBeenCalledWith('1 page mentions "isolation"', 'info'))
+    expect(await screen.findByText('A serious lab gets a durable path.')).toBeInTheDocument()
+    expect(region('library-room').getByText('Test isolation')).toBeInTheDocument()
+    await waitFor(() => expect(mockState.announce).toHaveBeenCalledWith('1 page mentions "durable"', 'info'))
   })
 
   it('edits a page in place and commits it with a summary', async () => {

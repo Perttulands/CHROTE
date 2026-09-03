@@ -3,12 +3,11 @@ import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, useSensor, useSe
 import './App.css'
 import { SessionProvider, useSession } from './context/SessionContext'
 import { StatusProvider } from './context/StatusContext'
+import { TableProvider } from './context/TableContext'
 import TabBar, { Tab } from './components/TabBar'
 import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
 import FloatingModal from './components/FloatingModal'
 import SendDrawer from './components/SendDrawer'
-import BeadCard from './components/BeadCard'
-import AgentContextSheet from './components/AgentContextSheet'
 import type { BeadsRevealRequest } from './components/BeadsView'
 import ErrorBoundary from './components/ErrorBoundary'
 import Skeleton from './components/LoadingSkeleton'
@@ -371,6 +370,7 @@ function DashboardContent() {
 
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={resetDrag}>
+      <TableProvider openInBeads={handleOpenInBeads}>
       <div className={`dashboard ${activeDrag ? 'is-dragging' : ''}`}>
         <TabBar
           activeTab={activeTab}
@@ -478,12 +478,11 @@ function DashboardContent() {
               </Suspense>
             </ErrorBoundary>
           )}
-          {/* Peek and the Send drawer dock inside the workspace, so the status
-              line stays whole beneath both of them. */}
+          {/* Peek and the Send drawer lie inside the workspace, so the status
+              line stays whole beneath both of them. The table's column is each
+              tab's own: a flex sibling of its content, never a layer here. */}
           <FloatingModal />
           <SendDrawer />
-          <BeadCard onOpenInBeads={handleOpenInBeads} />
-          <AgentContextSheet />
           {/* The bottom-centre slot: the toast above, the key echo beneath. */}
           <Toast />
           <KeyEcho />
@@ -497,6 +496,7 @@ function DashboardContent() {
 
         <KeysPanel isOpen={keysPanelOpen} onClose={handleCloseKeys} />
       </div>
+      </TableProvider>
 
       <DragOverlay className="drag-overlay-wrapper">
         {activeDrag ? <DraggedSessionOverlay drag={activeDrag} /> : null}

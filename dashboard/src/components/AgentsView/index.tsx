@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import AgentStack from '../AgentStack'
 import Desk from '../Desk'
+import TableColumn from '../TableColumn'
 import { HarnessMark } from '../harnessMarks'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
@@ -219,6 +220,8 @@ export default function AgentsView() {
           ))}
           {tender.beads && <span className="agents-proposals-foot">From the tender&apos;s Beads project.</span>}
         </aside>
+
+        <TableColumn />
       </div>
 
       <Desk

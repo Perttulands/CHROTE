@@ -1,13 +1,20 @@
 /**
- * The Beads tab and the Bead card (bead: chrote-5grx.15).
+ * The Beads tab, the Bead card on the table, and the drawer over it
+ * (beads: chrote-5grx.15, chrote-5grx.47).
  */
 
-import { test, expect, allowBrowserConsoleMessage } from './fixtures'
+import { test, expect, allowBrowserConsoleMessage, type Locator, type Page } from './fixtures'
 import { mockApiRoutes, mockBeadsApiRoutes, mockBeadsApiError } from './mock-api'
 
-async function openBeadsTab(page: import('@playwright/test').Page) {
+async function openBeadsTab(page: Page) {
   await page.click('.tab:has-text("Beads")')
   await page.waitForSelector('.beads-view')
+}
+
+async function box(locator: Locator) {
+  const value = await locator.boundingBox()
+  if (!value) throw new Error('expected a rendered bounding box')
+  return value
 }
 
 test.describe('Beads', () => {
@@ -37,7 +44,7 @@ test.describe('Beads', () => {
     await expect(page.locator('.bead-row', { hasText: 'Fix login bug' })).toHaveCount(0)
     await expect(epic.locator('.bead-row-fold')).toHaveText('▸4')
     // The same click put the epic on the table.
-    await expect(page.locator('.sheet-right[aria-label="Bead test-ep1"]')).toBeVisible()
+    await expect(page.getByRole('complementary', { name: 'Bead test-ep1' })).toBeVisible()
 
     await page.fill('.beads-search', 'dark mode')
     await expect(page.locator('.bead-row', { hasText: 'Add dark mode' })).toBeVisible()
@@ -61,25 +68,75 @@ test.describe('Beads', () => {
     await expect(page.locator('.bead-row-age')).toContainText('days')
   })
 
-  test('opens the card from a row and hands the Bead to a session', async ({ page }) => {
-    await openBeadsTab(page)
+  // The right edge, end to end: a Bead goes on the table from the map, the
+  // drawer lies over the table's column and gives it back on Escape, the same
+  // Bead is in a column beside the tiles on a terminal tab, the column's drag
+  // handle sets a width that outlives a reload, and Alt+I puts it all away.
+  test('puts a Bead on the table, hands it over, and keeps it across tabs at the width it was given', async ({ page }) => {
+    const grid = page.locator('.terminal-grid[data-workspace="terminal1"]')
+    const gridBefore = await box(grid)
 
+    await openBeadsTab(page)
     await page.click('.bead-row:has-text("Fix login bug") .bead-row-open')
 
-    const card = page.locator('.sheet-right[aria-label="Bead test-ep1.1"]')
-    await expect(card).toBeVisible()
-    await expect(card.locator('.bead-card-title')).toHaveText('Fix login bug')
-    await expect(card).toContainText('A login survives a reload.')
-    await expect(card.locator('.bead-card-fields')).toContainText('test-ep1')
+    const table = page.getByRole('complementary', { name: 'Bead test-ep1.1' })
+    await expect(table.locator('.bead-card-title')).toHaveText('Fix login bug')
+    await expect(table).toContainText('A login survives a reload.')
+    await expect(table.locator('.bead-card-fields')).toContainText('test-ep1')
 
     // Copy id confirms as a toast in the bottom-centre slot, and the status
     // line keeps the same event as the record.
-    await card.getByRole('button', { name: 'Copy id' }).click()
+    await table.getByRole('button', { name: 'Copy id' }).click()
     await expect(page.locator('.toast')).toHaveText('Copied test-ep1.1')
     await expect(page.locator('.status-line')).toContainText('Copied test-ep1.1')
 
-    await card.getByRole('button', { name: 'Send' }).click()
-    await expect(page.locator('.send-drawer-reference')).toHaveText('bead test-ep1.1: Fix login bug')
+    const send = table.getByRole('button', { name: 'Send' })
+    await send.click()
+    const drawer = page.getByRole('dialog', { name: 'Send to session' })
+    await expect(drawer.locator('.send-drawer-reference')).toHaveText('bead test-ep1.1: Fix login bug')
+    await expect(drawer.getByLabel('Message to send')).toBeFocused()
+
+    // The card is still there beneath: the drawer ends where the column ends
+    // and starts inside it, so the column was overlaid, not replaced.
+    const tableBox = await box(table)
+    const drawerBox = await box(drawer)
+    expect(drawerBox.x).toBeGreaterThan(tableBox.x)
+    expect(Math.round(drawerBox.x + drawerBox.width)).toBe(Math.round(tableBox.x + tableBox.width))
+
+    await page.keyboard.press('Escape')
+    await expect(drawer).toHaveCount(0)
+    await expect(table).toBeVisible()
+    await expect(send).toBeFocused()
+
+    await page.keyboard.press('Alt+1')
+    const column = page.locator('.terminal-workspace-dock[data-active="true"] .table-column')
+    await expect(column.locator('.bead-card-id')).toHaveText('test-ep1.1')
+    const gridAfter = await box(grid)
+    const columnBox = await box(column)
+    expect(gridAfter.width).toBeLessThan(gridBefore.width)
+    expect(gridAfter.x + gridAfter.width).toBeLessThanOrEqual(columnBox.x + 1)
+
+    const handle = column.locator('.table-column-handle')
+    const handleBox = await box(handle)
+    const grabX = handleBox.x + 2
+    await page.mouse.move(grabX, handleBox.y + 200)
+    await page.mouse.down()
+    await page.mouse.move(grabX - 60, handleBox.y + 200, { steps: 4 })
+    await page.mouse.move(grabX - 120, handleBox.y + 200, { steps: 4 })
+    await page.mouse.up()
+    const widened = Math.round(columnBox.width) + 120
+    expect(Math.round((await box(column)).width)).toBe(widened)
+
+    await page.reload()
+    await page.waitForSelector('.dashboard')
+    await openBeadsTab(page)
+    await page.click('.bead-row:has-text("Fix login bug") .bead-row-open')
+    const reopened = page.getByRole('complementary', { name: 'Bead test-ep1.1' })
+    await expect(reopened.locator('.bead-card-title')).toHaveText('Fix login bug')
+    expect(Math.round((await box(reopened)).width)).toBe(widened)
+
+    await page.keyboard.press('Alt+i')
+    await expect(reopened).toHaveCount(0)
   })
 
   test('follows an id inside the card and comes back', async ({ page }) => {
@@ -89,7 +146,7 @@ test.describe('Beads', () => {
     await page.click('.bead-card-section .chrote-markdown-token')
 
     await expect(page.locator('.bead-card-id')).toHaveText('test-ep1.2')
-    await page.click('.bead-card-action:has-text("Back")')
+    await page.getByRole('button', { name: 'Back' }).click()
     await expect(page.locator('.bead-card-id')).toHaveText('test-ep1.1')
   })
 

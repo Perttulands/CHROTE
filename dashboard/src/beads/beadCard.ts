@@ -4,53 +4,49 @@
  * A Bead id is a link in a terminal, in a row of the map, and inside another
  * Bead's text. None of those places is a React parent of the card, and the
  * terminal is not React at all, so the request travels as a fact the card
- * subscribes to rather than as a prop passed down a tree.
+ * subscribes to rather than as a prop passed down a tree. The fact is the
+ * table's: opening a Bead puts it on the table, and the card is what the
+ * table shows for a Bead.
  */
 
-import { useSyncExternalStore } from 'react'
+import {
+  clearTable,
+  putOnTable,
+  readTable,
+  resetTableForTest,
+  stepBackOnTable,
+  useTableObject,
+  type BeadOnTable,
+} from '../context/TableContext'
 
-export interface BeadCardRequest {
-  id: string
-  /** The store the id belongs to, when the caller already knows it. */
-  projectPath?: string
-  /** Each request is its own, so the same id can be asked for twice. */
-  nonce: number
-}
-
-let request: BeadCardRequest | null = null
-let nonce = 0
-const listeners = new Set<() => void>()
-
-function publish(): void {
-  listeners.forEach(listener => listener())
-}
+export type BeadCardRequest = BeadOnTable
 
 export function openBeadCard(id: string, projectPath?: string): void {
-  nonce += 1
-  request = { id, projectPath, nonce }
-  publish()
+  putOnTable({ kind: 'bead', id, projectPath })
+}
+
+/** The card following an id in its own text: the Bead in hand joins the trail. */
+export function followBeadFromCard(id: string, projectPath?: string): void {
+  const current = readTable()
+  const trail = current?.kind === 'bead' ? [...current.trail, current.id] : []
+  putOnTable({ kind: 'bead', id, projectPath, trail })
+}
+
+/** Back along the trail; nothing happens with nothing behind. */
+export function backInBeadCard(): void {
+  stepBackOnTable()
 }
 
 export function closeBeadCard(): void {
-  if (request === null) return
-  request = null
-  publish()
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => { listeners.delete(listener) }
-}
-
-function read(): BeadCardRequest | null {
-  return request
+  if (readTable()?.kind !== 'bead') return
+  clearTable()
 }
 
 export function useBeadCardRequest(): BeadCardRequest | null {
-  return useSyncExternalStore(subscribe, read, read)
+  const object = useTableObject()
+  return object?.kind === 'bead' ? object : null
 }
 
 export function resetBeadCardForTest(): void {
-  request = null
-  nonce = 0
+  resetTableForTest()
 }

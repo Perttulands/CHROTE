@@ -3,30 +3,23 @@
  *
  * The way in is the session's own menu, in the Sessions panel or on its tile,
  * because the question is asked about the agent in front of the operator. The
- * answer docks as a sheet over the right of the workspace: the tiles beside it
- * stay readable, so the stack can be read against what the agent is doing with
- * it.
+ * answer goes on the table, in the column at the right of the tab: the tiles
+ * beside it stay readable, so the stack can be read against what the agent is
+ * doing with it.
  *
  * A session running a shell has no stack of its own. The panel says so and
  * shows the folder's stack anyway, because a folder is what the next agent
  * started here will load.
  */
 
-import { useCallback, useEffect, useState } from 'react'
-import Sheet from './Sheet'
+import { useEffect, useState } from 'react'
 import AgentStack from './AgentStack'
 import { SessionCommandMark } from './sessionLabel'
 import { useSession } from '../context/SessionContext'
 import { getSessionKey, getSessionNameFromKey } from '../types'
-import {
-  closeAgentContext,
-  useAgentContextRequest,
-} from '../agents/agentContextPanel'
+import { closeAgentContext, useAgentContextRequest } from '../agents/agentContextPanel'
 import { fetchAgentContext, type AgentContext } from '../agents/agentContextApi'
 import './AgentContextSheet.css'
-
-/** The share of the workspace the panel takes, as the contract fixes it. */
-export const AGENT_CONTEXT_EXTENT = '60%'
 
 export default function AgentContextSheet() {
   const request = useAgentContextRequest()
@@ -56,23 +49,22 @@ export default function AgentContextSheet() {
     return () => { current = false }
   }, [request?.nonce, folder, harness, user])
 
-  const close = useCallback(() => closeAgentContext(), [])
-
   if (request === null) return null
 
   const name = getSessionNameFromKey(request.sessionKey)
   const session = sessions.find(candidate => getSessionKey(candidate.name, candidate.unixUser) === request.sessionKey)
 
-  const header = (
-    <>
-      <span className="agent-sheet-name">{name}</span>
-      <SessionCommandMark command={session?.currentCommand} />
-      <span className="agent-sheet-folder">{folder || 'no working directory'}</span>
-      {user && <span className="agent-sheet-user">{user}</span>}
-      <span className="agent-sheet-actions">
+  return (
+    <div className="agent-sheet" data-ui="agents.sheet">
+      <div className="table-header">
+        <span className="agent-sheet-name">{name}</span>
+        <SessionCommandMark command={session?.currentCommand} />
+        <span className="agent-sheet-folder">{folder || 'no working directory'}</span>
+        {user && <span className="agent-sheet-user">{user}</span>}
+        <span className="table-header-spacer" />
         <button
           type="button"
-          className="agent-word"
+          className="table-action"
           onClick={() => openSendToSession({
             targetSessionKey: request.sessionKey,
             reference: `agents ${folder} ${harness}`,
@@ -80,20 +72,10 @@ export default function AgentContextSheet() {
         >
           Send
         </button>
-        <button type="button" className="agent-word" aria-label="Close" onClick={close}>×</button>
-      </span>
-    </>
-  )
-
-  return (
-    <Sheet
-      open
-      edge="right"
-      extent={AGENT_CONTEXT_EXTENT}
-      label={`What ${name} sees`}
-      onClose={close}
-      header={header}
-    >
+        <button type="button" className="table-action" aria-keyshortcuts="Escape" onClick={closeAgentContext}>
+          Close<span className="table-chord" aria-hidden="true">Esc</span>
+        </button>
+      </div>
       <div className="agent-sheet-body">
         <p className="agent-sheet-purpose">
           {request.shell
@@ -105,6 +87,6 @@ export default function AgentContextSheet() {
         {folder && error === null && context === null && <div className="agent-note">Resolving…</div>}
         {context !== null && <AgentStack context={context} />}
       </div>
-    </Sheet>
+    </div>
   )
 }

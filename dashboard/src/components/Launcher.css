@@ -193,6 +193,17 @@
   margin-left: auto;
 }
 
+/* One quiet line beneath the flags: a checkbox and its words, nothing else. */
+.launcher-notify {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
 .launcher-name {
   height: 26px;
   padding: 0 8px;

@@ -7,6 +7,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import SessionPanel from './SessionPanel'
 import TerminalArea from './TerminalArea'
 import TerminalFilesPanel from './TerminalFilesPanel'
+import TableColumn from './TableColumn'
 import {
   readWorkspaceFilesDockState,
   writeWorkspaceFilesDockState,
@@ -233,6 +234,9 @@ function TerminalWorkspaceDock({
         onOpenFilesAtPath={openFilesAtPath}
         workspaceActive={active}
       />
+      {/* The table at the right of the grid, in the active tab only: one
+          column shows the one object, whichever dock is in front. */}
+      {active && <TableColumn />}
     </div>
   )
 }

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import MapView from './MapView'
 import ReadyView from './ReadyView'
 import StaleView from './StaleView'
+import TableColumn from '../TableColumn'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { setBeadProjects } from '../../beads/beadIds'
@@ -216,6 +217,8 @@ export default function BeadsView({ reveal }: BeadsViewProps = {}) {
           {!error && !loading && view === 'stale' && <StaleView rows={staleRows(matching, staleDays)} />}
         </div>
       </div>
+
+      <TableColumn />
     </div>
   )
 }
