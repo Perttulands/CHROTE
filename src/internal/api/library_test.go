@@ -560,6 +560,7 @@ func TestLibraryRoutesRefuseWhenNoLibraryIsConfigured(t *testing.T) {
 		{name: "page", method: http.MethodGet, target: "/api/library/page?path=a.md"},
 		{name: "search", method: http.MethodGet, target: "/api/library/search?q=a"},
 		{name: "changes", method: http.MethodGet, target: "/api/library/changes"},
+		{name: "graph", method: http.MethodGet, target: "/api/library/graph"},
 		{name: "save", method: http.MethodPut, target: "/api/library/page", body: `{"path":"a.md","content":"x"}`},
 	}
 
