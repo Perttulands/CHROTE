@@ -1,7 +1,5 @@
 export const FEATURE_FLAGS = {
   uiV2: 'chrote-ui-v2',
-  beadsAllStatuses: 'chrote-beads-all-statuses',
-  beadsDetailModal: 'chrote-beads-detail-modal',
   filesPersistTabState: 'chrote-files-persist-tab-state',
   filesResizablePreview: 'chrote-files-resizable-preview',
   serverStatusTab: 'chrote-server-status-tab',
@@ -11,8 +9,6 @@ export type FeatureFlagName = keyof typeof FEATURE_FLAGS
 
 const DEFAULT_ENABLED: Record<FeatureFlagName, boolean> = {
   uiV2: false,
-  beadsAllStatuses: true,
-  beadsDetailModal: true,
   filesPersistTabState: true,
   filesResizablePreview: true,
   serverStatusTab: true,

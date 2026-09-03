@@ -12,9 +12,10 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"sort"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chrote/server/internal/core"
@@ -43,13 +44,8 @@ func NewBeadsHandler() *BeadsHandler {
 func (h *BeadsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/beads/health", h.Health)
 	mux.HandleFunc("GET /api/beads/projects", h.ListProjects)
-	mux.HandleFunc("GET /api/beads/issues", h.Issues)
+	mux.HandleFunc("GET /api/beads/work", h.Work)
 	mux.HandleFunc("GET /api/beads/issue", h.IssueDetail)
-	mux.HandleFunc("GET /api/beads/comments", h.Comments)
-	mux.HandleFunc("POST /api/beads/comments", h.AddComment)
-	mux.HandleFunc("GET /api/beads/triage", h.Triage)
-	mux.HandleFunc("GET /api/beads/insights", h.Insights)
-	mux.HandleFunc("GET /api/beads/graph", h.Graph)
 }
 
 // getBdVersion returns the bd version or error.
@@ -295,62 +291,6 @@ func (h *BeadsHandler) execBdIssue(projectPath string, args ...string) (map[stri
 	return issue, nil
 }
 
-func (h *BeadsHandler) execBdComments(projectPath string, args ...string) ([]map[string]interface{}, error) {
-	result, err := h.execBdJSON(projectPath, args...)
-	if err != nil {
-		return nil, err
-	}
-
-	items, ok := result.([]interface{})
-	if !ok {
-		if obj, ok := result.(map[string]interface{}); ok {
-			return []map[string]interface{}{obj}, nil
-		}
-		return nil, fmt.Errorf("bd %s returned %T, expected JSON array", strings.Join(args, " "), result)
-	}
-
-	comments := make([]map[string]interface{}, 0, len(items))
-	for _, item := range items {
-		obj, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		comments = append(comments, obj)
-	}
-	return comments, nil
-}
-
-func bdListArgsFromRequest(r *http.Request) ([]string, error) {
-	args := []string{"list"}
-	query := r.URL.Query()
-
-	if status := strings.TrimSpace(query.Get("status")); status != "" {
-		if !isAllowedBeadsStatus(status) {
-			return nil, fmt.Errorf("invalid status %q", status)
-		}
-		args = append(args, "--status", status)
-	}
-
-	if limitRaw := strings.TrimSpace(query.Get("limit")); limitRaw != "" {
-		limit, err := strconv.Atoi(limitRaw)
-		if err != nil || limit < 0 {
-			return nil, fmt.Errorf("invalid limit %q", limitRaw)
-		}
-		args = append(args, "--limit", strconv.Itoa(limit))
-	}
-
-	return args, nil
-}
-
-func isAllowedBeadsStatus(status string) bool {
-	switch status {
-	case "all", "open", "ready", "in_progress", "hooked", "blocked", "closed", "wont_fix", "duplicate", "deferred":
-		return true
-	default:
-		return false
-	}
-}
-
 func requiredIssueID(r *http.Request) (string, string, string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if id == "" {
@@ -360,60 +300,6 @@ func requiredIssueID(r *http.Request) (string, string, string) {
 }
 
 // transformIssue converts raw JSONL issue to frontend-expected format
-func transformIssue(raw map[string]interface{}) map[string]interface{} {
-	issue := make(map[string]interface{})
-
-	// Copy direct fields
-	for _, key := range []string{"id", "title", "status", "priority", "assignee", "labels", "description"} {
-		if v, ok := raw[key]; ok {
-			issue[key] = v
-		}
-	}
-
-	// Map issue_type -> type
-	if v, ok := raw["issue_type"]; ok {
-		issue["type"] = v
-	}
-
-	// Map created_at -> created, updated_at -> updated
-	if v, ok := raw["created_at"]; ok {
-		issue["created"] = v
-	}
-	if v, ok := raw["updated_at"]; ok {
-		issue["updated"] = v
-	}
-
-	// Transform dependencies: extract depends_on_id from each object
-	if deps, ok := raw["dependencies"].([]interface{}); ok && len(deps) > 0 {
-		depIds := make([]string, 0, len(deps))
-		for _, d := range deps {
-			if depObj, ok := d.(map[string]interface{}); ok {
-				if depId, ok := depObj["depends_on_id"].(string); ok {
-					depIds = append(depIds, depId)
-				}
-			}
-		}
-		if len(depIds) > 0 {
-			issue["dependencies"] = depIds
-		}
-	}
-
-	return issue
-}
-
-func transformIssueDetail(raw map[string]interface{}) map[string]interface{} {
-	detail := make(map[string]interface{}, len(raw)+8)
-	for key, value := range raw {
-		detail[key] = value
-	}
-	for key, value := range transformIssue(raw) {
-		detail[key] = value
-	}
-	if v, ok := raw["acceptance_criteria"]; ok {
-		detail["acceptance"] = v
-	}
-	return detail
-}
 
 // Health handles GET /api/beads/health
 func (h *BeadsHandler) Health(w http.ResponseWriter, r *http.Request) {
@@ -497,6 +383,8 @@ func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.addProjectPrefixes(projects)
+
 	result := map[string]interface{}{"projects": projects}
 	if len(warnings) > 0 {
 		result["warnings"] = warnings
@@ -504,47 +392,281 @@ func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	core.WriteSuccess(w, result)
 }
 
-// Issues handles GET /api/beads/issues
-func (h *BeadsHandler) Issues(w http.ResponseWriter, r *http.Request) {
+// beadBrief is a Bead as another Bead's neighbour: enough to draw a row and
+// follow the link, and nothing the card would have to scroll past.
+type beadBrief struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Status   string `json:"status"`
+	Type     string `json:"type,omitempty"`
+	Priority int    `json:"priority"`
+}
+
+// beadRow is one row of open work: what the map, the ready lists and the stale
+// list all draw, plus the edges that decide where the row belongs.
+type beadRow struct {
+	beadBrief
+	Updated    string   `json:"updated,omitempty"`
+	Parent     string   `json:"parent,omitempty"`
+	BlockedBy  []string `json:"blockedBy,omitempty"`
+	Blocked    bool     `json:"blocked"`
+	Acceptance string   `json:"acceptance,omitempty"`
+}
+
+// beadCard is the Bead the card shows: its own text, and every neighbour it
+// links to.
+type beadCard struct {
+	beadBrief
+	Updated     string      `json:"updated,omitempty"`
+	Created     string      `json:"created,omitempty"`
+	Assignee    string      `json:"assignee,omitempty"`
+	Description string      `json:"description,omitempty"`
+	Design      string      `json:"design,omitempty"`
+	Acceptance  string      `json:"acceptance,omitempty"`
+	Notes       string      `json:"notes,omitempty"`
+	Parents     []beadBrief `json:"parents"`
+	Children    []beadBrief `json:"children"`
+	BlockedBy   []beadBrief `json:"blockedBy"`
+	Blocks      []beadBrief `json:"blocks"`
+}
+
+// The dependency bd draws when one Bead has to wait for another. Every other
+// kind — parent-child above all — says where a Bead belongs, not whether it can
+// start.
+const blocksDependency = "blocks"
+
+const parentDependency = "parent-child"
+
+// How far up a parent chain the card walks. Bead ids nest as prefix-abc.1.2, so
+// a chain this long is already longer than any store here has, and the bound is
+// what keeps a cycle in the data from costing an unbounded number of bd calls.
+const maxParentChainDepth = 4
+
+// A Bead id is its project's prefix and a short random tail, with a dotted
+// child number for each level of nesting. The prefix is what a project is
+// recognised by, in terminal output and in a card's links alike.
+var beadIDPattern = regexp.MustCompile(`^(.+)-[a-z0-9]{3,6}(\.[0-9]+)*$`)
+
+// beadPrefix reads the project prefix out of one of its Bead ids. An id that
+// does not have the shape yields nothing rather than a guess.
+func beadPrefix(id string) string {
+	match := beadIDPattern.FindStringSubmatch(strings.TrimSpace(id))
+	if match == nil {
+		return ""
+	}
+	return match[1]
+}
+
+func beadString(raw map[string]interface{}, key string) string {
+	value, _ := raw[key].(string)
+	return value
+}
+
+func beadBriefOf(raw map[string]interface{}) beadBrief {
+	return beadBrief{
+		ID:       beadString(raw, "id"),
+		Title:    beadString(raw, "title"),
+		Status:   beadString(raw, "status"),
+		Type:     firstString(raw["issue_type"], raw["type"]),
+		Priority: issuePriority(raw),
+	}
+}
+
+// beadDependencies reads the edges of one raw Bead as bd writes them. `bd list`
+// carries them as records with depends_on_id and type; `bd show` and `bd dep
+// list` carry the whole neighbour with a dependency_type. Both are the same
+// edge, so both are read here.
+func beadDependencies(raw map[string]interface{}, kind string) []map[string]interface{} {
+	items, ok := raw["dependencies"].([]interface{})
+	if !ok {
+		return nil
+	}
+	matches := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		edge, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if firstString(edge["type"], edge["dependency_type"]) != kind {
+			continue
+		}
+		matches = append(matches, edge)
+	}
+	return matches
+}
+
+func beadDependencyIDs(raw map[string]interface{}, kind string) []string {
+	edges := beadDependencies(raw, kind)
+	ids := make([]string, 0, len(edges))
+	for _, edge := range edges {
+		if id := firstString(edge["depends_on_id"], edge["id"]); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func isEpic(raw map[string]interface{}) bool {
+	return firstString(raw["issue_type"], raw["type"]) == "epic"
+}
+
+func isClosedBead(raw map[string]interface{}) bool {
+	switch beadString(raw, "status") {
+	case "closed", "wont_fix", "duplicate":
+		return true
+	default:
+		return false
+	}
+}
+
+// projectPrefix asks bd for one Bead of the project and reads its prefix. An
+// empty project has no prefix to report and no ids in anyone's terminal either.
+func (h *BeadsHandler) projectPrefix(projectPath string) string {
+	issues, err := h.execBdIssues(projectPath, "list", "--status", "all", "--limit", "1")
+	if err != nil || len(issues) == 0 {
+		return ""
+	}
+	return beadPrefix(beadString(issues[0], "id"))
+}
+
+// addProjectPrefixes gives every discovered project the prefix its Bead ids
+// carry, because that is what the terminal's link provider matches on. One bd
+// call per project, all of them at once: the list is short and the operator is
+// waiting for it.
+func (h *BeadsHandler) addProjectPrefixes(projects []map[string]interface{}) {
+	var wait sync.WaitGroup
+	prefixes := make([]string, len(projects))
+	for index, project := range projects {
+		path, _ := project["path"].(string)
+		if path == "" {
+			continue
+		}
+		wait.Add(1)
+		go func(index int, path string) {
+			defer wait.Done()
+			prefixes[index] = h.projectPrefix(path)
+		}(index, path)
+	}
+	wait.Wait()
+	for index, prefix := range prefixes {
+		if prefix != "" {
+			projects[index]["prefix"] = prefix
+		}
+	}
+}
+
+// Work handles GET /api/beads/work: the open work of one project, with the
+// finished children of its open epics, which is what the map, the ready lists
+// and the stale list are all views of.
+//
+// One `bd list --status all` answers all of it: the statuses of the blockers
+// decide what is blocked, and the parents decide what hangs under which epic.
+// Nothing is kept between requests.
+func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
 	if code != "" {
 		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
 		return
 	}
 
-	beadsPath, err := h.checkBeadsDirectory(projectPath)
-	if err != nil {
+	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
 		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 		return
 	}
 
-	_ = beadsPath
-	args, err := bdListArgsFromRequest(r)
-	if err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
-		return
-	}
-
-	issues, err := h.execBdIssues(projectPath, args...)
+	issues, err := h.execBdIssues(projectPath, "list", "--status", "all", "--limit", "0")
 	if err != nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
 	}
 
-	// Transform issues to match frontend interface
-	transformed := make([]map[string]interface{}, len(issues))
-	for i, issue := range issues {
-		transformed[i] = transformIssue(issue)
+	byID := make(map[string]map[string]interface{}, len(issues))
+	for _, issue := range issues {
+		if id := beadString(issue, "id"); id != "" {
+			byID[id] = issue
+		}
 	}
 
+	// An open epic is a root of the map, so its finished children come too:
+	// reviewing an epic means seeing what is already done under it.
+	openEpics := make(map[string]bool)
+	for _, issue := range issues {
+		if !isClosedBead(issue) && isEpic(issue) {
+			openEpics[beadString(issue, "id")] = true
+		}
+	}
+
+	beads := make([]beadRow, 0, len(issues))
+	prefix := ""
+	for _, issue := range issues {
+		id := beadString(issue, "id")
+		if id == "" {
+			continue
+		}
+		if prefix == "" {
+			prefix = beadPrefix(id)
+		}
+		parent := beadString(issue, "parent")
+		closed := isClosedBead(issue)
+		if closed && !openEpics[parent] {
+			continue
+		}
+		row := beadRow{
+			beadBrief: beadBriefOf(issue),
+			Updated:   firstString(issue["updated_at"], issue["updated"]),
+			Parent:    parent,
+		}
+		if !closed {
+			for _, blockerID := range beadDependencyIDs(issue, blocksDependency) {
+				if blocker, known := byID[blockerID]; known && isClosedBead(blocker) {
+					continue
+				}
+				row.BlockedBy = append(row.BlockedBy, blockerID)
+			}
+			row.Blocked = len(row.BlockedBy) > 0
+		}
+		if isEpic(issue) {
+			row.Acceptance = beadString(issue, "acceptance_criteria")
+		}
+		beads = append(beads, row)
+	}
+
+	sort.Slice(beads, func(i, j int) bool {
+		if beads[i].Priority != beads[j].Priority {
+			return beads[i].Priority < beads[j].Priority
+		}
+		return beads[i].ID < beads[j].ID
+	})
+
 	core.WriteSuccess(w, map[string]interface{}{
-		"issues":      transformed,
-		"totalCount":  len(transformed),
+		"beads":       beads,
+		"prefix":      prefix,
 		"projectPath": projectPath,
 	})
 }
 
-// IssueDetail handles GET /api/beads/issue
+// parentChain walks up from a Bead, nearest parent first. bd tells a Bead its
+// parent and no further, so each step up is its own show.
+func (h *BeadsHandler) parentChain(projectPath, parentID string) []beadBrief {
+	chain := make([]beadBrief, 0, maxParentChainDepth)
+	seen := make(map[string]bool)
+	for parentID != "" && len(chain) < maxParentChainDepth && !seen[parentID] {
+		seen[parentID] = true
+		parent, err := h.execBdIssue(projectPath, "show", parentID)
+		if err != nil {
+			return chain
+		}
+		chain = append(chain, beadBriefOf(parent))
+		parentID = beadString(parent, "parent")
+	}
+	return chain
+}
+
+// IssueDetail handles GET /api/beads/issue: one Bead as the card reads it.
+//
+// bd tells a Bead what it depends on; what depends on it is the other
+// direction, and that is the second call. Children and blocks are the same
+// answer read by edge type.
 func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
 	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
 	if code != "" {
@@ -568,325 +690,49 @@ func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	core.WriteSuccess(w, map[string]interface{}{
-		"issue":       transformIssueDetail(issue),
-		"projectPath": projectPath,
-	})
-}
-
-// Comments handles GET /api/beads/comments
-func (h *BeadsHandler) Comments(w http.ResponseWriter, r *http.Request) {
-	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
-	if code != "" {
-		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
-		return
+	card := beadCard{
+		beadBrief:   beadBriefOf(issue),
+		Updated:     firstString(issue["updated_at"], issue["updated"]),
+		Created:     firstString(issue["created_at"], issue["created"]),
+		Assignee:    beadString(issue, "assignee"),
+		Description: beadString(issue, "description"),
+		Design:      beadString(issue, "design"),
+		Acceptance:  beadString(issue, "acceptance_criteria"),
+		Notes:       beadString(issue, "notes"),
+		Parents:     h.parentChain(projectPath, beadString(issue, "parent")),
+		Children:    []beadBrief{},
+		BlockedBy:   []beadBrief{},
+		Blocks:      []beadBrief{},
 	}
-	issueID, code, msg := requiredIssueID(r)
-	if code != "" {
-		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
-		return
-	}
-
-	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
-		return
+	for _, blocker := range beadDependencies(issue, blocksDependency) {
+		card.BlockedBy = append(card.BlockedBy, beadBriefOf(blocker))
 	}
 
-	comments, err := h.execBdComments(projectPath, "comments", issueID)
-	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
-		return
-	}
-
-	core.WriteSuccess(w, map[string]interface{}{
-		"comments":    comments,
-		"projectPath": projectPath,
-		"issueId":     issueID,
-	})
-}
-
-type addCommentRequest struct {
-	Path    string `json:"path"`
-	ID      string `json:"id"`
-	Comment string `json:"comment"`
-}
-
-// AddComment handles POST /api/beads/comments
-func (h *BeadsHandler) AddComment(w http.ResponseWriter, r *http.Request) {
-	var req addCommentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body: "+err.Error())
-		return
-	}
-
-	projectPath, code, msg := validateBeadsProjectPath(req.Path)
-	if code != "" {
-		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
-		return
-	}
-	issueID := strings.TrimSpace(req.ID)
-	if issueID == "" {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing required field: id")
-		return
-	}
-	comment := strings.TrimSpace(req.Comment)
-	if comment == "" {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing required field: comment")
-		return
-	}
-
-	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
-		return
-	}
-
-	result, err := h.execBdJSON(projectPath, "comments", "add", issueID, comment)
-	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
-		return
-	}
-
-	core.WriteSuccess(w, map[string]interface{}{
-		"comment":     result,
-		"projectPath": projectPath,
-		"issueId":     issueID,
-	})
-}
-
-// Triage handles GET /api/beads/triage
-func (h *BeadsHandler) Triage(w http.ResponseWriter, r *http.Request) {
-	if !h.checkBdInstalled() {
-		core.WriteError(w, http.StatusServiceUnavailable, "BD_NOT_INSTALLED",
-			"bd command not found.")
-		return
-	}
-
-	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
-	if code != "" {
-		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
-		return
-	}
-
-	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
-		return
-	}
-
-	ready, err := h.execBdIssues(projectPath, "ready")
-	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
-		return
-	}
-
-	allIssues, err := h.execBdIssues(projectPath, "list")
-	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
-		return
-	}
-
-	sortIssuesByPriority(ready)
-
-	recommendations := make([]map[string]interface{}, 0, min(5, len(ready)))
-	quickWins := make([]string, 0)
-	for i, issue := range ready {
-		id, _ := issue["id"].(string)
-		if id == "" {
-			continue
-		}
-		priority := issuePriority(issue)
-		impact := "medium"
-		if priority <= 1 {
-			impact = "high"
-		} else if priority >= 3 {
-			impact = "low"
-		}
-		if len(recommendations) < 5 {
-			recommendations = append(recommendations, map[string]interface{}{
-				"issueId":         id,
-				"rank":            i + 1,
-				"reasoning":       "Ready according to bd: open work with no active blockers.",
-				"estimatedImpact": impact,
-			})
-		}
-		if dependencyCount(issue) == 0 && len(quickWins) < 8 {
-			quickWins = append(quickWins, id)
-		}
-	}
-
-	blockers := make([]map[string]interface{}, 0)
-	for _, issue := range allIssues {
-		if dependentCount(issue) > 0 && issue["status"] != "closed" {
-			blockers = append(blockers, issue)
-		}
-	}
-	sort.Slice(blockers, func(i, j int) bool {
-		return dependentCount(blockers[i]) > dependentCount(blockers[j])
-	})
-	blockerIDs := make([]string, 0, min(8, len(blockers)))
-	for _, issue := range blockers {
-		if id, _ := issue["id"].(string); id != "" {
-			blockerIDs = append(blockerIDs, id)
-		}
-		if len(blockerIDs) >= 8 {
-			break
-		}
-	}
-
-	core.WriteSuccess(w, map[string]interface{}{
-		"recommendations": recommendations,
-		"quickWins":       quickWins,
-		"blockers":        blockerIDs,
-	})
-}
-
-// Insights handles GET /api/beads/insights
-func (h *BeadsHandler) Insights(w http.ResponseWriter, r *http.Request) {
-	if !h.checkBdInstalled() {
-		core.WriteError(w, http.StatusServiceUnavailable, "BD_NOT_INSTALLED",
-			"bd command not found.")
-		return
-	}
-
-	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
-	if code != "" {
-		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
-		return
-	}
-
-	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
-		return
-	}
-
-	args, err := bdListArgsFromRequest(r)
-	if err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
-		return
-	}
-
-	issues, err := h.execBdIssues(projectPath, args...)
-	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
-		return
-	}
-
-	byStatus := map[string]int{}
-	byType := map[string]int{}
-	openCount := 0
-	blockedCount := 0
-	closedCount := 0
-	for _, issue := range issues {
-		status, _ := issue["status"].(string)
-		if status == "" {
-			status = "unknown"
-		}
-		byStatus[status]++
-		switch status {
-		case "closed":
-			closedCount++
-		case "blocked":
-			blockedCount++
-			openCount++
-		default:
-			openCount++
-		}
-		typ := firstString(issue["issue_type"], issue["type"])
-		if typ == "" {
-			typ = "unknown"
-		}
-		byType[typ]++
-	}
-
-	warnings := make([]string, 0)
-	if blockedCount > 0 {
-		warnings = append(warnings, fmt.Sprintf("%d blocked issues need attention", blockedCount))
-	}
-	if openCount > 50 {
-		warnings = append(warnings, "Large open backlog; use bd ready or priorities to focus next work")
-	}
-	score := 100 - blockedCount*5
-	if openCount > 50 {
-		score -= 10
-	}
-	if score < 0 {
-		score = 0
-	}
-
-	core.WriteSuccess(w, map[string]interface{}{
-		"issueCount":   len(issues),
-		"openCount":    openCount,
-		"blockedCount": blockedCount,
-		"closedCount":  closedCount,
-		"byStatus":     byStatus,
-		"byType":       byType,
-		"health": map[string]interface{}{
-			"score":    score,
-			"risks":    []string{},
-			"warnings": warnings,
-		},
-	})
-}
-
-// Graph handles GET /api/beads/graph
-func (h *BeadsHandler) Graph(w http.ResponseWriter, r *http.Request) {
-	if !h.checkBdInstalled() {
-		core.WriteError(w, http.StatusServiceUnavailable, "BD_NOT_INSTALLED",
-			"bd command not found.")
-		return
-	}
-
-	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
-	if code != "" {
-		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
-		return
-	}
-
-	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
-		return
-	}
-
-	issues, err := h.execBdIssues(projectPath, "export")
-	if err != nil {
-		issues, err = h.execBdIssues(projectPath, "list")
-	}
-	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
-		return
-	}
-
-	nodes := make([]map[string]interface{}, 0, len(issues))
-	edges := make([]map[string]interface{}, 0)
-	for _, issue := range issues {
-		id, _ := issue["id"].(string)
-		if id == "" {
-			continue
-		}
-		nodes = append(nodes, map[string]interface{}{
-			"id":       id,
-			"title":    issue["title"],
-			"status":   issue["status"],
-			"priority": issue["priority"],
-			"type":     firstString(issue["issue_type"], issue["type"]),
-		})
-		if deps, ok := issue["dependencies"].([]interface{}); ok {
-			for _, dep := range deps {
-				depObj, ok := dep.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				target, _ := depObj["depends_on_id"].(string)
-				if target == "" {
-					continue
-				}
-				edges = append(edges, map[string]interface{}{"source": id, "target": target})
+	// Dependents are not in the show at all, so they are asked for by name.
+	// A store that cannot answer leaves the card without its reverse links
+	// rather than without the Bead.
+	dependents, err := h.execBdIssues(projectPath, "dep", "list", issueID, "--direction", "up")
+	if err == nil {
+		for _, dependent := range dependents {
+			brief := beadBriefOf(dependent)
+			switch beadString(dependent, "dependency_type") {
+			case parentDependency:
+				card.Children = append(card.Children, brief)
+			case blocksDependency:
+				card.Blocks = append(card.Blocks, brief)
 			}
 		}
 	}
+	sort.SliceStable(card.Children, func(i, j int) bool {
+		if card.Children[i].Priority != card.Children[j].Priority {
+			return card.Children[i].Priority < card.Children[j].Priority
+		}
+		return card.Children[i].ID < card.Children[j].ID
+	})
 
 	core.WriteSuccess(w, map[string]interface{}{
-		"nodes": nodes,
-		"edges": edges,
+		"bead":        card,
+		"projectPath": projectPath,
 	})
 }
 
@@ -899,39 +745,6 @@ func issuePriority(issue map[string]interface{}) int {
 	default:
 		return 3
 	}
-}
-
-func dependencyCount(issue map[string]interface{}) int {
-	switch v := issue["dependency_count"].(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	default:
-		return 0
-	}
-}
-
-func dependentCount(issue map[string]interface{}) int {
-	switch v := issue["dependent_count"].(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	default:
-		return 0
-	}
-}
-
-func sortIssuesByPriority(issues []map[string]interface{}) {
-	sort.SliceStable(issues, func(i, j int) bool {
-		pi := issuePriority(issues[i])
-		pj := issuePriority(issues[j])
-		if pi != pj {
-			return pi < pj
-		}
-		return fmt.Sprint(issues[i]["updated_at"]) > fmt.Sprint(issues[j]["updated_at"])
-	})
 }
 
 func firstString(values ...interface{}) string {

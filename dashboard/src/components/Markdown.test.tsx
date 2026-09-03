@@ -88,3 +88,18 @@ describe('Markdown', () => {
       .toHaveAttribute('src', '/api/files/raw/srv/chrote/docs/shots/panel.png?inline=false')
   })
 })
+
+describe('Markdown tokens', () => {
+  it('turns bare tokens into controls the host handles', () => {
+    const onToken = vi.fn()
+    render(<Markdown content="Blocked by chrote-5grx.13 today" tokenPattern={/chrote-[a-z0-9]{3,6}(?:\.\d+)*/g} onToken={onToken} />)
+    fireEvent.click(screen.getByRole('button', { name: 'chrote-5grx.13' }))
+    expect(onToken).toHaveBeenCalledWith('chrote-5grx.13')
+  })
+
+  it('leaves a token inside code as text', () => {
+    const onToken = vi.fn()
+    render(<Markdown content="run `bd show chrote-5grx.13`" tokenPattern={/chrote-[a-z0-9]{3,6}(?:\.\d+)*/g} onToken={onToken} />)
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+})

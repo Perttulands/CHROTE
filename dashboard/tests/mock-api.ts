@@ -14,61 +14,62 @@ export const mockBeadsProjects = {
   timestamp: new Date().toISOString(),
   data: {
     projects: [
-      { name: 'test-project', path: '/code/test-project', beadsPath: '/code/test-project/.beads' },
-      { name: 'another-project', path: '/code/another-project', beadsPath: '/code/another-project/.beads' },
+      { name: 'test-project', path: '/code/test-project', beadsPath: '/code/test-project/.beads', prefix: 'test' },
+      { name: 'another-project', path: '/code/another-project', beadsPath: '/code/another-project/.beads', prefix: 'other' },
     ]
   }
 }
 
-export const mockBeadsIssues = {
+const staleTimestamp = new Date(Date.now() - 40 * 86400000).toISOString()
+const freshTimestamp = new Date(Date.now() - 86400000).toISOString()
+
+export const mockBeadsWork = {
   success: true,
   timestamp: new Date().toISOString(),
   data: {
-    issues: [
-      { id: 'ISSUE-001', title: 'Fix login bug', status: 'open', priority: 1, type: 'bug' },
-      { id: 'ISSUE-002', title: 'Add dark mode', status: 'in_progress', priority: 2, type: 'feature' },
-      { id: 'ISSUE-003', title: 'Update dependencies', status: 'ready', priority: 3, type: 'chore' },
-      { id: 'ISSUE-004', title: 'Blocked by external API', status: 'blocked', priority: 1, type: 'bug', dependencies: ['ISSUE-001'] },
-      { id: 'ISSUE-005', title: 'Completed feature', status: 'closed', priority: 2, type: 'feature' },
+    prefix: 'test',
+    projectPath: '/code/test-project',
+    beads: [
+      {
+        id: 'test-ep1', title: 'One interaction language', status: 'open', type: 'epic', priority: 1,
+        updated: freshTimestamp, acceptance: 'Every surface reads the same way', blocked: false,
+      },
+      {
+        id: 'test-ep1.1', title: 'Fix login bug', status: 'open', type: 'bug', priority: 1,
+        parent: 'test-ep1', updated: freshTimestamp, blocked: false,
+      },
+      {
+        id: 'test-ep1.2', title: 'Add dark mode', status: 'in_progress', type: 'feature', priority: 2,
+        parent: 'test-ep1', updated: freshTimestamp, blocked: false,
+      },
+      {
+        id: 'test-ep1.3', title: 'Blocked by external API', status: 'open', type: 'task', priority: 2,
+        parent: 'test-ep1', updated: staleTimestamp, blocked: true, blockedBy: ['test-ep1.2'],
+      },
+      {
+        id: 'test-ep1.4', title: 'Completed feature', status: 'closed', type: 'feature', priority: 3,
+        parent: 'test-ep1', updated: staleTimestamp, blocked: false,
+      },
     ],
-    totalCount: 5,
-    projectPath: '/code/test-project'
   }
 }
 
-export const mockBeadsTriage = {
+export const mockBeadsDetail = {
   success: true,
   timestamp: new Date().toISOString(),
   data: {
-    recommendations: [
-      { issueId: 'ISSUE-001', rank: 1, reasoning: 'High priority bug blocking users', estimatedImpact: 'high' },
-      { issueId: 'ISSUE-002', rank: 2, reasoning: 'User requested feature', estimatedImpact: 'medium' },
-    ],
-    quickWins: ['ISSUE-003'],
-    blockers: ['ISSUE-004'],
-  }
-}
-
-export const mockBeadsInsights = {
-  success: true,
-  timestamp: new Date().toISOString(),
-  data: {
-    issueCount: 5,
-    openCount: 1,
-    blockedCount: 1,
-    closedCount: 1,
-    byStatus: { open: 1, in_progress: 1, ready: 1, blocked: 1, closed: 1 },
-    byType: { bug: 2, feature: 2, chore: 1 },
-    health: {
-      score: 75,
-      risks: ['1 blocked issue needs attention'],
-      warnings: ['Consider prioritizing quick wins'],
+    projectPath: '/code/test-project',
+    bead: {
+      id: 'test-ep1.1', title: 'Fix login bug', status: 'open', type: 'bug', priority: 1,
+      updated: freshTimestamp, created: freshTimestamp,
+      description: 'The login form drops the session. Follows test-ep1.2.',
+      acceptance: 'A login survives a reload.',
+      notes: 'Reported from a terminal.',
+      parents: [{ id: 'test-ep1', title: 'One interaction language', status: 'open', type: 'epic', priority: 1 }],
+      children: [],
+      blockedBy: [],
+      blocks: [{ id: 'test-ep1.3', title: 'Blocked by external API', status: 'open', type: 'task', priority: 2 }],
     },
-    metrics: {
-      density: 0.2,
-      cycles: [],
-      criticalPath: ['ISSUE-001', 'ISSUE-004'],
-    }
   }
 }
 
@@ -122,8 +123,8 @@ export const mockBeadsError = {
   success: false,
   timestamp: new Date().toISOString(),
   error: {
-    code: 'BV_NOT_INSTALLED',
-    message: 'bv command not found. Install beads_viewer: go install github.com/Dicklesworthstone/beads_viewer@latest'
+    code: 'BD_NOT_INSTALLED',
+    message: 'bd command not found. Install modern Beads and ensure it is on CHROTE\'s PATH.'
   }
 }
 
@@ -288,6 +289,9 @@ export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: S
 
   await mockFileApiRoutes(page)
   await mockSystemStatusApiRoutes(page)
+  // Every terminal asks which Beads projects exist, so that ids in its output
+  // are links to the right store.
+  await mockBeadsProjectsRoute(page)
 
   await page.route(tmuxSessionsPattern, async route => {
     if (route.request().method() === 'POST') {
@@ -317,42 +321,41 @@ export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: S
   // The UI should handle disconnected state
 }
 
+export async function mockBeadsProjectsRoute(page: Page, projectsResponse?: object) {
+  await page.route('**/api/beads/projects**', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(projectsResponse ?? mockBeadsProjects),
+    })
+  })
+}
+
 // Beads API mock routes - can be customized per test
 export async function mockBeadsApiRoutes(page: Page, options?: {
   projectsResponse?: object
-  issuesResponse?: object
-  triageResponse?: object
-  insightsResponse?: object
+  workResponse?: object
+  beadResponse?: object
 }) {
-  await page.route('**/api/beads/projects', async route => {
+  await mockBeadsProjectsRoute(page, options?.projectsResponse)
+
+  // Each store answers for itself: the second project is empty, so "All" is a
+  // sum of stores rather than the same rows twice.
+  await page.route('**/api/beads/work**', async route => {
+    const path = new URL(route.request().url()).searchParams.get('path')
+    const empty = { success: true, timestamp: new Date().toISOString(), data: { prefix: 'other', projectPath: path, beads: [] } }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(options?.projectsResponse ?? mockBeadsProjects),
+      body: JSON.stringify(options?.workResponse ?? (path === '/code/test-project' ? mockBeadsWork : empty)),
     })
   })
 
-  await page.route('**/api/beads/issues**', async route => {
+  await page.route('**/api/beads/issue**', async route => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(options?.issuesResponse ?? mockBeadsIssues),
-    })
-  })
-
-  await page.route('**/api/beads/triage**', async route => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(options?.triageResponse ?? mockBeadsTriage),
-    })
-  })
-
-  await page.route('**/api/beads/insights**', async route => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(options?.insightsResponse ?? mockBeadsInsights),
+      body: JSON.stringify(options?.beadResponse ?? mockBeadsDetail),
     })
   })
 }
@@ -407,9 +410,9 @@ export async function mockSystemStatusApiRoutes(page: Page, onRequest?: () => vo
   })
 }
 
-// Beads API error mock - simulates bv not installed
+// Beads API error mock - simulates bd not installed
 export async function mockBeadsApiError(page: Page) {
-  await page.route('**/api/beads/projects', async route => {
+  await page.route('**/api/beads/projects**', async route => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -417,7 +420,7 @@ export async function mockBeadsApiError(page: Page) {
     })
   })
 
-  await page.route('**/api/beads/issues**', async route => {
+  await page.route('**/api/beads/work**', async route => {
     await route.fulfill({
       status: 503,
       contentType: 'application/json',
@@ -425,15 +428,7 @@ export async function mockBeadsApiError(page: Page) {
     })
   })
 
-  await page.route('**/api/beads/triage**', async route => {
-    await route.fulfill({
-      status: 503,
-      contentType: 'application/json',
-      body: JSON.stringify(mockBeadsError),
-    })
-  })
-
-  await page.route('**/api/beads/insights**', async route => {
+  await page.route('**/api/beads/issue**', async route => {
     await route.fulfill({
       status: 503,
       contentType: 'application/json',
