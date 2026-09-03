@@ -17,6 +17,7 @@ const mockState = vi.hoisted(() => ({
   shelves: null as LibraryShelves | null,
   shelvesError: null as Error | null,
   changes: [] as LibraryChange[],
+  gitError: '',
   pages: new Map<string, LibraryPage[]>(),
   page: new Map<string, LibraryPageContent>(),
   results: [] as LibrarySearchResult[],
@@ -48,8 +49,8 @@ vi.mock('../library/libraryApi', async () => {
   return {
     ...actual,
     fetchShelves: () => (mockState.shelvesError ? Promise.reject(mockState.shelvesError) : Promise.resolve(mockState.shelves)),
-    fetchChanges: () => Promise.resolve(mockState.changes),
-    fetchShelfPages: (shelf: string) => Promise.resolve(mockState.pages.get(shelf) ?? []),
+    fetchChanges: () => Promise.resolve({ changes: mockState.changes, error: mockState.gitError }),
+    fetchShelfPages: (shelf: string) => Promise.resolve({ pages: mockState.pages.get(shelf) ?? [], error: mockState.gitError }),
     fetchPage: (path: string) => {
       const found = mockState.page.get(path)
       return found ? Promise.resolve(found) : Promise.reject(new Error('No such page'))
@@ -77,6 +78,7 @@ beforeEach(() => {
   mockState.announce.mockReset()
   mockState.shelvesError = null
   mockState.saveError = null
+  mockState.gitError = ''
   mockState.saved = []
   mockState.shelves = {
     root: '/corpus',

@@ -42,6 +42,20 @@ export interface LibraryChange extends LibraryCommit {
 export interface LibraryPageContent extends LibraryPage {
   content: string
   history: LibraryCommit[]
+  /** What git said when it would not read the corpus, if it would not. */
+  error?: string
+}
+
+/** A shelf's pages, and why they carry no dates when git refused the corpus. */
+export interface LibraryPages {
+  pages: LibraryPage[]
+  error?: string
+}
+
+/** What arrived lately, and why nothing did when git refused the corpus. */
+export interface LibraryChanges {
+  changes: LibraryChange[]
+  error?: string
 }
 
 export interface LibrarySearchResult {
@@ -74,8 +88,8 @@ export function fetchShelves(): Promise<LibraryShelves> {
   return request<LibraryShelves>('/shelves')
 }
 
-export function fetchShelfPages(shelf: string): Promise<LibraryPage[]> {
-  return request<LibraryPage[]>('/pages', { shelf })
+export function fetchShelfPages(shelf: string): Promise<LibraryPages> {
+  return request<LibraryPages>('/pages', { shelf })
 }
 
 export function fetchPage(path: string): Promise<LibraryPageContent> {
@@ -86,8 +100,8 @@ export function searchLibrary(query: string): Promise<LibrarySearchResult[]> {
   return request<LibrarySearchResult[]>('/search', { q: query })
 }
 
-export function fetchChanges(limit = 30): Promise<LibraryChange[]> {
-  return request<LibraryChange[]>('/changes', { limit: String(limit) })
+export function fetchChanges(limit = 30): Promise<LibraryChanges> {
+  return request<LibraryChanges>('/changes', { limit: String(limit) })
 }
 
 /** The one write: the operator's own correction, committed as him. */

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,7 +9,6 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -120,7 +118,25 @@ type LibraryChange struct {
 	Files []string `json:"files"`
 }
 
-// LibraryPageResponse is the body of GET /api/library/page.
+// LibraryPagesResponse is the body of GET /api/library/pages. The shelf is
+// walked on disk, so its pages are there whatever git says; Error is why they
+// carry no dates when git would not read the corpus.
+type LibraryPagesResponse struct {
+	Pages []LibraryPage `json:"pages"`
+	Error string        `json:"error,omitempty"`
+}
+
+// LibraryChangesResponse is the body of GET /api/library/changes. A corpus that
+// git refused and a corpus with nothing new both list no changes, and Error is
+// the difference between them.
+type LibraryChangesResponse struct {
+	Changes []LibraryChange `json:"changes"`
+	Error   string          `json:"error,omitempty"`
+}
+
+// LibraryPageResponse is the body of GET /api/library/page. Error is why the
+// history is empty when git refused the corpus; the page itself is read off
+// disk and is there regardless.
 type LibraryPageResponse struct {
 	Path    string          `json:"path"`
 	Title   string          `json:"title"`
@@ -128,6 +144,7 @@ type LibraryPageResponse struct {
 	Updated string          `json:"updated"`
 	Author  string          `json:"author"`
 	History []LibraryCommit `json:"history"`
+	Error   string          `json:"error,omitempty"`
 }
 
 // LibrarySearchResult is one hit of GET /api/library/search.
@@ -258,48 +275,16 @@ func isLibraryPage(name string) bool {
 	return strings.EqualFold(filepath.Ext(name), libraryPageExtension)
 }
 
-// git runs one git command inside the corpus root and returns its stdout. A
-// git that is absent or that fails is not an error here: an empty result says
-// the same thing to every caller, which is that history has nothing to add.
-func (h *LibraryHandler) git(ctx context.Context, args ...string) string {
-	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		return ""
-	}
+// git runs one git command inside the corpus root and returns its stdout and
+// what git said when it refused. A refusal is not an empty corpus - the server
+// reads a corpus the operator owns, and git will not read a repository owned by
+// somebody else without being told it is safe - so every caller carries the
+// refusal into its response rather than answering as if there were no history.
+func (h *LibraryHandler) git(ctx context.Context, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, libraryGitTimeout)
 	defer cancel()
-	output := &boundedOutput{limit: libraryGitOutputLimit, onOverflow: cancel}
-	cmd := exec.CommandContext(ctx, gitPath, append([]string{"--no-pager", "-C", h.config.Root}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
-	cmd.Stdout = output
-	if err := cmd.Run(); err != nil && !output.truncated {
-		return ""
-	}
-	return output.buffer.String()
-}
-
-// gitWrite runs a git command that changes the corpus and reports what went
-// wrong. Unlike a read, a failed write must be told to the operator: the save
-// he asked for did not happen.
-func (h *LibraryHandler) gitWrite(ctx context.Context, args ...string) error {
-	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		return errors.New("git is not installed on the server")
-	}
-	ctx, cancel := context.WithTimeout(ctx, libraryGitTimeout)
-	defer cancel()
-	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, gitPath, append([]string{"--no-pager", "-C", h.config.Root}, args...)...)
-	cmd.Env = os.Environ()
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		message := strings.TrimSpace(stderr.String())
-		if message == "" {
-			message = err.Error()
-		}
-		return fmt.Errorf("git %s: %s", args[0], message)
-	}
-	return nil
+	output, _, err := runGitCommand(ctx, h.config.Root, libraryGitOutputLimit, args...)
+	return output, err
 }
 
 // libraryLogFormat is the field line every history read shares.
@@ -447,7 +432,7 @@ func (h *LibraryHandler) Pages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lastChange := h.lastChangeByPath(r.Context(), h.libraryRelative(absoluteShelf))
+	lastChange, gitErr := h.lastChangeByPath(r.Context(), h.libraryRelative(absoluteShelf))
 	pages := make([]LibraryPage, 0)
 	_ = filepath.WalkDir(absoluteShelf, func(walked string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -476,26 +461,31 @@ func (h *LibraryHandler) Pages(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	sort.Slice(pages, func(i, j int) bool { return pages[i].Path < pages[j].Path })
-	core.WriteJSON(w, http.StatusOK, pages)
+	response := LibraryPagesResponse{Pages: pages}
+	if gitErr != nil {
+		response.Error = gitErr.Error()
+	}
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // lastChangeByPath maps every path under scope to the commit that last touched
 // it. git log is newest first, so the first record naming a path is its last
 // change.
-func (h *LibraryHandler) lastChangeByPath(ctx context.Context, scope string) map[string]LibraryCommit {
+func (h *LibraryHandler) lastChangeByPath(ctx context.Context, scope string) (map[string]LibraryCommit, error) {
 	args := []string{"log", libraryLogFormat, "--name-only"}
 	if scope != "" && scope != "." {
 		args = append(args, "--", scope)
 	}
+	output, err := h.git(ctx, args...)
 	last := make(map[string]LibraryCommit)
-	for _, change := range parseLibraryLog(h.git(ctx, args...)) {
+	for _, change := range parseLibraryLog(output) {
 		for _, file := range change.Files {
 			if _, seen := last[file]; !seen {
 				last[file] = change.LibraryCommit
 			}
 		}
 	}
-	return last
+	return last, err
 }
 
 // Page handles GET /api/library/page?path= - one page and its history.
@@ -521,7 +511,7 @@ func (h *LibraryHandler) Page(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relative := h.libraryRelative(absolute)
-	history := h.pageHistory(r.Context(), relative)
+	history, gitErr := h.pageHistory(r.Context(), relative)
 	response := LibraryPageResponse{
 		Path:    relative,
 		Title:   libraryTitle(content, relative),
@@ -532,17 +522,20 @@ func (h *LibraryHandler) Page(w http.ResponseWriter, r *http.Request) {
 		response.Updated = history[0].Time
 		response.Author = history[0].Author
 	}
+	if gitErr != nil {
+		response.Error = gitErr.Error()
+	}
 	core.WriteJSON(w, http.StatusOK, response)
 }
 
-func (h *LibraryHandler) pageHistory(ctx context.Context, relative string) []LibraryCommit {
-	output := h.git(ctx, "log", "-n", strconv.Itoa(libraryHistoryLimit), libraryLogFormat, "--", relative)
+func (h *LibraryHandler) pageHistory(ctx context.Context, relative string) ([]LibraryCommit, error) {
+	output, err := h.git(ctx, "log", "-n", strconv.Itoa(libraryHistoryLimit), libraryLogFormat, "--", relative)
 	changes := parseLibraryLog(output)
 	history := make([]LibraryCommit, 0, len(changes))
 	for _, change := range changes {
 		history = append(history, change.LibraryCommit)
 	}
-	return history
+	return history, err
 }
 
 // Search handles GET /api/library/search?q= - a case-insensitive walk of every
@@ -658,8 +651,12 @@ func (h *LibraryHandler) Changes(w http.ResponseWriter, r *http.Request) {
 	if limit > libraryChangesLimit {
 		limit = libraryChangesLimit
 	}
-	changes := parseLibraryLog(h.git(r.Context(), "log", "-n", strconv.Itoa(limit), libraryLogFormat, "--name-only"))
-	core.WriteJSON(w, http.StatusOK, changes)
+	output, gitErr := h.git(r.Context(), "log", "-n", strconv.Itoa(limit), libraryLogFormat, "--name-only")
+	response := LibraryChangesResponse{Changes: parseLibraryLog(output)}
+	if gitErr != nil {
+		response.Error = gitErr.Error()
+	}
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // SavePage handles PUT /api/library/page - the operator's own correction,
@@ -693,7 +690,14 @@ func (h *LibraryHandler) SavePage(w http.ResponseWriter, r *http.Request) {
 	}
 	relative := h.libraryRelative(absolute)
 
-	if dirty := strings.TrimSpace(h.git(r.Context(), "status", "--porcelain", "--", relative)); dirty != "" {
+	// A status git would not answer leaves the question open, and a save made
+	// on an open question is the one that swallows somebody else's edit.
+	status, gitErr := h.git(r.Context(), "status", "--porcelain", "--", relative)
+	if gitErr != nil {
+		core.WriteError(w, http.StatusInternalServerError, "INTERNAL", gitErr.Error())
+		return
+	}
+	if dirty := strings.TrimSpace(status); dirty != "" {
 		core.WriteError(w, http.StatusConflict, "DIRTY",
 			fmt.Sprintf("%s already has an uncommitted change in the corpus; commit or discard it before saving from here", relative))
 		return
@@ -706,17 +710,22 @@ func (h *LibraryHandler) SavePage(w http.ResponseWriter, r *http.Request) {
 
 	// A save that changed nothing is not a commit. The operator gets the entry
 	// that is already there, which is the truth about when the page last moved.
-	if strings.TrimSpace(h.git(r.Context(), "status", "--porcelain", "--", relative)) != "" {
+	written, gitErr := h.git(r.Context(), "status", "--porcelain", "--", relative)
+	if gitErr != nil {
+		core.WriteError(w, http.StatusInternalServerError, "INTERNAL", gitErr.Error())
+		return
+	}
+	if strings.TrimSpace(written) != "" {
 		message := strings.TrimSpace(request.Summary)
 		if message == "" {
 			message = "Edit " + relative
 		}
 		name, email := splitLibraryAuthor(h.config.Author)
-		if err := h.gitWrite(r.Context(), "add", "--", relative); err != nil {
+		if _, err := h.git(r.Context(), "add", "--", relative); err != nil {
 			core.WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 			return
 		}
-		if err := h.gitWrite(r.Context(),
+		if _, err := h.git(r.Context(),
 			"-c", "user.name="+name,
 			"-c", "user.email="+email,
 			"commit", "-m", message, "--", relative,
@@ -726,7 +735,11 @@ func (h *LibraryHandler) SavePage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	history := h.pageHistory(r.Context(), relative)
+	history, gitErr := h.pageHistory(r.Context(), relative)
+	if gitErr != nil {
+		core.WriteError(w, http.StatusInternalServerError, "INTERNAL", gitErr.Error())
+		return
+	}
 	if len(history) == 0 {
 		core.WriteJSON(w, http.StatusOK, LibraryCommit{})
 		return
