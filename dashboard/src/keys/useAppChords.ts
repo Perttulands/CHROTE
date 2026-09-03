@@ -26,7 +26,7 @@ export interface AppChordSurfaces {
   onTabChange: (tab: Tab) => void
   onToggleSessionsPanel: () => void
   onOpenSessionsPanel: () => void
-  onOpenKeysPanel: () => void
+  onToggleKeysPanel: () => void
 }
 
 function clickInActiveDock(selector: string) {
@@ -136,11 +136,11 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
     const chords: Chord[] = [
       { id: 'keys.beads', key: 'b', direct: { alt: true, shift: false, key: 'b' }, label: 'Beads tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('beads') },
       { id: 'keys.library', key: 'l', direct: { alt: true, shift: false, key: 'l' }, label: 'Library tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('library') },
-      // Alt+K opens the panel, which is also what the leader opens. Turning
+      // Alt+K toggles the panel, which is also what the leader toggles. Turning
       // keys off has no chord of its own: the tab bar's own button says so and
       // is how they come back, and the panel's row runs it from here.
       { id: 'keys.agents', key: 'g', direct: { alt: true, shift: false, key: 'g' }, label: 'Agents tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('agents') },
-      { id: 'keys.panel', key: '?', direct: { alt: true, shift: false, key: 'k' }, label: 'Keybindings', scope: 'global', run: () => stateRef.current.surfaces.onOpenKeysPanel() },
+      { id: 'keys.panel', key: '?', direct: { alt: true, shift: false, key: 'k' }, label: 'Keybindings', scope: 'global', run: () => stateRef.current.surfaces.onToggleKeysPanel() },
       { id: 'keys.off', key: 'k', label: 'Keys off', scope: 'global', run: () => stateRef.current.session.updateSettings({ keysEnabled: false }) },
 
       { id: 'keys.nextWindow', key: 'w', direct: { alt: true, shift: false, key: 'w' }, label: 'Next window', scope: 'workspace', run: () => cycleWindow(1) },
@@ -155,6 +155,8 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
       { id: 'keys.sessions', key: 'Tab', direct: { alt: true, shift: false, key: 'a' }, label: 'Sessions panel', scope: 'workspace', run: () => stateRef.current.surfaces.onToggleSessionsPanel() },
       { id: 'keys.files', key: 'f', direct: { alt: true, shift: false, key: 'o' }, label: 'Files panel', scope: 'workspace', run: () => clickInActiveDock('button[aria-label="Files sidecar"]') },
 
+      // Peek is a glance, so its chord toggles it: pressed again over the tile
+      // Peek shows, it closes; pressed over another tile, Peek switches.
       {
         id: 'keys.peek',
         key: 'p',
@@ -163,7 +165,10 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
         scope: 'tile',
         run: () => {
           const sessionKey = focusedSession()
-          if (sessionKey) stateRef.current.session.openFloatingModal(sessionKey)
+          if (!sessionKey) return
+          const { floatingSession, openFloatingModal, closeFloatingModal } = stateRef.current.session
+          if (floatingSession === sessionKey) closeFloatingModal()
+          else openFloatingModal(sessionKey)
         },
       },
       {

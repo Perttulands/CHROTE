@@ -244,7 +244,8 @@ function DashboardContent() {
     if (!workspaceIds.includes(lastActiveWorkspaceId)) setLastActiveWorkspaceId('terminal1')
   }, [lastActiveWorkspaceId, workspaceIds])
 
-  const handleShowKeys = useCallback(() => setKeysPanelOpen(true), [])
+  // The panel is a glance, so the chord that opens it closes it as well.
+  const toggleKeysPanel = useCallback(() => setKeysPanelOpen(open => !open), [])
   const handleCloseKeys = useCallback(() => setKeysPanelOpen(false), [])
   const toggleSessionsPanel = useCallback(() => {
     setSessionsDockState(previous => ({ ...previous, open: !previous.open }))
@@ -276,18 +277,18 @@ function DashboardContent() {
     }
   }, [windowRevealRequest])
 
-  // The leader is discovery: it opens the keys panel and shuts its own window,
-  // because from here the next key is search text rather than a chord.
+  // The leader is discovery: it toggles the keys panel and shuts its own
+  // window, because from here the next key is search text rather than a chord.
   const { leaderOpen } = useLeader()
   useEffect(() => {
     if (!leaderOpen) return
-    setKeysPanelOpen(true)
+    setKeysPanelOpen(open => !open)
     closeLeaderWindow()
   }, [leaderOpen])
 
   // Plain keys outside a terminal; the leader model lives in the registry.
   useKeyboardShortcuts({
-    onShowKeys: handleShowKeys,
+    onShowKeys: toggleKeysPanel,
     isKeysPanelOpen: keysPanelOpen,
   })
 
@@ -296,7 +297,7 @@ function DashboardContent() {
     onTabChange: handleTabChange,
     onToggleSessionsPanel: toggleSessionsPanel,
     onOpenSessionsPanel: openSessionsPanel,
-    onOpenKeysPanel: handleShowKeys,
+    onToggleKeysPanel: toggleKeysPanel,
   })
 
   useEffect(() => {
@@ -374,7 +375,7 @@ function DashboardContent() {
         <TabBar
           activeTab={activeTab}
           onTabChange={handleTabChange}
-          onShowKeys={handleShowKeys}
+          onShowKeys={toggleKeysPanel}
           sessionsPinned={sessionsDockState.pinned}
           onToggleSessionsPinned={toggleSessionsPinned}
         />
