@@ -47,7 +47,7 @@ function MapNode({ node, depth, expandAll }: { node: BeadTreeNode; depth: number
       <BeadRow
         row={row}
         depth={depth}
-        fold={foldable ? { expanded, onToggle: () => setCollapsed(previous => !previous) } : undefined}
+        fold={foldable ? { count: node.children.length, expanded, setExpanded: open => setCollapsed(!open) } : undefined}
       />
       {row.blocked && row.blockedBy && row.blockedBy.length > 0 && (
         <BlockedBy ids={row.blockedBy} depth={depth} projectPath={row.projectPath} />

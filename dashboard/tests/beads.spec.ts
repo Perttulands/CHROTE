@@ -28,16 +28,21 @@ test.describe('Beads', () => {
     await expect(page.locator('.bead-row-blocked')).toContainText('blocked by test-ep1.2')
   })
 
-  test('folds an epic and narrows by search', async ({ page }) => {
+  test('folds an epic from its title and narrows by search', async ({ page }) => {
     await openBeadsTab(page)
 
-    await page.click('.bead-row:has-text("One interaction language") .bead-row-glyph')
+    const epic = page.locator('.bead-row', { hasText: 'One interaction language' })
+    await expect(epic.locator('.bead-row-fold')).toHaveText('▾4')
+    await epic.locator('.bead-row-title').click()
     await expect(page.locator('.bead-row', { hasText: 'Fix login bug' })).toHaveCount(0)
+    await expect(epic.locator('.bead-row-fold')).toHaveText('▸4')
+    // The same click put the epic on the table.
+    await expect(page.locator('.sheet-right[aria-label="Bead test-ep1"]')).toBeVisible()
 
-    await page.click('.bead-row:has-text("One interaction language") .bead-row-glyph')
     await page.fill('.beads-search', 'dark mode')
     await expect(page.locator('.bead-row', { hasText: 'Add dark mode' })).toBeVisible()
     await expect(page.locator('.bead-row', { hasText: 'Fix login bug' })).toHaveCount(0)
+    await expect(epic.locator('.bead-row-fold')).toHaveText('▾1')
   })
 
   test('splits ready from in progress, and lists what has gone stale', async ({ page }) => {

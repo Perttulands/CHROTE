@@ -143,23 +143,21 @@
   background-color: var(--surface-secondary);
 }
 
+/* The fold slot: a chevron and the child count, or the same width of nothing. */
+.bead-row-fold {
+  flex: none;
+  width: 36px;
+  color: var(--text-dim);
+}
+
+.bead-row-count {
+  margin-left: 4px;
+}
+
 .bead-row-glyph {
   flex: none;
   width: 14px;
-  padding: 0;
-  border: none;
-  background: none;
   color: var(--text-secondary);
-  font: inherit;
-  text-align: left;
-}
-
-button.bead-row-glyph {
-  cursor: pointer;
-}
-
-button.bead-row-glyph:hover {
-  color: var(--accent);
 }
 
 .bead-row-open {
