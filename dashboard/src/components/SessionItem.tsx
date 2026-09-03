@@ -7,6 +7,7 @@ import { SessionCommandMark, SessionLabel } from './sessionLabel'
 import { identityColorFor } from '../theme/theme'
 import { useTheme } from '../theme/ThemeContext'
 import Menu, { type MenuAction, type MenuGroup } from './Menu'
+import { harnessOfCommand, openAgentContext } from '../agents/agentContextPanel'
 
 interface SessionItemProps {
   session: TmuxSession
@@ -178,6 +179,19 @@ function SessionItem({ session }: SessionItemProps) {
     openSendToSession({ targetSessionKey: sessionKey })
   }, [openSendToSession, sessionKey])
 
+  // What this agent sees is asked of the session, so the folder and the harness
+  // come from the session itself: its working directory and its pane command.
+  const handleShowAgentContext = useCallback(() => {
+    const { harness, shell } = harnessOfCommand(session.currentCommand)
+    openAgentContext({
+      sessionKey,
+      folder: session.cwd ?? '',
+      harness,
+      user: session.unixUser ?? '',
+      shell,
+    })
+  }, [session.currentCommand, session.cwd, session.unixUser, sessionKey])
+
   const handleClick = useCallback(() => {
     handleSessionClick(sessionKey)
   }, [handleSessionClick, sessionKey])
@@ -226,6 +240,7 @@ function SessionItem({ session }: SessionItemProps) {
       rows: [
         { id: 'peek', label: 'Peek', chord: 'Alt+P', onSelect: handlePeek },
         { id: 'send', label: 'Send to session', chord: 'Alt+S', onSelect: handleOpenSendToSession },
+        { id: 'agent-context', label: 'What this agent sees', onSelect: handleShowAgentContext },
       ],
     },
     {

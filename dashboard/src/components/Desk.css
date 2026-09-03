@@ -1,0 +1,105 @@
+/* A desk: one line, and the session's own terminal when it is expanded. */
+
+.desk {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--divider);
+  background-color: var(--surface-primary);
+}
+
+.desk-line {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 14px;
+  height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.desk-label {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.desk-session {
+  flex: none;
+  color: var(--text-primary);
+}
+
+.desk-state {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.desk-word {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.desk-word:hover {
+  color: var(--text-primary);
+}
+
+.desk-ask {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background-color: var(--background);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.desk-ask:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.desk-ask:disabled {
+  color: var(--text-dim);
+}
+
+.desk-launcher {
+  flex: none;
+  padding: 0 12px 8px;
+}
+
+.desk-tile {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin: 0 4px 4px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  overflow: hidden;
+  background-color: var(--terminal-background, var(--background));
+}
+
+.desk-tile-head {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  background-color: var(--surface-secondary);
+  font-size: 13px;
+}
+
+.desk-tile-send {
+  margin-left: auto;
+}

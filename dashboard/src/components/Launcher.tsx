@@ -213,6 +213,11 @@ interface LauncherProps {
   /** The window the new session binds to, when one is launching it. */
   attachTo?: CreateSessionAttachTarget
   /**
+   * The folder to start in, when the surface that opened the launcher already
+   * knows it. A desk offering to launch its own agent knows exactly one folder.
+   */
+  initialFolder?: string
+  /**
    * Called once a session was created, with what it was created as. A popover
    * uses it to close itself; the Send drawer uses it to reach the session it
    * just launched.
@@ -220,7 +225,7 @@ interface LauncherProps {
   onLaunched?: (created: { name: string; unixUser: LaunchUser }) => void
 }
 
-export default function Launcher({ workspaceId, attachTo, onLaunched }: LauncherProps) {
+export default function Launcher({ workspaceId, attachTo, initialFolder, onLaunched }: LauncherProps) {
   const { sessions, settings, terminalUsers, createSession } = useSession()
   const theme = useTheme()
   const options = useLaunchOptions()
@@ -243,7 +248,7 @@ export default function Launcher({ workspaceId, attachTo, onLaunched }: Launcher
   const flagsFieldId = useId()
 
   const harness = options.harnesses.find(entry => entry.id === chosenHarness) ?? options.harnesses[0]
-  const folder = chosenFolder ?? options.folders[0] ?? HOME_TOKEN
+  const folder = chosenFolder ?? initialFolder ?? options.folders[0] ?? HOME_TOKEN
   const defaultUser = resolveLaunchUser(settings, workspaceId, terminalUsers)
   const user = chosenUser ?? defaultUser
 
