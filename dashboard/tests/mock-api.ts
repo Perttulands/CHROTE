@@ -490,19 +490,21 @@ export async function mockLibraryApiRoutes(page: Page, options?: { shelves?: obj
 
   await page.route('**/api/library/shelves**', route => flat(route, options?.shelves ?? mockLibraryShelves))
 
-  await page.route('**/api/library/changes**', route => flat(route, [
-    {
-      hash: 'c79783abc',
-      time: libraryChangedAt,
-      author: 'The Operator',
-      message: 'Record a workflow preference',
-      files: ['preferences/workflow.md'],
-    },
-  ]))
+  await page.route('**/api/library/changes**', route => flat(route, {
+    changes: [
+      {
+        hash: 'c79783abc',
+        time: libraryChangedAt,
+        author: 'The Operator',
+        message: 'Record a workflow preference',
+        files: ['preferences/workflow.md'],
+      },
+    ],
+  }))
 
   await page.route('**/api/library/pages**', route => {
     const shelf = new URL(route.request().url()).searchParams.get('shelf') ?? ''
-    return flat(route, mockLibraryPages[shelf] ?? [])
+    return flat(route, { pages: mockLibraryPages[shelf] ?? [] })
   })
 
   await page.route('**/api/library/search**', route => {
