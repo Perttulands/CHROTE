@@ -77,9 +77,18 @@
   opacity: 1;
 }
 
-/* Help dropdown menu */
-.help-menu-container {
+/* Keys toggle dropdown menu */
+.keys-menu-container {
   position: relative;
+}
+
+/* The toggle reads state rather than naming a view, so it keeps its own two
+   words on one line, in the case they were written in. */
+.tab.keys-toggle {
+  white-space: nowrap;
+  padding: 12px 12px;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .help-dropdown {

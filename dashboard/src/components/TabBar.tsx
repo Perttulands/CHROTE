@@ -27,12 +27,12 @@ type TabConfig = InternalTab | ExternalTab
 interface TabBarProps {
   activeTab: Tab
   onTabChange: (tab: Tab) => void
-  onShowHelp?: () => void
+  onShowKeys?: () => void
   onShowPresets?: () => void
 }
 
-function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarProps) {
-  const [helpMenuOpen, setHelpMenuOpen] = useState(false)
+function TabBar({ activeTab, onTabChange, onShowKeys, onShowPresets }: TabBarProps) {
+  const [keysMenuOpen, setKeysMenuOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [tabMenu, setTabMenu] = useState<{ show: boolean; x: number; y: number; workspaceId: WorkspaceId | null; submenu: string | null }>({ show: false, x: 0, y: 0, workspaceId: null, submenu: null })
   const tabMenuPosition = useViewportMenuPosition<HTMLDivElement>(
@@ -68,13 +68,21 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
   const closeTabMenu = () => setTabMenu({ show: false, x: 0, y: 0, workspaceId: null, submenu: null })
   const toggleMobileMenu = () => {
     closeTabMenu()
-    setHelpMenuOpen(false)
+    setKeysMenuOpen(false)
     setMobileMenuOpen(open => !open)
   }
-  const toggleHelpMenu = () => {
+  const toggleKeysMenu = () => {
     closeTabMenu()
     setMobileMenuOpen(false)
-    setHelpMenuOpen(open => !open)
+    setKeysMenuOpen(open => !open)
+  }
+  // The toggle is device-local and states what it is, not what pressing it
+  // does: "Keys on" means chords are live. Leader then K turns them off, and
+  // this button is how they come back.
+  const keysEnabled = settings.keysEnabled
+  const toggleKeys = () => {
+    setKeysMenuOpen(false)
+    updateSettings({ keysEnabled: !keysEnabled })
   }
 
   const renameTab = () => {
@@ -102,7 +110,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
   const openActiveTabMenu = (button: HTMLButtonElement) => {
     if (!activeTerminalWorkspace) return
     const rect = button.getBoundingClientRect()
-    setHelpMenuOpen(false)
+    setKeysMenuOpen(false)
     setMobileMenuOpen(false)
     setTabMenu({ show: true, x: rect.left, y: rect.bottom + 4, workspaceId: activeTerminalWorkspace, submenu: null })
   }
@@ -208,11 +216,20 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
               <button
                 className="mobile-nav-item"
                 onClick={() => {
-                  if (onShowHelp) onShowHelp()
+                  toggleKeys()
                   setMobileMenuOpen(false)
                 }}
               >
-                Keyboard Shortcuts
+                {keysEnabled ? 'Keys on' : 'Keys off'}
+              </button>
+              <button
+                className="mobile-nav-item"
+                onClick={() => {
+                  if (onShowKeys) onShowKeys()
+                  setMobileMenuOpen(false)
+                }}
+              >
+                Keys panel
               </button>
               <button
                 className="mobile-nav-item"
@@ -256,33 +273,38 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
                 ⊞ Layouts
               </button>
             )}
-            <div className="help-menu-container">
+            <div className="keys-menu-container">
               <button
-                className={`tab ${helpMenuOpen ? 'active dismissible-trigger-active' : ''}`}
-                onClick={toggleHelpMenu}
-                title="Help & Documentation"
+                className={`tab keys-toggle ${keysMenuOpen ? 'active dismissible-trigger-active' : ''}`}
+                onClick={toggleKeys}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  toggleKeysMenu()
+                }}
+                aria-pressed={keysEnabled}
+                title={keysEnabled ? 'Chords are live. Click to turn keys off; right-click for the keys panel.' : 'Chords are off. Click to turn keys on; right-click for the keys panel.'}
               >
-                ?
+                {keysEnabled ? 'Keys on' : 'Keys off'}
               </button>
-              {helpMenuOpen && (
-                <DismissiblePanel onDismiss={() => setHelpMenuOpen(false)} panelZIndex={1000} panelPosition="absolute">
+              {keysMenuOpen && (
+                <DismissiblePanel onDismiss={() => setKeysMenuOpen(false)} panelZIndex={1000} panelPosition="absolute">
                   <div className="help-dropdown">
-                  {onShowHelp && (
+                  {onShowKeys && (
                     <button
                       className="help-dropdown-item"
                       onClick={() => {
-                        onShowHelp()
-                        setHelpMenuOpen(false)
+                        onShowKeys()
+                        setKeysMenuOpen(false)
                       }}
                     >
-                      Keyboard Shortcuts
+                      Keys panel
                     </button>
                   )}
                   <button
                     className="help-dropdown-item"
                     onClick={() => {
                       onTabChange('help')
-                      setHelpMenuOpen(false)
+                      setKeysMenuOpen(false)
                     }}
                   >
                     Dashboard Help

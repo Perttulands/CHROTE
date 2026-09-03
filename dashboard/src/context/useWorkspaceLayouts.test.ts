@@ -146,6 +146,18 @@ describe('dashboard persisted storage contract', () => {
     })
   })
 
+  it('persists the keys toggle and reads it back on the next load', () => {
+    const first = renderSession()
+    expect(first.result.current.settings.keysEnabled).toBe(true)
+
+    act(() => {
+      first.result.current.updateSettings({ keysEnabled: false })
+    })
+
+    expect(storedDashboardState().settings.keysEnabled).toBe(false)
+    expect(renderSession().result.current.settings.keysEnabled).toBe(false)
+  })
+
   it('does not mutate tmux on initial load and applies mouse mode only after an explicit setting change', async () => {
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
       version: 3,

@@ -11,6 +11,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { connectTtyd, type TtydConnection } from './ttydProtocol'
+import { terminalKeyEvent } from '../keys/chords'
 import { copyTextToClipboard } from '../utils/clipboard'
 import type { TerminalTheme } from '../theme/theme'
 import '@xterm/xterm/css/xterm.css'
@@ -129,6 +130,13 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   // Activation is a plain click, as it was under ttyd: under tmux mouse mode
   // that click also reaches tmux, where CHROTE's settings make it harmless.
   terminal.loadAddon(new WebLinksAddon())
+
+  // The leader is the one keystroke a focused terminal does not own. Returning
+  // false here is what keeps it out of the pty: xterm neither writes it nor
+  // sends it, and the chord registry has already taken it. Every other key,
+  // and every key at all while keys are off, comes back true and belongs to
+  // the shell as it always did.
+  terminal.attachCustomKeyEventHandler(terminalKeyEvent)
 
   let connection: TtydConnection | null = null
   let opened = false
