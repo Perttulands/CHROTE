@@ -69,6 +69,7 @@ export default function BeadsView({ reveal }: BeadsViewProps = {}) {
   const [rows, setRows] = useState<WorkRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [quietShown, setQuietShown] = useState(false)
 
   const manualPaths = useMemo(() => settings.beadsProjectPaths || [], [settings.beadsProjectPaths])
 
@@ -92,10 +93,15 @@ export default function BeadsView({ reveal }: BeadsViewProps = {}) {
     return () => { current = false }
   }, [manualPaths])
 
+  // A quiet store has nothing open: it is folded in the rail, and "All" does
+  // not ask it, because the answer is known to be empty.
+  const openProjects = useMemo(() => projects.filter(project => project.openBeads !== 0), [projects])
+  const quietProjects = useMemo(() => projects.filter(project => project.openBeads === 0), [projects])
   const chosen = useMemo(
-    () => (selected === ALL_PROJECTS ? projects : projects.filter(project => project.path === selected)),
-    [projects, selected],
+    () => (selected === ALL_PROJECTS ? openProjects : projects.filter(project => project.path === selected)),
+    [openProjects, projects, selected],
   )
+  const quietOpen = quietShown || quietProjects.some(project => project.path === selected)
 
   useEffect(() => {
     if (projects.length === 0) return
@@ -150,11 +156,32 @@ export default function BeadsView({ reveal }: BeadsViewProps = {}) {
         >
           All
         </button>
-        {projects.map(project => (
+        {openProjects.map(project => (
           <button
             key={project.path}
             type="button"
             className={`beads-rail-item ${selected === project.path ? 'active' : ''}`}
+            onClick={() => selectProject(project.path)}
+            title={project.path}
+          >
+            {project.prefix || project.name}
+          </button>
+        ))}
+        {quietProjects.length > 0 && (
+          <button
+            type="button"
+            className="beads-rail-item beads-rail-more"
+            aria-expanded={quietOpen}
+            onClick={() => setQuietShown(open => !open)}
+          >
+            {quietOpen ? 'Fewer' : `More (${quietProjects.length} quiet)`}
+          </button>
+        )}
+        {quietOpen && quietProjects.map(project => (
+          <button
+            key={project.path}
+            type="button"
+            className={`beads-rail-item beads-rail-quiet ${selected === project.path ? 'active' : ''}`}
             onClick={() => selectProject(project.path)}
             title={project.path}
           >

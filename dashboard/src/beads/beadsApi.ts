@@ -6,13 +6,18 @@
  * request that asked for it.
  */
 
+import { fetchWorkspaces, holdsStore, workspaceName } from '../workspaces/workspacesApi'
+
 export interface BeadProject {
   name: string
   path: string
   beadsPath: string
+  /** configured, discovered or manual: how the store came to be listed. */
   source?: string
   /** The prefix this project's ids carry, which is what terminal output shows. */
   prefix?: string
+  /** How many Beads are not closed. Absent when the server could not count. */
+  openBeads?: number
 }
 
 /** A Bead as a link from somewhere else: a row, a parent, a blocker. */
@@ -77,9 +82,30 @@ async function get<T>(path: string, params: Record<string, string | string[]>): 
   return envelope.data
 }
 
+/**
+ * Every store on the host: the ones the workspace list found, then the manual
+ * paths the operator added in Settings that the list did not already carry.
+ */
 export async function fetchBeadProjects(manualPaths: readonly string[] = []): Promise<BeadProject[]> {
-  const data = await get<{ projects: BeadProject[] }>('/projects', manualPaths.length > 0 ? { path: [...manualPaths] } : {})
-  return data.projects ?? []
+  const [workspaces, manual] = await Promise.all([
+    fetchWorkspaces(),
+    manualPaths.length > 0
+      ? get<{ projects: BeadProject[] }>('/projects', { path: [...manualPaths] }).then(data => data.projects ?? [])
+      : Promise.resolve([] as BeadProject[]),
+  ])
+  const projects: BeadProject[] = workspaces.filter(holdsStore).map(workspace => ({
+    name: workspaceName(workspace.path),
+    path: workspace.path,
+    beadsPath: `${workspace.path}/.beads`,
+    source: workspace.sources.includes('beads') ? 'configured' : 'discovered',
+    ...(workspace.beadsPrefix ? { prefix: workspace.beadsPrefix } : {}),
+    ...(workspace.openBeads !== undefined ? { openBeads: workspace.openBeads } : {}),
+  }))
+  const known = new Set(projects.map(project => project.path))
+  for (const project of manual) {
+    if (!known.has(project.path)) projects.push(project)
+  }
+  return projects
 }
 
 /** The open work of one project, with the finished children of its open epics. */
