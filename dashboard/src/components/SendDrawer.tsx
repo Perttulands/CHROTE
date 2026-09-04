@@ -159,7 +159,11 @@ export default function SendDrawer() {
   useLayoutEffect(() => {
     if (!open) return
     activeSendRef.current = null
-    setSelected(sendToSessionRequest.targetSessionKey ?? focusedSessionKey ?? null)
+    // A launch offer that names a folder came from a surface asking for an
+    // agent there — a row's Launch here, a resident who is not running — so
+    // the drawer opens on the launcher rather than on whatever tile has focus.
+    const launchWanted = sendToSessionRequest.launch?.folder !== undefined
+    setSelected(sendToSessionRequest.targetSessionKey ?? (launchWanted ? NEW_AGENT : focusedSessionKey) ?? null)
     setSearch('')
     setNote(sendToSessionRequest.note ?? '')
     setFiles([])

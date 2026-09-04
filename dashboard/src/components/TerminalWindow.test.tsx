@@ -196,17 +196,17 @@ describe('TerminalWindow launch user', () => {
     await waitFor(() => expect(launchButton).toBeEnabled())
   })
 
-  // The tags are the tile's tabs; the arrows that stepped through them are
-  // gone, and nothing in the header cycles a session any more.
-  // Only a session tag carries a menu. Everywhere else in the tile the
-  // browser's own right-click still belongs to the operator.
-  it('leaves right-click to the browser everywhere but a session tag', async () => {
+  // The header is the session it shows, so a right-click anywhere on it opens
+  // the active tag's menu. With no session there is nothing to open, and in
+  // the body the browser's own right-click still belongs to the operator.
+  it('opens the active session\'s menu from anywhere on the header, and nowhere else', async () => {
     const { container, rerender } = render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
       />
     )
+    const header = container.querySelector('.terminal-window-header') as HTMLElement
 
     const launchButton = await screen.findByRole('button', { name: 'Launch claude in chrote' })
     const launcherEvent = dispatchContextMenu(launchButton)
@@ -216,16 +216,22 @@ describe('TerminalWindow launch user', () => {
     fireEvent.click(launchButton)
     await waitFor(() => expect(createSession).toHaveBeenCalled())
 
+    expect(dispatchContextMenu(header).defaultPrevented).toBe(false)
+    expect(document.querySelector('.menu-sheet')).toBeNull()
+
     rerender(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: ['forge-existing'], activeSession: 'forge-existing', colorIndex: 0 }}
       />
     )
-    const headerEvent = dispatchContextMenu(container.querySelector('.terminal-window-header') as HTMLElement)
+    const headerEvent = dispatchContextMenu(header)
 
-    expect(headerEvent.defaultPrevented).toBe(false)
-    expect(document.querySelector('.menu-sheet')).toBeNull()
+    expect(headerEvent.defaultPrevented).toBe(true)
+    expect(screen.getByRole('menu', { name: 'Session actions for forge-existing' })).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
   })
 
   it('opens only the requested actions for the clicked session tag', () => {

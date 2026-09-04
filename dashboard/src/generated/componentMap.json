@@ -55,6 +55,7 @@
   "MarkdownLink": "dashboard/src/components/Markdown.tsx",
   "Menu": "dashboard/src/components/Menu.tsx",
   "MenuRows": "dashboard/src/components/Menu.tsx",
+  "MenuTarget": "dashboard/src/components/MenuTarget.tsx",
   "NewFolderDialog": "dashboard/src/components/FilesView/components/Dialogs.tsx",
   "PanelPath": "dashboard/src/components/PanelPath.tsx",
   "Peek": "dashboard/src/components/Peek.tsx",

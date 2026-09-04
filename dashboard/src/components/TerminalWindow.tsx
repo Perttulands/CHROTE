@@ -12,6 +12,7 @@ import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types
 import { isDetached, tileStateFor, type TileState } from '../terminal/tileState'
 import { useSessionEvidence } from '../context/useSessionEvidence'
 import Menu, { type MenuGroup } from './Menu'
+import { useContextMenu, type MenuAnchor } from './useContextMenu'
 import { harnessOfCommand, openAgentContext } from '../agents/agentContextPanel'
 import EmptyWindow from './EmptyWindow'
 
@@ -25,9 +26,12 @@ interface SessionTagProps {
   onOpenFilesAtPath?: (path: string) => void
   workspaceActive: boolean
   tileState: TileState
+  /** Where the header asked for this tag's menu, while it is asking. */
+  headerMenuAt: MenuAnchor | null
+  onHeaderMenuClose: () => void
 }
 
-function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive, tileState }: SessionTagProps) {
+function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive, tileState, headerMenuAt, onHeaderMenuClose }: SessionTagProps) {
   const { sessions, terminalUsers, deleteSession, renameSession, openSendToSession } = useSession()
   const theme = useTheme()
   const pool = useTerminalPool()
@@ -99,10 +103,13 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
     tagRef.current = node
     setNodeRef(node)
   }, [setNodeRef])
+  // The header's request and the tag's own are one menu, so closing it clears
+  // both: whichever opened it, nothing is left asking.
   const closeContextMenu = useCallback((restoreFocus = true) => {
     setContextMenu(null)
+    onHeaderMenuClose()
     if (restoreFocus) tagRef.current?.focus()
-  }, [])
+  }, [onHeaderMenuClose])
   const openContextMenu = useCallback((x: number, y: number) => {
     setContextMenu({ x, y })
   }, [])
@@ -260,9 +267,9 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
         </button>
       </div>
 
-      {contextMenu && (
+      {(contextMenu ?? headerMenuAt) && (
         <Menu
-          at={contextMenu}
+          at={(contextMenu ?? headerMenuAt) as MenuAnchor}
           label={`Session actions for ${displayName}`}
           estimatedSize={{ width: 240, height: 300 }}
           onClose={() => closeContextMenu()}
@@ -450,6 +457,12 @@ function TerminalWindow({ workspaceId, window: windowConfig, style, onOpenFilesA
 
   const hasSessions = windowConfig.boundSessions.length > 0
 
+  // The header is the session it shows: a right-click or a long press anywhere
+  // on it opens the active tag's menu, at the pointer. A tag keeps its own
+  // gesture, and a header with no session has no menu to open, so the
+  // browser's own right-click stays with the operator there.
+  const headerMenu = useContextMenu({ ignore: '.session-tag', enabled: activeSession !== null })
+
   // The tile's place in the layout as the operator counts them, from 1. The
   // window's own id already carries it, so an annotation can say which tile it
   // came from without anyone counting tiles.
@@ -465,7 +478,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, style, onOpenFilesA
       tabIndex={-1}
       style={style}
     >
-      <div className="terminal-window-header" data-ui="tile.header">
+      <div className="terminal-window-header" data-ui="tile.header" {...headerMenu.triggerProps}>
         <div className="session-tags">
           {windowConfig.boundSessions.map(sessionName => (
             <SessionTag
@@ -479,6 +492,8 @@ function TerminalWindow({ workspaceId, window: windowConfig, style, onOpenFilesA
               onOpenFilesAtPath={onOpenFilesAtPath}
               workspaceActive={workspaceActive}
               tileState={tileStates.get(sessionName) ?? 'idle'}
+              headerMenuAt={sessionName === activeSession ? headerMenu.anchor : null}
+              onHeaderMenuClose={headerMenu.close}
             />
           ))}
         </div>

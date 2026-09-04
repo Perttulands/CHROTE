@@ -10,10 +10,15 @@ const mockState = vi.hoisted(() => ({
   fetchAgentContext: vi.fn(),
   fetchWorkspaces: vi.fn(),
   fetchBeadWork: vi.fn(),
+  openSendToSession: vi.fn(),
 }))
 
 vi.mock('../../context/SessionContext', () => ({
-  useSession: () => ({ settings: DEFAULT_SETTINGS, terminalUsers: ['operator'] }),
+  useSession: () => ({
+    settings: DEFAULT_SETTINGS,
+    terminalUsers: ['operator'],
+    openSendToSession: mockState.openSendToSession,
+  }),
 }))
 
 vi.mock('../../context/StatusContext', () => ({
@@ -67,6 +72,7 @@ describe('AgentsView', () => {
     mockState.fetchAgentContext.mockReset()
     mockState.fetchWorkspaces.mockReset()
     mockState.fetchBeadWork.mockReset()
+    mockState.openSendToSession.mockReset()
     mockState.fetchWorkspaces.mockResolvedValue(workspaces)
     mockState.fetchAgentContext.mockImplementation((folder: string, harness: string) =>
       Promise.resolve(context(folder, harness)))
@@ -119,6 +125,26 @@ describe('AgentsView', () => {
 
     await waitFor(() => expect(screen.getByText('ctx-p3f')).toBeInTheDocument())
     expect(screen.getByTestId('resident')).toHaveTextContent('agents: agents /home/operator claude-code')
+  })
+
+  it('offers a workspace row an agent, the Files tab and a message', async () => {
+    const openInFiles = vi.fn()
+    render(<AgentsView onOpenInFiles={openInFiles} />)
+    await waitFor(() => expect(screen.getByText('/srv/chrote')).toBeInTheDocument())
+
+    fireEvent.contextMenu(screen.getByText('/srv/chrote'))
+    expect(screen.getAllByRole('menuitem').map(item => item.querySelector('.menu-row-label')?.textContent))
+      .toEqual(['Launch here', 'Open in Files', 'Send'])
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open in Files' }))
+    expect(openInFiles).toHaveBeenCalledWith('/srv/chrote')
+
+    fireEvent.contextMenu(screen.getByText('/srv/chrote'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Launch here' }))
+    expect(mockState.openSendToSession).toHaveBeenCalledWith({
+      reference: 'agents /srv/chrote claude-code',
+      launch: { label: 'Launch in chrote', folder: '/srv/chrote', harness: 'claude-code' },
+    })
   })
 
   it('says what the workspace holds on the status line', async () => {

@@ -445,7 +445,7 @@ function DashboardContent() {
           {activeTab === 'agents' && (
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
-                <AgentsView />
+                <AgentsView onOpenInFiles={handleOpenProjectInFiles} />
               </Suspense>
             </ErrorBoundary>
           )}

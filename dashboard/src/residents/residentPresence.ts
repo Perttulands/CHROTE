@@ -16,6 +16,11 @@ export interface ResidentHandle {
   tab: ResidentTab
   /** Put the keyboard in the resident's terminal, or on the column when there is none. */
   focus: () => void
+  /**
+   * Put one line in the resident's prompt, unsubmitted. False when there is no
+   * session to take it, which is the caller's cue to open the drawer instead.
+   */
+  paste: (line: string) => Promise<boolean>
 }
 
 let mounted: ResidentHandle | null = null
@@ -41,6 +46,16 @@ export function focusResident(): boolean {
   if (mounted === null) return false
   mounted.focus()
   return true
+}
+
+/**
+ * Hand a line to the resident living in the tab in front. False when no column
+ * is mounted or its session is not running, so a row's "Send to <resident>"
+ * can fall back to the drawer rather than dropping the operator's request.
+ */
+export async function pasteToResident(line: string): Promise<boolean> {
+  if (mounted === null) return false
+  return mounted.paste(line)
 }
 
 function subscribe(listener: () => void): () => void {
