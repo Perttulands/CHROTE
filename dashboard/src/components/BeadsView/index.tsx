@@ -12,10 +12,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import FlowView from './FlowView'
 import MapView from './MapView'
 import ReadyView from './ReadyView'
+import StoreState from './StoreState'
 import StaleView from './StaleView'
 import ResidentColumn from '../ResidentColumn'
 import TableColumn from '../TableColumn'
-import Rail, { RailScroll } from '../Rail'
+import Rail, { RailScroll, RailSection } from '../Rail'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { tableReference, useTableObject } from '../../context/TableContext'
@@ -221,6 +222,10 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
     setView(next)
     updateSettings({ beadsView: next })
   }, [updateSettings])
+  const selectedStore = useMemo(
+    () => (selected === ALL_PROJECTS ? null : projects.find(project => project.path === selected) ?? null),
+    [projects, selected],
+  )
   const commitRailWidth = useCallback((beads: number) => {
     updateSettings({ railWidth: { ...settings.railWidth, beads } })
   }, [settings.railWidth, updateSettings])
@@ -234,6 +239,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
         width={settings.railWidth.beads}
         onWidthCommit={commitRailWidth}
       >
+        <RailSection fill>
         <RailScroll>
           <button
             type="button"
@@ -286,6 +292,14 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
             </button>
           ))}
         </RailScroll>
+        </RailSection>
+
+        {/* The rail's lower half: the selected store's own state. */}
+        <RailSection fill title="Store" className="beads-rail-state">
+          <RailScroll>
+            <StoreState store={selectedStore} />
+          </RailScroll>
+        </RailSection>
       </Rail>
 
       <div className="beads-main">
