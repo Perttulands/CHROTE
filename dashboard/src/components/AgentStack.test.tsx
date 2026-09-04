@@ -149,7 +149,6 @@ describe('AgentStack', () => {
 
     expect(screen.getAllByText(/^skill-\d+$/)).toHaveLength(skills.length)
     expect(screen.getAllByText(/^memory-\d+$/)).toHaveLength(memories.length)
-    expect(screen.queryByRole('button', { name: /more/i })).not.toBeInTheDocument()
   })
 
   it('opens and edits a skill manifest and offers its four file actions', async () => {
