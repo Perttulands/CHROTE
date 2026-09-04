@@ -524,13 +524,14 @@ export async function mockBeadsApiError(page: Page) {
  * shapes the browser parses in production.
  */
 const libraryChangedAt = new Date(Date.now() - 3 * 3600_000).toISOString()
+const libraryLongAgo = new Date(Date.now() - 90 * 86_400_000).toISOString()
 
 export const mockLibraryShelves = {
   root: '/corpus',
   librarianSession: 'hq-deacon',
   beadsProject: '/code/test-project',
   shelves: [
-    { name: 'knowledge', path: 'knowledge', pages: 1 },
+    { name: 'knowledge', path: 'knowledge', pages: 2 },
     { name: 'preferences', path: 'preferences', pages: 2 },
   ],
 }
@@ -538,6 +539,7 @@ export const mockLibraryShelves = {
 const mockLibraryPages: Record<string, object[]> = {
   knowledge: [
     { path: 'knowledge/testing.md', title: 'Test isolation', updated: libraryChangedAt, author: 'The Operator' },
+    { path: 'knowledge/long.md', title: 'A note whose name runs well past the measure a label is drawn at', updated: libraryLongAgo, author: 'The Operator' },
   ],
   preferences: [
     { path: 'preferences/tools.md', title: 'Tool Preferences', updated: libraryChangedAt, author: 'The Operator' },
@@ -572,6 +574,9 @@ const mockLibraryGraph = {
     { path: 'knowledge/testing.md', shelf: 'knowledge', title: 'Test isolation', words: 60, updated: libraryChangedAt, candidate: false },
     { path: 'preferences/tools.md', shelf: 'preferences', title: 'Tool Preferences', words: 30, updated: libraryChangedAt, candidate: false },
     { path: 'preferences/workflow.md', shelf: 'preferences', title: 'Workflow Preferences', words: 200, updated: libraryChangedAt, candidate: false },
+    // A name past the label measure, last touched long enough ago that any
+    // window narrower than all leaves it behind.
+    { path: 'knowledge/long.md', shelf: 'knowledge', title: 'A note whose name runs well past the measure a label is drawn at', words: 45, updated: libraryLongAgo, candidate: false },
   ],
   links: [['knowledge/testing.md', 'preferences/workflow.md'], ['preferences/workflow.md', 'preferences/tools.md']],
   tags: [['preferences/tools.md', 'preferences/workflow.md', 'tooling']],
