@@ -349,6 +349,11 @@ func resolvedListsPath(resolved AgentContextResponse, path string) bool {
 			return true
 		}
 	}
+	for _, skill := range resolved.Skills {
+		if filepath.Join(skill.Path, "SKILL.md") == path {
+			return true
+		}
+	}
 	for _, memory := range resolved.Memories {
 		if memory.Path == path {
 			return true

@@ -564,6 +564,7 @@ func TestAgentFileRoute_ServesOnlyWhatTheStackLists(t *testing.T) {
 	host := newAgentTestHost(t)
 	folder := filepath.Join(host.root, "project")
 	listed := writeFile(t, filepath.Join(folder, "CLAUDE.md"), "# project\n")
+	skill := writeFile(t, filepath.Join(folder, ".claude", "skills", "review", "SKILL.md"), "# Review\n")
 	unlisted := writeFile(t, filepath.Join(folder, "notes.md"), "# notes\n")
 	query := "&folder=" + folder + "&harness=claude-code"
 
@@ -578,6 +579,20 @@ func TestAgentFileRoute_ServesOnlyWhatTheStackLists(t *testing.T) {
 		}
 		if response.Content != "# project\n" {
 			t.Fatalf("content = %q, want the file's", response.Content)
+		}
+	})
+
+	t.Run("a listed skill manifest comes back whole", func(t *testing.T) {
+		recorder := host.get(t, "/api/agent/file?path="+skill+query)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+		}
+		var response AgentFileResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if response.Content != "# Review\n" {
+			t.Fatalf("content = %q, want the skill manifest's", response.Content)
 		}
 	})
 
