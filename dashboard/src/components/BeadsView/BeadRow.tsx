@@ -7,12 +7,12 @@
 
 import type { KeyboardEvent, ReactNode } from 'react'
 import { openBeadCard } from '../../beads/beadCard'
+import { beadReference } from '../../beads/beadReference'
 import { beadGlyph, beadStatusLabel } from '../../beads/beadStatus'
 import type { WorkRow } from '../../beads/beadsTree'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { copyAndAnnounce } from '../../utils/clipboard'
-import { beadReference } from '../BeadCard'
 import type { MenuGroup } from '../Menu'
 import MenuTarget from '../MenuTarget'
 
@@ -50,7 +50,7 @@ export default function BeadRow({ row, depth = 0, fold, trailing }: BeadRowProps
   const state = beadStatusLabel(row.status, row.blocked)
 
   const select = () => {
-    openBeadCard(row.id, row.projectPath)
+    openBeadCard(row.id, row.projectPath, row.title)
     fold?.setExpanded(!fold.expanded)
   }
 

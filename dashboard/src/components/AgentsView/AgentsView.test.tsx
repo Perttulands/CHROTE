@@ -44,9 +44,9 @@ vi.mock('../../beads/beadsApi', () => ({
   fetchBeadWork: (path: string) => mockState.fetchBeadWork(path),
 }))
 
-vi.mock('../Desk', () => ({
-  default: ({ label, sessionName, reference }: { label: string; sessionName?: string; reference: string }) => (
-    <div data-testid="desk">{`${label} ${sessionName ?? 'none'} ${reference}`}</div>
+vi.mock('../ResidentColumn', () => ({
+  default: ({ tab, reference }: { tab: string; reference: string | null }) => (
+    <div data-testid="resident">{`${tab}: ${reference ?? ''}`}</div>
   ),
 }))
 
@@ -120,11 +120,11 @@ describe('AgentsView', () => {
       .toHaveBeenCalledWith('/home/operator', 'codex', 'operator'))
   })
 
-  it('lists the tender proposals and hosts the tender desk', async () => {
+  it('lists the tender proposals and hands the tender the chosen workspace and harness', async () => {
     render(<AgentsView />)
 
     await waitFor(() => expect(screen.getByText('ctx-p3f')).toBeInTheDocument())
-    expect(screen.getByTestId('desk')).toHaveTextContent('Tender tender agents /home/operator claude-code')
+    expect(screen.getByTestId('resident')).toHaveTextContent('agents: agents /home/operator claude-code')
   })
 
   it('offers a workspace row an agent, the Files tab and a message', async () => {

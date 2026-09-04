@@ -23,9 +23,11 @@ export default function Toast() {
   const node = useRef<HTMLDivElement>(null)
 
   // A new event goes up at once and starts the hold over, whether the slot is
-  // empty, holding, or already on its way out.
+  // empty, holding, or already on its way out. Information (a load, a count)
+  // takes the status line only: the toast confirms the operator's own action
+  // or reports a failure.
   useEffect(() => {
-    if (status === null) return
+    if (status === null || status.severity === 'info') return
     setShown(status)
     const hold = setTimeout(() => setRaised(false), TOAST_FADE_IN_MS + TOAST_HOLD_MS)
     return () => clearTimeout(hold)

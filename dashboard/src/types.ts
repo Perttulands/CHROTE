@@ -123,6 +123,7 @@ export interface UserSettings {
   hideScrollbar: boolean             // Hide the dead xterm scrollbar gutter in terminals
   keysEnabled: boolean               // Leader chords intercept keys; off hands every key to the pty
   tableWidth: number                 // The table's column at the right, in px; device-local
+  residentWidth: number              // A resident's column, in px; 0 means 44 terminal columns at the tile font
   beadsProjectPaths?: string[]       // Manually added beads project paths
 }
 
@@ -139,6 +140,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   hideScrollbar: true,
   keysEnabled: true,
   tableWidth: 400,
+  residentWidth: 0,
 }
 
 export interface TmuxSession {

@@ -32,6 +32,15 @@ release.
   `lastEvent` until `POST /api/agent/event/seen`. The launcher installs the
   hook for Claude Code and Codex while its **Notify on completion** setting is
   on.
+- Resident agents: the Library, Agents and Beads tabs each show one tmux
+  session live in a column at the tab's right edge, the Librarian, the tender
+  and the Clerk, named by `CHROTE_LIBRARIAN_SESSION`, `CHROTE_TENDER_*` and
+  `CHROTE_CLERK_*` and reported by `GET /api/residents`. The column is 44
+  terminal columns wide by default, resizable and remembered per device;
+  `Alt+S` pastes the tab's reference into the resident's prompt without
+  submitting, `Alt+Enter` focuses it, and an absent session is offered Launch
+  from the resident's folder. The Front desk and Tender desk ask lines are
+  gone: the terminal is the input.
 
 ### Changed
 

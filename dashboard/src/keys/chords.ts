@@ -20,6 +20,7 @@
  */
 
 import { useSyncExternalStore } from 'react'
+import { ownsKey } from './dismiss'
 
 export type ChordScope = 'global' | 'workspace' | 'tile'
 
@@ -75,7 +76,7 @@ export const SCOPE_TITLES: Record<ChordScope, string> = {
 // belongs here: the keys panel must read the same however many surfaces
 // registered the chords. Case matters, so `w` and `W` can both appear.
 const KEY_ORDER = [
-  '1', '2', '3', '4', '5', '6', 'b', 'l', 'g', 'i', 'd', '?', 'k', 'Escape',
+  '1', '2', '3', '4', '5', '6', 'b', 'l', 'g', 'i', 'Enter', 'd', '?', 'k', 'Escape',
   'w', 'W', '=', '-', '/', 'n', 'Tab', 'f', 'p', 's', 'r',
 ]
 
@@ -363,9 +364,11 @@ export function interceptKeyEvent(event: KeyboardEvent): boolean {
 /**
  * xterm's `attachCustomKeyEventHandler` contract: true lets xterm handle the
  * key and send it to the pty, false keeps it out of the terminal entirely.
+ * Escape belongs to the topmost open surface, and reaches the pty only when
+ * nothing is open.
  */
 export function terminalKeyEvent(event: KeyboardEvent): boolean {
-  return !interceptKeyEvent(event)
+  return !interceptKeyEvent(event) && !ownsKey(event)
 }
 
 // The capture phase is what puts this ahead of everything else in the page,

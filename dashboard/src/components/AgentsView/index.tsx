@@ -5,15 +5,15 @@
  * answers it for a workspace he has not started an agent in yet, and for the
  * other harness, so the same instruction can be compared where it is supposed
  * to hold. Nothing here writes except the shared editor in a row, and the
- * curation itself belongs to the tender, whose desk sits at the foot of the tab
- * exactly as the Librarian's does in the Library.
+ * curation itself belongs to the tender, whose column sits at the far right of
+ * the tab exactly as the Librarian's does in the Library.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import AgentStack from '../AgentStack'
-import Desk from '../Desk'
 import MenuTarget from '../MenuTarget'
 import type { MenuGroup } from '../Menu'
+import ResidentColumn from '../ResidentColumn'
 import TableColumn from '../TableColumn'
 import { HarnessMark } from '../harnessMarks'
 import { useSession } from '../../context/SessionContext'
@@ -280,15 +280,8 @@ export default function AgentsView({ onOpenInFiles }: AgentsViewProps = {}) {
         </aside>
 
         <TableColumn />
+        <ResidentColumn tab="agents" reference={`agents ${folder} ${harness}`} />
       </div>
-
-      <Desk
-        label="Tender"
-        sessionName={tender.session || undefined}
-        reference={`agents ${folder} ${harness}`}
-        placeholder="Ask the tender…"
-        launchFolder={tender.folder || undefined}
-      />
     </div>
   )
 }

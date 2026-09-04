@@ -1,0 +1,116 @@
+/* The resident's column: a flex sibling at the far right of its tab, hairlined
+   on the edge it faces, resizable at that edge, never a layer over anything. */
+
+.resident-column {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: var(--resident-column-width);
+  min-width: 0;
+  background-color: var(--surface-primary);
+  border-left: 1px solid var(--divider);
+  overflow: hidden;
+  outline: none;
+}
+
+/* Collapsed, by the operator or by the squeeze, the column is its header and
+   takes only what the header's words need. */
+.resident-column.collapsed {
+  width: auto;
+}
+
+/* The handle sits on the hairline. It takes colour only while it is the thing
+   in hand: under the pointer, focused from the keyboard, or being dragged. */
+.resident-column-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.resident-column-handle:hover {
+  background-color: var(--text-dim);
+}
+
+.resident-column-handle:focus-visible,
+.resident-column-handle.dragging {
+  background-color: var(--accent);
+}
+
+.resident-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--divider);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.resident-label {
+  flex: none;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.resident-session {
+  flex: none;
+  color: var(--text-primary);
+}
+
+.resident-state {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.resident-header-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+.resident-action {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.resident-action:hover {
+  color: var(--accent);
+}
+
+.resident-chord {
+  margin-left: 6px;
+  color: var(--text-dim);
+}
+
+/* The terminal surface positions itself against the nearest positioned
+   ancestor, so the body it lives in must be one. */
+.resident-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--terminal-background, var(--background));
+}
+
+.resident-launcher {
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+  overflow: auto;
+}

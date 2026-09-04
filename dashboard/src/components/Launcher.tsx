@@ -241,14 +241,25 @@ interface LauncherProps {
    */
   initialHarness?: string
   /**
+   * The session name to start with, when the surface is launching a session
+   * the host already names: a resident's column relaunches its own session.
+   */
+  initialName?: string
+  /**
    * Called once a session was created, with what it was created as. A popover
    * uses it to close itself; the Send drawer uses it to reach the session it
    * just launched.
    */
   onLaunched?: (created: { name: string; unixUser: LaunchUser }) => void
+  /**
+   * Reports whether the operator has typed anything over the defaults. A
+   * popover that holds typed text is work in progress, and stays open through
+   * a press outside it; one that holds nothing goes away like a glance.
+   */
+  onTypedChange?: (typed: boolean) => void
 }
 
-export default function Launcher({ workspaceId, attachTo, initialFolder, initialHarness, onLaunched }: LauncherProps) {
+export default function Launcher({ workspaceId, attachTo, initialFolder, initialHarness, initialName, onLaunched, onTypedChange }: LauncherProps) {
   const { sessions, settings, terminalUsers, createSession } = useSession()
   const theme = useTheme()
   const options = useLaunchOptions()
@@ -271,6 +282,11 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
   const [notify, setNotify] = useState(readNotifyPreference)
   const folderFieldId = useId()
 
+  const typed = typedName !== null || Object.keys(flagEdits).length > 0
+  useEffect(() => {
+    onTypedChange?.(typed)
+  }, [onTypedChange, typed])
+
   const harness = options.harnesses.find(entry => entry.id === chosenHarness) ??
     options.harnesses.find(entry => entry.id === initialHarness) ??
     options.harnesses[0]
@@ -288,7 +304,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
     () => derivedSessionName(harness.id, folder, sessions, user),
     [harness.id, folder, sessions, user],
   )
-  const name = typedName ?? derivedName
+  const name = typedName ?? initialName ?? derivedName
 
   const short = launchShortName(harness.id)
   const launchLabel = harness.id === SHELL_HARNESS

@@ -105,7 +105,7 @@ describe('dev mode identity', () => {
     )
 
     pressChord('d')
-    expect(mockState.announce).toHaveBeenCalledWith('Dev mode on', 'info')
+    expect(mockState.announce).toHaveBeenCalledWith('Dev mode on', 'success')
 
     fireEvent.click(screen.getByRole('button', { name: 'Kill session' }))
 
@@ -118,7 +118,7 @@ describe('dev mode identity', () => {
     expect(request.launch).toEqual({ label: 'New agent in CHROTE', harness: 'claude-code' })
 
     // The annotation ends dev mode: the drawer it just opened has to be usable.
-    expect(mockState.announce).toHaveBeenLastCalledWith('Dev mode off', 'info')
+    expect(mockState.announce).toHaveBeenLastCalledWith('Dev mode off', 'success')
     fireEvent.click(screen.getByRole('button', { name: 'Kill session' }))
     expect(press).toHaveBeenCalledTimes(1)
   })
@@ -136,7 +136,7 @@ describe('dev mode identity', () => {
     expect(screen.getByText(/TileHeader/)).toBeInTheDocument()
 
     fireEvent.keyDown(document, { key: 'Escape' })
-    expect(mockState.announce).toHaveBeenLastCalledWith('Dev mode off', 'info')
+    expect(mockState.announce).toHaveBeenLastCalledWith('Dev mode off', 'success')
     expect(screen.queryByText(/TileHeader/)).not.toBeInTheDocument()
   })
 })

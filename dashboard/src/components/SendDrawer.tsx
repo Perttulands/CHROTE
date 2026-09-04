@@ -22,6 +22,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from '../context/SessionContext'
+import { useSurface } from '../keys/dismiss'
 import { useTerminalPool } from './TerminalPool'
 import { useTheme } from '../theme/ThemeContext'
 import { identityColorFor } from '../theme/theme'
@@ -127,6 +128,7 @@ export default function SendDrawer() {
   const [panesLoading, setPanesLoading] = useState(false)
   const [panesFailed, setPanesFailed] = useState(false)
   const [deliveryUnknown, setDeliveryUnknown] = useState(false)
+  const drawerRef = useRef<HTMLElement>(null)
   const noteRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const activeSendRef = useRef<symbol | null>(null)
@@ -191,16 +193,9 @@ export default function SendDrawer() {
     noteRef.current?.focus()
   }, [open, sendToSessionRequestId])
 
-  useEffect(() => {
-    if (!open) return
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      closeSendToSession()
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [open, closeSendToSession])
+  // A work surface: Escape closes it while it is the topmost thing open, and
+  // a click outside leaves it where it is.
+  useSurface({ open, kind: 'work', onClose: closeSendToSession, ref: drawerRef })
 
   const target = useMemo(
     () => (selected && selected !== NEW_AGENT ? resolveTarget(selected, sessions, evidence) : null),
@@ -369,7 +364,7 @@ export default function SendDrawer() {
   }
 
   return (
-    <aside className="send-drawer" role="dialog" aria-label="Send to session">
+    <aside ref={drawerRef} className="send-drawer" role="dialog" aria-label="Send to session">
       <div className="send-drawer-header">
         <span className="send-drawer-title">Send to session</span>
         <button

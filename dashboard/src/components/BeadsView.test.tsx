@@ -26,6 +26,12 @@ vi.mock('../beads/beadsApi', () => ({
   fetchBeadWork: (path: string) => Promise.resolve(mockState.work.get(path)),
 }))
 
+vi.mock('./ResidentColumn', () => ({
+  default: ({ reference }: { reference: string | null }) => (
+    <div data-testid="resident" data-reference={reference ?? ''} />
+  ),
+}))
+
 function bead(overrides: Partial<BeadRow> & { id: string }): BeadRow {
   return { title: `Title of ${overrides.id}`, status: 'open', priority: 1, blocked: false, ...overrides }
 }
@@ -131,13 +137,15 @@ describe('the Beads tab', () => {
     expect(screen.getByText('Title of ctx-t4ak')).toBeInTheDocument()
   })
 
-  it('opens the card from a row', async () => {
+  it('opens the card from a row, and hands the Clerk the Bead by id and title', async () => {
     render(<><BeadsView /><CardProbe /></>)
     const row = await screen.findByText('Title of chrote-ep.1')
+    expect(screen.getByTestId('resident')).toHaveAttribute('data-reference', '')
 
     fireEvent.click(row)
 
     expect(screen.getByTestId('card-request')).toHaveTextContent('chrote-ep.1')
+    expect(screen.getByTestId('resident')).toHaveAttribute('data-reference', 'bead chrote-ep.1: Title of chrote-ep.1')
   })
 
   it('hands a stale Bead over with the question already asked', async () => {

@@ -6,7 +6,8 @@ import { StatusProvider } from './context/StatusContext'
 import { TableProvider } from './context/TableContext'
 import TabBar, { Tab } from './components/TabBar'
 import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
-import FloatingModal from './components/FloatingModal'
+import Peek from './components/Peek'
+import ImageGlance from './components/ImageGlance'
 import SendDrawer from './components/SendDrawer'
 import type { BeadsRevealRequest } from './components/BeadsView'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -18,6 +19,7 @@ import KeyEcho from './keys/KeyEcho'
 import DevMode from './dev/DevMode'
 import { closeLeaderWindow, useLeader } from './keys/chords'
 import { TerminalPoolProvider } from './components/TerminalPool'
+import { useOpenInFilesRequest } from './terminal/openInFiles'
 import { SessionCommandMark, SessionLabel } from './components/sessionLabel'
 import {
   readSessionsDockState,
@@ -244,7 +246,8 @@ function DashboardContent() {
     if (!workspaceIds.includes(lastActiveWorkspaceId)) setLastActiveWorkspaceId('terminal1')
   }, [lastActiveWorkspaceId, workspaceIds])
 
-  const handleShowKeys = useCallback(() => setKeysPanelOpen(true), [])
+  // The panel is a glance, so the chord that opens it closes it as well.
+  const toggleKeysPanel = useCallback(() => setKeysPanelOpen(open => !open), [])
   const handleCloseKeys = useCallback(() => setKeysPanelOpen(false), [])
   const toggleSessionsPanel = useCallback(() => {
     setSessionsDockState(previous => ({ ...previous, open: !previous.open }))
@@ -276,18 +279,29 @@ function DashboardContent() {
     }
   }, [windowRevealRequest])
 
-  // The leader is discovery: it opens the keys panel and shuts its own window,
-  // because from here the next key is search text rather than a chord.
+  // A path activated in a terminal goes to the Files panel of the terminal
+  // tab the operator is on; on any other tab, to the Files tab.
+  const openInFilesRequest = useOpenInFilesRequest()
+  const openInFilesOnTerminalTab = isTerminalWorkspaceId(activeTab, mountedWorkspaceIds)
+  useEffect(() => {
+    if (!openInFilesRequest || openInFilesOnTerminalTab) return
+    handleOpenProjectInFiles(openInFilesRequest.path)
+    // Each request is answered once, where the operator was when it was made.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openInFilesRequest])
+
+  // The leader is discovery: it toggles the keys panel and shuts its own
+  // window, because from here the next key is search text rather than a chord.
   const { leaderOpen } = useLeader()
   useEffect(() => {
     if (!leaderOpen) return
-    setKeysPanelOpen(true)
+    setKeysPanelOpen(open => !open)
     closeLeaderWindow()
   }, [leaderOpen])
 
   // Plain keys outside a terminal; the leader model lives in the registry.
   useKeyboardShortcuts({
-    onShowKeys: handleShowKeys,
+    onShowKeys: toggleKeysPanel,
     isKeysPanelOpen: keysPanelOpen,
   })
 
@@ -296,7 +310,7 @@ function DashboardContent() {
     onTabChange: handleTabChange,
     onToggleSessionsPanel: toggleSessionsPanel,
     onOpenSessionsPanel: openSessionsPanel,
-    onOpenKeysPanel: handleShowKeys,
+    onToggleKeysPanel: toggleKeysPanel,
   })
 
   useEffect(() => {
@@ -375,7 +389,7 @@ function DashboardContent() {
         <TabBar
           activeTab={activeTab}
           onTabChange={handleTabChange}
-          onShowKeys={handleShowKeys}
+          onShowKeys={toggleKeysPanel}
           sessionsPinned={sessionsDockState.pinned}
           onToggleSessionsPinned={toggleSessionsPinned}
         />
@@ -392,6 +406,7 @@ function DashboardContent() {
               sessionsForcedPinned={sessionsForcedPinned}
               onFilesOpenChange={handleFilesOpenChange}
               onOpenInFiles={handleOpenProjectInFiles}
+              openFilesRequest={activeTab === workspaceId ? openInFilesRequest : null}
             />
           ))}
           {persistFilesTabState ? (
@@ -478,10 +493,12 @@ function DashboardContent() {
               </Suspense>
             </ErrorBoundary>
           )}
-          {/* Peek and the Send drawer lie inside the workspace, so the status
-              line stays whole beneath both of them. The table's column is each
-              tab's own: a flex sibling of its content, never a layer here. */}
-          <FloatingModal />
+          {/* Peek and the image glance float and the Send drawer overlays the
+              right edge, all inside the workspace, so the status line stays
+              whole beneath them. The table's column is each tab's own: a flex
+              sibling of its content, never a layer here. */}
+          <Peek />
+          <ImageGlance />
           <SendDrawer />
           {/* The bottom-centre slot: the toast above, the key echo beneath. */}
           <Toast />

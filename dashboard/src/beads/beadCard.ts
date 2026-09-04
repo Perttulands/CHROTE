@@ -21,8 +21,8 @@ import {
 
 export type BeadCardRequest = BeadOnTable
 
-export function openBeadCard(id: string, projectPath?: string): void {
-  putOnTable({ kind: 'bead', id, projectPath })
+export function openBeadCard(id: string, projectPath?: string, title?: string): void {
+  putOnTable({ kind: 'bead', id, projectPath, title })
 }
 
 /** The card following an id in its own text: the Bead in hand joins the trail. */

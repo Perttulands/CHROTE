@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import TableColumn from './TableColumn'
+import { registerSurface } from '../keys/dismiss'
 import { DEFAULT_SETTINGS } from '../types'
 import { TABLE_WIDTH_MIN, resetTableForTest } from '../context/TableContext'
 import { openBeadCard } from '../beads/beadCard'
@@ -50,18 +51,18 @@ describe('the table column', () => {
   })
 
   // Escape belongs to the topmost surface: the table's while nothing lies
-  // over it, the drawer's while the drawer is open.
-  it('closes on Escape, unless the Send drawer is the surface on top', () => {
-    const { rerender } = render(<TableColumn />)
+  // over it, and whatever registered above it (the drawer, Peek) first.
+  it('closes on Escape, unless another surface lies on top', () => {
+    render(<TableColumn />)
     act(() => openBeadCard('chrote-5grx.47'))
 
-    mockState.drawerOpen = true
-    rerender(<TableColumn />)
+    const closeDrawer = vi.fn()
+    const unregister = registerSurface({ kind: 'work', close: closeDrawer, contains: () => false })
     fireEvent.keyDown(document, { key: 'Escape' })
+    expect(closeDrawer).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('complementary')).toBeInTheDocument()
 
-    mockState.drawerOpen = false
-    rerender(<TableColumn />)
+    unregister()
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('complementary')).toBeNull()
   })
