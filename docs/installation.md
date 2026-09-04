@@ -261,11 +261,13 @@ marks it seen; the dashboard calls that when the session is focused. A report
 about a session that does not exist on the user's socket is answered `404`.
 Nothing is persisted and nothing polls the harness.
 
-On the device, a report the dashboard has not yet taken in marks the session's
-row and the terminal tab holding it and names the session in the toast; a tone
-and a browser notification while the tab is hidden are off until turned on
-under Settings, Agent events. The browser grants notifications only on a
-secure origin, and the setting reads back what it answered.
+How a device passes a report on is that device's own choice, under Settings,
+Agent events. Marking the session's row and the terminal tab holding it, and
+naming the session in the toast, are on; a tone and a browser notification
+while the tab is hidden are off. The browser grants notifications only on a
+secure origin, and the setting reads back what it answered. The status line
+keeps the last report whatever is turned on, and focusing the session marks it
+seen for every device.
 
 ### The Library
 

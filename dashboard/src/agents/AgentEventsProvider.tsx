@@ -75,9 +75,12 @@ export function AgentEventsProvider({ children }: { children: ReactNode }) {
       return next
     })
     if (taken.notices.length === 0) return
-    const { agentEventTones, agentEventNotifications } = settingsRef.current
+    const { agentEventToast, agentEventTones, agentEventNotifications } = settingsRef.current
     for (const notice of taken.notices) {
-      announce(agentEventTitle(notice), 'success')
+      // The status line is the record of the last event and keeps it either
+      // way. Severity is what decides the toast: the slot passes information
+      // by, so turning the toast off leaves the line and drops the pop.
+      announce(agentEventTitle(notice), agentEventToast ? 'success' : 'info')
       if (agentEventTones) {
         const context = audioContext()
         if (context) playTone(notice.event, context)
@@ -113,7 +116,11 @@ export function AgentEventsProvider({ children }: { children: ReactNode }) {
     void postSeen(focused)
   }, [focused])
 
+  // The setting decides what is drawn, not what is known: the ledger and the
+  // seen post go on either way, so turning marks back on shows what is still
+  // unseen, and focusing a session still tells the server on every device.
   const marked = useMemo(() => {
+    if (!settings.agentEventMarks) return NO_MARKS
     const keys = new Set<string>()
     for (const session of sessions) {
       const event = session.lastEvent
@@ -122,7 +129,7 @@ export function AgentEventsProvider({ children }: { children: ReactNode }) {
       if (noticed.get(sessionKey) === event.time) keys.add(sessionKey)
     }
     return keys
-  }, [sessions, noticed])
+  }, [sessions, noticed, settings.agentEventMarks])
 
   return <AgentEventMarksContext.Provider value={marked}>{children}</AgentEventMarksContext.Provider>
 }

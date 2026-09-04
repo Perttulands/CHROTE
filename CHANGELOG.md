@@ -32,13 +32,14 @@ release.
   `lastEvent` until `POST /api/agent/event/seen`. The launcher installs the
   hook for Claude Code and Codex while its **Notify on completion** setting is
   on.
-- The dashboard tells an agent event: a dot and the report's first line on the
-  session's row, a dot on the terminal tab holding it, and the toast naming
-  the session, until the tile showing the session is focused, which marks it
-  seen. Two device-local settings add a short tone for each kind of event and
-  a browser notification while the tab is hidden, both off by default. A
-  report already in the list when the page loaded is history and tells
-  nothing.
+- The dashboard tells an agent event four ways, each a device-local setting
+  under **Settings**, **Agent events**: a dot and the report's first line on
+  the session's row with a dot on the terminal tab holding it, and the toast
+  naming the session, both on; a short tone for each kind of event, and a
+  browser notification while the tab is hidden, both off. The marks last until
+  the tile showing the session is focused, which marks the report seen on
+  every device whatever this one draws. A report already in the list when the
+  page loaded is history and tells nothing.
 - Resident agents: the Library, Agents and Beads tabs each show one tmux
   session live in a column at the tab's right edge, the Librarian, the tender
   and the Clerk, named by `CHROTE_LIBRARIAN_SESSION`, `CHROTE_TENDER_*` and

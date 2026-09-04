@@ -133,6 +133,42 @@ describe('AgentEventsProvider', () => {
     expect(StubNotification.made).toEqual([])
   })
 
+  it('marks nothing when the device has turned marks off, and marks again when it turns them back on', () => {
+    mockState.settings = { ...DEFAULT_SETTINGS, agentEventMarks: false }
+    const view = renderProvider()
+    mockState.sessions = [builder()]
+    mockState.loading = false
+    act(() => view.rerender(<AgentEventsProvider><Marks /></AgentEventsProvider>))
+
+    mockState.sessions = [builder({ event: 'finished', time: '2026-09-03T10:05:00.000Z', seen: false })]
+    act(() => view.rerender(<AgentEventsProvider><Marks /></AgentEventsProvider>))
+    expect(marks.size).toBe(0)
+    // The setting silences the mark alone; the report still arrives.
+    expect(mockState.announce).toHaveBeenCalledWith('builder finished', 'success')
+
+    // Knowing the event and drawing it are separate, so the mark is there to
+    // show the moment the operator turns it back on.
+    mockState.settings = { ...DEFAULT_SETTINGS, agentEventMarks: true }
+    act(() => view.rerender(<AgentEventsProvider><Marks /></AgentEventsProvider>))
+    expect([...marks]).toEqual(['chrote:builder'])
+  })
+
+  it('keeps the toast off when the device has turned it off, leaving the status line the record', () => {
+    mockState.settings = { ...DEFAULT_SETTINGS, agentEventToast: false }
+    const view = renderProvider()
+    mockState.sessions = [builder()]
+    mockState.loading = false
+    act(() => view.rerender(<AgentEventsProvider><Marks /></AgentEventsProvider>))
+
+    mockState.sessions = [builder({ event: 'finished', time: '2026-09-03T10:05:00.000Z', seen: false })]
+    act(() => view.rerender(<AgentEventsProvider><Marks /></AgentEventsProvider>))
+
+    // Severity is what the toast reads: information takes the line only.
+    expect(mockState.announce).toHaveBeenCalledWith('builder finished', 'info')
+    // The mark is a telling of its own and is untouched by this setting.
+    expect([...marks]).toEqual(['chrote:builder'])
+  })
+
   it('tells the server seen when the focused tile shows the session, once per event', () => {
     const view = renderProvider()
     mockState.sessions = [builder()]

@@ -74,6 +74,14 @@ function SettingsView() {
     updateSettings({ autoRefreshInterval: parseInt(e.target.value, 10) })
   }
 
+  const handleMarksChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateSettings({ agentEventMarks: e.target.checked })
+  }
+
+  const handleToastChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateSettings({ agentEventToast: e.target.checked })
+  }
+
   const handleTonesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     updateSettings({ agentEventTones: e.target.checked })
   }
@@ -307,13 +315,48 @@ function SettingsView() {
         </div>
       </section>
 
-      {/* Agent events: what this device does beyond the mark and the toast. */}
+      {/* Agent events: the four ways this device can tell the operator. */}
       <section className="settings-section" data-ui="settings.agent-events">
         <h2 className="settings-section-title">Agent events</h2>
         <p className="settings-description">
-          When an agent finishes or needs input, its session&apos;s row and tab carry a mark until
-          the session is focused, and the toast names it. These two are off until turned on here.
+          When an agent finishes or needs input, its own hook reports it. How this device passes
+          that on is its own choice; every other device keeps its own. Focusing the session marks
+          the report seen everywhere, whatever is turned on here.
         </p>
+
+        <div className="settings-field">
+          <label
+            className="settings-label"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={settings.agentEventMarks}
+              onChange={handleMarksChange}
+            />
+            Mark the session&apos;s row and the tab holding it
+          </label>
+          <p className="settings-hint">
+            A dot and the report&apos;s first line, until the session is focused.
+          </p>
+        </div>
+
+        <div className="settings-field">
+          <label
+            className="settings-label"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={settings.agentEventToast}
+              onChange={handleToastChange}
+            />
+            Name the session in the toast
+          </label>
+          <p className="settings-hint">
+            The status line keeps the record either way.
+          </p>
+        </div>
 
         <div className="settings-field">
           <label
