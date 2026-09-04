@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, CSSProperties, FormEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { ChangeEvent, CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { ArrowUp, Pin, PinOff, X } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
+import { useResizableWidth } from '../hooks/useResizableWidth'
 import { getSessionKey, type WorkspaceId } from '../types'
 import { copyAndAnnounce } from '../utils/clipboard'
 import FilePanelViewer from './FilePanelViewer'
@@ -92,6 +93,7 @@ function TerminalFilesPanel({
   const { workspaces, focusedWindowKey, sessions, openSendToSession } = useSession()
   const { announce } = useStatus()
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
+  const panelRef = useRef<HTMLElement>(null)
   const [filesState, setFilesState] = useState<WorkspaceFilesState>(() => readWorkspaceFilesState(workspaceId))
   const [query, setQuery] = useState('')
   const [matches, setMatches] = useState<FileMatch[]>([])
@@ -318,34 +320,25 @@ function TerminalFilesPanel({
     setContextMenu(null)
   }
 
-  const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.currentTarget.setPointerCapture(event.pointerId)
-    const startX = event.clientX
-    const startWidth = width
-    const pointerId = event.pointerId
-    const move = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) return
-      onWidthChange(Math.min(560, Math.max(240, startWidth + moveEvent.clientX - startX)))
-    }
-    const finish = (upEvent: PointerEvent) => {
-      if (upEvent.pointerId !== pointerId) return
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', finish)
-      window.removeEventListener('pointercancel', finish)
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', finish)
-    window.addEventListener('pointercancel', finish)
-  }
+  const widest = useCallback(() => 560, [])
+  const resize = useResizableWidth({
+    elementRef: panelRef,
+    width,
+    minWidth: 240,
+    maxWidth: widest,
+    edge: 'right',
+    onCommit: onWidthChange,
+  })
 
   const sendPath = sendTarget
     ? (path: string) => openSendToSession({ targetSessionKey: sendTarget, reference: `path ${path}` })
     : null
 
-  const panelStyle = collapsed ? undefined : ({ '--terminal-files-width': `${width}px` } as CSSProperties)
+  const panelStyle = collapsed ? undefined : ({ '--terminal-files-width': `${resize.width}px` } as CSSProperties)
 
   return (
     <aside
+      ref={panelRef}
       id={panelId}
       className={`terminal-files-panel ${collapsed ? 'collapsed' : ''} ${pinned ? 'sidecar-pinned' : 'sidecar-overlay'}`}
       style={panelStyle}
@@ -487,16 +480,15 @@ function TerminalFilesPanel({
       )}
       {!collapsed && (
         <div
-          className="dock-resizer"
+          {...resize.handleProps}
+          className={`dock-resizer${resize.resizing ? ' dragging' : ''}`}
           role="separator"
           aria-label="Resize Files panel"
           aria-orientation="vertical"
+          aria-valuenow={Math.round(resize.width)}
+          aria-valuemin={240}
+          aria-valuemax={560}
           tabIndex={0}
-          onPointerDown={startPanelResize}
-          onKeyDown={event => {
-            if (event.key === 'ArrowLeft') onWidthChange(Math.max(240, width - 16))
-            if (event.key === 'ArrowRight') onWidthChange(Math.min(560, width + 16))
-          }}
         />
       )}
       {contextMenu && (

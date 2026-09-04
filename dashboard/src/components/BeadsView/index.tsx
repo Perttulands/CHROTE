@@ -13,6 +13,7 @@ import ReadyView from './ReadyView'
 import StaleView from './StaleView'
 import ResidentColumn from '../ResidentColumn'
 import TableColumn from '../TableColumn'
+import Rail, { RailScroll } from '../Rail'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { tableReference, useTableObject } from '../../context/TableContext'
@@ -63,7 +64,7 @@ function projectTally(name: string, rows: { status: string }[]): string {
 }
 
 export default function BeadsView({ reveal }: BeadsViewProps = {}) {
-  const { settings } = useSession()
+  const { settings, updateSettings } = useSession()
   const { announce } = useStatus()
   const [projects, setProjects] = useState<BeadProject[]>([])
   const [selected, setSelected] = useState<string>(ALL_PROJECTS)
@@ -153,50 +154,61 @@ export default function BeadsView({ reveal }: BeadsViewProps = {}) {
   const selectProject = useCallback((path: string) => {
     setSelected(path)
   }, [])
+  const commitRailWidth = useCallback((beads: number) => {
+    updateSettings({ railWidth: { ...settings.railWidth, beads } })
+  }, [settings.railWidth, updateSettings])
 
   return (
     <div className="beads-view">
-      <nav className="beads-rail" aria-label="Beads projects">
-        <button
-          type="button"
-          className={`beads-rail-item ${selected === ALL_PROJECTS ? 'active' : ''}`}
-          onClick={() => selectProject(ALL_PROJECTS)}
-        >
-          All
-        </button>
-        {openProjects.map(project => (
-          <button
-            key={project.path}
-            type="button"
-            className={`beads-rail-item ${selected === project.path ? 'active' : ''}`}
-            onClick={() => selectProject(project.path)}
-            title={project.path}
-          >
-            {project.prefix || project.name}
-          </button>
-        ))}
-        {quietProjects.length > 0 && (
+      <Rail
+        className="beads-rail"
+        role="navigation"
+        label="Beads projects"
+        width={settings.railWidth.beads}
+        onWidthCommit={commitRailWidth}
+      >
+        <RailScroll>
           <button
             type="button"
-            className="beads-rail-item beads-rail-more"
-            aria-expanded={quietOpen}
-            onClick={() => setQuietShown(open => !open)}
+            className={`beads-rail-item ${selected === ALL_PROJECTS ? 'active' : ''}`}
+            onClick={() => selectProject(ALL_PROJECTS)}
           >
-            {quietOpen ? 'Fewer' : `More (${quietProjects.length} quiet)`}
+            All
           </button>
-        )}
-        {quietOpen && quietProjects.map(project => (
-          <button
-            key={project.path}
-            type="button"
-            className={`beads-rail-item beads-rail-quiet ${selected === project.path ? 'active' : ''}`}
-            onClick={() => selectProject(project.path)}
-            title={project.path}
-          >
-            {project.prefix || project.name}
-          </button>
-        ))}
-      </nav>
+          {openProjects.map(project => (
+            <button
+              key={project.path}
+              type="button"
+              className={`beads-rail-item ${selected === project.path ? 'active' : ''}`}
+              onClick={() => selectProject(project.path)}
+              title={project.path}
+            >
+              {project.prefix || project.name}
+            </button>
+          ))}
+          {quietProjects.length > 0 && (
+            <button
+              type="button"
+              className="beads-rail-item beads-rail-more"
+              aria-expanded={quietOpen}
+              onClick={() => setQuietShown(open => !open)}
+            >
+              {quietOpen ? 'Fewer' : `More (${quietProjects.length} quiet)`}
+            </button>
+          )}
+          {quietOpen && quietProjects.map(project => (
+            <button
+              key={project.path}
+              type="button"
+              className={`beads-rail-item beads-rail-quiet ${selected === project.path ? 'active' : ''}`}
+              onClick={() => selectProject(project.path)}
+              title={project.path}
+            >
+              {project.prefix || project.name}
+            </button>
+          ))}
+        </RailScroll>
+      </Rail>
 
       <div className="beads-main">
         <div className="beads-controls">

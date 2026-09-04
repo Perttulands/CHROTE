@@ -195,7 +195,9 @@ describe('FileViewer', () => {
       />,
     )
 
-    const separator = await screen.findByRole('separator', { name: 'Resize Markdown split' })
+    const split = await screen.findByLabelText(`Markdown viewer for ${markdownFile.name}`)
+    vi.spyOn(split, 'getBoundingClientRect').mockReturnValue({ width: 320 } as DOMRect)
+    const separator = screen.getByRole('separator', { name: 'Resize Markdown split' })
     fireEvent.keyDown(separator, { key: 'ArrowRight' })
     expect(onViewStateChange).toHaveBeenLastCalledWith(expect.objectContaining({ markdownSplitPercent: 55 }))
   })

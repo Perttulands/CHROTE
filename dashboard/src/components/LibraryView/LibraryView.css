@@ -23,34 +23,13 @@
 
 /* ---- the rail ---- */
 
-.library-left {
-  flex: none;
-  width: 240px;
-  display: flex;
-  flex-direction: column;
-  padding: 8px;
-  background: var(--surface-primary);
-  border-right: 1px solid var(--divider);
-  overflow: hidden;
-}
-
 /*
  * Nothing moves under the pointer. A section takes a fixed extent or scrolls
  * inside a bounded one, and clips rather than painting over its neighbour.
  * Shelves keep their rows; New arrivals takes what is left and scrolls;
  * Proposals takes its rows up to a share of the rail, then scrolls.
  */
-.library-section {
-  flex: none;
-  margin-top: 15px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
 .library-arrivals {
-  flex: 1 1 0;
   min-height: 52px;
 }
 
@@ -58,23 +37,6 @@
   flex: 0 1 auto;
   min-height: 52px;
   max-height: 35%;
-}
-
-.library-section > h3 {
-  flex: none;
-  margin: 0 0 6px;
-  padding: 0 6px;
-  font-size: 12px;
-  font-weight: 400;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-dim);
-}
-
-.library-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
 }
 
 .library-search,

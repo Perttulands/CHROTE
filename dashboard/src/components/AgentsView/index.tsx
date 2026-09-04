@@ -9,12 +9,13 @@
  * the tab exactly as the Librarian's does in the Library.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AgentStack from '../AgentStack'
 import MenuTarget from '../MenuTarget'
 import type { MenuGroup } from '../Menu'
 import ResidentColumn from '../ResidentColumn'
 import TableColumn from '../TableColumn'
+import Rail, { RailScroll, RailSection } from '../Rail'
 import { HarnessMark } from '../harnessMarks'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
@@ -24,6 +25,7 @@ import { isBeadClosed, beadGlyph } from '../../beads/beadStatus'
 import { getTerminalUserInitial, resolveLaunchUser } from '../../types'
 import { identityColorFor } from '../../theme/theme'
 import { useTheme } from '../../theme/ThemeContext'
+import { useResizableWidth } from '../../hooks/useResizableWidth'
 import {
   AGENT_HARNESSES,
   fetchAgentContext,
@@ -62,7 +64,7 @@ interface AgentsViewProps {
 }
 
 export default function AgentsView({ onOpenInFiles }: AgentsViewProps = {}) {
-  const { settings, terminalUsers, openSendToSession } = useSession()
+  const { settings, terminalUsers, openSendToSession, updateSettings } = useSession()
   const { announce } = useStatus()
   const theme = useTheme()
   const [harness, setHarness] = useState<AgentHarness>('claude-code')
@@ -73,6 +75,8 @@ export default function AgentsView({ onOpenInFiles }: AgentsViewProps = {}) {
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [proposals, setProposals] = useState<BeadRow[]>([])
+  const [proposalsWidth, setProposalsWidth] = useState(300)
+  const proposalsRef = useRef<HTMLElement>(null)
 
   const user = resolveLaunchUser(settings, 'terminal1', terminalUsers)
 
@@ -151,6 +155,21 @@ export default function AgentsView({ onOpenInFiles }: AgentsViewProps = {}) {
 
   const running = useMemo(() => workspaces.filter(isRunning), [workspaces])
   const projects = useMemo(() => workspaces.filter(workspace => !isRunning(workspace)), [workspaces])
+  const commitRailWidth = useCallback((agents: number) => {
+    updateSettings({ railWidth: { ...settings.railWidth, agents } })
+  }, [settings.railWidth, updateSettings])
+  const widestProposals = useCallback(() => {
+    const room = proposalsRef.current?.parentElement?.clientWidth || Number.POSITIVE_INFINITY
+    return Math.max(240, room - 480)
+  }, [])
+  const proposalsResize = useResizableWidth({
+    elementRef: proposalsRef,
+    width: proposalsWidth,
+    minWidth: 240,
+    maxWidth: widestProposals,
+    edge: 'left',
+    onCommit: setProposalsWidth,
+  })
 
   // What a folder offers besides being looked at: an agent started in it, the
   // folder itself in the Files tab, and the stack this tab is showing handed
@@ -201,7 +220,13 @@ export default function AgentsView({ onOpenInFiles }: AgentsViewProps = {}) {
   return (
     <div className="agents-view">
       <div className="agents-columns">
-        <aside className="agents-rail" data-ui="agents.rail">
+        <Rail
+          className="agents-rail"
+          data-ui="agents.rail"
+          label="Agents"
+          width={settings.railWidth.agents}
+          onWidthCommit={commitRailWidth}
+        >
           <input
             type="text"
             className="agents-filter"
@@ -210,8 +235,7 @@ export default function AgentsView({ onOpenInFiles }: AgentsViewProps = {}) {
             value={query}
             onChange={event => setQuery(event.target.value)}
           />
-          <div className="agents-group">
-            <h3>Harness</h3>
+          <RailSection className="agents-group" title="Harness">
             {AGENT_HARNESSES.map(entry => (
               <button
                 type="button"
@@ -224,15 +248,19 @@ export default function AgentsView({ onOpenInFiles }: AgentsViewProps = {}) {
                 <span>{entry.label}</span>
               </button>
             ))}
-          </div>
-          <div className="agents-group agents-workspaces">
-            {running.length > 0 && <h3>Running</h3>}
-            {running.map(workspaceRow)}
-            <h3>Projects</h3>
-            {workspaces.length === 0 && <span className="agent-note">No workspace found under the roots.</span>}
-            {projects.map(workspaceRow)}
-          </div>
-        </aside>
+          </RailSection>
+          <RailScroll className="agents-workspaces">
+            {running.length > 0 && (
+              <RailSection className="agents-group" title="Running">
+                {running.map(workspaceRow)}
+              </RailSection>
+            )}
+            <RailSection className="agents-group" title="Projects">
+              {workspaces.length === 0 && <span className="agent-note">No workspace found under the roots.</span>}
+              {projects.map(workspaceRow)}
+            </RailSection>
+          </RailScroll>
+        </Rail>
 
         <div className="agents-main" data-ui="agents.stack">
           <div className="agents-subject">
@@ -262,7 +290,23 @@ export default function AgentsView({ onOpenInFiles }: AgentsViewProps = {}) {
           </div>
         </div>
 
-        <aside className="agents-proposals" data-ui="agents.proposals">
+        <aside
+          ref={proposalsRef}
+          className="agents-proposals"
+          data-ui="agents.proposals"
+          style={{ width: proposalsResize.width }}
+        >
+          <div
+            {...proposalsResize.handleProps}
+            className={`agents-proposals-handle${proposalsResize.resizing ? ' dragging' : ''}`}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize proposals"
+            aria-valuenow={Math.round(proposalsResize.width)}
+            aria-valuemin={240}
+            aria-valuemax={Number.isFinite(widestProposals()) ? Math.round(widestProposals()) : undefined}
+            tabIndex={0}
+          />
           <h3>Proposals</h3>
           {!tender.beads && <span className="agent-note">No tender Beads project is configured.</span>}
           {tender.beads && proposals.length === 0 && <span className="agent-note">Nothing is in flight.</span>}

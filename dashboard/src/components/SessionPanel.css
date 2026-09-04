@@ -57,7 +57,8 @@
 }
 
 .dock-resizer:hover,
-.dock-resizer:focus-visible {
+.dock-resizer:focus-visible,
+.dock-resizer.dragging {
   background: var(--accent);
 }
 

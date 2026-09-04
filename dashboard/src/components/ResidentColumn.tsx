@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react'
 import Launcher from './Launcher'
 import Menu, { type MenuGroup } from './Menu'
 import TerminalSurface, { useTerminalSession } from './TerminalSurface'
@@ -38,6 +38,7 @@ import {
 } from '../residents/residentsApi'
 import { terminalSocketUrl } from '../terminal/ttydProtocol'
 import { getSessionKey } from '../types'
+import { useResizableWidth } from '../hooks/useResizableWidth'
 import './ResidentColumn.css'
 
 export interface ResidentColumnProps {
@@ -52,9 +53,6 @@ export interface ResidentColumnProps {
 
 /** What the state word can read, in the order the column decides it. */
 export type ResidentState = 'live' | 'idle' | 'not running' | 'not configured'
-
-/** What one arrow key on the handle is worth. */
-const KEYBOARD_STEP = 16
 
 function collapsedKey(tab: ResidentTab): string {
   return `chrote.resident.${tab}.collapsed`
@@ -101,9 +99,7 @@ export default function ResidentColumn({ tab, reference }: ResidentColumnProps) 
   const [collapsed, setCollapsed] = useState(() => readCollapsed(tab))
   const [squeezed, setSqueezed] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
-  const [dragWidth, setDragWidth] = useState<number | null>(null)
   const columnRef = useRef<HTMLElement>(null)
-  const dragRef = useRef<number | null>(null)
 
   // One request when the tab opens; nothing polls the host for its residents.
   useEffect(() => {
@@ -152,7 +148,6 @@ export default function ResidentColumn({ tab, reference }: ResidentColumnProps) 
   // than the tab can spare once the content keeps its 480px and the table its
   // minimum.
   const remembered = clampResidentWidth(settings.residentWidth, settings.fontSize)
-  const width = dragWidth ?? remembered
   const tableOpen = table !== null
 
   const room = useCallback(() => {
@@ -160,6 +155,19 @@ export default function ResidentColumn({ tab, reference }: ResidentColumnProps) 
     if (!parent) return Number.POSITIVE_INFINITY
     return parent.clientWidth - TABLE_CONTENT_MIN - (tableOpen ? TABLE_WIDTH_MIN : 0)
   }, [tableOpen])
+  const widest = useCallback(() => Math.max(RESIDENT_WIDTH_MIN, room()), [room])
+  const commitWidth = useCallback((residentWidth: number) => {
+    updateSettings({ residentWidth })
+  }, [updateSettings])
+  const resize = useResizableWidth({
+    elementRef: columnRef,
+    width: remembered,
+    minWidth: RESIDENT_WIDTH_MIN,
+    maxWidth: widest,
+    edge: 'left',
+    onCommit: commitWidth,
+  })
+  const width = resize.width
 
   // The squeeze: when the tab runs out of room the column collapses to its
   // header rather than narrowing the content, and comes back when room does.
@@ -264,46 +272,6 @@ export default function ResidentColumn({ tab, reference }: ResidentColumnProps) 
     setLaunching(true)
   }, [announce, deleteSession, session])
 
-  const widest = useCallback(() => Math.max(RESIDENT_WIDTH_MIN, room()), [room])
-
-  const startDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const column = columnRef.current
-    if (event.button !== 0 || !column) return
-    event.preventDefault()
-    const handle = event.currentTarget
-    // The edge follows the pointer from where it was grabbed, so the handle
-    // does not jump under the finger by however far into it the press landed.
-    const grabbedAt = event.clientX
-    const grabbedWidth = column.getBoundingClientRect().width
-    const max = widest()
-    handle.setPointerCapture(event.pointerId)
-    const move = (moveEvent: PointerEvent) => {
-      const next = Math.min(max, Math.max(RESIDENT_WIDTH_MIN, Math.round(grabbedWidth + grabbedAt - moveEvent.clientX)))
-      dragRef.current = next
-      setDragWidth(next)
-    }
-    const end = () => {
-      handle.removeEventListener('pointermove', move)
-      handle.removeEventListener('pointerup', end)
-      handle.removeEventListener('pointercancel', end)
-      const dragged = dragRef.current
-      dragRef.current = null
-      setDragWidth(null)
-      if (dragged !== null) updateSettings({ residentWidth: dragged })
-    }
-    handle.addEventListener('pointermove', move)
-    handle.addEventListener('pointerup', end)
-    handle.addEventListener('pointercancel', end)
-  }, [updateSettings, widest])
-
-  // The handle is at the left edge, so left is wider and right is narrower.
-  const resizeByKey = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const delta = event.key === 'ArrowLeft' ? KEYBOARD_STEP : event.key === 'ArrowRight' ? -KEYBOARD_STEP : 0
-    if (delta === 0) return
-    event.preventDefault()
-    updateSettings({ residentWidth: Math.min(widest(), Math.max(RESIDENT_WIDTH_MIN, remembered + delta)) })
-  }, [remembered, updateSettings, widest])
-
   const openMenu = useCallback((event: ReactMouseEvent) => {
     if (state === null || state === 'not configured') return
     event.preventDefault()
@@ -369,15 +337,14 @@ export default function ResidentColumn({ tab, reference }: ResidentColumnProps) 
     >
       {!showsHeaderOnly && (
         <div
-          className={`resident-column-handle${dragWidth !== null ? ' dragging' : ''}`}
+          {...resize.handleProps}
+          className={`resident-column-handle${resize.resizing ? ' dragging' : ''}`}
           role="separator"
           aria-orientation="vertical"
           aria-label={`Resize the ${label}'s column`}
           aria-valuenow={width}
           aria-valuemin={RESIDENT_WIDTH_MIN}
           tabIndex={0}
-          onPointerDown={startDrag}
-          onKeyDown={resizeByKey}
         />
       )}
       <div className="resident-header" data-ui="resident.header" onContextMenu={openMenu}>

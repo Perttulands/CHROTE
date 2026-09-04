@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, ChangeEvent, DragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { ChangeEvent, DragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { toDisplayPath } from './types'
 import type {
   ContextMenuState,
@@ -138,7 +138,6 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
   const discardArmed = useRef<{ path: string | null; at: number }>({ path: null, at: 0 })
 
   const currentPathPinned = pinnedPaths.some(item => item.path === currentPath)
-  const workbenchStyle = { '--fb-explorer-width': `${explorerWidth}px` } as CSSProperties
   const { announce } = useStatus()
   const showError = useCallback((message: string) => announce(message, 'error'), [announce])
 
@@ -181,26 +180,6 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
     void loadDirectory(currentPath)
     setTreeRefreshToken(previous => previous + 1)
   }, [currentPath, loadDirectory])
-
-  const startExplorerResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    event.currentTarget.setPointerCapture(event.pointerId)
-    const startX = event.clientX
-    const startWidth = explorerWidth
-    const pointerId = event.pointerId
-    const move = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId === pointerId) setExplorerWidth(Math.min(560, Math.max(180, startWidth + moveEvent.clientX - startX)))
-    }
-    const finish = (upEvent: PointerEvent) => {
-      if (upEvent.pointerId !== pointerId) return
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', finish)
-      window.removeEventListener('pointercancel', finish)
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', finish)
-    window.addEventListener('pointercancel', finish)
-  }, [explorerWidth])
 
   useEffect(() => {
     void loadDirectory(initialWorkbench.currentPath)
@@ -785,8 +764,8 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
     openFiles, activeFilePath, setActiveFilePath, fileViewStates, setFileViewStates,
     pinnedPaths, recentPaths, savedGroupsCollapsed, editingPath, setEditingPath,
     pathDraft, setPathDraft, setDraggingPaths, dropTargetPath, setDropTargetPath,
-    operationLabel, currentPathPinned, workbenchStyle, setExplorerWidth,
-    loadDirectory, navigateTo, refreshCurrentPath, startExplorerResize, updateOpenFile,
+    operationLabel, currentPathPinned, explorerWidth, setExplorerWidth,
+    loadDirectory, navigateTo, refreshCurrentPath, updateOpenFile,
     openFile, openSavedPath, closeOpenFile, closeAllOpenFiles, closeOtherOpenFiles,
     activeFile, selectedItems, visibleItems, toggleSort, goBack, goForward, goUp,
     handlePathSubmit, handleItemClick, handleContextMenu, beginRename, cancelRename,

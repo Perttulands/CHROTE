@@ -166,7 +166,8 @@
 }
 
 .fb-markdown-split-resizer:hover,
-.fb-markdown-split-resizer:focus-visible {
+.fb-markdown-split-resizer:focus-visible,
+.fb-markdown-split-resizer.dragging {
   background: color-mix(in srgb, var(--accent) 24%, transparent);
   outline: none;
 }

@@ -105,7 +105,8 @@
 }
 
 .fb-explorer-resizer:hover,
-.fb-explorer-resizer:focus-visible {
+.fb-explorer-resizer:focus-visible,
+.fb-explorer-resizer.dragging {
   background: var(--accent);
   outline: none;
 }

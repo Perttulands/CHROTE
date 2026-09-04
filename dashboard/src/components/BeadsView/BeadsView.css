@@ -12,16 +12,6 @@
   font-size: 12px;
 }
 
-.beads-rail {
-  display: flex;
-  flex-direction: column;
-  flex: none;
-  width: 150px;
-  padding: 8px 0;
-  border-right: 1px solid var(--divider);
-  overflow-y: auto;
-}
-
 .beads-rail-item {
   padding: 4px 12px;
   border: none;

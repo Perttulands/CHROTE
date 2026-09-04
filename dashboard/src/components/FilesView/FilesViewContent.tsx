@@ -1,4 +1,5 @@
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useCallback, useRef } from 'react'
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { FileItem } from './types'
 import type { SavedPath } from './pinnedPaths'
 import FileTree from '../FileTree'
@@ -9,6 +10,7 @@ import { FileContextMenu } from '../FileContextMenu'
 import { formatDate, formatSize } from './utils'
 import { savedPathLabel, type SavedPathGroup } from './savedPaths'
 import type { useFilesView } from './useFilesView'
+import { useResizableWidth } from '../../hooks/useResizableWidth'
 
 type FilesViewContentProps = ReturnType<typeof useFilesView>
 
@@ -22,8 +24,8 @@ export default function FilesViewContent({
   openFiles, activeFilePath, setActiveFilePath, fileViewStates, setFileViewStates,
   pinnedPaths, recentPaths, savedGroupsCollapsed, editingPath, setEditingPath,
   pathDraft, setPathDraft, setDraggingPaths, dropTargetPath, setDropTargetPath,
-  operationLabel, currentPathPinned, workbenchStyle, setExplorerWidth,
-  loadDirectory, navigateTo, refreshCurrentPath, startExplorerResize, updateOpenFile,
+  operationLabel, currentPathPinned, explorerWidth, setExplorerWidth,
+  loadDirectory, navigateTo, refreshCurrentPath, updateOpenFile,
   openFile, openSavedPath, closeOpenFile, closeAllOpenFiles, closeOtherOpenFiles,
   activeFile, selectedItems, visibleItems, toggleSort, goBack, goForward, goUp,
   handlePathSubmit, handleItemClick, handleContextMenu, beginRename, cancelRename,
@@ -33,6 +35,20 @@ export default function FilesViewContent({
   handleInternalDragStart, handleFolderDragOver, handleFolderDrop, onSendPath,
   sendTargetLabel,
 }: FilesViewContentProps) {
+  const explorerRef = useRef<HTMLElement>(null)
+  const widestExplorer = useCallback(() => 560, [])
+  const explorerResize = useResizableWidth({
+    elementRef: explorerRef,
+    width: explorerWidth,
+    minWidth: 180,
+    maxWidth: widestExplorer,
+    edge: 'right',
+    onCommit: setExplorerWidth,
+  })
+  const resizedWorkbenchStyle = {
+    '--fb-explorer-width': `${explorerResize.width}px`,
+  } as CSSProperties
+
   const renderSavedPath = (item: SavedPath, className: string) => (
     <button
       key={`${item.kind}:${item.path}`}
@@ -248,8 +264,8 @@ export default function FilesViewContent({
         </div>
       </div>
 
-      <div className="fb-workbench" style={workbenchStyle}>
-        <aside className="fb-sidebar" aria-label="Explorer">
+      <div className="fb-workbench" style={resizedWorkbenchStyle}>
+        <aside ref={explorerRef} className="fb-sidebar" aria-label="Explorer">
           <div className="fb-sidebar-header">
             <span>Explorer</span>
             <button className="fb-sidebar-action" type="button" title="Refresh tree" onClick={() => setTreeRefreshToken(previous => previous + 1)}>Refresh</button>
@@ -275,16 +291,15 @@ export default function FilesViewContent({
           </section>
         </aside>
         <div
-          className="fb-explorer-resizer"
+          {...explorerResize.handleProps}
+          className={`fb-explorer-resizer${explorerResize.resizing ? ' dragging' : ''}`}
           role="separator"
           aria-label="Resize Files explorer"
           aria-orientation="vertical"
+          aria-valuenow={Math.round(explorerResize.width)}
+          aria-valuemin={180}
+          aria-valuemax={560}
           tabIndex={0}
-          onPointerDown={startExplorerResize}
-          onKeyDown={event => {
-            if (event.key === 'ArrowLeft') setExplorerWidth(previous => Math.max(180, previous - 16))
-            if (event.key === 'ArrowRight') setExplorerWidth(previous => Math.min(560, previous + 16))
-          }}
         />
 
         <main className="fb-main">

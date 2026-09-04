@@ -186,6 +186,40 @@ describe('dashboard persisted storage contract', () => {
     expect(renderSession().result.current.settings.keysEnabled).toBe(false)
   })
 
+  it('fills missing rail widths and persists each rail independently across reloads', () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {},
+      settings: { railWidth: { beads: 312 } },
+    }))
+    const first = renderSession()
+
+    expect(first.result.current.settings.railWidth).toEqual({
+      beads: 312,
+      library: 240,
+      agents: 240,
+    })
+
+    act(() => {
+      first.result.current.updateSettings({
+        railWidth: { ...first.result.current.settings.railWidth, library: 288 },
+      })
+    })
+
+    expect(storedDashboardState().settings.railWidth).toEqual({
+      beads: 312,
+      library: 288,
+      agents: 240,
+    })
+    first.unmount()
+    expect(renderSession().result.current.settings.railWidth).toEqual({
+      beads: 312,
+      library: 288,
+      agents: 240,
+    })
+  })
+
   it('does not mutate tmux on initial load and applies mouse mode only after an explicit setting change', async () => {
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
       version: 3,

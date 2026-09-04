@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { X } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { getGroupPriority } from '../types'
 import type { WorkspaceId } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
+import { useResizableWidth } from '../hooks/useResizableWidth'
 import Launcher from './Launcher'
 import SessionGroup from './SessionGroup'
 import DismissiblePanel from './DismissiblePanel'
@@ -55,6 +56,7 @@ function SessionPanel({
     else setLocalCollapsedGroups(nextCollapsedGroups)
   }
   const [launcher, setLauncher] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const launcherPosition = useViewportMenuPosition<HTMLDivElement>(
     launcher.show ? { x: launcher.x, y: launcher.y } : null,
@@ -92,30 +94,22 @@ function SessionPanel({
     setLauncherTyped(false)
   }
 
-  const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!onWidthChange) return
-    event.currentTarget.setPointerCapture(event.pointerId)
-    const startX = event.clientX
-    const startWidth = width
-    const pointerId = event.pointerId
-    const move = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId === pointerId) onWidthChange(Math.min(480, Math.max(220, startWidth + moveEvent.clientX - startX)))
-    }
-    const finish = (upEvent: PointerEvent) => {
-      if (upEvent.pointerId !== pointerId) return
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', finish)
-      window.removeEventListener('pointercancel', finish)
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', finish)
-    window.addEventListener('pointercancel', finish)
-  }
+  const widest = useCallback(() => 480, [])
+  const commitWidth = useCallback((next: number) => onWidthChange?.(next), [onWidthChange])
+  const resize = useResizableWidth({
+    elementRef: panelRef,
+    width,
+    minWidth: 220,
+    maxWidth: widest,
+    edge: 'right',
+    onCommit: commitWidth,
+  })
 
-  const panelStyle = isCollapsed ? undefined : ({ '--session-panel-width': `${width}px` } as CSSProperties)
+  const panelStyle = isCollapsed ? undefined : ({ '--session-panel-width': `${resize.width}px` } as CSSProperties)
 
   return (
     <div
+      ref={panelRef}
       id={panelId}
       className={`session-panel ${isCollapsed ? 'collapsed' : ''} ${pinned ? 'sidecar-pinned' : 'sidecar-overlay'}`}
       style={panelStyle}
@@ -219,16 +213,15 @@ function SessionPanel({
 
       {!isCollapsed && onWidthChange && (
         <div
-          className="dock-resizer"
+          {...resize.handleProps}
+          className={`dock-resizer${resize.resizing ? ' dragging' : ''}`}
           role="separator"
           aria-label="Resize Sessions panel"
           aria-orientation="vertical"
+          aria-valuenow={Math.round(resize.width)}
+          aria-valuemin={220}
+          aria-valuemax={480}
           tabIndex={0}
-          onPointerDown={startPanelResize}
-          onKeyDown={event => {
-            if (event.key === 'ArrowLeft') onWidthChange(Math.max(220, width - 16))
-            if (event.key === 'ArrowRight') onWidthChange(Math.min(480, width + 16))
-          }}
         />
       )}
     </div>
