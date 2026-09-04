@@ -9,7 +9,6 @@ const mockState = vi.hoisted(() => ({
   announce: vi.fn(),
   fetchAgentContext: vi.fn(),
   fetchWorkspaces: vi.fn(),
-  fetchBeadWork: vi.fn(),
   openSendToSession: vi.fn(),
 }))
 
@@ -31,7 +30,6 @@ vi.mock('../../agents/agentContextApi', async () => {
     ...actual,
     fetchAgentContext: (folder: string, harness: string, user: string) =>
       mockState.fetchAgentContext(folder, harness, user),
-    fetchAgentTender: () => Promise.resolve({ session: 'tender', beads: '/srv', folder: '/srv/ops/tender' }),
   }
 })
 
@@ -39,10 +37,6 @@ vi.mock('../../workspaces/workspacesApi', async () => {
   const actual = await vi.importActual<typeof import('../../workspaces/workspacesApi')>('../../workspaces/workspacesApi')
   return { ...actual, fetchWorkspaces: () => mockState.fetchWorkspaces() }
 })
-
-vi.mock('../../beads/beadsApi', () => ({
-  fetchBeadWork: (path: string) => mockState.fetchBeadWork(path),
-}))
 
 vi.mock('../ResidentColumn', () => ({
   default: ({ tab, reference }: { tab: string; reference: string | null }) => (
@@ -71,16 +65,10 @@ describe('AgentsView', () => {
     mockState.announce.mockReset()
     mockState.fetchAgentContext.mockReset()
     mockState.fetchWorkspaces.mockReset()
-    mockState.fetchBeadWork.mockReset()
     mockState.openSendToSession.mockReset()
     mockState.fetchWorkspaces.mockResolvedValue(workspaces)
     mockState.fetchAgentContext.mockImplementation((folder: string, harness: string) =>
       Promise.resolve(context(folder, harness)))
-    mockState.fetchBeadWork.mockResolvedValue({
-      beads: [{ id: 'ctx-p3f', title: 'skill-doctrine-review', status: 'open', priority: 1, blocked: false }],
-      prefix: 'ctx',
-      projectPath: '/srv',
-    })
   })
 
   it('resolves the first workspace under Claude Code and lists its stack', async () => {
@@ -120,10 +108,9 @@ describe('AgentsView', () => {
       .toHaveBeenCalledWith('/home/operator', 'codex', 'operator'))
   })
 
-  it('lists the tender proposals and hands the tender the chosen workspace and harness', async () => {
+  it('hands the tender the chosen workspace and harness', async () => {
     render(<AgentsView />)
-
-    await waitFor(() => expect(screen.getByText('ctx-p3f')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('/home/operator/CLAUDE.md')).toBeInTheDocument())
     expect(screen.getByTestId('resident')).toHaveTextContent('agents: agents /home/operator claude-code')
   })
 

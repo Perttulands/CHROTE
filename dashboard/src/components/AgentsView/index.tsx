@@ -9,7 +9,7 @@
  * the tab exactly as the Librarian's does in the Library.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import AgentStack from '../AgentStack'
 import MenuTarget from '../MenuTarget'
 import type { MenuGroup } from '../Menu'
@@ -19,40 +19,21 @@ import Rail, { RailScroll, RailSection } from '../Rail'
 import { HarnessMark } from '../harnessMarks'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
-import { openBeadCard } from '../../beads/beadCard'
-import { fetchBeadWork, type BeadRow } from '../../beads/beadsApi'
-import { isBeadClosed, beadGlyph } from '../../beads/beadStatus'
 import { getTerminalUserInitial, resolveLaunchUser } from '../../types'
 import { identityColorFor } from '../../theme/theme'
 import { useTheme } from '../../theme/ThemeContext'
-import { useResizableWidth } from '../../hooks/useResizableWidth'
 import {
   AGENT_HARNESSES,
   fetchAgentContext,
-  fetchAgentTender,
   shortWorkspacePath,
   type AgentContext,
   type AgentHarness,
-  type AgentTender,
 } from '../../agents/agentContextApi'
 import { fetchWorkspaces, isRunning, workspaceName, type Workspace } from '../../workspaces/workspacesApi'
 import './AgentsView.css'
 
-/** How many proposals the right column shows. */
-const PROPOSAL_LIMIT = 12
-
 function tally(count: number, singular: string, plural: string): string {
   return `${count} ${count === 1 ? singular : plural}`
-}
-
-function ageOf(updated: string | undefined): string {
-  if (!updated) return ''
-  const when = new Date(updated)
-  if (Number.isNaN(when.getTime())) return ''
-  const hours = Math.floor((Date.now() - when.getTime()) / 3600000)
-  if (hours < 1) return 'now'
-  if (hours < 24) return `${hours}h`
-  return `${Math.floor(hours / 24)}d`
 }
 
 interface AgentsViewProps {
@@ -70,14 +51,10 @@ export default function AgentsView({ active = true, onOpenInFiles }: AgentsViewP
   const theme = useTheme()
   const [harness, setHarness] = useState<AgentHarness>('claude-code')
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
-  const [tender, setTender] = useState<AgentTender>({ session: '', beads: '', folder: '' })
   const [folder, setFolder] = useState<string>('')
   const [context, setContext] = useState<AgentContext | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [proposals, setProposals] = useState<BeadRow[]>([])
-  const [proposalsWidth, setProposalsWidth] = useState(300)
-  const proposalsRef = useRef<HTMLElement>(null)
 
   const user = resolveLaunchUser(settings, 'terminal1', terminalUsers)
 
@@ -95,14 +72,6 @@ export default function AgentsView({ active = true, onOpenInFiles }: AgentsViewP
         if (!current) return
         setError(cause instanceof Error ? cause.message : 'Could not list the workspaces')
       })
-    return () => { current = false }
-  }, [])
-
-  useEffect(() => {
-    let current = true
-    fetchAgentTender()
-      .then(found => { if (current) setTender(found) })
-      .catch(() => { /* an unconfigured tender is what the empty fields already say */ })
     return () => { current = false }
   }, [])
 
@@ -130,25 +99,6 @@ export default function AgentsView({ active = true, onOpenInFiles }: AgentsViewP
     return () => { current = false }
   }, [announce, folder, harness, user])
 
-  useEffect(() => {
-    if (!tender.beads) {
-      setProposals([])
-      return
-    }
-    let current = true
-    fetchBeadWork(tender.beads)
-      .then(work => {
-        if (!current) return
-        setProposals(work.beads.filter(bead => !isBeadClosed(bead.status)).slice(0, PROPOSAL_LIMIT))
-      })
-      .catch(() => { if (current) setProposals([]) })
-    return () => { current = false }
-  }, [tender.beads])
-
-  const openProposal = useCallback((bead: BeadRow) => {
-    openBeadCard(bead.id, tender.beads)
-  }, [tender.beads])
-
   const harnessLabel = useMemo(
     () => AGENT_HARNESSES.find(entry => entry.id === harness)?.label ?? harness,
     [harness],
@@ -159,19 +109,6 @@ export default function AgentsView({ active = true, onOpenInFiles }: AgentsViewP
   const commitRailWidth = useCallback((agents: number) => {
     updateSettings({ railWidth: { ...settings.railWidth, agents } })
   }, [settings.railWidth, updateSettings])
-  const widestProposals = useCallback(() => {
-    const room = proposalsRef.current?.parentElement?.clientWidth || Number.POSITIVE_INFINITY
-    return Math.max(240, room - 480)
-  }, [])
-  const proposalsResize = useResizableWidth({
-    elementRef: proposalsRef,
-    width: proposalsWidth,
-    minWidth: 240,
-    maxWidth: widestProposals,
-    edge: 'left',
-    onCommit: setProposalsWidth,
-  })
-
   // What a folder offers besides being looked at: an agent started in it, the
   // folder itself in the Files tab, and the stack this tab is showing handed
   // to a session. Launch goes through the drawer's launcher, which is the one
@@ -290,39 +227,6 @@ export default function AgentsView({ active = true, onOpenInFiles }: AgentsViewP
             {context !== null && <AgentStack context={context} query={query} />}
           </div>
         </div>
-
-        <aside
-          ref={proposalsRef}
-          className="agents-proposals"
-          data-ui="agents.proposals"
-          style={{ width: proposalsResize.width }}
-        >
-          <div
-            {...proposalsResize.handleProps}
-            className={`agents-proposals-handle${proposalsResize.resizing ? ' dragging' : ''}`}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize proposals"
-            aria-valuenow={Math.round(proposalsResize.width)}
-            aria-valuemin={240}
-            aria-valuemax={Number.isFinite(widestProposals()) ? Math.round(widestProposals()) : undefined}
-            tabIndex={0}
-          />
-          <h3>Proposals</h3>
-          {!tender.beads && <span className="agent-note">No tender Beads project is configured.</span>}
-          {tender.beads && proposals.length === 0 && <span className="agent-note">Nothing is in flight.</span>}
-          {proposals.map(bead => (
-            <button type="button" className="agents-proposal" key={bead.id} onClick={() => openProposal(bead)}>
-              <span className="agents-proposal-head">
-                <span className="agents-proposal-glyph">{beadGlyph(bead.status, bead.blocked)}</span>
-                <span className="agents-proposal-id">{bead.id}</span>
-                <span className="agents-proposal-age">{ageOf(bead.updated)}</span>
-              </span>
-              <span className="agents-proposal-title">{bead.title}</span>
-            </button>
-          ))}
-          {tender.beads && <span className="agents-proposals-foot">From the tender&apos;s Beads project.</span>}
-        </aside>
 
         <TableColumn />
         <ResidentColumn active={active} tab="agents" reference={`agents ${folder} ${harness}`} />

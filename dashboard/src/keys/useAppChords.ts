@@ -28,6 +28,7 @@ export interface AppChordSurfaces {
   onTabChange: (tab: Tab) => void
   onToggleSessionsPanel: () => void
   onOpenSessionsPanel: () => void
+  onToggleBeadsColumn: () => void
   onToggleKeysPanel: () => void
 }
 
@@ -136,7 +137,8 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
     const focusedSession = () => focusedWindow()?.activeSession ?? null
 
     const chords: Chord[] = [
-      { id: 'keys.beads', key: 'b', direct: { alt: true, shift: false, key: 'b' }, label: 'Beads tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('beads') },
+      { id: 'keys.beads', key: 'b', label: 'Beads tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('beads') },
+      { id: 'keys.beadsColumn', key: 'B', direct: { alt: true, shift: false, key: 'b' }, label: 'Beads column', scope: 'global', run: () => stateRef.current.surfaces.onToggleBeadsColumn() },
       { id: 'keys.library', key: 'l', direct: { alt: true, shift: false, key: 'l' }, label: 'Library tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('library') },
       // Alt+K toggles the panel, which is also what the leader toggles. Turning
       // keys off has no chord of its own: the tab bar's own button says so and

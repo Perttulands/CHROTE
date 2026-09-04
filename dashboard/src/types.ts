@@ -125,6 +125,7 @@ export interface UserSettings {
   hideScrollbar: boolean             // Hide the dead xterm scrollbar gutter in terminals
   keysEnabled: boolean               // Leader chords intercept keys; off hands every key to the pty
   tableWidth: number                 // The table's column at the right, in px; device-local
+  beadsColumnWidth: number           // The global Beads column, in px; device-local
   railWidth: {                       // Left rails, in px; device-local
     beads: number
     library: number
@@ -153,6 +154,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   hideScrollbar: true,
   keysEnabled: true,
   tableWidth: 400,
+  beadsColumnWidth: 360,
   railWidth: {
     beads: 240,
     library: 240,

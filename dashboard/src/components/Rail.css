@@ -1,0 +1,73 @@
+/* Shared shell for the left rails in Beads, Library, and Agents. Callers own
+   their rows and the one live width kept inline by Rail.tsx. */
+
+.rail {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px;
+  overflow: hidden;
+  border-right: 1px solid var(--divider);
+  background-color: var(--surface-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.rail-resize-handle {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.rail-resize-handle:hover {
+  background-color: var(--text-dim);
+}
+
+.rail-resize-handle:focus,
+.rail-resize-handle.dragging {
+  background-color: var(--accent);
+}
+
+.rail-section {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rail-section.fill {
+  flex: 1 1 0;
+}
+
+.rail-section-heading {
+  flex: none;
+  margin: 0 0 6px;
+  padding: 0 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.rail-scroll {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}

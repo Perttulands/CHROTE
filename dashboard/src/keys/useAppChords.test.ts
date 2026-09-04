@@ -53,6 +53,7 @@ describe('Alt+P', () => {
       onTabChange: vi.fn(),
       onToggleSessionsPanel: vi.fn(),
       onOpenSessionsPanel: vi.fn(),
+      onToggleBeadsColumn: vi.fn(),
       onToggleKeysPanel: vi.fn(),
     }))
 
@@ -73,5 +74,39 @@ describe('Alt+P', () => {
     altP()
     expect(state.openFloatingModal).toHaveBeenLastCalledWith('alice:main')
     expect(state.closeFloatingModal).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Beads chords', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetChordsForTest()
+  })
+  afterEach(() => resetChordsForTest())
+
+  it('gives Alt+B to the global column and keeps leader then B on the tab', () => {
+    const onTabChange = vi.fn()
+    const onToggleBeadsColumn = vi.fn()
+    renderHook(() => useAppChords({
+      activeTab: 'terminal1',
+      onTabChange,
+      onToggleSessionsPanel: vi.fn(),
+      onOpenSessionsPanel: vi.fn(),
+      onToggleBeadsColumn,
+      onToggleKeysPanel: vi.fn(),
+    }))
+
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'b', altKey: true, bubbles: true, cancelable: true,
+    }))
+    expect(onToggleBeadsColumn).toHaveBeenCalledTimes(1)
+    expect(onTabChange).not.toHaveBeenCalled()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: ' ', code: 'Space', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true,
+    }))
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', bubbles: true, cancelable: true }))
+    expect(onTabChange).toHaveBeenCalledWith('beads')
+    expect(onToggleBeadsColumn).toHaveBeenCalledTimes(1)
   })
 })
