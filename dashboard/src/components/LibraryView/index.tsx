@@ -278,6 +278,17 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
       : { reference, launch: { label: 'Launch the Librarian', folder: root } })
   }, [openSendToSession, root, sessions, shelves?.librarianSession])
 
+  // The shelves the operator has left off the map, remembered per device: a
+  // library he is not working in today stays out of the picture until he asks
+  // for it back.
+  const hidden = useMemo(() => new Set(settings.libraryHiddenShelves), [settings.libraryHiddenShelves])
+  const toggleShelfOnMap = useCallback((name: string) => {
+    const next = new Set(settings.libraryHiddenShelves)
+    if (next.has(name)) next.delete(name)
+    else next.add(name)
+    updateSettings({ libraryHiddenShelves: Array.from(next).sort() })
+  }, [settings.libraryHiddenShelves, updateSettings])
+
   const shelfOpen = (name: string) => shelf === name
   const collapseShelf = useCallback(() => setShelf(null), [])
 
@@ -312,6 +323,22 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   // The map is the room, unless a search is standing in it. Neither a dive
   // nor an open shelf displaces it.
   const showMap = results === null
+
+  // The corpus the map draws: the whole of it, less the shelves the operator
+  // has hidden. They are taken out before the layout rather than left out of
+  // the drawing, so what is left fills the frame instead of sitting around a
+  // hole where a shelf used to be.
+  const shown = useMemo(() => {
+    if (!graph || hidden.size === 0) return graph
+    const pages = graph.pages.filter(entry => !hidden.has(entry.shelf))
+    const kept = new Set(pages.map(entry => entry.path))
+    return {
+      ...graph,
+      pages,
+      links: graph.links.filter(([from, to]) => kept.has(from) && kept.has(to)),
+      tags: graph.tags.filter(([from, to]) => kept.has(from) && kept.has(to)),
+    }
+  }, [graph, hidden])
 
   const save = useCallback(async () => {
     if (!page || draft === null) return
@@ -406,14 +433,14 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   if (!shelves) return <div className="library-view"><p className="library-empty">Opening the library…</p></div>
   if (!shelves.root) return <div className="library-view"><p className="library-empty">No library is configured</p></div>
 
-  const mapPages = graph ? graph.pages.filter(entry => entry.shelf !== '').length : 0
-  const mapShelves = graph ? new Set(graph.pages.filter(entry => entry.shelf !== '').map(entry => entry.shelf)).size : 0
+  const mapPages = shown ? shown.pages.filter(entry => entry.shelf !== '').length : 0
+  const mapShelves = shown ? new Set(shown.pages.filter(entry => entry.shelf !== '').map(entry => entry.shelf)).size : 0
 
   const mapOrWhy = () => {
-    if (graph) {
+    if (shown) {
       return (
         <LibraryMap
-          graph={graph}
+          graph={shown}
           openPath={page?.path ?? null}
           matches={matches}
           hoverPath={hoverPath}
@@ -515,17 +542,33 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
               {shelves.shelves.map(entry => (
                 <div key={entry.path} className="library-shelf-group">
                   <MenuTarget label={`Actions for shelf ${entry.name}`} groups={shelfMenu(entry.name)}>
-                    <button
-                      type="button"
-                      className={`library-shelf ${shelf === entry.name ? 'active' : ''}`}
-                      aria-expanded={shelf === entry.name}
-                      onClick={() => openShelf(entry.name)}
+                    {/* The row is the shelf and what to do with it on the map.
+                        Pointing anywhere in it lights that shelf alone, so the
+                        rail is read against the map rather than instead of it. */}
+                    <div
+                      className={`library-shelf-row${hidden.has(entry.name) ? ' off' : ''}`}
                       onMouseEnter={() => setHoverShelf(entry.name)}
                       onMouseLeave={() => setHoverShelf(current => (current === entry.name ? null : current))}
                     >
-                      <span className="library-shelf-name">{entry.name}</span>
-                      <span className="library-shelf-count" style={{ color: hues.get(entry.name) }}>{entry.pages}</span>
-                    </button>
+                      <button
+                        type="button"
+                        className={`library-shelf ${shelf === entry.name ? 'active' : ''}`}
+                        aria-expanded={shelf === entry.name}
+                        onClick={() => openShelf(entry.name)}
+                      >
+                        <span className="library-shelf-name">{entry.name}</span>
+                        <span className="library-shelf-count" style={{ color: hues.get(entry.name) }}>{entry.pages}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="library-shelf-toggle"
+                        aria-pressed={hidden.has(entry.name)}
+                        aria-label={`${hidden.has(entry.name) ? 'Show' : 'Hide'} ${entry.name} on the map`}
+                        onClick={() => toggleShelfOnMap(entry.name)}
+                      >
+                        {hidden.has(entry.name) ? 'Show' : 'Hide'}
+                      </button>
+                    </div>
                   </MenuTarget>
                   {shelf === entry.name && (
                     <div className="library-shelf-pages">
@@ -554,9 +597,9 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
             <div className="library-map-frame">
               <div className="library-map-bar">
                 <span className="library-map-title">The map</span>
-                {graph && (
+                {shown && (
                   <span className="library-map-count">
-                    {count(mapPages, 'page')} · {count(mapShelves, 'shelf', 'shelves')} · {count(graph.links.length, 'link')} · {count(graph.tags.length, 'shared tag')}
+                    {count(mapPages, 'page')} · {count(mapShelves, 'shelf', 'shelves')} · {count(shown.links.length, 'link')} · {count(shown.tags.length, 'shared tag')}
                   </span>
                 )}
                 <span className="library-map-windows" role="group" aria-label="The recency window">

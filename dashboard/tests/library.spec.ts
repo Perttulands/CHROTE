@@ -230,6 +230,38 @@ test.describe('The Library', () => {
     await expect(page.locator('.library-arrivals .library-row').last()).not.toBeInViewport()
   })
 
+  // The map is the operator's own picture of his corpus, and a shelf he is not
+  // working in today is noise on it. Hiding one is a device-local preference,
+  // so it must survive the reload that proves it was written down.
+  test('leaves a shelf off the map until it is asked back, across a reload', async ({ page }) => {
+    await mockApiRoutes(page)
+    await mockBeadsApiRoutes(page)
+    await mockLibraryApiRoutes(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+
+    await page.click('.tab:has-text("Library")')
+    await expect(page.locator('.library-map-count')).toHaveText('4 pages · 2 shelves · 2 links · 1 shared tag')
+    await expect(node(page, 'Workflow Preferences')).toBeVisible()
+
+    const row = page.locator('.library-shelf-row', { hasText: 'preferences' })
+    await row.getByRole('button', { name: 'Hide preferences on the map' }).click()
+
+    await expect(page.locator('.library-map-count')).toHaveText('2 pages · 1 shelf · 0 links · 0 shared tags')
+    await expect(node(page, 'Workflow Preferences')).toHaveCount(0)
+
+    await page.reload()
+    await page.waitForSelector('.dashboard')
+    await page.click('.tab:has-text("Library")')
+    await page.waitForSelector('.library-view')
+    await expect(page.locator('.library-map-count')).toHaveText('2 pages · 1 shelf · 0 links · 0 shared tags')
+
+    await page.locator('.library-shelf-row', { hasText: 'preferences' })
+      .getByRole('button', { name: 'Show preferences on the map' }).click()
+    await expect(page.locator('.library-map-count')).toHaveText('4 pages · 2 shelves · 2 links · 1 shared tag')
+    await expect(node(page, 'Workflow Preferences')).toBeVisible()
+  })
+
   test('says so when the host has no library', async ({ page }) => {
     await mockApiRoutes(page)
     await mockBeadsApiRoutes(page)

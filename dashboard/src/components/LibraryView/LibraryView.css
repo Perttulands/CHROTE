@@ -61,6 +61,45 @@
   border-color: var(--accent);
 }
 
+/* A shelf's row: the shelf itself, and the one word that takes it off the map
+   or puts it back. The word keeps its place whether it reads Hide or Show, and
+   the row reserves it whether or not the pointer is on the row, so nothing in
+   the rail moves under the pointer. */
+.library-shelf-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding-right: 6px;
+}
+
+/* A shelf left off the map is still a shelf to open and read; it is only the
+   drawing it is out of, and the row says so by standing back. */
+.library-shelf-row.off .library-shelf-name,
+.library-shelf-row.off .library-shelf-count {
+  color: var(--text-dim);
+}
+
+.library-shelf-toggle {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  color: transparent;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.library-shelf-row:hover .library-shelf-toggle,
+.library-shelf-row.off .library-shelf-toggle,
+.library-shelf-toggle:focus-visible {
+  color: var(--text-dim);
+}
+
+.library-shelf-row:hover .library-shelf-toggle:hover {
+  color: var(--text-primary);
+}
+
 .library-shelf {
   display: flex;
   align-items: baseline;

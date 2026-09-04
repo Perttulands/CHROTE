@@ -136,6 +136,7 @@ export interface UserSettings {
   agentEventTones: boolean           // A short tone when an agent finishes or needs input; device-local, off
   agentEventNotifications: boolean   // A browser notification for the same while this tab is hidden; device-local, off
   residentWidth: number              // A resident's column, in px; 0 means 44 terminal columns at the tile font
+  libraryHiddenShelves: string[]     // Library shelves left off the map; device-local
   beadsSelectedProject: string       // Last selected Beads store, or "all"; device-local
   beadsView: BeadsViewSetting        // Last selected Beads reading; device-local
   beadsProjectPaths?: string[]       // Manually added beads project paths
@@ -165,6 +166,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   agentEventTones: false,
   agentEventNotifications: false,
   residentWidth: 0,
+  libraryHiddenShelves: [],
   beadsSelectedProject: 'all',
   beadsView: 'map',
 }
