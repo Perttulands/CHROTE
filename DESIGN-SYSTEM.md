@@ -55,6 +55,11 @@ of them is the wall of buttons the doctrine exists to prevent.
    largest state, a list that can grow scrolls inside a fixed extent, and a
    control never shifts because a sibling appeared or vanished. A surface
    changes size only on the operator's own resize.
+8. **Speed is part of the design, and a technique is chosen for the size the
+   data will reach, not the size it has.** Every surface is built to be as fast
+   as it can be on the weakest device it serves; a delay the operator can feel
+   is a defect, and a rewrite at scale is the price of building on sand. Speed
+   bought this way also lets CHROTE run on lesser hardware, which is a feature.
 
 ## The colour rule
 
