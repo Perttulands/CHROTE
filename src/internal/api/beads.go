@@ -3,6 +3,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -401,15 +403,14 @@ type storeSummary struct {
 }
 
 type storeSummaryCacheEntry struct {
-	manifestMtime time.Time
-	summary       storeSummary
+	manifestHash string
+	summary      storeSummary
 }
 
 type storeSummaryRefresh struct {
-	manifestMtime time.Time
-	done          chan struct{}
-	summary       storeSummary
-	err           error
+	done    chan struct{}
+	summary storeSummary
+	err     error
 }
 
 // beadCard is the Bead the card shows: its own text, and every neighbour it
@@ -525,14 +526,17 @@ func (h *BeadsHandler) projectPrefix(projectPath string) string {
 	return beadPrefix(beadString(issues[0], "id"))
 }
 
-// storeManifestMtime is the cache key for the counts projection. Dolt replaces
-// its manifest when a store changes, so the cache expires from the write
-// itself. No timer or sweep is needed.
-func storeManifestMtime(projectPath string) (time.Time, error) {
+// storeManifestHash is the cache key for the counts projection: the content of
+// the store's Dolt manifest. The mtime cannot serve, because reading a store
+// rewrites the manifest with the same bytes, so a time-keyed entry expired on
+// the very read that filled it and no request ever saw a count. Content
+// changes only when the store does, so the cache still expires from the write
+// itself and needs no timer or sweep.
+func storeManifestHash(projectPath string) (string, error) {
 	doltRoot := filepath.Join(projectPath, ".beads", "embeddeddolt")
 	databases, err := os.ReadDir(doltRoot)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("read Dolt databases in %s: %w", doltRoot, err)
+		return "", fmt.Errorf("read Dolt databases in %s: %w", doltRoot, err)
 	}
 	for _, database := range databases {
 		if !database.IsDir() {
@@ -541,13 +545,18 @@ func storeManifestMtime(projectPath string) (time.Time, error) {
 		manifest := filepath.Join(doltRoot, database.Name(), ".dolt", "noms", "manifest")
 		info, statErr := os.Stat(manifest)
 		if statErr == nil && info.Mode().IsRegular() {
-			return info.ModTime(), nil
+			content, readErr := os.ReadFile(manifest)
+			if readErr != nil {
+				return "", fmt.Errorf("read Dolt manifest %s: %w", manifest, readErr)
+			}
+			sum := sha256.Sum256(content)
+			return hex.EncodeToString(sum[:]), nil
 		}
 		if errors.Is(statErr, fs.ErrPermission) {
-			return time.Time{}, fmt.Errorf("cannot read Dolt manifest %s: %w", manifest, statErr)
+			return "", fmt.Errorf("cannot read Dolt manifest %s: %w", manifest, statErr)
 		}
 	}
-	return time.Time{}, fmt.Errorf("no Dolt manifest found in %s", doltRoot)
+	return "", fmt.Errorf("no Dolt manifest found in %s", doltRoot)
 }
 
 func deferredUntil(raw map[string]interface{}) string {
@@ -652,6 +661,13 @@ func (h *BeadsHandler) ensureStoreSummaryStateLocked() {
 func (h *BeadsHandler) refreshStoreSummary(projectPath string, refresh *storeSummaryRefresh) {
 	h.storeSummarySlots <- struct{}{}
 	summary, err := h.readStoreSummary(projectPath)
+	// The key is read after bd has run, because bd rewrites the manifest as it
+	// reads. Hashing before would file the entry under bytes that no longer
+	// exist, which is the miss this handler used to take on every request.
+	var hash string
+	if err == nil {
+		hash, err = storeManifestHash(projectPath)
+	}
 	<-h.storeSummarySlots
 
 	h.storeSummaryMu.Lock()
@@ -659,8 +675,8 @@ func (h *BeadsHandler) refreshStoreSummary(projectPath string, refresh *storeSum
 	refresh.err = err
 	if err == nil {
 		h.storeSummaries[projectPath] = storeSummaryCacheEntry{
-			manifestMtime: refresh.manifestMtime,
-			summary:       summary,
+			manifestHash: hash,
+			summary:      summary,
 		}
 	}
 	if h.storeSummaryRefresh[projectPath] == refresh {
@@ -674,20 +690,20 @@ func (h *BeadsHandler) refreshStoreSummary(projectPath string, refresh *storeSum
 // starts one background refresh. A follow-up request may wait for that exact
 // refresh after the browser has already painted the store rail.
 func (h *BeadsHandler) cachedStoreSummary(projectPath string, wait bool) (storeSummary, bool, bool, error) {
-	mtime, err := storeManifestMtime(projectPath)
+	hash, err := storeManifestHash(projectPath)
 	if err != nil {
 		return storeSummary{}, false, false, err
 	}
 
 	h.storeSummaryMu.Lock()
 	h.ensureStoreSummaryStateLocked()
-	if cached, ok := h.storeSummaries[projectPath]; ok && cached.manifestMtime.Equal(mtime) {
+	if cached, ok := h.storeSummaries[projectPath]; ok && cached.manifestHash == hash {
 		h.storeSummaryMu.Unlock()
 		return cached.summary, true, false, nil
 	}
 	refresh := h.storeSummaryRefresh[projectPath]
 	if refresh == nil {
-		refresh = &storeSummaryRefresh{manifestMtime: mtime, done: make(chan struct{})}
+		refresh = &storeSummaryRefresh{done: make(chan struct{})}
 		h.storeSummaryRefresh[projectPath] = refresh
 		go h.refreshStoreSummary(projectPath, refresh)
 	}
