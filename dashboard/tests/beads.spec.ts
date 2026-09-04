@@ -36,8 +36,8 @@ test.describe('Beads', () => {
     await expect(page.locator('.beads-rail-item').first()).toHaveText('All')
     await expect(page.locator('.beads-rail-item.active')).toHaveText('All')
     await expect(page.locator('.bead-row', { hasText: 'One interaction language' })).toBeVisible()
-    await expect(page.locator('.bead-map-acceptance')).toContainText('Every surface reads the same way')
-    await expect(page.locator('.bead-row-blocked')).toContainText('blocked by test-ep1.2')
+    await expect(page.locator('.bead-map-acceptance').first()).toContainText('Every surface reads the same way')
+    await expect(page.locator('.bead-row-blocked').first()).toContainText('blocked by test-ep1.2')
   })
 
   test('folds an epic from its title and narrows by search', async ({ page }) => {
@@ -155,6 +155,52 @@ test.describe('Beads', () => {
 
     await page.keyboard.press('Alt+i')
     await expect(reopened).toHaveCount(0)
+  })
+
+  // The flow of an epic: two chains that can run at once, the join that waits
+  // for both, travel from the keyboard, and a node handed to the table.
+  test('lays an epic out in waves and travels it Bead to Bead', async ({ page }) => {
+    await openBeadsTab(page)
+    await page.click('.beads-view-tab:has-text("Flow")')
+    await page.getByLabel('Epic to flow').selectOption({ label: 'test-ep2 · Ship the reading room' })
+
+    const nodes = page.locator('.bead-flow-node')
+    await expect(nodes).toHaveCount(6)
+
+    // Two chains nobody blocks stand in the same column, one above the other;
+    // what waits for one of them stands in the next column.
+    const measure = page.locator('.bead-flow-node', { hasText: 'Measure the shelves' })
+    const draw = page.locator('.bead-flow-node', { hasText: 'Draw the shelves' })
+    const index = page.locator('.bead-flow-node', { hasText: 'Index the pages' })
+    const [measureBox, drawBox, indexBox] = [await box(measure), await box(draw), await box(index)]
+    expect(measureBox.x).toBe(drawBox.x)
+    expect(drawBox.y).toBeGreaterThan(measureBox.y)
+    expect(indexBox.x).toBeGreaterThan(measureBox.x)
+
+    // The join waits for the end of both chains: two lines arrive at it.
+    await expect(page.locator('.bead-flow-edge')).toHaveCount(4)
+
+    // Right travels a wave, down travels the column.
+    await measure.focus()
+    await page.keyboard.press('ArrowRight')
+    await expect(index).toBeFocused()
+    await page.keyboard.press('ArrowDown')
+    await expect(page.locator('.bead-flow-node', { hasText: 'Search the index' })).toBeFocused()
+
+    // A click puts the Bead on the table. The first one opens the table beside
+    // the drawing, which is what narrows the box; the second is centred in the
+    // box as it then stands.
+    await measure.click()
+    await expect(page.getByRole('complementary', { name: 'Bead test-ep2.1' })).toBeVisible()
+
+    const join = page.locator('.bead-flow-node', { hasText: 'Open a page from a search' })
+    const joinBefore = await box(join)
+    await join.click()
+    await expect(page.getByRole('complementary', { name: 'Bead test-ep2.5' })).toBeVisible()
+    const flowBox = await box(page.locator('[data-ui="beads.flow"]'))
+    const joinAfter = await box(join)
+    expect(Math.abs(joinAfter.x + joinAfter.width / 2 - (flowBox.x + flowBox.width / 2))).toBeLessThan(2)
+    expect(joinAfter.x).not.toBe(joinBefore.x)
   })
 
   test('follows an id inside the card and comes back', async ({ page }) => {

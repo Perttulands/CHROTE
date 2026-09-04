@@ -315,3 +315,183 @@
 .beads-column .bead-row-type {
   width: 60px;
 }
+
+/* ==================== THE FLOW OF AN EPIC ==================== */
+
+.bead-flow-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.bead-flow-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  padding: 0 12px 8px;
+  color: var(--text-secondary);
+}
+
+.bead-flow-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bead-flow-picker select {
+  max-width: 420px;
+  padding: 3px 6px;
+  border: 1px solid var(--divider);
+  background-color: var(--surface-primary);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.bead-flow-epic-name,
+.bead-flow-tally {
+  color: var(--text-dim);
+}
+
+.bead-flow-reset {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--divider);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* The box the drawing is moved through: it clips, and it never scrolls, so a
+   wheel over it zooms rather than taking the page with it. */
+.bead-flow {
+  position: relative;
+  flex: 1;
+  min-height: 360px;
+  margin: 0 12px 12px;
+  border: 1px solid var(--divider);
+  overflow: hidden;
+}
+
+.bead-flow-surface {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+}
+
+.bead-flow-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.bead-flow-lines {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* A blocking edge. One that closes a loop is dashed and takes the error token:
+   the store contradicts itself, and the drawing says so rather than obeying. */
+.bead-flow-edge {
+  fill: none;
+  stroke: var(--divider);
+  stroke-width: 1;
+}
+
+.bead-flow-edge.broken {
+  stroke: var(--color-error);
+  stroke-dasharray: 3 3;
+}
+
+/* A parent inside the epic, behind its children. */
+.bead-flow-band {
+  fill: var(--surface-secondary);
+  stroke: var(--divider);
+  stroke-width: 1;
+}
+
+.bead-flow-band-name {
+  fill: var(--text-dim);
+  font-size: 10px;
+}
+
+.bead-flow-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 8px;
+  border: 1px solid var(--divider);
+  background-color: var(--surface-primary);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  line-height: 1.4;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.bead-flow-node:hover {
+  background-color: var(--surface-secondary);
+}
+
+.bead-flow-node:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Claimed work carries a heavier left edge, so a column says at a glance how
+   much of it is already in hand. */
+.bead-flow-node.in-progress {
+  border-left: 3px solid var(--text-primary);
+}
+
+/* Closed, wont_fix and duplicate: the node greys end to end, glyph, id and
+   title alike, on the marker class every Bead row uses. */
+.bead-flow-node.bead-row-closed,
+.bead-flow-node.bead-row-closed .bead-flow-node-glyph,
+.bead-flow-node.bead-row-closed .bead-flow-node-id,
+.bead-flow-node.bead-row-closed .bead-flow-node-title {
+  color: var(--text-dim);
+}
+
+.bead-flow-node-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bead-flow-node-glyph {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.bead-flow-node-type {
+  flex: none;
+  font-size: 10px;
+}
+
+.bead-flow-node-id {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.bead-flow-node-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
