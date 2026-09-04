@@ -39,9 +39,8 @@ export interface AgentSkill {
 }
 
 export interface AgentMemory {
-  /** claude-auto, codex or bd. */
+  /** claude-auto or codex. */
   kind: string
-  /** Empty for a memory that is not a file, such as a bd memory. */
   path: string
   title: string
   updated: string
@@ -122,7 +121,6 @@ export function formatUpdated(updated: string): string {
 
 /** Who wrote a memory, in the words the rows read. */
 export function memoryKindLabel(memory: AgentMemory): string {
-  if (memory.kind === 'bd') return 'bd'
   if (memory.kind === 'codex') return 'codex'
   return memory.path.endsWith('/MEMORY.md') ? 'claude index' : 'claude'
 }

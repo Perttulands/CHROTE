@@ -35,10 +35,6 @@ func newAgentTestHost(t *testing.T) *agentTestHost {
 		home: home,
 		root: root,
 		handler: &AgentContextHandler{
-			// A command that does not exist: bd contributes nothing, and the
-			// rest of the stack is what these tests are about.
-			bdCommand:           filepath.Join(base, "no-such-bd"),
-			execTimeout:         5 * time.Second,
 			managedClaudePolicy: filepath.Join(base, "etc", "claude-code", "CLAUDE.md"),
 			homeForUser:         func(string) (string, error) { return home, nil },
 			allowedRoots:        func() []string { return []string{root} },
@@ -460,25 +456,6 @@ func TestAgentContext_HasNoCodexMemoriesWhenTheHandbookIsAbsent(t *testing.T) {
 	resolved := host.handler.resolve(folder, harnessCodex, "", host.home)
 	if len(resolved.Memories) != 0 {
 		t.Fatalf("memories = %v, want none", memoryTitles(resolved.Memories))
-	}
-}
-
-func TestAgentContext_BdMemoriesIgnoreSchemaMetadata(t *testing.T) {
-	host := newAgentTestHost(t)
-	folder := filepath.Join(host.root, "project")
-	mkdirAll(t, folder)
-	fakeBd := writeFile(t, filepath.Join(host.root, "bin", "bd"), "#!/bin/sh\nprintf '%s' '{\"schema_version\":1,\"second\":\"two\",\"first\":\"one\"}'\n")
-	if err := os.Chmod(fakeBd, 0o755); err != nil {
-		t.Fatalf("make fake bd executable: %v", err)
-	}
-	host.handler.bdCommand = fakeBd
-
-	memories := host.handler.bdMemories(folder)
-	assertSequence(t, memoryTitles(memories), []string{"first", "second"}, "bd memories")
-	for _, memory := range memories {
-		if memory.Kind != memoryBd || !memory.Readable {
-			t.Fatalf("memory = %+v, want a readable bd memory", memory)
-		}
 	}
 }
 
