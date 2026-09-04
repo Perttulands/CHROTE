@@ -16,13 +16,10 @@ package api
 
 import (
 	"bufio"
-	"context"
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"sort"
@@ -70,7 +67,6 @@ const (
 const (
 	memoryClaudeAuto = "claude-auto"
 	memoryCodex      = "codex"
-	memoryBd         = "bd"
 )
 
 // The Claude Code auto-memory index; it reads as the file it is, not as a slug.
@@ -115,8 +111,7 @@ type AgentSkill struct {
 
 // AgentMemory is one thing an agent was told to remember about this folder.
 type AgentMemory struct {
-	Kind string `json:"kind"`
-	// Empty for a memory that is not a file of its own, such as a bd memory.
+	Kind     string `json:"kind"`
 	Path     string `json:"path"`
 	Title    string `json:"title"`
 	Updated  string `json:"updated"`
@@ -141,8 +136,6 @@ type AgentFileResponse struct {
 
 // AgentContextHandler resolves what an agent sees.
 type AgentContextHandler struct {
-	bdCommand           string
-	execTimeout         time.Duration
 	managedClaudePolicy string
 	// How a Unix user becomes a home directory. A field so a test can answer
 	// with a temporary home instead of the host's real accounts.
@@ -153,13 +146,7 @@ type AgentContextHandler struct {
 
 // NewAgentContextHandler creates a handler over the host's own accounts.
 func NewAgentContextHandler() *AgentContextHandler {
-	bdCommand := os.Getenv("CHROTE_BD_COMMAND")
-	if bdCommand == "" {
-		bdCommand = "bd"
-	}
 	return &AgentContextHandler{
-		bdCommand:           bdCommand,
-		execTimeout:         30 * time.Second,
 		managedClaudePolicy: claudeManagedPolicyPath,
 		homeForUser:         defaultHomeForUser,
 		allowedRoots:        core.GetAllowedRoots,
@@ -315,7 +302,6 @@ func (h *AgentContextHandler) resolve(folder, harness, unixUser, home string) Ag
 		response.Skills = claudeSkills(home, folder)
 		response.Memories = claudeMemories(home, folder)
 	}
-	response.Memories = append(response.Memories, h.bdMemories(folder)...)
 	return response
 }
 
@@ -867,39 +853,6 @@ func codexAppliesTo(line, folder string) bool {
 		}
 	}
 	return false
-}
-
-// bdMemories asks bd for the folder's own memories. A folder with no store, or
-// a bd that will not answer, contributes nothing: the rest of the stack is
-// still worth showing, and an error here would hide it.
-func (h *AgentContextHandler) bdMemories(folder string) []AgentMemory {
-	ctx, cancel := context.WithTimeout(context.Background(), h.execTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, h.bdCommand, "memories", "--json")
-	cmd.Dir = folder
-	output, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-	var entries map[string]json.RawMessage
-	if err := json.Unmarshal(output, &entries); err != nil {
-		return nil
-	}
-	keys := make([]string, 0, len(entries))
-	for key, raw := range entries {
-		var value string
-		if err := json.Unmarshal(raw, &value); err != nil {
-			continue
-		}
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	memories := make([]AgentMemory, 0, len(keys))
-	for _, key := range keys {
-		memories = append(memories, AgentMemory{Kind: memoryBd, Title: key, Readable: true})
-	}
-	return memories
 }
 
 // workspaceInstructionFiles is what a folder can own of its own instruction

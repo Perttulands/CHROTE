@@ -52,7 +52,6 @@ function context(overrides: Partial<AgentContext> = {}): AgentContext {
     ],
     memories: [
       { kind: 'claude-auto', path: '/home/operator/.claude/projects/-srv-chrote/memory/MEMORY.md', title: 'MEMORY.md', updated: '2026-09-03T15:31:00Z', readable: true },
-      { kind: 'bd', path: '', title: 'beads-acl-no-chmod-700', updated: '', readable: true },
     ],
     ...overrides,
   }
@@ -82,7 +81,6 @@ describe('AgentStack', () => {
     expect(screen.getByText('project /srv/chrote/skills')).toBeInTheDocument()
     expect(screen.getByText('MEMORY.md')).toBeInTheDocument()
     expect(screen.getByText('claude index')).toBeInTheDocument()
-    expect(screen.getByText('beads-acl-no-chmod-700')).toBeInTheDocument()
   })
 
   it('says a file is not readable rather than leaving it out', () => {
