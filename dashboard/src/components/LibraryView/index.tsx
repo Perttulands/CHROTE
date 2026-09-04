@@ -23,6 +23,7 @@ import { fetchBeadWork, type BeadRow } from '../../beads/beadsApi'
 import { isBeadClosed } from '../../beads/beadStatus'
 import { registerChords } from '../../keys/chords'
 import { getSessionKey } from '../../types'
+import { pasteToResident } from '../../residents/residentPresence'
 import { copyAndAnnounce } from '../../utils/clipboard'
 import type { MenuGroup } from '../Menu'
 import MenuTarget from '../MenuTarget'
@@ -232,16 +233,20 @@ export default function LibraryView() {
     openSendToSession({ reference: libraryReference(page?.path ?? shelf) })
   }, [openSendToSession, page, shelf])
 
-  // Send to Librarian names the resident: his session while it runs, and the
-  // offer to launch him from the corpus root when it does not. Every row's
-  // hand-off to him goes through here, so the resident column, when it
-  // arrives, replaces the drawer with a paste into his prompt in one place.
-  const sendToLibrarian = useCallback((path: string) => {
+  // Send to Librarian is the column at the right where he is living in it: the
+  // line lands in his prompt, unsubmitted, exactly as Alt+S puts the open page
+  // there. With no column, or with his session not running, the drawer takes
+  // over — targeting him where he is somewhere else, and offering to launch
+  // him from the corpus root when he is nowhere. Every row's hand-off goes
+  // through here, so all of them behave the same.
+  const sendToLibrarian = useCallback(async (path: string) => {
+    const reference = libraryReference(path)
+    if (await pasteToResident(reference)) return
     const name = shelves?.librarianSession ?? ''
     const live = name ? sessions.find(candidate => candidate.name === name) : undefined
     openSendToSession(live
-      ? { targetSessionKey: getSessionKey(live.name, live.unixUser), reference: libraryReference(path) }
-      : { reference: libraryReference(path), launch: { label: 'Launch the Librarian', folder: root } })
+      ? { targetSessionKey: getSessionKey(live.name, live.unixUser), reference }
+      : { reference, launch: { label: 'Launch the Librarian', folder: root } })
   }, [openSendToSession, root, sessions, shelves?.librarianSession])
 
   // A shelf is open while its listing is the room: not while a page from it is
@@ -257,7 +262,7 @@ export default function LibraryView() {
       id: 'read',
       rows: [
         { id: 'open', label: 'Open', onSelect: () => openPage(path) },
-        { id: 'send', label: 'Send to Librarian', chord: 'Alt+S', onSelect: () => sendToLibrarian(path) },
+        { id: 'send', label: 'Send to Librarian', chord: 'Alt+S', onSelect: () => { void sendToLibrarian(path) } },
       ],
     },
     {
@@ -274,7 +279,7 @@ export default function LibraryView() {
     {
       id: 'shelf',
       rows: [
-        { id: 'send', label: 'Send shelf to Librarian', chord: 'Alt+S', onSelect: () => sendToLibrarian(name) },
+        { id: 'send', label: 'Send shelf to Librarian', chord: 'Alt+S', onSelect: () => { void sendToLibrarian(name) } },
         { id: 'collapse', label: 'Collapse', disabled: !shelfOpen(name), onSelect: collapseShelf },
       ],
     },

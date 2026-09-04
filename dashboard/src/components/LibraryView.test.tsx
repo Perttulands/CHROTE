@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import LibraryView from './LibraryView'
 import { resetBeadCardForTest, useBeadCardRequest } from '../beads/beadCard'
 import { resetChordsForTest } from '../keys/chords'
+import { mountResident, resetResidentForTest } from '../residents/residentPresence'
 import { DEFAULT_SETTINGS } from '../types'
 import type {
   LibraryChange,
@@ -17,6 +18,7 @@ const mockState = vi.hoisted(() => ({
   openSendToSession: vi.fn(),
   announce: vi.fn(),
   copy: vi.fn(),
+  paste: vi.fn(),
   sessions: [] as { name: string; unixUser?: string }[],
   shelves: null as LibraryShelves | null,
   shelvesError: null as Error | null,
@@ -88,6 +90,9 @@ function CardProbe() {
 beforeEach(() => {
   resetBeadCardForTest()
   resetChordsForTest()
+  resetResidentForTest()
+  mockState.paste.mockReset()
+  mockState.paste.mockResolvedValue(false)
   mockState.openSendToSession.mockReset()
   mockState.announce.mockReset()
   mockState.copy.mockReset()
@@ -443,10 +448,10 @@ describe('LibraryView', () => {
     fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
     fireEvent.click(screen.getByRole('menuitem', { name: /^Send to Librarian/ }))
 
-    expect(mockState.openSendToSession).toHaveBeenCalledWith({
+    await waitFor(() => expect(mockState.openSendToSession).toHaveBeenCalledWith({
       targetSessionKey: 'alice:librarian',
       reference: 'library preferences/workflow.md',
-    })
+    }))
   })
 
   // With no Librarian session the hand-off is not dead: the drawer opens on
@@ -458,10 +463,29 @@ describe('LibraryView', () => {
     fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
     fireEvent.click(screen.getByRole('menuitem', { name: /^Send to Librarian/ }))
 
-    expect(mockState.openSendToSession).toHaveBeenCalledWith({
+    await waitFor(() => expect(mockState.openSendToSession).toHaveBeenCalledWith({
       reference: 'library preferences/workflow.md',
       launch: { label: 'Launch the Librarian', folder: '/corpus' },
-    })
+    }))
+  })
+
+  // With the Librarian living in the column, a row's hand-off is a paste into
+  // his prompt rather than a drawer over him.
+  it('pastes a page and a shelf into the Librarian where his column is there', async () => {
+    mountResident({ tab: 'library', focus: vi.fn(), paste: mockState.paste })
+    mockState.paste.mockResolvedValue(true)
+    await openLibrary()
+    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+
+    fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Send to Librarian/ }))
+    await waitFor(() => expect(mockState.paste).toHaveBeenCalledWith('library preferences/workflow.md'))
+
+    fireEvent.contextMenu(region('library-left').getByRole('button', { name: /^preferences/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Send shelf to Librarian/ }))
+    await waitFor(() => expect(mockState.paste).toHaveBeenLastCalledWith('library preferences'))
+
+    expect(mockState.openSendToSession).not.toHaveBeenCalled()
   })
 
   it('offers a shelf its two actions, and collapses the one it is showing', async () => {

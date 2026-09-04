@@ -207,10 +207,22 @@ export default function ResidentColumn({ tab, reference }: ResidentColumnProps) 
     else columnRef.current?.focus()
   }, [terminal])
 
+  // One line into the prompt, unsubmitted, ending with the line break the
+  // drawer would put between a reference and a note. The tab's own rows hand
+  // their line here through the presence, so a page sent from a row and the
+  // page sent by Alt+S arrive the same way.
+  const pasteLine = useCallback(async (line: string): Promise<boolean> => {
+    if (!session) return false
+    const report = await sendToSession(session.name, { text: `${line}\n`, files: [], submit: false }, session.unixUser)
+    if (report.outcome !== 'sent') return false
+    terminal?.scrollToBottom()
+    focus()
+    return true
+  }, [focus, sendToSession, session, terminal])
+
   // Alt+S: the reference goes into the resident's prompt and stays there for
-  // the operator to finish, so the paste ends with the line break the drawer
-  // would put between a reference and a note. Without a resident to paste
-  // into, the drawer serves whichever session the operator picks.
+  // the operator to finish. Without a resident to paste into, the drawer
+  // serves whichever session the operator picks.
   const paste = useCallback(async () => {
     if (!session) {
       openSendToSession(reference ? { reference } : {})
@@ -220,11 +232,8 @@ export default function ResidentColumn({ tab, reference }: ResidentColumnProps) 
       focus()
       return
     }
-    const report = await sendToSession(session.name, { text: `${reference}\n`, files: [], submit: false }, session.unixUser)
-    if (report.outcome !== 'sent') return
-    terminal?.scrollToBottom()
-    focus()
-  }, [focus, openSendToSession, reference, sendToSession, session, terminal])
+    await pasteLine(reference)
+  }, [focus, openSendToSession, pasteLine, reference, session])
 
   useEffect(() => registerChords([{
     id: `resident.${tab}.send`,
@@ -235,7 +244,7 @@ export default function ResidentColumn({ tab, reference }: ResidentColumnProps) 
     run: () => { void paste() },
   }]), [label, paste, tab])
 
-  useEffect(() => mountResident({ tab, focus }), [focus, tab])
+  useEffect(() => mountResident({ tab, focus, paste: pasteLine }), [focus, pasteLine, tab])
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed(open => {
