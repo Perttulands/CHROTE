@@ -21,7 +21,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import Editor from '../Editor'
 import Markdown from '../Markdown'
 import LibraryMap from './Map'
-import { RECENCY_WINDOWS, neighboursOf, type RecencyWindow } from './mapLayout'
+import { neighboursOf } from './mapLayout'
+import { NOW, SCRUB_STEPS, backFrom, existedAt, momentOf, snapTo, stopsOn } from './mapMoment'
 import { shelfHues } from './mapShelves'
 import { useTheme } from '../../theme/ThemeContext'
 import { useSession } from '../../context/SessionContext'
@@ -66,12 +67,8 @@ export function libraryReference(path: string | null): string {
   return path ? `library ${path}` : 'library'
 }
 
-/** The one line under the window control that says what the dimming means. */
-function windowLegend(window: RecencyWindow): string {
-  if (window === 'all') return 'Every page, faded as it ages'
-  const entry = RECENCY_WINDOWS.find(candidate => candidate.id === window)
-  return `Dimmed: not changed in the last ${entry?.days === 1 ? 'day' : `${entry?.days} days`}`
-}
+/** How far back the scrubber reaches when the corpus is younger than that. */
+const LEAST_SPAN = 30 * 86_400_000
 
 function count(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
@@ -111,7 +108,9 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   // Every page this dive has passed through, oldest first; the last of them is
   // the page being read. Empty means no dive is open.
   const [trail, setTrail] = useState<string[]>([])
-  const [recency, setRecency] = useState<RecencyWindow>('all')
+  // Where the scrubber stands, as a place along it rather than as a time, so
+  // the control and the reading cannot drift apart. The right end is now.
+  const [scrub, setScrub] = useState(SCRUB_STEPS)
   const [historyOpen, setHistoryOpen] = useState(false)
   const diveRef = useRef<HTMLElement>(null)
 
@@ -425,6 +424,20 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     [shelves, theme.shelves],
   )
 
+  // The moment the map is read at, and how far back the scrubber reaches: from
+  // the corpus's own first page, or a month, whichever is longer. One reading
+  // of the clock per graph, so nothing moves because time passed.
+  const now = useMemo(() => Date.now(), [graph])
+  const span = useMemo(() => {
+    const arrivals = (graph?.pages ?? []).map(entry => momentOf(entry.created)).filter(at => at > 0)
+    return Math.max(LEAST_SPAN, arrivals.length > 0 ? now - Math.min(...arrivals) : 0)
+  }, [graph, now])
+  const moment = scrub >= SCRUB_STEPS ? NOW : now - backFrom(scrub, span)
+  const stops = useMemo(() => stopsOn(span), [span])
+  const momentLegend = moment === NOW
+    ? 'The corpus as it stands'
+    : `The corpus ${libraryWhen(new Date(moment).toISOString(), now)}`
+
   const commitRailWidth = useCallback((library: number) => {
     updateSettings({ railWidth: { ...settings.railWidth, library } })
   }, [settings.railWidth, updateSettings])
@@ -433,8 +446,16 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   if (!shelves) return <div className="library-view"><p className="library-empty">Opening the library…</p></div>
   if (!shelves.root) return <div className="library-view"><p className="library-empty">No library is configured</p></div>
 
-  const mapPages = shown ? shown.pages.filter(entry => entry.shelf !== '').length : 0
-  const mapShelves = shown ? new Set(shown.pages.filter(entry => entry.shelf !== '').map(entry => entry.shelf)).size : 0
+  // What the bar counts is what the map draws: the shelves that are on, at the
+  // moment the scrubber stands at. The layout is not narrowed by the moment —
+  // that is what lets the corpus grow in place under a drag — so the count is
+  // worked out here rather than read off the layout.
+  const drawnPages = (shown?.pages ?? []).filter(entry => existedAt(momentOf(entry.created), moment))
+  const drawnPaths = new Set(drawnPages.map(entry => entry.path))
+  const mapPages = drawnPages.filter(entry => entry.shelf !== '').length
+  const mapShelves = new Set(drawnPages.filter(entry => entry.shelf !== '').map(entry => entry.shelf)).size
+  const mapLinks = (shown?.links ?? []).filter(([from, to]) => drawnPaths.has(from) && drawnPaths.has(to)).length
+  const mapTags = (shown?.tags ?? []).filter(([from, to]) => drawnPaths.has(from) && drawnPaths.has(to)).length
 
   const mapOrWhy = () => {
     if (shown) {
@@ -446,7 +467,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
           hoverPath={hoverPath}
           soloShelf={hoverShelf}
           hues={hues}
-          window={recency}
+          moment={moment}
           onOpen={openPage}
         />
       )
@@ -599,25 +620,34 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
                 <span className="library-map-title">The map</span>
                 {shown && (
                   <span className="library-map-count">
-                    {count(mapPages, 'page')} · {count(mapShelves, 'shelf', 'shelves')} · {count(shown.links.length, 'link')} · {count(shown.tags.length, 'shared tag')}
+                    {count(mapPages, 'page')} · {count(mapShelves, 'shelf', 'shelves')} · {count(mapLinks, 'link')} · {count(mapTags, 'shared tag')}
                   </span>
                 )}
-                <span className="library-map-windows" role="group" aria-label="The recency window">
-                  {RECENCY_WINDOWS.map(entry => (
-                    <button
-                      key={entry.id}
-                      type="button"
-                      className={`library-map-window${entry.id === recency ? ' on' : ''}`}
-                      aria-pressed={entry.id === recency}
-                      onClick={() => setRecency(entry.id)}
-                    >
-                      {entry.label}
-                    </button>
-                  ))}
-                </span>
-                <span className="library-map-legend">{windowLegend(recency)}</span>
+                <span className="library-map-legend">{momentLegend}</span>
               </div>
               {mapOrWhy()}
+              {/* The moment the map is read at, along its bottom edge. Dragging
+                  left takes pages back out of the corpus in the order they
+                  arrived; dragging right grows it again. The four windows the
+                  map used to offer as buttons are stops along it. */}
+              <div className="library-map-scrub">
+                <input
+                  type="range"
+                  className="library-map-scrubber"
+                  data-ui="library.map.scrubber"
+                  min={0}
+                  max={SCRUB_STEPS}
+                  step={1}
+                  value={scrub}
+                  list="library-map-stops"
+                  aria-label="The moment the map is read at"
+                  aria-valuetext={momentLegend}
+                  onChange={event => setScrub(snapTo(Number(event.target.value), span))}
+                />
+                <datalist id="library-map-stops">
+                  {stops.map(stop => <option key={stop.id} value={stop.position} label={stop.label} />)}
+                </datalist>
+              </div>
             </div>
           ) : (
             <div className="library-page">

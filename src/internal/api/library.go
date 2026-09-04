@@ -468,23 +468,34 @@ func (h *LibraryHandler) Pages(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, http.StatusOK, response)
 }
 
-// lastChangeByPath maps every path under scope to the commit that last touched
-// it. git log is newest first, so the first record naming a path is its last
-// change.
-func (h *LibraryHandler) lastChangeByPath(ctx context.Context, scope string) (map[string]LibraryCommit, error) {
+// changeSpanByPath maps every path under scope to the commit that last touched
+// it and to the one that first did. git log is newest first, so the first
+// record naming a path is its last change and the last one is the commit the
+// page arrived in — which is the only date the corpus has for when a page was
+// written, since the Librarian's rules leave front matter optional.
+func (h *LibraryHandler) changeSpanByPath(ctx context.Context, scope string) (last, first map[string]LibraryCommit, err error) {
 	args := []string{"log", libraryLogFormat, "--name-only"}
 	if scope != "" && scope != "." {
 		args = append(args, "--", scope)
 	}
 	output, err := h.git(ctx, args...)
-	last := make(map[string]LibraryCommit)
+	last = make(map[string]LibraryCommit)
+	first = make(map[string]LibraryCommit)
 	for _, change := range parseLibraryLog(output) {
 		for _, file := range change.Files {
 			if _, seen := last[file]; !seen {
 				last[file] = change.LibraryCommit
 			}
+			first[file] = change.LibraryCommit
 		}
 	}
+	return last, first, err
+}
+
+// lastChangeByPath maps every path under scope to the commit that last touched
+// it.
+func (h *LibraryHandler) lastChangeByPath(ctx context.Context, scope string) (map[string]LibraryCommit, error) {
+	last, _, err := h.changeSpanByPath(ctx, scope)
 	return last, err
 }
 

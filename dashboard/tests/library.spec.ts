@@ -3,7 +3,7 @@
  * chrote-5grx.75, chrote-5grx.76, chrote-5grx.77).
  *
  * One pass through the surface the browser is the point of: land on the map,
- * read a long name in full under the pointer, narrow the recency window, take
+ * read a long name in full under the pointer, scrub the corpus back in time, take
  * the map in and put it back, open a shelf in the rail and point at one of its
  * pages to bring the map to it, dive into a page, travel to a neighbour, walk
  * the trail back, hand the page to the Librarian in the column at the right,
@@ -100,14 +100,29 @@ test.describe('The Library', () => {
     await node(page, LONG_TITLE).hover()
     await expect(page.locator('[data-ui="library.map.hover"]')).toHaveText(LONG_TITLE)
 
-    // The recency window leaves the corpus in place and steps back from what
-    // has not moved lately; All brings it forward again.
-    await page.click('.library-map-window:has-text("Week")')
-    await expect(page.locator('.library-map-legend')).toHaveText('Dimmed: not changed in the last 7 days')
-    await expect(node(page, LONG_TITLE)).toHaveClass(/stale/)
-    await expect(node(page, 'Test isolation')).not.toHaveClass(/stale/)
-    await page.click('.library-map-window:has-text("All")')
+    // The scrubber reads the map at a moment, and dropped near one of its stops
+    // it takes it, so the four windows the map used to offer as buttons are
+    // still one movement away. A day ago, a page written two days ago is on
+    // the map but has been rewritten since, so it stands back; the page that
+    // has not moved in months was current then and does not.
+    const scrubber = page.locator('[data-ui="library.map.scrubber"]')
+    await expect(page.locator('.library-map-legend')).toHaveText('The corpus as it stands')
+    await scrubber.fill('827')
+    await expect(page.locator('.library-map-legend')).toHaveText('The corpus 1 day ago')
+    await expect(node(page, 'Test isolation')).toHaveClass(/stale/)
     await expect(node(page, LONG_TITLE)).not.toHaveClass(/stale/)
+
+    // A week ago it had not been written at all, and is not on the map.
+    await scrubber.fill('670')
+    await expect(page.locator('.library-map-legend')).toHaveText('The corpus 7 days ago')
+    await expect(node(page, 'Test isolation')).toHaveCount(0)
+    await expect(node(page, LONG_TITLE)).toBeVisible()
+
+    // Back at now the corpus is whole again.
+    await scrubber.fill('1000')
+    await expect(page.locator('.library-map-legend')).toHaveText('The corpus as it stands')
+    await expect(node(page, 'Test isolation')).toBeVisible()
+    await expect(node(page, 'Test isolation')).not.toHaveClass(/stale/)
 
     // The map moves: the wheel takes it in, and the way back is offered only
     // while there is one.

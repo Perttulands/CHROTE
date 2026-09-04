@@ -147,6 +147,8 @@ export interface LibraryGraphPage {
   words: number
   /** When git last touched it; '' for a page git has never seen. */
   updated: string
+  /** When the commit that first named it was made; '' if git never saw it. */
+  created: string
   /** Still a proposal rather than an accepted page. */
   candidate: boolean
 }

@@ -22,14 +22,18 @@ import (
 const libraryGraphPageLimit = 2000
 
 // LibraryGraphPage is one page as the map draws it: where it sits, what it is
-// called, how much it says, when it last moved, and whether it is still a
-// candidate rather than a page the operator has accepted.
+// called, how much it says, when it arrived and when it last moved, and whether
+// it is still a candidate rather than a page the operator has accepted.
 type LibraryGraphPage struct {
-	Path      string `json:"path"`
-	Shelf     string `json:"shelf"`
-	Title     string `json:"title"`
-	Words     int    `json:"words"`
-	Updated   string `json:"updated"`
+	Path    string `json:"path"`
+	Shelf   string `json:"shelf"`
+	Title   string `json:"title"`
+	Words   int    `json:"words"`
+	Updated string `json:"updated"`
+	// Created is when the commit that first named this path was made, which is
+	// the corpus's own answer to when the page was written. Empty for a page
+	// git has never seen.
+	Created   string `json:"created"`
 	Candidate bool   `json:"candidate"`
 }
 
@@ -249,12 +253,13 @@ func libraryTagEdges(pages []LibraryGraphPage, tags map[string][]string) [][3]st
 }
 
 // Graph handles GET /api/library/graph - the corpus as the map draws it. One
-// walk reads every page, one git log dates them all.
+// walk reads every page, one git log dates them all, from the commit each
+// arrived in to the one that last touched it.
 func (h *LibraryHandler) Graph(w http.ResponseWriter, r *http.Request) {
 	if !h.configured(w) {
 		return
 	}
-	lastChange, gitErr := h.lastChangeByPath(r.Context(), "")
+	lastChange, firstChange, gitErr := h.changeSpanByPath(r.Context(), "")
 
 	pages := make([]LibraryGraphPage, 0)
 	bodies := make(map[string]string)
@@ -294,6 +299,9 @@ func (h *LibraryHandler) Graph(w http.ResponseWriter, r *http.Request) {
 		}
 		if commit, known := lastChange[relative]; known {
 			page.Updated = commit.Time
+		}
+		if commit, known := firstChange[relative]; known {
+			page.Created = commit.Time
 		}
 		pages = append(pages, page)
 		bodies[relative] = body

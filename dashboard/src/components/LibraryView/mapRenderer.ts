@@ -29,6 +29,7 @@ import { dotRadius, type MapCard } from './mapBands'
 import { curveControl } from './mapCurve'
 import { createEdgeLayer, type EdgeLayer } from './mapEdgesGL'
 import { alphaOf, edgeLight, glows, lightOf, type MapLight, type MapLighting } from './mapLight'
+import { currentAt, existedAt } from './mapMoment'
 import type { MapEdge, MapLabel, MapNode } from './mapLayout'
 
 /** The colours the drawing uses, read from the theme rather than invented. */
@@ -62,8 +63,12 @@ export interface MapScene {
   height: number
   /** What the pointer is asking about, and how far its light reaches. */
   lighting: MapLighting
-  /** Pages outside the recency window, drawn all but out of the way. */
-  stale: ReadonlySet<string>
+  /**
+   * The moment the map is read at. A page that arrived after it is not drawn;
+   * one changed since it is drawn all but out of the way, because what it says
+   * now is not what it said then.
+   */
+  moment: number
   /** Which hue each shelf is drawn in. Empty leaves the map in its greys. */
   hues: ReadonlyMap<string, string>
   palette: MapPalette
@@ -257,7 +262,12 @@ export function createCanvasRenderer(
   // one is handed down otherwise, which is what tells the layer to leave the
   // buffer it already holds alone.
   let colours: Uint8Array | null = null
-  let painted: { lighting: MapLighting; palette: MapPalette; hues: ReadonlyMap<string, string> } | null = null
+  let painted: {
+    lighting: MapLighting
+    palette: MapPalette
+    hues: ReadonlyMap<string, string>
+    moment: number
+  } | null = null
   // One small image per colour, shade and size, kept until the map is thrown
   // away. A zoom asks for sizes it has not stamped before, so the sheet is
   // emptied rather than allowed to grow without end.
@@ -328,7 +338,7 @@ export function createCanvasRenderer(
    * links times two lookups by name.
    */
   const repaint = (scene: MapScene) => {
-    if (colours && painted && painted.lighting === scene.lighting
+    if (colours && painted && painted.lighting === scene.lighting && painted.moment === scene.moment
       && painted.palette === scene.palette && painted.hues === scene.hues) return colours
     const strengths = new Int8Array(scene.nodes.length)
     scene.nodes.forEach((node, position) => {
@@ -359,6 +369,10 @@ export function createCanvasRenderer(
       const from = edgeFrom[index]
       const to = edgeTo[index]
       if (from < 0 || to < 0) continue
+      // A link between pages that had not both arrived yet is drawn at
+      // nothing: the buffer keeps its shape so a scrub costs no geometry.
+      if (!existedAt(scene.nodes[from].createdAt, scene.moment)) continue
+      if (!existedAt(scene.nodes[to].createdAt, scene.moment)) continue
       const light = edgeLight(decode(strengths[from]), decode(strengths[to]), scene.lighting)
       const shade = inkFor(scene.nodes[from].shelf)[light === null ? 0 : light === 'out' ? 4 : light + 1]
       built[index * 4] = shade[0]
@@ -367,7 +381,7 @@ export function createCanvasRenderer(
       built[index * 4 + 3] = shade[3]
     }
     colours = built
-    painted = { lighting: scene.lighting, palette: scene.palette, hues: scene.hues }
+    painted = { lighting: scene.lighting, palette: scene.palette, hues: scene.hues, moment: scene.moment }
     return built
   }
 
@@ -388,6 +402,7 @@ export function createCanvasRenderer(
       const from = positions.get(edge.from)
       const to = positions.get(edge.to)
       if (!from || !to) return
+      if (!existedAt(from.createdAt, scene.moment) || !existedAt(to.createdAt, scene.moment)) return
       if (Math.max(from.x, to.x) < view.left || Math.min(from.x, to.x) > view.right) return
       if (Math.max(from.y, to.y) < view.top || Math.min(from.y, to.y) > view.bottom) return
       const light = edgeLight(lightOf(from, scene.lighting), lightOf(to, scene.lighting), scene.lighting)
@@ -425,8 +440,9 @@ export function createCanvasRenderer(
     const { scale, x: offsetX, y: offsetY } = scene.transform
     scene.nodes.forEach(node => {
       if (node.x < view.left || node.x > view.right || node.y < view.top || node.y > view.bottom) return
+      if (!existedAt(node.createdAt, scene.moment)) return
       const light = lightOf(node, scene.lighting)
-      const stale = scene.stale.has(node.path)
+      const stale = !currentAt(node.updatedAt, scene.moment)
       const lit = glows(light)
       // A page's colour says which shelf it is on. A candidate is not on one
       // yet — it is a proposal — so it stays grey, and the map reads at a

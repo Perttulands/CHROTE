@@ -10,7 +10,7 @@ import { buildIndex, hitTest } from './mapIndex'
 import type { MapNode } from './mapLayout'
 
 const at = (path: string, x: number, y: number, r = 4): MapNode => ({
-  path, shelf: 'knowledge', title: path, x, y, r, words: 40, opacity: 1, updated: '', candidate: false,
+  path, shelf: 'knowledge', title: path, x, y, r, words: 40, opacity: 1, updated: '', createdAt: 0, updatedAt: 0, candidate: false,
 })
 
 describe('the map index', () => {

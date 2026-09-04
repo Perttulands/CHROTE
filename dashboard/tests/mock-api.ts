@@ -620,6 +620,10 @@ export async function mockBeadsApiError(page: Page) {
  */
 const libraryChangedAt = new Date(Date.now() - 3 * 3600_000).toISOString()
 const libraryLongAgo = new Date(Date.now() - 90 * 86_400_000).toISOString()
+// When each page arrived: the old one at the corpus's start, the rest lately,
+// so scrubbing back takes the recent pages off the map and leaves the old one.
+const libraryStartedAt = new Date(Date.now() - 200 * 86_400_000).toISOString()
+const libraryArrivedAt = new Date(Date.now() - 2 * 86_400_000).toISOString()
 
 export const mockLibraryShelves = {
   root: '/corpus',
@@ -665,12 +669,13 @@ const mockLibraryPageContents: Record<string, { path: string; title: string; upd
 /** The same corpus as the map reads it: three pages, two links, one shared tag. */
 const mockLibraryGraph = {
   pages: [
-    { path: 'knowledge/testing.md', shelf: 'knowledge', title: 'Test isolation', words: 60, updated: libraryChangedAt, candidate: false },
-    { path: 'preferences/tools.md', shelf: 'preferences', title: 'Tool Preferences', words: 30, updated: libraryChangedAt, candidate: false },
-    { path: 'preferences/workflow.md', shelf: 'preferences', title: 'Workflow Preferences', words: 200, updated: libraryChangedAt, candidate: false },
-    // A name past the label measure, last touched long enough ago that any
-    // window narrower than all leaves it behind.
-    { path: 'knowledge/long.md', shelf: 'knowledge', title: 'A note whose name runs well past the measure a label is drawn at', words: 45, updated: libraryLongAgo, candidate: false },
+    { path: 'knowledge/testing.md', shelf: 'knowledge', title: 'Test isolation', words: 60, updated: libraryChangedAt, created: libraryArrivedAt, candidate: false },
+    { path: 'preferences/tools.md', shelf: 'preferences', title: 'Tool Preferences', words: 30, updated: libraryChangedAt, created: libraryArrivedAt, candidate: false },
+    { path: 'preferences/workflow.md', shelf: 'preferences', title: 'Workflow Preferences', words: 200, updated: libraryChangedAt, created: libraryArrivedAt, candidate: false },
+    // A name past the label measure, on the map since the corpus started and
+    // last touched long enough ago that any moment but the newest leaves it
+    // standing while the rest of the corpus has yet to arrive.
+    { path: 'knowledge/long.md', shelf: 'knowledge', title: 'A note whose name runs well past the measure a label is drawn at', words: 45, updated: libraryLongAgo, created: libraryStartedAt, candidate: false },
   ],
   links: [['knowledge/testing.md', 'preferences/workflow.md'], ['preferences/workflow.md', 'preferences/tools.md']],
   tags: [['preferences/tools.md', 'preferences/workflow.md', 'tooling']],
