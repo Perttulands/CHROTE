@@ -1,5 +1,6 @@
 {
   "AgentContextSheet": "dashboard/src/components/AgentContextSheet.tsx",
+  "AgentEventsProvider": "dashboard/src/agents/AgentEventsProvider.tsx",
   "AgentStack": "dashboard/src/components/AgentStack.tsx",
   "AgentsView": "dashboard/src/components/AgentsView/index.tsx",
   "App": "dashboard/src/App.tsx",
@@ -79,6 +80,8 @@
   "StatusProvider": "dashboard/src/context/StatusContext.tsx",
   "SystemStatusView": "dashboard/src/components/SystemStatusView/index.tsx",
   "TabBar": "dashboard/src/components/TabBar.tsx",
+  "TableColumn": "dashboard/src/components/TableColumn.tsx",
+  "TableProvider": "dashboard/src/context/TableContext.tsx",
   "TaskDetail": "dashboard/src/components/ScheduledTasksView.tsx",
   "TerminalArea": "dashboard/src/components/TerminalArea.tsx",
   "TerminalFilesPanel": "dashboard/src/components/TerminalFilesPanel.tsx",

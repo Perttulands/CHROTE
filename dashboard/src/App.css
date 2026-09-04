@@ -89,6 +89,23 @@
   opacity: 1;
 }
 
+/* A terminal tab holding a session whose agent reported: a dot after the
+   name. The slot is always there, so a report arriving shifts no tab. */
+.tab-event-mark {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  vertical-align: middle;
+  visibility: hidden;
+}
+
+.tab-event-mark.on {
+  visibility: visible;
+}
+
 .tab.external {
   color: var(--text-dim);
   opacity: 0.8;

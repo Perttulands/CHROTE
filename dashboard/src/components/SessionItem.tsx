@@ -8,6 +8,8 @@ import { identityColorFor } from '../theme/theme'
 import { useTheme } from '../theme/ThemeContext'
 import Menu, { type MenuAction, type MenuGroup } from './Menu'
 import { harnessOfCommand, openAgentContext } from '../agents/agentContextPanel'
+import { useAgentEventMarks } from '../agents/AgentEventsProvider'
+import { summaryLine } from '../agents/agentEvents'
 
 interface SessionItemProps {
   session: TmuxSession
@@ -23,6 +25,9 @@ function SessionItem({ session }: SessionItemProps) {
   const { assignedSessions, handleSessionClick, deleteSession, renameSession, workspaces, workspaceIds, focusedWindowKey, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, terminalUsers } = useSession()
   const theme = useTheme()
   const sessionKey = getSessionKey(session.name, session.unixUser)
+  // What the agent inside last reported, while it is news the operator has
+  // not looked at: the row carries a dot and the report's first line.
+  const mark = useAgentEventMarks().has(sessionKey) ? session.lastEvent : undefined
   const assignmentKey = assignedSessions.has(sessionKey) ? sessionKey : session.name
   const assignment = assignedSessions.get(assignmentKey)
   const isAssigned = !!assignment
@@ -263,8 +268,9 @@ function SessionItem({ session }: SessionItemProps) {
     <>
       <div
         ref={setNodeRef}
-        className={`session-item ${isAssigned ? 'assigned' : ''} ${isInFocusedTile ? 'in-focused-tile' : ''} ${isDragging ? 'dragging' : ''}`}
+        className={`session-item ${isAssigned ? 'assigned' : ''} ${isInFocusedTile ? 'in-focused-tile' : ''} ${isDragging ? 'dragging' : ''} ${mark ? 'has-event' : ''}`}
         data-ui="session.row"
+        data-event={mark?.event}
         style={style}
         title={dragLabel}
         aria-current={isInFocusedTile ? 'true' : undefined}
@@ -290,7 +296,17 @@ function SessionItem({ session }: SessionItemProps) {
           </span>
         )}
         <SessionCommandMark command={session.currentCommand} />
-        <SessionLabel name={session.name} className="session-name" />
+        {mark && (
+          <span
+            className="session-event-mark"
+            role="img"
+            aria-label={mark.event === 'finished' ? 'Finished' : 'Needs input'}
+          />
+        )}
+        <span className="session-item-text">
+          <SessionLabel name={session.name} className="session-name" />
+          {mark?.summary && <span className="session-event-summary">{summaryLine(mark.summary)}</span>}
+        </span>
         {badges.length > 0 && (
           <span className="session-badges">
             {badges.map(badge => (

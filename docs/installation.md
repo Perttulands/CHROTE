@@ -261,6 +261,12 @@ marks it seen; the dashboard calls that when the session is focused. A report
 about a session that does not exist on the user's socket is answered `404`.
 Nothing is persisted and nothing polls the harness.
 
+On the device, a report the dashboard has not yet taken in marks the session's
+row and the terminal tab holding it and names the session in the toast; a tone
+and a browser notification while the tab is hidden are off until turned on
+under Settings, Agent events. The browser grants notifications only on a
+secure origin, and the setting reads back what it answered.
+
 ### The Library
 
 Four variables describe the context corpus the Library tab reads. The corpus is

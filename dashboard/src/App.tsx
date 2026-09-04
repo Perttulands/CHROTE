@@ -3,6 +3,7 @@ import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, useSensor, useSe
 import './App.css'
 import { SessionProvider, useSession } from './context/SessionContext'
 import { StatusProvider } from './context/StatusContext'
+import { AgentEventsProvider } from './agents/AgentEventsProvider'
 import { TableProvider } from './context/TableContext'
 import TabBar, { Tab } from './components/TabBar'
 import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
@@ -510,9 +511,11 @@ function App() {
     <ThemeProvider>
       <StatusProvider>
         <SessionProvider>
-          <TerminalPoolProvider>
-            <DashboardContent />
-          </TerminalPoolProvider>
+          <AgentEventsProvider>
+            <TerminalPoolProvider>
+              <DashboardContent />
+            </TerminalPoolProvider>
+          </AgentEventsProvider>
         </SessionProvider>
       </StatusProvider>
     </ThemeProvider>

@@ -32,6 +32,13 @@ release.
   `lastEvent` until `POST /api/agent/event/seen`. The launcher installs the
   hook for Claude Code and Codex while its **Notify on completion** setting is
   on.
+- The dashboard tells an agent event: a dot and the report's first line on the
+  session's row, a dot on the terminal tab holding it, and the toast naming
+  the session, until the tile showing the session is focused, which marks it
+  seen. Two device-local settings add a short tone for each kind of event and
+  a browser notification while the tab is hidden, both off by default. A
+  report already in the list when the page loaded is history and tells
+  nothing.
 
 ### Changed
 

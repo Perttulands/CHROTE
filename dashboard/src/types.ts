@@ -123,6 +123,8 @@ export interface UserSettings {
   hideScrollbar: boolean             // Hide the dead xterm scrollbar gutter in terminals
   keysEnabled: boolean               // Leader chords intercept keys; off hands every key to the pty
   tableWidth: number                 // The table's column at the right, in px; device-local
+  agentEventTones: boolean           // A short tone when an agent finishes or needs input; device-local, off
+  agentEventNotifications: boolean   // A browser notification for the same while this tab is hidden; device-local, off
   beadsProjectPaths?: string[]       // Manually added beads project paths
 }
 
@@ -139,6 +141,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   hideScrollbar: true,
   keysEnabled: true,
   tableWidth: 400,
+  agentEventTones: false,
+  agentEventNotifications: false,
 }
 
 export interface TmuxSession {

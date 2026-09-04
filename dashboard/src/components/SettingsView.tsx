@@ -7,6 +7,9 @@ import { MAX_TERMINAL_TAB_COUNT, MIN_TERMINAL_TAB_COUNT, defaultSessionPrefixFor
 import FolderPickerModal from './FolderPickerModal'
 import { useConfirmInPlace } from './confirmInPlace'
 import { toDisplayPath } from './FilesView/types'
+import { askNotificationPermission, notificationPermissionWord } from '../agents/browserNotifications'
+import { audioContext, playTone } from '../agents/tones'
+import type { AgentEventKind } from '../types'
 
 function normalizeProjectPath(path: string): string {
   const trimmed = path.trim()
@@ -23,6 +26,7 @@ function SettingsView() {
   const [showFolderPicker, setShowFolderPicker] = useState(false)
   const [projectPathInput, setProjectPathInput] = useState('')
   const [nuking, setNuking] = useState(false)
+  const [notificationPermission, setNotificationPermission] = useState(notificationPermissionWord)
   const configuredUsers = normalizeTerminalUsers(terminalUsers.length > 0
     ? terminalUsers
     : [
@@ -73,6 +77,34 @@ function SettingsView() {
 
   const handleRefreshIntervalChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     updateSettings({ autoRefreshInterval: parseInt(e.target.value, 10) })
+  }
+
+  const handleTonesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateSettings({ agentEventTones: e.target.checked })
+  }
+
+  // The click is the gesture the browser wants before it will make a sound.
+  const playAgentTone = (event: AgentEventKind) => {
+    const context = audioContext()
+    if (!context) {
+      announce('This browser offers no Web Audio', 'error')
+      return
+    }
+    playTone(event, context)
+  }
+
+  // Turning notifications on asks the browser, and the word beside the setting
+  // reads back what it answered. Anything but granted leaves the setting off:
+  // a setting that is on and does nothing is a lie.
+  const handleNotificationsChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.checked) {
+      updateSettings({ agentEventNotifications: false })
+      return
+    }
+    const word = await askNotificationPermission()
+    setNotificationPermission(word)
+    if (word === 'granted') updateSettings({ agentEventNotifications: true })
+    else announce(`Browser notifications: ${word}`, 'error')
   }
 
   const handleLaunchUserChange = (workspaceId: WorkspaceId, launchUser: LaunchUser) => {
@@ -277,6 +309,74 @@ function SettingsView() {
             })}
           </div>
           <p className="settings-hint">Controls which Unix user's tmux socket new shells attach to in each terminal tab.</p>
+        </div>
+      </section>
+
+      {/* Agent events: what this device does beyond the mark and the toast. */}
+      <section className="settings-section" data-ui="settings.agent-events">
+        <h2 className="settings-section-title">Agent events</h2>
+        <p className="settings-description">
+          When an agent finishes or needs input, its session&apos;s row and tab carry a mark until
+          the session is focused, and the toast names it. These two are off until turned on here.
+        </p>
+
+        <div className="settings-field">
+          <label
+            className="settings-label"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={settings.agentEventTones}
+              onChange={handleTonesChange}
+            />
+            Tones
+          </label>
+          <div className="settings-tone-list">
+            <div className="settings-tone-row">
+              <span>Finished: two notes, falling</span>
+              <button
+                type="button"
+                className="settings-btn"
+                aria-label="Play the finished tone"
+                onClick={() => playAgentTone('finished')}
+              >
+                Play
+              </button>
+            </div>
+            <div className="settings-tone-row">
+              <span>Needs input: one note, higher</span>
+              <button
+                type="button"
+                className="settings-btn"
+                aria-label="Play the needs-input tone"
+                onClick={() => playAgentTone('needs-input')}
+              >
+                Play
+              </button>
+            </div>
+          </div>
+          <p className="settings-hint">
+            Made in the browser, 120 ms a note. The browser plays them once you have clicked or typed on the page.
+          </p>
+        </div>
+
+        <div className="settings-field">
+          <label
+            className="settings-label"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={settings.agentEventNotifications}
+              onChange={handleNotificationsChange}
+            />
+            Browser notifications while this tab is hidden
+          </label>
+          <p className="settings-hint">
+            Permission: <span data-ui="settings.notification-permission">{notificationPermission}</span>.
+            Turning this on asks the browser, which grants it only on a secure origin.
+          </p>
         </div>
       </section>
 
