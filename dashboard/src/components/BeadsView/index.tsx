@@ -1,13 +1,15 @@
 /**
  * The Beads tab: the open work of every configured store, read three ways.
  *
- * A rail of projects at the left, "All" first; the map, the ready lists and the
- * stale list as a segmented control; one search across all three. Nothing here
+ * A rail of projects at the left, "All" first; the map, the ready lists, the
+ * flow of an epic and the stale list as a segmented control; one search across
+ * the lists. Nothing here
  * writes: creating, editing and closing Beads stays with `bd` and the agents,
  * and the hand-off out of this tab is the Send drawer.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import FlowView from './FlowView'
 import MapView from './MapView'
 import ReadyView from './ReadyView'
 import StaleView from './StaleView'
@@ -32,11 +34,12 @@ import {
 import { isBeadClosed } from '../../beads/beadStatus'
 import './BeadsView.css'
 
-type BeadsTabView = 'map' | 'ready' | 'stale'
+type BeadsTabView = 'map' | 'ready' | 'flow' | 'stale'
 
 const VIEWS: { id: BeadsTabView; label: string }[] = [
   { id: 'map', label: 'Map' },
   { id: 'ready', label: 'Ready and in progress' },
+  { id: 'flow', label: 'Flow' },
   { id: 'stale', label: 'Stale' },
 ]
 
@@ -52,6 +55,7 @@ export interface BeadsRevealRequest {
 }
 
 interface BeadsViewProps {
+  active?: boolean
   /** A Bead the card asked to be shown here, in its own project. */
   reveal?: BeadsRevealRequest | null
 }
@@ -63,7 +67,7 @@ function projectTally(name: string, rows: { status: string }[]): string {
   return active > 0 ? `${name} ${open} open, ${active} in progress` : `${name} ${open} open`
 }
 
-export default function BeadsView({ reveal }: BeadsViewProps = {}) {
+export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}) {
   const { settings, updateSettings } = useSession()
   const { announce } = useStatus()
   const [projects, setProjects] = useState<BeadProject[]>([])
@@ -257,12 +261,15 @@ export default function BeadsView({ reveal }: BeadsViewProps = {}) {
           {!error && !loading && view === 'ready' && (
             <ReadyView ready={readyRows(matching)} inProgress={inProgressRows(matching)} />
           )}
+          {/* The flow is a graph: search narrows the lists, not the drawing,
+              because a filtered graph loses the edges that explain it. */}
+          {!error && !loading && view === 'flow' && <FlowView rows={rows} />}
           {!error && !loading && view === 'stale' && <StaleView rows={staleRows(matching, staleDays)} />}
         </div>
       </div>
 
       <TableColumn />
-      <ResidentColumn tab="beads" reference={table ? tableReference(table) : null} />
+      <ResidentColumn active={active} tab="beads" reference={table ? tableReference(table) : null} />
     </div>
   )
 }

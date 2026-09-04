@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LibraryGraph } from '../../library/libraryApi'
-import { LABEL_LINE, LANDMARK_LABELS, layoutMap, layoutStrip, neighboursOf, nodeOpacity, placeLabels, type MapNode } from './mapLayout'
+import { LABEL_LINE, LANDMARK_LABELS, layoutMap, neighboursOf, nodeOpacity, placeLabels, withinWindow, type MapNode } from './mapLayout'
 
 const NOW = Date.parse('2026-09-03T12:00:00Z')
 const DAY = 86_400_000
@@ -83,36 +83,20 @@ describe('layoutMap', () => {
   })
 })
 
-describe('layoutStrip', () => {
-  it('puts the open page at the left and every neighbour beside it', () => {
-    const layout = layoutStrip(corpus(), 'knowledge/alpha.md', 960, 150, NOW)
-
-    expect(layout.nodes[0].path).toBe('knowledge/alpha.md')
-    expect(layout.nodes.slice(1).map(node => node.path)).toEqual(['preferences/gamma.md', 'knowledge/beta.md'])
-    layout.nodes.slice(1).forEach(node => expect(node.x).toBeGreaterThan(layout.nodes[0].x))
-    expect(layout.more).toBe(0)
+// The dive's Neighbours list is this function's only reader with a list to
+// show, so what counts as one hop is worth pinning: a written link either
+// way, a shared tag, each page once.
+describe('neighboursOf', () => {
+  it('gathers every page one written link or one shared tag away', () => {
+    expect(neighboursOf(corpus(), 'knowledge/alpha.md')).toEqual(['preferences/gamma.md', 'knowledge/beta.md'])
     expect(neighboursOf(corpus(), 'preferences/gamma.md')).toEqual(['knowledge/alpha.md', 'preferences/delta.md'])
-  })
-
-  it('counts the neighbours a narrow strip cannot hold', () => {
-    const graph = corpus()
-    const hub = 'knowledge/alpha.md'
-    for (let index = 0; index < 20; index++) {
-      const path = `inbox/note-${index}.md`
-      graph.pages.push(page(path))
-      graph.links.push([path, hub])
-    }
-
-    const layout = layoutStrip(graph, hub, 500, 150, NOW)
-
-    expect(layout.nodes.length).toBeLessThan(23)
-    expect(layout.more).toBe(22 - (layout.nodes.length - 1))
+    expect(neighboursOf(corpus(), 'telos/epsilon.md')).toEqual([])
   })
 })
 
 describe('placeLabels', () => {
   const at = (path: string, x: number, y: number, r = 4, candidate = false): MapNode => ({
-    path, shelf: 'knowledge', title: path, x, y, r, opacity: 1, candidate,
+    path, shelf: 'knowledge', title: path, x, y, r, opacity: 1, updated: '', candidate,
   })
 
   it('names every hot page, then the largest accepted pages up to the landmark limit', () => {
@@ -162,5 +146,33 @@ describe('placeLabels', () => {
 
     expect(label.text).toHaveLength(26)
     expect(label.text.endsWith('…')).toBe(true)
+  })
+})
+
+describe('withinWindow', () => {
+  const ago = (days: number) => new Date(NOW - days * DAY).toISOString()
+
+  it('holds a page the window reaches back to and drops one it does not', () => {
+    expect(withinWindow(ago(0.5), 'day', NOW)).toBe(true)
+    expect(withinWindow(ago(2), 'day', NOW)).toBe(false)
+    expect(withinWindow(ago(6.9), 'week', NOW)).toBe(true)
+    expect(withinWindow(ago(8), 'week', NOW)).toBe(false)
+    expect(withinWindow(ago(8), 'month', NOW)).toBe(true)
+    expect(withinWindow(ago(40), 'month', NOW)).toBe(false)
+  })
+
+  it('keeps the page the window ends on, to the millisecond', () => {
+    expect(withinWindow(ago(7), 'week', NOW)).toBe(true)
+    expect(withinWindow(new Date(NOW - 7 * DAY - 1).toISOString(), 'week', NOW)).toBe(false)
+  })
+
+  it('holds everything under all, including a page git never dated', () => {
+    expect(withinWindow('', 'all', NOW)).toBe(true)
+    expect(withinWindow(ago(4000), 'all', NOW)).toBe(true)
+  })
+
+  it('drops a page with no date, or an unreadable one, from any narrower window', () => {
+    expect(withinWindow('', 'month', NOW)).toBe(false)
+    expect(withinWindow('not a date', 'week', NOW)).toBe(false)
   })
 })

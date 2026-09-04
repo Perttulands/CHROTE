@@ -171,9 +171,9 @@ export function shelfOf(path: string): string {
 }
 
 /**
- * A page's prose, without the heading the reading room already shows above it.
+ * A page's prose, without the heading the dive already shows above it.
  *
- * Every page in the corpus opens with its own title, and the room's running
+ * Every page in the corpus opens with its own title, and the dive's running
  * head carries that title over the path and the date. Printing it twice, once
  * in each size, makes the page look like it starts over.
  */

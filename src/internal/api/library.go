@@ -20,7 +20,7 @@ import (
 	"github.com/chrote/server/internal/core"
 )
 
-// The Library is a reading room over one Markdown corpus held in git. The
+// The Library is a map over one Markdown corpus held in git, with a dive beside it for reading. The
 // corpus is the operator's own context library: its top-level directories are
 // the shelves, its files are the pages, and its history is what changed. CHROTE
 // reads it, searches it, and commits the operator's own small corrections back

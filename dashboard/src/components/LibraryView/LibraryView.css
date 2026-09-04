@@ -1,12 +1,12 @@
-/* The Library: a rail, a room and a desk.
+/* The Library: a rail, the map, and a page dived into beside it.
    Character comes from the names and the layout — Shelves, New arrivals,
-   Proposals, the map, the reading room, the Front desk — not from
-   decoration. Nothing here takes colour it has not earned. */
+   Proposals, the map, the trail through a dive — not from decoration.
+   Nothing here takes colour it has not earned. */
 
 .library-view {
   flex: 1;
   /* The tab shrinks to the workspace rather than to the sum of its columns:
-     with the Librarian's column at the right, the reading room is what gives. */
+     with the Librarian's column at the right, the map is what gives. */
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -147,7 +147,7 @@
   overflow: hidden;
 }
 
-/* ---- the map, full and as the strip ---- */
+/* ---- the map ---- */
 
 .library-map-frame {
   flex: 1;
@@ -175,18 +175,13 @@
   text-transform: uppercase;
 }
 
+/* The bar is one line: the count gives its width up first, then the legend,
+   so the window control and the toggle keep theirs. */
 .library-map-count {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.library-map-toggle {
-  margin-left: auto;
-}
-
-.library-map-toggle:disabled {
-  color: var(--text-dim);
-  cursor: default;
 }
 
 .library-map {
@@ -198,41 +193,141 @@
 
 .library-map svg {
   display: block;
+  cursor: grab;
+  touch-action: none;
 }
 
-/* The strip is the same drawing at a fixed height, with its own head laid
-   over the top-left corner and the toggle over the top-right, as the mock has
-   them. */
-.library-strip {
-  flex: none;
-  position: relative;
-  height: 150px;
-  border-bottom: 1px solid var(--divider);
+.library-map svg:active {
+  cursor: grabbing;
 }
 
-.library-strip .library-map-bar {
+/* The way back, offered only once the map has been moved. */
+.library-map-reset {
   position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: auto;
-  padding: 10px 14px 0;
-  border: none;
-  pointer-events: none;
+  right: 12px;
+  bottom: 12px;
+  padding: 4px 10px;
+  background: var(--background);
+  border: 1px solid var(--divider);
+  border-radius: 2px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
 }
 
-.library-strip .library-map-toggle {
-  pointer-events: auto;
+.library-map-reset:hover {
+  color: var(--text-primary);
 }
 
-.library-map-strip {
+/* The recency window, and the one line that says what its dimming means. */
+.library-map-windows {
   flex: none;
-  height: 150px;
+  display: flex;
+  gap: 8px;
 }
 
+.library-map-window {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.library-map-window:hover {
+  color: var(--text-secondary);
+}
+
+.library-map-window.on {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* A legend that has been cut short explains nothing, so it keeps its width
+   and the count beside it gives ground instead. */
+.library-map-legend {
+  flex: none;
+}
+
+/* ---- the dive: a page read beside the map it was opened from ---- */
+
+/*
+ * The column stands between the map and the table. It is given a measure
+ * prose is readable at and no more, so the map keeps the rest of the width;
+ * on a narrow window it gives ground rather than pushing the map out.
+ */
+.library-dive {
+  flex: none;
+  width: 46ch;
+  max-width: 34%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--divider);
+}
+
+/* The way back through this dive, and the way out of it. */
+.library-trail {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  height: 40px;
+  padding: 12px 14px 0;
+  border-bottom: 1px solid var(--divider);
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.library-trail-step {
+  padding: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.library-trail-step:hover {
+  color: var(--text-primary);
+}
+
+/* The page in hand is the end of the trail, not a link back to itself. */
+.library-trail-step[aria-current='page'] {
+  color: var(--text-primary);
+  cursor: default;
+}
+
+.library-trail-sep {
+  flex: none;
+}
+
+.library-dive-close {
+  margin-left: auto;
+  flex: none;
+}
+
+/* In the column the page takes the column's measure, and its own margins. */
+.library-dive .library-page {
+  width: auto;
+  padding: 16px 14px 0;
+}
+
+/* A hairline stays a hairline however far the map is taken in. */
 .library-map-edge {
   stroke: var(--divider);
   stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .library-map-edge.tag {
@@ -266,6 +361,11 @@
   fill: var(--accent);
 }
 
+/* Outside the recency window: still there, all but out of the way. */
+.library-map-node.stale {
+  cursor: default;
+}
+
 .library-map-node:focus-visible .library-map-dot {
   stroke: var(--accent);
   stroke-width: 2;
@@ -292,6 +392,17 @@
 }
 
 .library-map-label.primary {
+  fill: var(--text-primary);
+  font-size: 12px;
+}
+
+/* The pointer's page in full, on its own ground so a long name stays read. */
+.library-map-hover rect {
+  fill: var(--background);
+  stroke: var(--divider);
+}
+
+.library-map-hover text {
   fill: var(--text-primary);
   font-size: 12px;
 }
@@ -435,23 +546,24 @@
   color: var(--text-secondary);
 }
 
-/* What links here, beneath the prose. */
-.library-linked-from {
+/* Where to go from here, beneath the prose: what this page touches, then
+   what touches it. */
+.library-links {
   margin-top: 28px;
 }
 
-.library-linked-from h2 {
+.library-links h2 {
   margin: 0 0 8px;
   font-size: 14px;
   font-weight: 400;
   color: var(--text-primary);
 }
 
-.library-linked-from p {
+.library-links p {
   margin: 0;
 }
 
-/* A backlink reads like a link in the prose above it: text, underlined, no
+/* A neighbour reads like a link in the prose above it: text, underlined, no
    colour it has not earned. */
 .library-link {
   padding: 0;

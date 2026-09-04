@@ -78,15 +78,19 @@ a Bead to the Clerk, the agent that keeps the register.
 2. Read open work as a map. A click on a row puts its Bead on the table and,
    where the row has children, folds or unfolds them.
 3. Read an epic, its goals and its definitions of done.
-4. Find stale work to clear out.
-5. Open a Bead id printed in terminal output and read it on the table beside
+4. Read the same epic as a flow: waves of work from left to right, the Beads
+   that can run at once stacked in one column, the blocking edges drawn
+   between them. The arrow keys travel it wave by wave and down a column, and
+   a click puts a Bead on the table and brings it to the middle.
+5. Find stale work to clear out.
+6. Open a Bead id printed in terminal output and read it on the table beside
    the session that named it.
-6. Annotate the Bead and hand it to the Clerk, whose column is at the right of
+7. Annotate the Bead and hand it to the Clerk, whose column is at the right of
    the tab.
 
-**Surfaces.** Beads tab, its map and the table (1, 2, 3, 4, 6); terminal
-workspace with the table at its right, for ids in output (5); the Clerk's
-column (6); the Send drawer, for any other session (6).
+**Surfaces.** Beads tab, its map, its flow and the table (1, 2, 3, 4, 5, 7);
+terminal workspace with the table at its right, for ids in output (6); the
+Clerk's column (7); the Send drawer, for any other session (7).
 
 **End action.** Paste into the Clerk: `Alt+S` puts the Bead's reference into the
 Clerk's prompt, and the operator writes the rest and presses `Enter` there.
@@ -176,20 +180,22 @@ filesystem."
 
 1. Step into the library at its map: every page, shelves as labelled clusters,
    wiki links and shared tags as edges, size from length, brightness from
-   recency, candidates dim. Click a page to read it in the reading room, where
-   the map shrinks to a strip of what is near this page.
+   recency, candidates dim. Click a page to dive into it: the map takes it to
+   the middle and closer in, and the page opens in a column beside the map with
+   its neighbours as links to travel by and a trail back through the dive.
 2. Search across everything, and read what changed recently.
 3. Fix an odd wording where you find it; each save is a commit attributed to the
    operator.
 4. Point the Librarian at the page or the shelf.
 
-**Surfaces.** The Library's map and reading room, its search and recent changes
-(1, 2, 3); the editor shared with Files (3); the Librarian's column (4).
+**Surfaces.** The Library's map and the dive column beside it, its search and
+recent changes (1, 2, 3); the editor shared with Files (3); the Librarian's
+column (4).
 
 **End action.** A small manual edit, or paste into the Librarian: `Alt+S` puts
-the page on the table into the Librarian's prompt, and a shelf's menu sends the
-shelf the same way.
+the page being dived into into the Librarian's prompt, and a shelf's menu sends
+the shelf the same way.
 
-**Chords.** `Alt+L` opens the Library tab; `Alt+R` switches between the map and
-the reading room; `Alt+S` pastes the page into the Librarian's prompt;
+**Chords.** `Alt+L` opens the Library tab; `Escape` closes the dive and leaves
+the map where it was; `Alt+S` pastes the page into the Librarian's prompt;
 `Alt+Enter` focuses the Librarian's column.

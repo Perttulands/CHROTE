@@ -42,6 +42,8 @@ import { useResizableWidth } from '../hooks/useResizableWidth'
 import './ResidentColumn.css'
 
 export interface ResidentColumnProps {
+  /** Whether this column's tab is in front. Hidden columns keep UI state only. */
+  active: boolean
   tab: ResidentTab
   /**
    * The one line Alt+S pastes into the resident's prompt: the page open in
@@ -74,7 +76,7 @@ function writeCollapsed(tab: ResidentTab, collapsed: boolean): void {
   }
 }
 
-export default function ResidentColumn({ tab, reference }: ResidentColumnProps) {
+export default function ResidentColumn({ active, tab, reference }: ResidentColumnProps) {
   const {
     sessions,
     settings,
@@ -201,7 +203,7 @@ export default function ResidentColumn({ tab, reference }: ResidentColumnProps) 
   // Until the host has answered, the column keeps its full width: a tab that
   // laid itself out and then moved would break the rule that nothing shifts.
   const showsHeaderOnly = collapsed || squeezed || state === 'not configured'
-  const showsTerminal = running && !showsHeaderOnly
+  const showsTerminal = active && running && !showsHeaderOnly
   const showsLauncher = launching && !showsHeaderOnly && resident !== null && !running
 
   const socketUrl = useMemo(
@@ -243,16 +245,22 @@ export default function ResidentColumn({ tab, reference }: ResidentColumnProps) 
     await pasteLine(reference)
   }, [focus, openSendToSession, pasteLine, reference, session])
 
-  useEffect(() => registerChords([{
-    id: `resident.${tab}.send`,
-    key: 's',
-    direct: { alt: true, shift: false, key: 's' },
-    label: `Paste into the ${label}`,
-    scope: 'global',
-    run: () => { void paste() },
-  }]), [label, paste, tab])
+  useEffect(() => {
+    if (!active) return
+    return registerChords([{
+      id: `resident.${tab}.send`,
+      key: 's',
+      direct: { alt: true, shift: false, key: 's' },
+      label: `Paste into the ${label}`,
+      scope: 'global',
+      run: () => { void paste() },
+    }])
+  }, [active, label, paste, tab])
 
-  useEffect(() => mountResident({ tab, focus, paste: pasteLine }), [focus, pasteLine, tab])
+  useEffect(() => {
+    if (!active) return
+    return mountResident({ tab, focus, paste: pasteLine })
+  }, [active, focus, pasteLine, tab])
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed(open => {

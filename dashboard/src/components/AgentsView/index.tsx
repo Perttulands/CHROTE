@@ -56,6 +56,7 @@ function ageOf(updated: string | undefined): string {
 }
 
 interface AgentsViewProps {
+  active?: boolean
   /**
    * Puts a folder in front of the Files tab. The tab is not this view's to
    * switch, so the app that owns both hands the request down.
@@ -63,7 +64,7 @@ interface AgentsViewProps {
   onOpenInFiles?: (path: string) => void
 }
 
-export default function AgentsView({ onOpenInFiles }: AgentsViewProps = {}) {
+export default function AgentsView({ active = true, onOpenInFiles }: AgentsViewProps = {}) {
   const { settings, terminalUsers, openSendToSession, updateSettings } = useSession()
   const { announce } = useStatus()
   const theme = useTheme()
@@ -324,7 +325,7 @@ export default function AgentsView({ onOpenInFiles }: AgentsViewProps = {}) {
         </aside>
 
         <TableColumn />
-        <ResidentColumn tab="agents" reference={`agents ${folder} ${harness}`} />
+        <ResidentColumn active={active} tab="agents" reference={`agents ${folder} ${harness}`} />
       </div>
     </div>
   )

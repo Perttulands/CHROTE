@@ -3,10 +3,11 @@
  * parent.
  *
  * Alt+Enter is registered once, with the dashboard's other chords, and has to
- * reach whichever column is mounted; the Bead card has to know that Alt+S is
+ * reach whichever column is active; the Bead card has to know that Alt+S is
  * the resident's in this tab and not its own. Neither is a React ancestor of
- * the column, so the mounted column announces itself here and they read it.
- * At most one column is mounted at a time, because a tab is one at a time.
+ * the column, so the front column announces itself here and they read it.
+ * Hidden tabs stay mounted for their UI state, but only the active column
+ * announces itself.
  */
 
 import { useSyncExternalStore } from 'react'

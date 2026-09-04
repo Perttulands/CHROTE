@@ -201,7 +201,6 @@ test.describe('terminal workspace sidecars', () => {
       contentType: 'application/json',
       body: JSON.stringify({ path: '/README.md', repository: '', diff: '', truncated: false }),
     }))
-    await page.evaluate(() => localStorage.setItem('chrote-files-persist-tab-state', '0'))
     await page.reload()
     await openSessionsSidecar(page)
     await expect(page.locator('.session-panel')).toHaveClass(/sidecar-pinned/)
