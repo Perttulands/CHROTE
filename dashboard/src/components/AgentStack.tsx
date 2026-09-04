@@ -14,7 +14,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Markdown from './Markdown'
 import Editor from './Editor'
+import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
+import { copyAndAnnounce } from '../utils/clipboard'
+import type { MenuGroup } from './Menu'
+import MenuTarget from './MenuTarget'
 import { writeTextFile } from './FilesView/fileService'
 import {
   fetchAgentFile,
@@ -56,6 +60,7 @@ function memorySummary(memories: AgentMemory[], hidden: number): string {
 }
 
 export default function AgentStack({ context, query = '' }: AgentStackProps) {
+  const { openSendToSession } = useSession()
   const { announce } = useStatus()
   const [open, setOpen] = useState<OpenRow | null>(null)
   const [content, setContent] = useState<string | null>(null)
@@ -87,20 +92,52 @@ export default function AgentStack({ context, query = '' }: AgentStackProps) {
     [context.memories, needle],
   )
 
+  // Reading the file and putting it in the editor are the same request with a
+  // different ending, so the fetch is written once: the text arrives, and an
+  // edit starts from it rather than from whatever was read before.
+  const showRow = useCallback((row: OpenRow, intent: 'read' | 'edit' = 'read') => {
+    setOpen(row)
+    setContent(null)
+    setReadError(null)
+    setDraft(null)
+    fetchAgentFile(row.path, context.folder, context.harness, context.user)
+      .then(text => {
+        setContent(text)
+        if (intent === 'edit') setDraft(text)
+      })
+      .catch((cause: unknown) => setReadError(cause instanceof Error ? cause.message : 'Could not read the file'))
+  }, [context.folder, context.harness, context.user])
+
+  // A click on the row is a toggle; the menu's Open is a request for a state.
   const openRow = useCallback((row: OpenRow) => {
     if (sameRow(open, row)) {
       setOpen(null)
       setDraft(null)
       return
     }
-    setOpen(row)
-    setContent(null)
-    setReadError(null)
-    setDraft(null)
-    fetchAgentFile(row.path, context.folder, context.harness, context.user)
-      .then(text => setContent(text))
-      .catch((cause: unknown) => setReadError(cause instanceof Error ? cause.message : 'Could not read the file'))
-  }, [context.folder, context.harness, context.user, open])
+    showRow(row)
+  }, [open, showRow])
+
+  /** The rows every instruction and memory file offers, wherever it is listed. */
+  const fileMenu = (row: OpenRow, readable: boolean) => (): MenuGroup[] => {
+    const unreadable = readable ? undefined : 'The server cannot read this file'
+    return [
+      {
+        id: 'read',
+        rows: [
+          { id: 'open', label: 'Open', disabled: !readable, reason: unreadable, onSelect: () => showRow(row) },
+          { id: 'edit', label: 'Edit', disabled: !readable, reason: unreadable, onSelect: () => showRow(row, 'edit') },
+        ],
+      },
+      {
+        id: 'hand',
+        rows: [
+          { id: 'copy-path', label: 'Copy path', onSelect: () => { void copyAndAnnounce(row.path, row.path, announce) } },
+          { id: 'send', label: 'Send', onSelect: () => openSendToSession({ reference: `path ${row.path}` }) },
+        ],
+      },
+    ]
+  }
 
   const saveDraft = useCallback(async () => {
     if (open === null || draft === null) return
@@ -159,33 +196,35 @@ export default function AgentStack({ context, query = '' }: AgentStackProps) {
           const isOpen = sameRow(open, row)
           return (
             <div key={instruction.path}>
-              <div
-                className={`agent-row agent-instruction ${isOpen ? 'open' : ''} ${instruction.readable ? '' : 'unreadable'}`}
-                role="button"
-                tabIndex={0}
-                onClick={() => { if (instruction.readable) openRow(row) }}
-                onKeyDown={event => {
-                  if (event.key !== 'Enter' && event.key !== ' ') return
-                  event.preventDefault()
-                  if (instruction.readable) openRow(row)
-                }}
-              >
-                <span className="agent-scope">{instruction.scope}</span>
-                <span className="agent-path">{instruction.path}</span>
-                {instruction.link && <span className="agent-note-inline">links to {instruction.link}</span>}
-                {instruction.readable
-                  ? <span className="agent-size">{formatSize(instruction.size)}</span>
-                  : <span className="agent-note-inline agent-right">not readable by the server</span>}
-                {isOpen && instruction.readable && content !== null && draft === null && (
-                  <button
-                    type="button"
-                    className="agent-word"
-                    onClick={event => { event.stopPropagation(); setDraft(content) }}
-                  >
-                    Edit
-                  </button>
-                )}
-              </div>
+              <MenuTarget label={`Actions for ${instruction.path}`} groups={fileMenu(row, instruction.readable)}>
+                <div
+                  className={`agent-row agent-instruction ${isOpen ? 'open' : ''} ${instruction.readable ? '' : 'unreadable'}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => { if (instruction.readable) openRow(row) }}
+                  onKeyDown={event => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    if (instruction.readable) openRow(row)
+                  }}
+                >
+                  <span className="agent-scope">{instruction.scope}</span>
+                  <span className="agent-path">{instruction.path}</span>
+                  {instruction.link && <span className="agent-note-inline">links to {instruction.link}</span>}
+                  {instruction.readable
+                    ? <span className="agent-size">{formatSize(instruction.size)}</span>
+                    : <span className="agent-note-inline agent-right">not readable by the server</span>}
+                  {isOpen && instruction.readable && content !== null && draft === null && (
+                    <button
+                      type="button"
+                      className="agent-word"
+                      onClick={event => { event.stopPropagation(); setDraft(content) }}
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+              </MenuTarget>
               {expansion(row, instruction.path, isSettingsInstruction(instruction))}
             </div>
           )
@@ -218,25 +257,35 @@ export default function AgentStack({ context, query = '' }: AgentStackProps) {
           const row: OpenRow = { section: 'memories', path: memory.path }
           const isOpen = sameRow(open, row)
           const readable = memory.readable && memory.path !== ''
+          const line = (
+            <div
+              className={`agent-row agent-memory ${isOpen ? 'open' : ''} ${memory.readable ? '' : 'unreadable'}`}
+              role={readable ? 'button' : undefined}
+              tabIndex={readable ? 0 : undefined}
+              onClick={() => { if (readable) openRow(row) }}
+              onKeyDown={event => {
+                if (!readable || (event.key !== 'Enter' && event.key !== ' ')) return
+                event.preventDefault()
+                openRow(row)
+              }}
+            >
+              <span className="agent-title">{memory.title}</span>
+              {memory.readable
+                ? <span className="agent-updated">{formatUpdated(memory.updated)}</span>
+                : <span className="agent-updated">not readable by the server</span>}
+              <span className="agent-kind">{memoryKindLabel(memory)}</span>
+            </div>
+          )
           return (
             <div key={`${memory.kind}-${memory.path}-${memory.title}`}>
-              <div
-                className={`agent-row agent-memory ${isOpen ? 'open' : ''} ${memory.readable ? '' : 'unreadable'}`}
-                role={readable ? 'button' : undefined}
-                tabIndex={readable ? 0 : undefined}
-                onClick={() => { if (readable) openRow(row) }}
-                onKeyDown={event => {
-                  if (!readable || (event.key !== 'Enter' && event.key !== ' ')) return
-                  event.preventDefault()
-                  openRow(row)
-                }}
-              >
-                <span className="agent-title">{memory.title}</span>
-                {memory.readable
-                  ? <span className="agent-updated">{formatUpdated(memory.updated)}</span>
-                  : <span className="agent-updated">not readable by the server</span>}
-                <span className="agent-kind">{memoryKindLabel(memory)}</span>
-              </div>
+              {/* A memory bd keeps has no file of its own, so it has nothing a menu could act on. */}
+              {memory.path === ''
+                ? line
+                : (
+                  <MenuTarget label={`Actions for ${memory.path}`} groups={fileMenu(row, memory.readable)}>
+                    {line}
+                  </MenuTarget>
+                )}
               {memory.path !== '' && expansion(row, memory.path, false)}
             </div>
           )

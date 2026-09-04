@@ -7,10 +7,20 @@ const mockState = vi.hoisted(() => ({
   announce: vi.fn(),
   fetchAgentFile: vi.fn(),
   writeTextFile: vi.fn(),
+  openSendToSession: vi.fn(),
+  copy: vi.fn(),
 }))
 
 vi.mock('../context/StatusContext', () => ({
   useStatus: () => ({ announce: mockState.announce }),
+}))
+
+vi.mock('../context/SessionContext', () => ({
+  useSession: () => ({ openSendToSession: mockState.openSendToSession }),
+}))
+
+vi.mock('../utils/clipboard', () => ({
+  copyAndAnnounce: (text: string, what: string, announce: unknown) => mockState.copy(text, what, announce),
 }))
 
 vi.mock('./FilesView/fileService', () => ({
@@ -48,11 +58,15 @@ function context(overrides: Partial<AgentContext> = {}): AgentContext {
   }
 }
 
+const menuItems = () => screen.getAllByRole('menuitem').map(item => item.querySelector('.menu-row-label')?.textContent)
+
 describe('AgentStack', () => {
   beforeEach(() => {
     mockState.announce.mockReset()
     mockState.fetchAgentFile.mockReset()
     mockState.writeTextFile.mockReset()
+    mockState.openSendToSession.mockReset()
+    mockState.copy.mockReset()
     mockState.fetchAgentFile.mockResolvedValue('# CHROTE\n\nThe project.\n')
     mockState.writeTextFile.mockResolvedValue(undefined)
   })
@@ -129,5 +143,49 @@ describe('AgentStack', () => {
     expect(screen.queryByText('skill-19')).not.toBeInTheDocument()
     fireEvent.click(screen.getByText('14 more'))
     expect(screen.getByText('skill-19')).toBeInTheDocument()
+  })
+
+  it('offers the same four actions on an instruction row and a memory row', async () => {
+    render(<AgentStack context={context()} />)
+
+    fireEvent.contextMenu(screen.getByText('/srv/chrote/CLAUDE.md'))
+    expect(menuItems()).toEqual(['Open', 'Edit', 'Copy path', 'Send'])
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy path' }))
+    expect(mockState.copy).toHaveBeenCalledWith('/srv/chrote/CLAUDE.md', '/srv/chrote/CLAUDE.md', mockState.announce)
+
+    fireEvent.contextMenu(screen.getByText('MEMORY.md'))
+    expect(menuItems()).toEqual(['Open', 'Edit', 'Copy path', 'Send'])
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Send' }))
+    expect(mockState.openSendToSession).toHaveBeenCalledWith({
+      reference: 'path /home/operator/.claude/projects/-srv-chrote/memory/MEMORY.md',
+    })
+  })
+
+  // Edit from the menu is one step, not open-then-find-the-word: the file is
+  // read and the editor is already holding it.
+  it('puts a closed row straight into the editor from its menu', async () => {
+    render(<AgentStack context={context()} />)
+
+    fireEvent.contextMenu(screen.getByText('/srv/chrote/CLAUDE.md'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }))
+
+    const field = await screen.findByLabelText('Edit /srv/chrote/CLAUDE.md')
+    expect(field).toHaveValue('# CHROTE\n\nThe project.\n')
+  })
+
+  // A file the server cannot read has nothing to open or edit, and the row
+  // says why rather than offering an action that would fail.
+  it('leaves Open and Edit unavailable on an unreadable instruction', () => {
+    render(<AgentStack context={context()} />)
+
+    fireEvent.contextMenu(screen.getByText('/home/operator/.claude/settings.json'))
+    const [open, edit, copyPath] = screen.getAllByRole('menuitem')
+
+    expect(open).toBeDisabled()
+    expect(edit).toBeDisabled()
+    expect(copyPath).toBeEnabled()
+    expect(screen.getAllByText('The server cannot read this file')).toHaveLength(2)
   })
 })
