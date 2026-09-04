@@ -131,18 +131,25 @@ describe('AgentStack', () => {
     expect(screen.getByText('/srv/chrote/CLAUDE.md')).toBeInTheDocument()
   })
 
-  it('offers the rest of a long list rather than showing all of it at once', () => {
-    const many = Array.from({ length: 20 }, (_, index) => ({
+  it('shows every skill and memory in the payload', () => {
+    const skills = Array.from({ length: 54 }, (_, index) => ({
       name: `skill-${index}`,
       description: `Skill ${index}.`,
       path: `/home/operator/skills/skill-${index}`,
       source: 'shared',
     }))
-    render(<AgentStack context={context({ skills: many })} />)
+    const memories = Array.from({ length: 5 }, (_, index) => ({
+      kind: 'claude-auto',
+      path: `/home/operator/.claude/memory/memory-${index}.md`,
+      title: `memory-${index}`,
+      updated: '2026-09-03T15:31:00Z',
+      readable: true,
+    }))
+    render(<AgentStack context={context({ skills, memories })} />)
 
-    expect(screen.queryByText('skill-19')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByText('14 more'))
-    expect(screen.getByText('skill-19')).toBeInTheDocument()
+    expect(screen.getAllByText(/^skill-\d+$/)).toHaveLength(skills.length)
+    expect(screen.getAllByText(/^memory-\d+$/)).toHaveLength(memories.length)
+    expect(screen.queryByRole('button', { name: /more/i })).not.toBeInTheDocument()
   })
 
   it('opens and edits a skill manifest and offers its four file actions', async () => {
