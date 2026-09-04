@@ -52,6 +52,39 @@ export const mockBeadsWork = {
         id: 'test-ep1.4', title: 'Completed feature', status: 'closed', type: 'feature', priority: 3,
         parent: 'test-ep1', updated: staleTimestamp, blocked: false,
       },
+      // A second epic with a shape worth drawing: two chains that block
+      // nothing of each other's, and one Bead that waits for both to finish.
+      // The Flow view has three waves and two lanes to lay out from these.
+      {
+        id: 'test-ep2', title: 'Ship the reading room', status: 'open', type: 'epic', priority: 1,
+        updated: freshTimestamp, acceptance: 'A page opens where it was found', blocked: false,
+      },
+      {
+        id: 'test-ep2.1', title: 'Measure the shelves', status: 'open', type: 'task', priority: 2,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: false,
+      },
+      {
+        id: 'test-ep2.2', title: 'Draw the shelves', status: 'in_progress', type: 'feature', priority: 2,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: false,
+      },
+      {
+        id: 'test-ep2.3', title: 'Index the pages', status: 'open', type: 'task', priority: 2,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: true, blockedBy: ['test-ep2.1'],
+      },
+      {
+        id: 'test-ep2.4', title: 'Search the index', status: 'open', type: 'feature', priority: 2,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: true, blockedBy: ['test-ep2.2'],
+      },
+      {
+        id: 'test-ep2.5', title: 'Open a page from a search', status: 'open', type: 'feature', priority: 1,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: true, blockedBy: ['test-ep2.3', 'test-ep2.4'],
+      },
+      // Finished work keeps its place in the first wave: the server drops a
+      // closed blocker from every blockedBy, so nothing waits on it any more.
+      {
+        id: 'test-ep2.6', title: 'Choose the shelf order', status: 'closed', type: 'decision', priority: 3,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: false,
+      },
     ],
   }
 }
