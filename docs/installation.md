@@ -279,7 +279,7 @@ a Markdown tree under git whose top-level directories are its shelves.
 | `CHROTE_LIBRARY_ROOT` | The corpus directory. Unset: the tab reads "No library is configured" and nothing else. |
 | `CHROTE_LIBRARY_AUTHOR` | The git identity the operator's edits are committed as, as `Name <email>`. Unset: an edit is refused with that reason. |
 | `CHROTE_LIBRARIAN_SESSION` | The tmux session shown in the Library's resident column, the Librarian. Unset: the column says the Librarian is not configured. |
-| `CHROTE_LIBRARY_BEADS` | The Beads project whose open Beads are the proposals in flight. Unset: there is no Proposals shelf. |
+| `CHROTE_LIBRARY_BEADS` | The Beads project the Librarian works from, named as his store on `/api/residents`. Unset: he is named with no store. |
 
 ```bash
 CHROTE_LIBRARY_ROOT=/absolute/path/to/corpus

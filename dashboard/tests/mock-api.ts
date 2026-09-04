@@ -161,8 +161,32 @@ export const mockSystemStatus = {
  */
 export const mockWorkspaces = [
   { path: '/srv/chrote', sources: ['session', 'git'], sessions: ['gt-gastown-jack'], instructions: 2, lastActivity: freshTimestamp },
-  { path: '/code/test-project', sources: ['beads', 'git', 'store'], sessions: [], beadsPrefix: 'test', openBeads: 4, instructions: 1 },
-  { path: '/code/another-project', sources: ['git', 'store'], sessions: [], beadsPrefix: 'other', openBeads: 0, instructions: 0 },
+  {
+    path: '/code/test-project',
+    sources: ['beads', 'git', 'store'],
+    sessions: [],
+    beadsPrefix: 'test',
+    openBeads: 4,
+    instructions: 1,
+    beadsCounts: {
+      status: { open: 2, inProgress: 1, blocked: 1, closed: 9, deferred: 1 },
+      type: { epic: 2, task: 4, bug: 1, feature: 5, decision: 1, chore: 1 },
+    },
+    beadsNewestUpdate: freshTimestamp,
+  },
+  {
+    path: '/code/another-project',
+    sources: ['git', 'store'],
+    sessions: [],
+    beadsPrefix: 'other',
+    openBeads: 0,
+    instructions: 0,
+    beadsCounts: {
+      status: { open: 0, inProgress: 0, blocked: 0, closed: 3, deferred: 0 },
+      type: { epic: 0, task: 3, bug: 0, feature: 0, decision: 0, chore: 0 },
+    },
+    beadsNewestUpdate: freshTimestamp,
+  },
   { path: '/home/operator/repos/VSK-Zone', sources: ['git'], sessions: [], instructions: 0 },
 ]
 
@@ -600,7 +624,6 @@ const libraryLongAgo = new Date(Date.now() - 90 * 86_400_000).toISOString()
 export const mockLibraryShelves = {
   root: '/corpus',
   librarianSession: 'hq-deacon',
-  beadsProject: '/code/test-project',
   shelves: [
     { name: 'knowledge', path: 'knowledge', pages: 2 },
     { name: 'preferences', path: 'preferences', pages: 2 },
@@ -653,21 +676,33 @@ const mockLibraryGraph = {
   tags: [['preferences/tools.md', 'preferences/workflow.md', 'tooling']],
 }
 
-/** Enough arrivals to overflow the rail at a short window. */
+/**
+ * Enough arrivals to overflow the rail at a short window. The rail lists the
+ * pages a commit touched, each once, so a fixture that overflows needs pages
+ * to overflow with: the corpus pages first, then a run of one-off notes.
+ */
 const mockLibraryChanges = [
   {
     hash: 'c79783abc',
     time: libraryChangedAt,
     author: 'The Operator',
     message: 'Record a workflow preference',
+    files: ['preferences/workflow.md', 'knowledge/testing.md'],
+  },
+  // The same page again, older: an arrival is listed once, at its newest.
+  {
+    hash: 'd41d8cd98',
+    time: new Date(Date.now() - 30 * 3600_000).toISOString(),
+    author: 'The Operator',
+    message: 'Start the workflow preferences',
     files: ['preferences/workflow.md'],
   },
-  ...Array.from({ length: 14 }, (_, index) => ({
+  ...Array.from({ length: 28 }, (_, index) => ({
     hash: `a${index.toString().padStart(6, '0')}`,
     time: new Date(Date.now() - (index + 4) * 3600_000).toISOString(),
     author: 'The Operator',
     message: `Curate the knowledge shelf, pass ${index + 1}`,
-    files: ['knowledge/testing.md'],
+    files: [`knowledge/pass-${index + 1}.md`],
   })),
 ]
 

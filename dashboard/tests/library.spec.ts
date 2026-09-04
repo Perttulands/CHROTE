@@ -1,12 +1,13 @@
 /**
  * Journey 7, keep the library (beads: chrote-5grx.17, chrote-5grx.55,
- * chrote-5grx.75, chrote-5grx.76).
+ * chrote-5grx.75, chrote-5grx.76, chrote-5grx.77).
  *
  * One pass through the surface the browser is the point of: land on the map,
  * read a long name in full under the pointer, narrow the recency window, take
- * the map in and put it back, dive into a page, travel to a neighbour, walk the
- * trail back, hand the page to the Librarian in the column at the right, and
- * close the dive with the map still standing. Everything narrower — a date, a
+ * the map in and put it back, open a shelf in the rail and point at one of its
+ * pages to bring the map to it, dive into a page, travel to a neighbour, walk
+ * the trail back, hand the page to the Librarian in the column at the right,
+ * and close the dive with the map still standing. Everything narrower — a date, a
  * title, where a label sits — is a unit test.
  */
 
@@ -102,6 +103,23 @@ test.describe('The Library', () => {
     await reset.click()
     await expect(reset).toHaveCount(0)
 
+    // The rail works the map rather than replacing it: a shelf draws open
+    // where it stands, and pointing at one of its pages takes the map to that
+    // page and lights it.
+    await page.click('.library-shelf:has-text("preferences")')
+    const row = page.locator('.library-shelves .library-row', { hasText: 'Workflow Preferences' })
+    await expect(row).toBeVisible()
+    await expect(page.locator('.library-map')).toBeVisible()
+
+    await row.locator('.library-row-head').hover()
+    await expect(node(page, 'Workflow Preferences')).toHaveClass(/hot/)
+    await expect(reset).toBeVisible()
+    await reset.click()
+
+    // Clicking the row opens it on what the page is, in place.
+    await row.locator('.library-row-head').click()
+    await expect(row.locator('.library-row-meta')).toContainText('200 words')
+
     // A dot on the map dives into its page: the page opens beside the map,
     // the map stays and takes the page it was asked for.
     await node(page, 'Workflow Preferences').click()
@@ -156,7 +174,7 @@ test.describe('The Library', () => {
     await page.waitForSelector('.dashboard')
 
     await page.click('.tab:has-text("Library")')
-    await page.waitForSelector('.library-proposal')
+    await page.waitForSelector('.library-arrivals .library-row')
 
     const box = async (selector: string) => {
       const found = await page.locator(selector).boundingBox()
@@ -165,29 +183,34 @@ test.describe('The Library', () => {
     }
     const shelves = await box('.library-shelves')
     const arrivals = await box('.library-arrivals')
-    const proposals = await box('.library-proposals')
 
     expect(shelves.y + shelves.height).toBeLessThanOrEqual(arrivals.y + 0.5)
-    expect(arrivals.y + arrivals.height).toBeLessThanOrEqual(proposals.y + 0.5)
-    expect(proposals.height).toBeGreaterThan(40)
+    expect(shelves.height).toBeGreaterThan(40)
+    expect(arrivals.height).toBeGreaterThan(40)
 
-    for (const row of await page.locator('.library-shelf').all()) {
+    // A shelf drawn open lists its pages inside the shelves section, however
+    // long the listing is: the section scrolls rather than growing over its
+    // neighbour.
+    await page.click('.library-shelf:has-text("knowledge")')
+    await expect(page.locator('.library-shelf-pages .library-row').first()).toBeVisible()
+    const opened = await box('.library-shelves')
+    for (const row of await page.locator('.library-shelf, .library-shelf-pages .library-row').all()) {
       const rowBox = await row.boundingBox()
-      expect(rowBox).not.toBeNull()
-      expect(rowBox!.y).toBeGreaterThanOrEqual(shelves.y - 0.5)
-      expect(rowBox!.y + rowBox!.height).toBeLessThanOrEqual(shelves.y + shelves.height + 0.5)
+      if (!rowBox) continue
+      expect(rowBox.y).toBeGreaterThanOrEqual(opened.y - 0.5)
+      expect(rowBox.y + rowBox.height).toBeLessThanOrEqual(opened.y + opened.height + 0.5)
     }
 
     const arrivalsScroll = page.locator('.library-arrivals .library-scroll')
     expect(await arrivalsScroll.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
-    await expect(page.locator('.library-arrival').last()).not.toBeInViewport()
+    await expect(page.locator('.library-arrivals .library-row').last()).not.toBeInViewport()
   })
 
   test('says so when the host has no library', async ({ page }) => {
     await mockApiRoutes(page)
     await mockBeadsApiRoutes(page)
     await mockLibraryApiRoutes(page, {
-      shelves: { root: '', shelves: [], librarianSession: '', beadsProject: '' },
+      shelves: { root: '', shelves: [], librarianSession: '' },
     })
     await page.goto('/')
     await page.waitForSelector('.dashboard')

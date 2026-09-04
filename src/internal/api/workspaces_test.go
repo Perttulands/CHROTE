@@ -313,13 +313,8 @@ func TestWorkspacesStoreProjectionIsCachedUntilTheManifestChanges(t *testing.T) 
 	}
 
 	manifest := filepath.Join(store, ".beads", "embeddeddolt", "test", ".dolt", "noms", "manifest")
-	info, err := os.Stat(manifest)
-	if err != nil {
-		t.Fatalf("stat manifest: %v", err)
-	}
-	changed := info.ModTime().Add(2 * time.Second)
-	if err := os.Chtimes(manifest, changed, changed); err != nil {
-		t.Fatalf("change manifest mtime: %v", err)
+	if err := os.WriteFile(manifest, []byte("manifest after a write\n"), 0600); err != nil {
+		t.Fatalf("write manifest: %v", err)
 	}
 
 	found = tree.list(t, "?beads=wait")
@@ -329,5 +324,88 @@ func TestWorkspacesStoreProjectionIsCachedUntilTheManifestChanges(t *testing.T) 
 	}
 	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 2 {
 		t.Fatalf("bd was called %d times after a manifest change, want twice: %#v", len(calls), calls)
+	}
+}
+
+// Reading a store rewrites its Dolt manifest with the same bytes and a new
+// mtime. A time-keyed cache expired on the very read that filled it, so the
+// live service answered every request pending and re-spawned bd across every
+// store. The projection has to survive a read and only a write may end it.
+func TestWorkspacesStoreProjectionSurvivesTheManifestRewriteThatReadingCauses(t *testing.T) {
+	tree := newWorkspaceTestTree(t)
+	store := filepath.Join(tree.root, "store")
+	makeValidBeadsWorkspace(t, store)
+	manifest := filepath.Join(store, ".beads", "embeddeddolt", "test", ".dolt", "noms", "manifest")
+
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args.txt")
+	callPath := filepath.Join(dir, "calls.txt")
+	scriptPath := filepath.Join(dir, "bd")
+	// Every call rewrites the manifest with identical bytes at a later time,
+	// which is what Dolt does when bd only reads the store.
+	script := "#!/bin/sh\n" +
+		"printf '%s ' \"$@\" >> \"$BD_ARGS_FILE\"\n" +
+		"printf '\\n' >> \"$BD_ARGS_FILE\"\n" +
+		"n=$(cat \"$BD_CALL_FILE\" 2>/dev/null || echo 0)\n" +
+		"n=$((n+1))\n" +
+		"printf '%s' \"$n\" > \"$BD_CALL_FILE\"\n" +
+		"cat \"$BD_MANIFEST\" > \"$BD_MANIFEST.copy\"\n" +
+		"mv \"$BD_MANIFEST.copy\" \"$BD_MANIFEST\"\n" +
+		"touch -t \"20300101000${n}\" \"$BD_MANIFEST\"\n" +
+		"printf '%s' '[{\"id\":\"chr-1aa\",\"status\":\"open\",\"issue_type\":\"task\"}]'\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
+		t.Fatalf("write fake bd command: %v", err)
+	}
+	t.Setenv("BD_ARGS_FILE", argsPath)
+	t.Setenv("BD_CALL_FILE", callPath)
+	t.Setenv("BD_MANIFEST", manifest)
+	t.Setenv("CHROTE_BD_COMMAND", scriptPath)
+	tree.handler.beads = NewBeadsHandler()
+
+	before, err := os.Stat(manifest)
+	if err != nil {
+		t.Fatalf("stat manifest: %v", err)
+	}
+
+	found := tree.list(t, "?beads=wait")
+	entry, ok := workspaceByPath(found, store)
+	if !ok || entry.BeadsCounts == nil || entry.OpenBeads == nil || *entry.OpenBeads != 1 {
+		t.Fatalf("store after the first wait = %+v, want its counts", entry)
+	}
+
+	after, err := os.Stat(manifest)
+	if err != nil {
+		t.Fatalf("stat manifest after the read: %v", err)
+	}
+	if after.ModTime().Equal(before.ModTime()) {
+		t.Fatal("the fake bd did not rewrite the manifest, so this test proves nothing")
+	}
+
+	// The projection was filled, so an ordinary beads=1 request must answer
+	// from the cache: counts present, nothing pending, and no second bd.
+	found = tree.list(t, "?beads=1")
+	entry, ok = workspaceByPath(found, store)
+	if !ok || entry.BeadsSummaryPending || entry.BeadsCounts == nil || entry.BeadsPrefix != "chr" {
+		t.Fatalf("store after the read rewrote its manifest = %+v, want the cached projection", entry)
+	}
+	if entry.OpenBeads == nil || *entry.OpenBeads != 1 {
+		t.Fatalf("open count = %+v, want the cached one", entry.OpenBeads)
+	}
+	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 1 {
+		t.Fatalf("bd was called %d times when only a read had happened, want once: %#v", len(calls), calls)
+	}
+
+	// A write leaves different bytes behind, and only that ends the entry.
+	if err := os.WriteFile(manifest, []byte("manifest after a write\n"), 0600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	found = tree.list(t, "?beads=wait")
+	entry, _ = workspaceByPath(found, store)
+	if entry.BeadsCounts == nil || entry.OpenBeads == nil || *entry.OpenBeads != 1 {
+		t.Fatalf("store after a write = %+v, want the recomputed projection", entry)
+	}
+	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 2 {
+		t.Fatalf("bd was called %d times after a write, want twice: %#v", len(calls), calls)
 	}
 }

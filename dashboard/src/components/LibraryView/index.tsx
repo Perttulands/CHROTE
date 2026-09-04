@@ -1,13 +1,15 @@
 /**
  * The Library: the map of the operator's own context corpus, dived into.
  *
- * A rail, the map, and the Librarian. The shelves, what arrived lately and the
- * proposals in flight down the left; the map of the whole corpus in the middle,
- * always; the Librarian live in a column at the far edge. Choosing a page dives
- * into it rather than leaving the map: the map takes that page to the middle
- * and closer in, and the page opens in a column beside it with its neighbours
- * as links to travel by and a trail back to where the dive began. Escape ends
- * the dive and the map is exactly where it was left.
+ * A rail, the map, and the Librarian. The shelves and what arrived lately down
+ * the left; the map of the whole corpus in the middle, always; the Librarian
+ * live in a column at the far edge. The rail works the map rather than
+ * replacing it: a shelf opens inside the rail, pointing at one of its pages
+ * takes the map to that page and lights it, and clicking the page opens the
+ * row on what it is with a dive to take. Diving puts the page in a column
+ * beside the map with its neighbours as links to travel by and a trail back to
+ * where the dive began. Escape ends the dive and the map is exactly where it
+ * was left.
  *
  * The corpus is a Markdown tree under git, so every fact here — a title, a
  * date, an author, a history, a link — is read out of that tree rather than
@@ -20,12 +22,8 @@ import Editor from '../Editor'
 import Markdown from '../Markdown'
 import LibraryMap from './Map'
 import { RECENCY_WINDOWS, neighboursOf, type RecencyWindow } from './mapLayout'
-import Shelf from './Shelf'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
-import { openBeadCard } from '../../beads/beadCard'
-import { fetchBeadWork, type BeadRow } from '../../beads/beadsApi'
-import { isBeadClosed } from '../../beads/beadStatus'
 import { useSurface } from '../../keys/dismiss'
 import { getSessionKey } from '../../types'
 import { pasteToResident } from '../../residents/residentPresence'
@@ -36,6 +34,7 @@ import ResidentColumn from '../ResidentColumn'
 import TableColumn from '../TableColumn'
 import Rail, { RailScroll, RailSection } from '../Rail'
 import {
+  arrivalPages,
   fetchChanges,
   fetchGraph,
   fetchPage,
@@ -45,8 +44,8 @@ import {
   libraryWhen,
   savePage,
   searchLibrary,
-  type LibraryChange,
   type LibraryGraph,
+  type LibraryArrival,
   type LibraryPage,
   type LibraryPageContent,
   type LibrarySearchResult,
@@ -84,8 +83,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   const { announce } = useStatus()
 
   const [shelves, setShelves] = useState<LibraryShelves | null>(null)
-  const [changes, setChanges] = useState<LibraryChange[]>([])
-  const [proposals, setProposals] = useState<BeadRow[]>([])
+  const [arrivals, setArrivals] = useState<LibraryArrival[]>([])
   const [graph, setGraph] = useState<LibraryGraph | null>(null)
   const [graphError, setGraphError] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -95,8 +93,15 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
 
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<LibrarySearchResult[] | null>(null)
+  // The shelf drawn open in the rail, and its pages; null while they are
+  // still being read, so an empty shelf and an unread one do not look alike.
   const [shelf, setShelf] = useState<string | null>(null)
-  const [shelfPages, setShelfPages] = useState<LibraryPage[]>([])
+  const [shelfPages, setShelfPages] = useState<LibraryPage[] | null>(null)
+  // The page the pointer is on in the rail, which the map centres and lights,
+  // and the one row opened on what it is. Both are the rail's, not a list's,
+  // so a shelf and an arrival behave the same way.
+  const [hoverPath, setHoverPath] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<string | null>(null)
   const [page, setPage] = useState<LibraryPageContent | null>(null)
   // Every page this dive has passed through, oldest first; the last of them is
   // the page being read. Empty means no dive is open.
@@ -134,10 +139,10 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     fetchChanges(ARRIVALS)
       .then(found => {
         if (!current) return
-        setChanges(found.changes)
+        setArrivals(arrivalPages(found.changes))
         setGitError(found.error ?? '')
       })
-      .catch(() => { if (current) setChanges([]) })
+      .catch(() => { if (current) setArrivals([]) })
     return () => { current = false }
   }, [root])
 
@@ -162,18 +167,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     return loadGraph()
   }, [loadGraph, root])
 
-  // Proposals are open Beads of the configured store. Without one the shelf
-  // does not exist, rather than standing empty.
-  const beadsProject = shelves?.beadsProject ?? ''
-  useEffect(() => {
-    if (!beadsProject) return
-    let current = true
-    fetchBeadWork(beadsProject)
-      .then(work => { if (current) setProposals(work.beads.filter(bead => !isBeadClosed(bead.status))) })
-      .catch(() => { if (current) setProposals([]) })
-    return () => { current = false }
-  }, [beadsProject])
-
   // Diving into a page puts the map back under it — a dive is read against the
   // map, not instead of it — and adds the page to the trail. A page the dive
   // has already passed through is not visited twice: the trail is cut back to
@@ -183,7 +176,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   // history unfolded; the page arrives in that state rather than a step short.
   const openPage = useCallback((path: string, intent: OpenIntent = 'read') => {
     setResults(null)
-    setShelf(null)
     setDraft(null)
     fetchPage(path)
       .then(found => {
@@ -217,21 +209,21 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
 
   useSurface({ open: page !== null, kind: 'work', onClose: closeDive, ref: diveRef })
 
+  // A shelf is drawn open inside the rail, one at a time. The map stays: the
+  // shelf is a way of working it, not a room that replaces it.
   const openShelf = useCallback((name: string) => {
-    setResults(null)
-    setDraft(null)
-    setShelf(name)
-    closeDive()
-  }, [closeDive])
+    setShelf(current => (current === name ? null : name))
+  }, [])
 
   // The shelf listing follows the reader, whether he chose the shelf or
   // arrived on it through a page.
   useEffect(() => {
     if (!shelf) {
-      setShelfPages([])
+      setShelfPages(null)
       return
     }
     let current = true
+    setShelfPages(null)
     fetchShelfPages(shelf)
       .then(found => {
         if (!current) return
@@ -251,7 +243,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     searchLibrary(asked)
       .then(found => {
         setResults(found)
-        setShelf(null)
         closeDive()
         announce(`${found.length} ${found.length === 1 ? 'page mentions' : 'pages mention'} "${asked}"`, 'info')
       })
@@ -282,9 +273,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
       : { reference, launch: { label: 'Launch the Librarian', folder: root } })
   }, [openSendToSession, root, sessions, shelves?.librarianSession])
 
-  // A shelf is open while its listing is the room: not while a search stands
-  // in the room's place.
-  const shelfOpen = (name: string) => shelf === name && results === null
+  const shelfOpen = (name: string) => shelf === name
   const collapseShelf = useCallback(() => setShelf(null), [])
 
   const pageMenu = (path: string) => (): MenuGroup[] => [
@@ -315,9 +304,9 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     },
   ]
 
-  // The map is the room, unless a search or a shelf listing is standing in it.
-  // A dive never displaces it: the page is read in the column beside it.
-  const showMap = results === null && shelf === null
+  // The map is the room, unless a search is standing in it. Neither a dive
+  // nor an open shelf displaces it.
+  const showMap = results === null
 
   const save = useCallback(async () => {
     if (!page || draft === null) return
@@ -370,6 +359,12 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   )
   const titleOf = useCallback((path: string) => titles.get(path) ?? path, [titles])
 
+  /** How long a page is, as the map measures it, for a row opened on it. */
+  const words = useMemo(
+    () => new Map(graph?.pages.map(entry => [entry.path, entry.words]) ?? []),
+    [graph],
+  )
+
   // Every page one hop away — a written link either way, or a shared tag —
   // read off the same graph the map draws, so travelling costs no request.
   const neighbours = useMemo(() => {
@@ -407,12 +402,56 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
           graph={graph}
           openPath={page?.path ?? null}
           matches={matches}
+          hoverPath={hoverPath}
           window={recency}
           onOpen={openPage}
         />
       )
     }
     return <p className="library-empty">{graphError || 'Drawing the map…'}</p>
+  }
+
+  /**
+   * A page as the rail lists it, on a shelf or among the arrivals.
+   *
+   * Pointing at the row takes the map to that page and lights it, so the rail
+   * is read against the map rather than instead of it. Clicking opens the row
+   * on what the page is — where it sits, when it last moved, how long it is —
+   * and offers the dive, which is the step that leaves the rail.
+   */
+  const pageRow = (path: string, title: string, updated: string, author: string) => {
+    const open = expanded === path
+    const length = words.get(path)
+    return (
+      <MenuTarget key={path} label={`Actions for ${path}`} groups={pageMenu(path)}>
+        <div className={`library-row${open ? ' open' : ''}`}>
+          <button
+            type="button"
+            className="library-row-head"
+            aria-expanded={open}
+            onClick={() => setExpanded(current => (current === path ? null : path))}
+            onMouseEnter={() => setHoverPath(path)}
+            onMouseLeave={() => setHoverPath(current => (current === path ? null : current))}
+            onFocus={() => setHoverPath(path)}
+            onBlur={() => setHoverPath(current => (current === path ? null : current))}
+          >
+            <span className="library-row-title">{title}</span>
+            <span className="library-row-when">{libraryWhen(updated)}</span>
+          </button>
+          {open && (
+            <div className="library-row-open">
+              <span className="library-row-path">{path}</span>
+              <span className="library-row-meta">
+                {updated ? `changed ${libraryWhen(updated)} by ${author}` : 'never committed'}
+                {' · '}
+                {length === undefined ? 'not on the map' : count(length, 'word')}
+              </span>
+              <button type="button" className="library-action" onClick={() => openPage(path)}>Dive</button>
+            </div>
+          )}
+        </div>
+      </MenuTarget>
+    )
   }
 
   /** A list of pages as links that travel, the way both link lists read. */
@@ -456,63 +495,40 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
           />
 
           <RailSection className="library-section library-shelves" title="Shelves">
-            {shelves.shelves.map(entry => (
-              <MenuTarget key={entry.path} label={`Actions for shelf ${entry.name}`} groups={shelfMenu(entry.name)}>
-                <button
-                  type="button"
-                  className={`library-shelf ${shelf === entry.name ? 'active' : ''}`}
-                  onClick={() => openShelf(entry.name)}
-                >
-                  <span className="library-shelf-name">{entry.name}</span>
-                  <span className="library-shelf-count">{entry.pages}</span>
-                </button>
-              </MenuTarget>
-            ))}
+            <RailScroll className="library-scroll">
+              {shelves.shelves.map(entry => (
+                <div key={entry.path} className="library-shelf-group">
+                  <MenuTarget label={`Actions for shelf ${entry.name}`} groups={shelfMenu(entry.name)}>
+                    <button
+                      type="button"
+                      className={`library-shelf ${shelf === entry.name ? 'active' : ''}`}
+                      aria-expanded={shelf === entry.name}
+                      onClick={() => openShelf(entry.name)}
+                    >
+                      <span className="library-shelf-name">{entry.name}</span>
+                      <span className="library-shelf-count">{entry.pages}</span>
+                    </button>
+                  </MenuTarget>
+                  {shelf === entry.name && (
+                    <div className="library-shelf-pages">
+                      {shelfPages === null && <p className="library-empty">Reading the shelf…</p>}
+                      {shelfPages?.length === 0 && <p className="library-empty">This shelf is empty.</p>}
+                      {shelfPages?.map(entryPage => pageRow(entryPage.path, entryPage.title, entryPage.updated, entryPage.author))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </RailScroll>
           </RailSection>
 
           <RailSection className="library-section library-arrivals" title="New arrivals" fill>
             <RailScroll className="library-scroll">
               {gitError && <p className="library-git-error">{gitError}</p>}
-              {changes.length === 0 && <p className="library-empty">Nothing has arrived yet.</p>}
-              {changes.map(change => {
-                const path = change.files[0]
-                const arrival = (
-                  <button
-                    type="button"
-                    className="library-arrival"
-                    disabled={!path}
-                    onClick={() => { if (path) openPage(path) }}
-                  >
-                    <span className="library-arrival-when">{libraryWhen(change.time)} · {change.author}</span>
-                    <span className="library-arrival-message">{change.message}</span>
-                  </button>
-                )
-                // An arrival that touched no page is a fact with nothing to act on.
-                return path
-                  ? <MenuTarget key={change.hash} label={`Actions for ${path}`} groups={pageMenu(path)}>{arrival}</MenuTarget>
-                  : <Fragment key={change.hash}>{arrival}</Fragment>
-              })}
+              {arrivals.length === 0 && <p className="library-empty">Nothing has arrived yet.</p>}
+              {arrivals.map(arrival => pageRow(arrival.path, titleOf(arrival.path), arrival.time, arrival.author))}
             </RailScroll>
           </RailSection>
 
-          {shelves.beadsProject && (
-            <RailSection className="library-section library-proposals" title="Proposals">
-              <RailScroll className="library-scroll">
-                {proposals.length === 0 && <p className="library-empty">Nothing is in flight.</p>}
-                {proposals.map(bead => (
-                  <button
-                    key={bead.id}
-                    type="button"
-                    className="library-proposal"
-                    onClick={() => openBeadCard(bead.id, shelves.beadsProject)}
-                  >
-                    <span className="library-proposal-id">{bead.id}</span>
-                    <span className="library-proposal-title">{bead.title}</span>
-                  </button>
-                ))}
-              </RailScroll>
-            </RailSection>
-          )}
         </Rail>
 
         <div className="library-room" data-ui="library.room">
@@ -542,7 +558,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
               </div>
               {mapOrWhy()}
             </div>
-          ) : results !== null ? (
+          ) : (
             <div className="library-page">
               <div className="library-page-head">
                 <div className="library-page-title-row">
@@ -565,8 +581,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
                 ))}
               </div>
             </div>
-          ) : (
-            <Shelf shelf={shelf ?? ''} pages={shelfPages} onOpenPage={openPage} pageMenu={pageMenu} />
           )}
         </div>
 

@@ -34,6 +34,11 @@ export interface MapProps {
   openPath: string | null
   /** The pages a search names, lit and labelled; null with no search. */
   matches: ReadonlySet<string> | null
+  /**
+   * The page the pointer is on in the rail: brought to the middle and lit
+   * with its neighbours, so a list in the rail is read against the map.
+   */
+  hoverPath?: string | null
   /** How recently a page must have moved to be drawn at full strength. */
   window?: RecencyWindow
   onOpen: (path: string) => void
@@ -82,7 +87,7 @@ function useMeasuredSize() {
   return { ref, width: size.width, height: size.height }
 }
 
-export default function LibraryMap({ graph, openPath, matches, window: recency = 'all', onOpen }: MapProps) {
+export default function LibraryMap({ graph, openPath, matches, hoverPath = null, window: recency = 'all', onOpen }: MapProps) {
   const { ref, width, height } = useMeasuredSize()
   const [hovered, setHovered] = useState<string | null>(null)
   const view = useMapTransform({ width, height })
@@ -100,12 +105,13 @@ export default function LibraryMap({ graph, openPath, matches, window: recency =
     const focus = new Set<string>()
     if (openPath) focus.add(openPath)
     if (hovered) focus.add(hovered)
+    if (hoverPath) focus.add(hoverPath)
     const hot = new Set<string>(focus)
     focus.forEach(path => neighboursOf(graph, path).forEach(other => hot.add(other)))
     const primary = new Set<string>(focus)
     matches?.forEach(path => { hot.add(path); primary.add(path) })
     return { focus, hot, primary }
-  }, [graph, hovered, matches, openPath])
+  }, [graph, hovered, hoverPath, matches, openPath])
 
   const labels = useMemo(
     () => placeLabels(layout.nodes, hot, primary, { landmarks: LANDMARK_LABELS, maxChars: MAP_LABEL_CHARS }, layout.clusters),
@@ -130,6 +136,22 @@ export default function LibraryMap({ graph, openPath, matches, window: recency =
     dived.current = openPath
     centreOn(found, DIVE_SCALE)
   }, [centreOn, openPath, positions])
+
+  // A page pointed at in the rail is brought to the middle at the scale the
+  // map is already at: the operator is looking for where it sits, not diving
+  // into it. Once per page, so a map moved since stays moved.
+  const centred = useRef<string | null>(null)
+  useEffect(() => {
+    if (!hoverPath) {
+      centred.current = null
+      return
+    }
+    if (centred.current === hoverPath) return
+    const found = positions.get(hoverPath)
+    if (!found) return
+    centred.current = hoverPath
+    centreOn(found)
+  }, [centreOn, hoverPath, positions])
 
   const open = (path: string) => (event: ReactKeyboardEvent<SVGGElement>) => {
     if (event.key !== 'Enter' && event.key !== ' ') return

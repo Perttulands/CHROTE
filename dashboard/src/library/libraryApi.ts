@@ -18,7 +18,6 @@ export interface LibraryShelves {
   root: string
   shelves: LibraryShelf[]
   librarianSession: string
-  beadsProject: string
 }
 
 export interface LibraryPage {
@@ -50,6 +49,33 @@ export interface LibraryPageContent extends LibraryPage {
 export interface LibraryPages {
   pages: LibraryPage[]
   error?: string
+}
+
+/** One page as the rail lists it: the newest commit that touched it. */
+export interface LibraryArrival {
+  path: string
+  time: string
+  author: string
+  message: string
+}
+
+/**
+ * What arrived lately as pages rather than commits: every page a commit
+ * touched, newest first, kept once at the newest commit that touched it. A
+ * commit that touched no page contributes nothing, and one that touched five
+ * contributes all five rather than hiding four.
+ */
+export function arrivalPages(changes: LibraryChange[]): LibraryArrival[] {
+  const seen = new Set<string>()
+  const arrivals: LibraryArrival[] = []
+  for (const change of changes) {
+    for (const path of change.files) {
+      if (seen.has(path)) continue
+      seen.add(path)
+      arrivals.push({ path, time: change.time, author: change.author, message: change.message })
+    }
+  }
+  return arrivals
 }
 
 /** What arrived lately, and why nothing did when git refused the corpus. */
