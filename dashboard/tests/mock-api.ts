@@ -632,7 +632,6 @@ const libraryLongAgo = new Date(Date.now() - 90 * 86_400_000).toISOString()
 export const mockLibraryShelves = {
   root: '/corpus',
   librarianSession: 'hq-deacon',
-  beadsProject: '/code/test-project',
   shelves: [
     { name: 'knowledge', path: 'knowledge', pages: 2 },
     { name: 'preferences', path: 'preferences', pages: 2 },
@@ -685,21 +684,33 @@ const mockLibraryGraph = {
   tags: [['preferences/tools.md', 'preferences/workflow.md', 'tooling']],
 }
 
-/** Enough arrivals to overflow the rail at a short window. */
+/**
+ * Enough arrivals to overflow the rail at a short window. The rail lists the
+ * pages a commit touched, each once, so a fixture that overflows needs pages
+ * to overflow with: the corpus pages first, then a run of one-off notes.
+ */
 const mockLibraryChanges = [
   {
     hash: 'c79783abc',
     time: libraryChangedAt,
     author: 'The Operator',
     message: 'Record a workflow preference',
+    files: ['preferences/workflow.md', 'knowledge/testing.md'],
+  },
+  // The same page again, older: an arrival is listed once, at its newest.
+  {
+    hash: 'd41d8cd98',
+    time: new Date(Date.now() - 30 * 3600_000).toISOString(),
+    author: 'The Operator',
+    message: 'Start the workflow preferences',
     files: ['preferences/workflow.md'],
   },
-  ...Array.from({ length: 14 }, (_, index) => ({
+  ...Array.from({ length: 28 }, (_, index) => ({
     hash: `a${index.toString().padStart(6, '0')}`,
     time: new Date(Date.now() - (index + 4) * 3600_000).toISOString(),
     author: 'The Operator',
     message: `Curate the knowledge shelf, pass ${index + 1}`,
-    files: ['knowledge/testing.md'],
+    files: [`knowledge/pass-${index + 1}.md`],
   })),
 ]
 

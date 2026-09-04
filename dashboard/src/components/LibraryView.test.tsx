@@ -1,7 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import LibraryView from './LibraryView'
-import { resetBeadCardForTest, useBeadCardRequest } from '../beads/beadCard'
 import { resetChordsForTest } from '../keys/chords'
 import { resetSurfacesForTest } from '../keys/dismiss'
 import { mountResident, resetResidentForTest } from '../residents/residentPresence'
@@ -31,7 +30,6 @@ const mockState = vi.hoisted(() => ({
   results: [] as LibrarySearchResult[],
   saved: [] as { path: string; content: string; summary: string }[],
   saveError: null as Error | null,
-  beadWork: { beads: [] as unknown[], prefix: 'ctx', projectPath: '' },
 }))
 
 vi.mock('../context/SessionContext', () => ({
@@ -48,10 +46,6 @@ vi.mock('../utils/clipboard', () => ({
 
 vi.mock('../context/StatusContext', () => ({
   useStatus: () => ({ announce: mockState.announce }),
-}))
-
-vi.mock('../beads/beadsApi', () => ({
-  fetchBeadWork: () => Promise.resolve(mockState.beadWork),
 }))
 
 vi.mock('./ResidentColumn', () => ({
@@ -83,13 +77,7 @@ vi.mock('../library/libraryApi', async () => {
 
 const NOW = new Date(Date.now() - 3_600_000).toISOString()
 
-function CardProbe() {
-  const request = useBeadCardRequest()
-  return <span data-testid="card-request">{request?.id ?? 'none'}</span>
-}
-
 beforeEach(() => {
-  resetBeadCardForTest()
   resetChordsForTest()
   resetResidentForTest()
   resetSurfacesForTest()
@@ -106,7 +94,6 @@ beforeEach(() => {
   mockState.shelves = {
     root: '/corpus',
     librarianSession: 'librarian',
-    beadsProject: '/corpus/store',
     shelves: [
       { name: 'knowledge', path: 'knowledge', pages: 13 },
       { name: 'preferences', path: 'preferences', pages: 7 },
@@ -160,21 +147,13 @@ beforeEach(() => {
   mockState.results = [
     { path: 'knowledge/testing.md', title: 'Test isolation', line: 3, snippet: 'A serious lab gets a durable path.' },
   ]
-  mockState.beadWork = {
-    prefix: 'ctx',
-    projectPath: '/corpus/store',
-    beads: [
-      { id: 'ctx-c2f', title: 'Distil the harness notes', status: 'open', priority: 1, blocked: false },
-      { id: 'ctx-d71', title: 'Already done', status: 'closed', priority: 2, blocked: false },
-    ],
-  }
 })
 
 /**
  * A page's name appears in more than one place on purpose — in the rail, on
  * the map, in a listing — so every query says which region it means.
  */
-function region(name: 'library-left' | 'library-room' | 'library-map' | 'library-dive') {
+function region(name: 'library-left' | 'library-shelves' | 'library-arrivals' | 'library-room' | 'library-map' | 'library-dive') {
   const found = document.querySelector<HTMLElement>(`.${name}`)
   if (!found) throw new Error(`the ${name} region is not on screen`)
   return within(found)
@@ -202,10 +181,21 @@ async function openLibrary() {
   await waitFor(() => region('library-map'))
 }
 
-/** Step into a shelf from the rail, then dive into one of its pages. */
+/** Draw a shelf open in the rail. */
+function openShelf(name: string) {
+  fireEvent.click(region('library-left').getByRole('button', { name: new RegExp(`^${name}`) }))
+}
+
+/** A page's row where the rail lists it, by the name it carries. */
+function railRow(where: 'library-shelves' | 'library-arrivals', title: string) {
+  return region(where).getByRole('button', { name: new RegExp(`^${title}`) })
+}
+
+/** Open a shelf, open one of its pages, and dive into it. */
 async function openWorkflowPage() {
-  fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
-  fireEvent.click(await region('library-room').findByText('Workflow Preferences'))
+  openShelf('preferences')
+  fireEvent.click(await region('library-shelves').findByRole('button', { name: /^Workflow Preferences/ }))
+  fireEvent.click(region('library-shelves').getByRole('button', { name: 'Dive' }))
   await screen.findByText('Prefer small, verifiable changes.')
 }
 
@@ -217,7 +207,7 @@ function pressEscape() {
 
 describe('LibraryView', () => {
   it('says so when no corpus is configured', async () => {
-    mockState.shelves = { root: '', shelves: [], librarianSession: '', beadsProject: '' }
+    mockState.shelves = { root: '', shelves: [], librarianSession: '' }
     render(<LibraryView />)
 
     expect(await screen.findByText('No library is configured')).toBeInTheDocument()
@@ -304,28 +294,20 @@ describe('LibraryView', () => {
     expect(mapNode('Tool Preferences')).not.toHaveClass('hot')
   })
 
-  it('lists only the proposals still in flight', async () => {
+  // A shelf is worked inside the rail: it draws open where it stands, the map
+  // is still the room behind it, and the dive is a step the row offers.
+  it('opens a shelf in the rail, opens one of its pages, and dives from it', async () => {
     await openLibrary()
 
-    expect(await screen.findByText('ctx-c2f')).toBeInTheDocument()
-    expect(screen.queryByText('ctx-d71')).not.toBeInTheDocument()
-  })
+    openShelf('preferences')
+    expect(await region('library-shelves').findByRole('button', { name: /^Tool Preferences/ })).toBeInTheDocument()
+    expect(region('library-map')).toBeTruthy()
 
-  it('opens the Bead card from a proposal', async () => {
-    render(<><LibraryView /><CardProbe /></>)
+    fireEvent.click(railRow('library-shelves', 'Workflow Preferences'))
+    expect(region('library-shelves').getByText('preferences/workflow.md')).toBeInTheDocument()
+    expect(region('library-shelves').getByText('changed 1 hour ago by The Operator · 200 words')).toBeInTheDocument()
 
-    fireEvent.click(await screen.findByText('ctx-c2f'))
-
-    expect(screen.getByTestId('card-request')).toHaveTextContent('ctx-c2f')
-  })
-
-  it('steps from a shelf to a page and shows its history beneath the head', async () => {
-    await openLibrary()
-
-    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
-    expect(await region('library-room').findByText('Tool Preferences')).toBeInTheDocument()
-
-    fireEvent.click(region('library-room').getByText('Workflow Preferences'))
+    fireEvent.click(region('library-shelves').getByRole('button', { name: 'Dive' }))
 
     expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
     expect(screen.getByText('preferences/workflow.md · changed 1 hour ago by The Operator')).toBeInTheDocument()
@@ -374,12 +356,42 @@ describe('LibraryView', () => {
     expect(mockState.openSendToSession).toHaveBeenCalledWith({ reference: 'library preferences/workflow.md' })
   })
 
-  it('opens a page straight from an arrival', async () => {
+  // Arrivals are the pages that changed, not the commits that changed them:
+  // a page touched twice is listed once, at the newest commit that touched it.
+  it('lists the pages that arrived, each once, newest first, and dives into one', async () => {
+    mockState.changes = [
+      { hash: 'aaaaaaa1', time: NOW, author: 'The Operator', message: 'Record a workflow preference', files: ['preferences/workflow.md', 'preferences/tools.md'] },
+      { hash: 'bbbbbbb2', time: NOW, author: 'The Operator', message: 'Curate the knowledge shelf', files: ['knowledge/testing.md', 'preferences/workflow.md'] },
+    ]
     await openLibrary()
 
-    fireEvent.click(region('library-left').getByText('Record a workflow preference'))
+    const rows = () => Array.from(
+      document.querySelectorAll<HTMLElement>('.library-arrivals .library-row-title'),
+    ).map(row => row.textContent)
+    await waitFor(() => expect(rows()).toEqual(['Workflow Preferences', 'Tool Preferences', 'Test isolation']))
+
+    fireEvent.click(railRow('library-arrivals', 'Workflow Preferences'))
+    fireEvent.click(region('library-arrivals').getByRole('button', { name: 'Dive' }))
 
     expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
+  })
+
+  // The one channel from the rail to the map: the row under the pointer is the
+  // page the map lights and brings to the middle.
+  it('lights and centres the map on the page under the pointer in the rail', async () => {
+    await openLibrary()
+    const drawing = () => document.querySelector('.library-map svg g')?.getAttribute('transform')
+    const before = drawing()
+
+    openShelf('preferences')
+    fireEvent.mouseEnter(await region('library-shelves').findByRole('button', { name: /^Workflow Preferences/ }))
+
+    expect(mapNode('Workflow Preferences')).toHaveClass('hot')
+    expect(mapNode('Test isolation')).toHaveClass('hot')
+    expect(drawing()).not.toEqual(before)
+
+    fireEvent.mouseLeave(railRow('library-shelves', 'Workflow Preferences'))
+    expect(mapNode('Workflow Preferences')).not.toHaveClass('hot')
   })
 
   it('searches the whole corpus and opens a result', async () => {
@@ -447,9 +459,9 @@ describe('LibraryView', () => {
 
   it('offers a page row the five things a page can do, and copies its path', async () => {
     await openLibrary()
-    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+    openShelf('preferences')
 
-    fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
+    fireEvent.contextMenu(await region('library-shelves').findByText('Workflow Preferences'))
     expect(menuItems()).toEqual(['Open', 'Send to Librarian', 'Edit', 'Copy path', 'History'])
 
     fireEvent.click(screen.getByRole('menuitem', { name: /^Copy path/ }))
@@ -462,14 +474,13 @@ describe('LibraryView', () => {
   // it is open: the menu asked for the page that way.
   it('opens a page from its menu already in the editor, or with its history unfolded', async () => {
     await openLibrary()
-    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+    openShelf('preferences')
 
-    fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
+    fireEvent.contextMenu(await region('library-shelves').findByText('Workflow Preferences'))
     fireEvent.click(screen.getByRole('menuitem', { name: /^Edit/ }))
     expect(await screen.findByRole('textbox', { name: 'Editing preferences/workflow.md' })).toBeInTheDocument()
 
-    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
-    fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
+    fireEvent.contextMenu(region('library-shelves').getByText('Workflow Preferences'))
     fireEvent.click(screen.getByRole('menuitem', { name: /^History/ }))
     expect(await screen.findByText('Record a workflow preference')).toBeInTheDocument()
   })
@@ -477,9 +488,9 @@ describe('LibraryView', () => {
   it('hands a page to the Librarian where he is running', async () => {
     mockState.sessions = [{ name: 'librarian', unixUser: 'alice' }]
     await openLibrary()
-    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+    openShelf('preferences')
 
-    fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
+    fireEvent.contextMenu(await region('library-shelves').findByText('Workflow Preferences'))
     fireEvent.click(screen.getByRole('menuitem', { name: /^Send to Librarian/ }))
 
     await waitFor(() => expect(mockState.openSendToSession).toHaveBeenCalledWith({
@@ -492,9 +503,9 @@ describe('LibraryView', () => {
   // the launcher, at the corpus, with the page already named.
   it('offers to launch the Librarian when his session is not there', async () => {
     await openLibrary()
-    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+    openShelf('preferences')
 
-    fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
+    fireEvent.contextMenu(await region('library-shelves').findByText('Workflow Preferences'))
     fireEvent.click(screen.getByRole('menuitem', { name: /^Send to Librarian/ }))
 
     await waitFor(() => expect(mockState.openSendToSession).toHaveBeenCalledWith({
@@ -509,9 +520,9 @@ describe('LibraryView', () => {
     mountResident({ tab: 'library', focus: vi.fn(), paste: mockState.paste })
     mockState.paste.mockResolvedValue(true)
     await openLibrary()
-    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+    openShelf('preferences')
 
-    fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
+    fireEvent.contextMenu(await region('library-shelves').findByText('Workflow Preferences'))
     fireEvent.click(screen.getByRole('menuitem', { name: /^Send to Librarian/ }))
     await waitFor(() => expect(mockState.paste).toHaveBeenCalledWith('library preferences/workflow.md'))
 
@@ -532,10 +543,12 @@ describe('LibraryView', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
 
     fireEvent.click(shelf())
-    expect(await region('library-room').findByText('Tool Preferences')).toBeInTheDocument()
+    expect(await region('library-shelves').findByRole('button', { name: /^Tool Preferences/ })).toBeInTheDocument()
 
     fireEvent.contextMenu(shelf())
     fireEvent.click(screen.getByRole('menuitem', { name: /^Collapse/ }))
-    await waitFor(() => region('library-map'))
+    await waitFor(() => expect(
+      region('library-shelves').queryByRole('button', { name: /^Tool Preferences/ }),
+    ).toBeNull())
   })
 })
