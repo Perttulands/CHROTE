@@ -300,8 +300,8 @@
  */
 .library-dive {
   flex: none;
-  width: 58ch;
-  max-width: 45%;
+  width: 46ch;
+  max-width: 34%;
   min-width: 0;
   display: flex;
   flex-direction: column;
