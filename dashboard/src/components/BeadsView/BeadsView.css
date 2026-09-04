@@ -486,3 +486,126 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+/* The rail's lower half: the selected store's state, under a hairline. Its
+   only colour is the type words' own tokens; everything else is text. */
+.beads-rail-state {
+  padding-top: 10px;
+  border-top: 1px solid var(--divider);
+}
+
+.beads-store-note,
+.beads-store {
+  padding: 0 6px;
+}
+
+.beads-store-note {
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.beads-store-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.beads-store-prefix {
+  color: var(--text-primary);
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.beads-store-total,
+.beads-store-count {
+  flex: none;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.beads-store-path {
+  margin-top: 2px;
+  color: var(--text-dim);
+  /* The tail of a path is the folder: clip the head and keep the order. */
+  direction: rtl;
+  unicode-bidi: plaintext;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.beads-store-block {
+  display: grid;
+  /* Both blocks share one template so the bars and the numbers line up
+     between them; 11ch is the widest state word, "in progress". */
+  grid-template-columns: 11ch minmax(16px, 1fr) 3ch;
+  align-items: center;
+  gap: 3px 8px;
+  margin-top: 12px;
+  list-style: none;
+}
+
+.beads-store-row {
+  display: contents;
+}
+
+.beads-store-row-label {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.beads-store-block-types .beads-store-row-label {
+  font-size: 11px;
+}
+
+.beads-store-track {
+  height: 3px;
+  background-color: var(--surface-secondary);
+}
+
+.beads-store-fill {
+  display: block;
+  height: 100%;
+  background-color: var(--text-dim);
+}
+
+.beads-store-facts {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+}
+
+.beads-store-facts dt {
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.beads-store-facts dd {
+  margin-top: 2px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.beads-store-warnings {
+  margin-top: 10px;
+  list-style: none;
+}
+
+.beads-store-warning {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--text-dim);
+  color: var(--text-primary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
