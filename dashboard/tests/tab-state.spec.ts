@@ -91,7 +91,9 @@ test('returns to Beads, Library and Agents exactly as they were left', async ({ 
 
   await page.getByRole('button', { name: 'Library', exact: true }).click()
   await page.locator('.library-shelf', { hasText: 'preferences' }).click()
-  await page.locator('.library-result', { hasText: 'Workflow Preferences' }).click()
+  const shelfRow = page.locator('.library-shelves .library-row', { hasText: 'Workflow Preferences' })
+  await shelfRow.locator('.library-row-head').click()
+  await shelfRow.getByRole('button', { name: 'Dive' }).click()
   await expect(page.getByRole('heading', { name: 'Workflow Preferences' })).toBeVisible()
   await page.keyboard.press('Alt+Enter')
   await expect(page.getByRole('complementary', { name: 'The Librarian' }).locator('.xterm-helper-textarea')).toBeFocused()
