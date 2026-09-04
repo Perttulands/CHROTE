@@ -13,8 +13,8 @@
  * a click outside leaves it, and Alt+I closes it from anywhere.
  */
 
-import { useCallback, useRef, useState } from 'react'
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useRef } from 'react'
+import type { CSSProperties } from 'react'
 import BeadCard from './BeadCard'
 import AgentContextSheet from './AgentContextSheet'
 import FilePanelViewer from './FilePanelViewer'
@@ -31,18 +31,14 @@ import {
   useTableObject,
 } from '../context/TableContext'
 import { useSurface } from '../keys/dismiss'
+import { useResizableWidth } from '../hooks/useResizableWidth'
 import './TableColumn.css'
-
-/** What one arrow key on the handle is worth. */
-const KEYBOARD_STEP = 16
 
 export default function TableColumn() {
   const object = useTableObject()
   const session = useSession()
   const { openInBeads } = useTableActions()
   const columnRef = useRef<HTMLElement>(null)
-  const dragRef = useRef<number | null>(null)
-  const [dragWidth, setDragWidth] = useState<number | null>(null)
 
   const open = object !== null
 
@@ -57,47 +53,22 @@ export default function TableColumn() {
     return Math.max(TABLE_WIDTH_MIN, room - TABLE_CONTENT_MIN)
   }, [])
 
-  const startDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const column = columnRef.current
-    if (event.button !== 0 || !column) return
-    event.preventDefault()
-    const handle = event.currentTarget
-    // The edge follows the pointer from where it was grabbed, so the handle
-    // does not jump under the finger by however far into it the press landed.
-    const grabbedAt = event.clientX
-    const grabbedWidth = column.getBoundingClientRect().width
-    const max = widest()
-    handle.setPointerCapture(event.pointerId)
-    const move = (moveEvent: PointerEvent) => {
-      const next = Math.min(max, Math.max(TABLE_WIDTH_MIN, Math.round(grabbedWidth + grabbedAt - moveEvent.clientX)))
-      dragRef.current = next
-      setDragWidth(next)
-    }
-    const end = () => {
-      handle.removeEventListener('pointermove', move)
-      handle.removeEventListener('pointerup', end)
-      handle.removeEventListener('pointercancel', end)
-      const dragged = dragRef.current
-      dragRef.current = null
-      setDragWidth(null)
-      if (dragged !== null) updateSettings({ tableWidth: dragged })
-    }
-    handle.addEventListener('pointermove', move)
-    handle.addEventListener('pointerup', end)
-    handle.addEventListener('pointercancel', end)
-  }, [updateSettings, widest])
+  const commitWidth = useCallback((tableWidth: number) => {
+    updateSettings({ tableWidth })
+  }, [updateSettings])
 
-  // The handle is at the left edge, so left is wider and right is narrower.
-  const resizeByKey = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const delta = event.key === 'ArrowLeft' ? KEYBOARD_STEP : event.key === 'ArrowRight' ? -KEYBOARD_STEP : 0
-    if (delta === 0) return
-    event.preventDefault()
-    updateSettings({ tableWidth: Math.min(widest(), Math.max(TABLE_WIDTH_MIN, remembered + delta)) })
-  }, [remembered, updateSettings, widest])
+  const resize = useResizableWidth({
+    elementRef: columnRef,
+    width: remembered,
+    minWidth: TABLE_WIDTH_MIN,
+    maxWidth: widest,
+    edge: 'left',
+    onCommit: commitWidth,
+  })
 
   if (object === null) return null
 
-  const width = dragWidth ?? remembered
+  const width = resize.width
   const style = { '--table-width': `${width}px` } as CSSProperties
 
   return (
@@ -111,15 +82,14 @@ export default function TableColumn() {
       style={style}
     >
       <div
-        className={`table-column-handle${dragWidth !== null ? ' dragging' : ''}`}
+        {...resize.handleProps}
+        className={`table-column-handle${resize.resizing ? ' dragging' : ''}`}
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize the table"
         aria-valuenow={width}
         aria-valuemin={TABLE_WIDTH_MIN}
         tabIndex={0}
-        onPointerDown={startDrag}
-        onKeyDown={resizeByKey}
       />
       {object.kind === 'bead' && <BeadCard onOpenInBeads={openInBeads} />}
       {object.kind === 'agent-context' && <AgentContextSheet />}

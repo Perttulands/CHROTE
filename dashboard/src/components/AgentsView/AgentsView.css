@@ -18,18 +18,6 @@
   min-width: 0;
 }
 
-.agents-rail {
-  display: flex;
-  flex-direction: column;
-  flex: none;
-  gap: 12px;
-  width: 240px;
-  padding: 8px;
-  overflow: hidden;
-  border-right: 1px solid var(--divider);
-  background-color: var(--surface-primary);
-}
-
 .agents-filter {
   flex: none;
   height: 26px;
@@ -47,18 +35,6 @@
   border-color: var(--accent);
 }
 
-.agents-group {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.agents-workspaces {
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.agents-group h3,
 .agents-proposals h3 {
   margin: 0 0 4px;
   font-size: 12px;
@@ -157,15 +133,36 @@
 }
 
 .agents-proposals {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: none;
-  width: 300px;
   min-height: 0;
   padding: 10px 12px;
   overflow-y: auto;
   border-left: 1px solid var(--divider);
   background-color: var(--surface-primary);
+}
+
+.agents-proposals-handle {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.agents-proposals-handle:hover {
+  background-color: var(--text-dim);
+}
+
+.agents-proposals-handle:focus,
+.agents-proposals-handle.dragging {
+  outline: none;
+  background-color: var(--accent);
 }
 
 .agents-proposal {

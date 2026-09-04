@@ -110,6 +110,10 @@ function mergeSettings(rawSettings: unknown): UserSettings {
   return {
     ...DEFAULT_SETTINGS,
     ...carried,
+    railWidth: {
+      ...DEFAULT_SETTINGS.railWidth,
+      ...(isRecord(rawSettings.railWidth) ? rawSettings.railWidth : {}),
+    },
     terminalTabCount: normalizeTerminalTabCount(rawSettings.terminalTabCount),
     terminalLaunchUsers: mergeTerminalLaunchUsers(rawSettings.terminalLaunchUsers),
     terminalSessionPrefixes: mergeTerminalSessionPrefixes(

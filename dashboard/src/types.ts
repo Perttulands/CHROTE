@@ -125,6 +125,11 @@ export interface UserSettings {
   hideScrollbar: boolean             // Hide the dead xterm scrollbar gutter in terminals
   keysEnabled: boolean               // Leader chords intercept keys; off hands every key to the pty
   tableWidth: number                 // The table's column at the right, in px; device-local
+  railWidth: {                       // Left rails, in px; device-local
+    beads: number
+    library: number
+    agents: number
+  }
   agentEventMarks: boolean           // A mark on the session's row and tab until it is focused; device-local, on
   agentEventToast: boolean           // The toast naming the session that reported; device-local, on
   agentEventTones: boolean           // A short tone when an agent finishes or needs input; device-local, off
@@ -148,6 +153,11 @@ export const DEFAULT_SETTINGS: UserSettings = {
   hideScrollbar: true,
   keysEnabled: true,
   tableWidth: 400,
+  railWidth: {
+    beads: 240,
+    library: 240,
+    agents: 240,
+  },
   agentEventMarks: true,
   agentEventToast: true,
   agentEventTones: false,

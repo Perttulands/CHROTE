@@ -34,6 +34,7 @@ import type { MenuGroup } from '../Menu'
 import MenuTarget from '../MenuTarget'
 import ResidentColumn from '../ResidentColumn'
 import TableColumn from '../TableColumn'
+import Rail, { RailScroll, RailSection } from '../Rail'
 import {
   fetchChanges,
   fetchGraph,
@@ -79,7 +80,7 @@ function count(n: number, one: string, many = `${one}s`): string {
 type OpenIntent = 'read' | 'edit' | 'history'
 
 export default function LibraryView({ active = true }: { active?: boolean } = {}) {
-  const { openSendToSession, sessions } = useSession()
+  const { openSendToSession, sessions, settings, updateSettings } = useSession()
   const { announce } = useStatus()
 
   const [shelves, setShelves] = useState<LibraryShelves | null>(null)
@@ -388,6 +389,10 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
       .sort((a, b) => a.title.localeCompare(b.title))
   }, [graph, page, titleOf])
 
+  const commitRailWidth = useCallback((library: number) => {
+    updateSettings({ railWidth: { ...settings.railWidth, library } })
+  }, [settings.railWidth, updateSettings])
+
   if (error) return <div className="library-view"><p className="library-error">{error}</p></div>
   if (!shelves) return <div className="library-view"><p className="library-empty">Opening the library…</p></div>
   if (!shelves.root) return <div className="library-view"><p className="library-empty">No library is configured</p></div>
@@ -428,7 +433,13 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   return (
     <div className="library-view">
       <div className="library-columns">
-        <div className="library-left" data-ui="library.shelves">
+        <Rail
+          className="library-left"
+          data-ui="library.shelves"
+          label="Library"
+          width={settings.railWidth.library}
+          onWidthCommit={commitRailWidth}
+        >
           <input
             className="library-search"
             type="search"
@@ -444,8 +455,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
             onKeyDown={event => { if (event.key === 'Enter') runSearch() }}
           />
 
-          <section className="library-section library-shelves">
-            <h3>Shelves</h3>
+          <RailSection className="library-section library-shelves" title="Shelves">
             {shelves.shelves.map(entry => (
               <MenuTarget key={entry.path} label={`Actions for shelf ${entry.name}`} groups={shelfMenu(entry.name)}>
                 <button
@@ -458,11 +468,10 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
                 </button>
               </MenuTarget>
             ))}
-          </section>
+          </RailSection>
 
-          <section className="library-section library-arrivals">
-            <h3>New arrivals</h3>
-            <div className="library-scroll">
+          <RailSection className="library-section library-arrivals" title="New arrivals" fill>
+            <RailScroll className="library-scroll">
               {gitError && <p className="library-git-error">{gitError}</p>}
               {changes.length === 0 && <p className="library-empty">Nothing has arrived yet.</p>}
               {changes.map(change => {
@@ -483,13 +492,12 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
                   ? <MenuTarget key={change.hash} label={`Actions for ${path}`} groups={pageMenu(path)}>{arrival}</MenuTarget>
                   : <Fragment key={change.hash}>{arrival}</Fragment>
               })}
-            </div>
-          </section>
+            </RailScroll>
+          </RailSection>
 
           {shelves.beadsProject && (
-            <section className="library-section library-proposals">
-              <h3>Proposals</h3>
-              <div className="library-scroll">
+            <RailSection className="library-section library-proposals" title="Proposals">
+              <RailScroll className="library-scroll">
                 {proposals.length === 0 && <p className="library-empty">Nothing is in flight.</p>}
                 {proposals.map(bead => (
                   <button
@@ -502,10 +510,10 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
                     <span className="library-proposal-title">{bead.title}</span>
                   </button>
                 ))}
-              </div>
-            </section>
+              </RailScroll>
+            </RailSection>
           )}
-        </div>
+        </Rail>
 
         <div className="library-room" data-ui="library.room">
           {showMap ? (

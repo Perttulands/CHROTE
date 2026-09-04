@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import { MAX_TEXT_PREVIEW_BYTES, getDownloadUrl, getErrorMessage, probeTextFile, readTextFile } from './FilesView/fileService'
 import type { FileItem } from './FilesView/types'
 import type { FileViewState, MarkdownMode } from './workspaceFilesState'
 import { openImageGlance } from './imageGlance'
+import { useResizableWidth } from '../hooks/useResizableWidth'
 
 export type PreviewKind = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'download'
 export { MAX_TEXT_PREVIEW_BYTES } from './FilesView/fileService'
@@ -254,6 +255,8 @@ function FileViewer({
   onNext,
 }: FileViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const splitContainerRef = useRef<HTMLDivElement>(null)
+  const splitSourceRef = useRef<HTMLElement | null>(null)
   const [loadedContent, setLoadedContent] = useState(controlledContent || '')
   const [probedFile, setProbedFile] = useState<{ path: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
@@ -266,6 +269,26 @@ function FileViewer({
   const patchViewState = useCallback((patch: Partial<FileViewState>) => {
     onViewStateChange({ ...viewState, ...patch })
   }, [onViewStateChange, viewState])
+  const splitPixelsPerPercent = useCallback(() => {
+    const width = splitContainerRef.current?.getBoundingClientRect().width ?? 0
+    return width > 0 ? width / 100 : 1
+  }, [])
+  const widestSplit = useCallback(() => 80, [])
+  const commitSplitWidth = useCallback((markdownSplitPercent: number) => {
+    patchViewState({ markdownSplitPercent })
+  }, [patchViewState])
+  const splitResize = useResizableWidth({
+    elementRef: splitSourceRef,
+    width: viewState.markdownSplitPercent,
+    minWidth: 20,
+    maxWidth: widestSplit,
+    edge: 'right',
+    onCommit: commitSplitWidth,
+    pixelsPerUnit: splitPixelsPerPercent,
+  })
+  const captureSplitSource = useCallback((element: HTMLElement | null) => {
+    splitSourceRef.current = element
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -303,18 +326,8 @@ function FileViewer({
   const setMarkdownMode = (mode: MarkdownMode) => patchViewState({ markdownMode: mode })
   const viewerStyle = {
     '--fb-viewer-font-size': `${viewState.fontSize}px`,
-    '--fb-markdown-source-width': `${viewState.markdownSplitPercent}%`,
+    '--fb-markdown-source-width': `${splitResize.width}%`,
   } as CSSProperties
-
-  const resizeMarkdownSplit = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
-    const container = event.currentTarget.parentElement
-    if (!container) return
-    const bounds = container.getBoundingClientRect()
-    if (bounds.width <= 0) return
-    const percent = Math.min(80, Math.max(20, ((event.clientX - bounds.left) / bounds.width) * 100))
-    patchViewState({ markdownSplitPercent: percent })
-  }
 
   if (loading) return <div className="fb-editor-empty">Loading file...</div>
   if (error) return <div className="fb-editor-empty">{error}</div>
@@ -349,10 +362,11 @@ function FileViewer({
         onScroll={event => patchViewState({ scrollTop: event.currentTarget.scrollTop })}
       >
         {kind === 'text' && isMarkdownFileName(item.name) ? (
-          <div className={`fb-markdown-editor mode-${viewState.markdownMode}`} aria-label={`Markdown viewer for ${item.name}`}>
+          <div ref={splitContainerRef} className={`fb-markdown-editor mode-${viewState.markdownMode}`} aria-label={`Markdown viewer for ${item.name}`}>
             {(viewState.markdownMode === 'source' || viewState.markdownMode === 'split') && (
               editable ? (
                 <textarea
+                  ref={captureSplitSource}
                   className="fb-markdown-source"
                   aria-label={`Markdown source for ${item.name}`}
                   value={content}
@@ -361,26 +375,20 @@ function FileViewer({
                   onChange={event => onContentChange?.(event.target.value)}
                 />
               ) : (
-                <pre className="fb-markdown-source fb-markdown-source-readonly" aria-label={`Markdown source for ${item.name}`}>{content}</pre>
+                <pre ref={captureSplitSource} className="fb-markdown-source fb-markdown-source-readonly" aria-label={`Markdown source for ${item.name}`}>{content}</pre>
               )
             )}
             {viewState.markdownMode === 'split' && (
               <div
-                className="fb-markdown-split-resizer"
+                {...splitResize.handleProps}
+                className={`fb-markdown-split-resizer${splitResize.resizing ? ' dragging' : ''}`}
                 role="separator"
                 aria-label="Resize Markdown split"
                 aria-orientation="vertical"
+                aria-valuenow={Math.round(splitResize.width)}
+                aria-valuemin={20}
+                aria-valuemax={80}
                 tabIndex={0}
-                onPointerDown={event => event.currentTarget.setPointerCapture(event.pointerId)}
-                onPointerMove={resizeMarkdownSplit}
-                onPointerUp={event => event.currentTarget.releasePointerCapture(event.pointerId)}
-                onKeyDown={event => {
-                  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-                  event.preventDefault()
-                  patchViewState({
-                    markdownSplitPercent: Math.min(80, Math.max(20, viewState.markdownSplitPercent + (event.key === 'ArrowRight' ? 5 : -5))),
-                  })
-                }}
               />
             )}
             {(viewState.markdownMode === 'preview' || viewState.markdownMode === 'split') && (
