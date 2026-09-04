@@ -1,0 +1,21 @@
+/* The sixth colour rule: one theme ANSI token per Bead type, with the word
+   itself as the signal that survives the colour. A type the list does not know
+   keeps the word in --text-dim rather than an invented hue. */
+
+.bead-type {
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.bead-type[data-type='bug'] { color: var(--ansi-1); }
+.bead-type[data-type='feature'] { color: var(--ansi-2); }
+.bead-type[data-type='chore'] { color: var(--ansi-3); }
+.bead-type[data-type='decision'] { color: var(--ansi-4); }
+.bead-type[data-type='epic'] { color: var(--ansi-5); }
+.bead-type[data-type='task'] { color: var(--ansi-6); }
+
+/* A closed Bead is done arguing: the row is grey end to end, type included. */
+.bead-row-closed .bead-type,
+.bead-card-closed .bead-type {
+  color: var(--text-dim);
+}

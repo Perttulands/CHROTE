@@ -8,13 +8,15 @@
 import type { KeyboardEvent, ReactNode } from 'react'
 import { openBeadCard } from '../../beads/beadCard'
 import { beadReference } from '../../beads/beadReference'
-import { beadGlyph, beadStatusLabel } from '../../beads/beadStatus'
+import { beadGlyph, beadStatusLabel, isBeadClosed } from '../../beads/beadStatus'
+import { isEpic } from '../../beads/beadType'
 import type { WorkRow } from '../../beads/beadsTree'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { copyAndAnnounce } from '../../utils/clipboard'
 import type { MenuGroup } from '../Menu'
 import MenuTarget from '../MenuTarget'
+import BeadTypeLabel from '../BeadTypeLabel'
 
 export interface BeadRowFold {
   /** How many rows open beneath this one. */
@@ -48,6 +50,13 @@ export default function BeadRow({ row, depth = 0, fold, trailing }: BeadRowProps
   const { announce } = useStatus()
   const glyph = beadGlyph(row.status, row.blocked)
   const state = beadStatusLabel(row.status, row.blocked)
+  // A closed Bead reads grey end to end; an epic reads heavier, with a hairline
+  // beneath it, because it is the roof the rows under it hang from.
+  const shape = [
+    'bead-row',
+    isBeadClosed(row.status) ? 'bead-row-closed' : '',
+    isEpic(row.type) ? 'bead-row-epic' : '',
+  ].filter(Boolean).join(' ')
 
   const select = () => {
     openBeadCard(row.id, row.projectPath, row.title)
@@ -102,7 +111,7 @@ export default function BeadRow({ row, depth = 0, fold, trailing }: BeadRowProps
 
   return (
     <MenuTarget label={`Actions for ${row.id}`} groups={menu}>
-      <div className="bead-row" data-ui="beads.row" style={{ paddingLeft: `${12 + depth * 22}px` }}>
+      <div className={shape} data-ui="beads.row" style={{ paddingLeft: `${12 + depth * 22}px` }}>
         <button
           type="button"
           className="bead-row-open"
@@ -120,7 +129,7 @@ export default function BeadRow({ row, depth = 0, fold, trailing }: BeadRowProps
             )}
           </span>
           <span className="bead-row-glyph" title={state}>{glyph}</span>
-          <span className="bead-row-type">{row.type || 'task'}</span>
+          <BeadTypeLabel type={row.type} className="bead-row-type" />
           <span className="bead-row-id">{row.id}</span>
           <span className="bead-row-title">{row.title}</span>
         </button>
