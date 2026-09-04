@@ -10,6 +10,11 @@
  * absent the header offers Launch with the resident's folder; when the host
  * configured nothing, the header says so and nothing else.
  *
+ * Closed, by the operator's Collapse or by the squeeze, the column is a strip
+ * one line wide: the label and the state word turned on their side, a click or
+ * a press anywhere on it opening the column again. The strip is the control,
+ * so neither state spends a word of the header on saying which it is.
+ *
  * The column owns the terminal it shows rather than taking the pool's: a
  * pooled terminal belongs to the tile that bound it, and a terminal is attached
  * in one place at a time. Peek answers the same problem the same way.
@@ -202,7 +207,13 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
 
   // Until the host has answered, the column keeps its full width: a tab that
   // laid itself out and then moved would break the rule that nothing shifts.
-  const showsHeaderOnly = collapsed || squeezed || state === 'not configured'
+  //
+  // Collapsed, by the operator or by the squeeze, the column is a strip a few
+  // pixels wide carrying the label and the state word in one rotated line. A
+  // host that configured no session is not a strip: it is the header saying so.
+  const unconfigured = state === 'not configured'
+  const stripped = !unconfigured && (collapsed || squeezed)
+  const showsHeaderOnly = stripped || unconfigured
   const showsTerminal = active && running && !showsHeaderOnly
   const showsLauncher = launching && !showsHeaderOnly && resident !== null && !running
 
@@ -262,11 +273,12 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
     return mountResident({ tab, focus, paste: pasteLine })
   }, [active, focus, pasteLine, tab])
 
-  const toggleCollapsed = useCallback(() => {
-    setCollapsed(open => {
-      writeCollapsed(tab, !open)
-      return !open
-    })
+  // The strip is the control that opens the column again, and the menu is the
+  // one that closes it; the header carries no word for either. While the
+  // squeeze holds there is no room to give back, so opening waits for room.
+  const setCollapsedTo = useCallback((next: boolean) => {
+    writeCollapsed(tab, next)
+    setCollapsed(next)
   }, [tab])
 
   // Restart is the one destructive thing here, and it is exact: the resident's
@@ -305,6 +317,13 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
           reason: running ? undefined : 'The session is not running',
           onSelect: () => { void paste() },
         },
+        {
+          id: 'collapse',
+          label: 'Collapse',
+          disabled: collapsed,
+          reason: collapsed ? 'The column is already a strip' : undefined,
+          onSelect: () => setCollapsedTo(true),
+        },
       ],
     },
     {
@@ -335,7 +354,7 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
   return (
     <aside
       ref={columnRef}
-      className={`resident-column${showsHeaderOnly ? ' collapsed' : ''}`}
+      className={`resident-column${stripped ? ' collapsed' : ''}${unconfigured ? ' bare' : ''}`}
       role="complementary"
       aria-label={`The ${label}`}
       data-ui="resident.column"
@@ -355,28 +374,40 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
           tabIndex={0}
         />
       )}
-      <div className="resident-header" data-ui="resident.header" onContextMenu={openMenu}>
-        <span className="resident-label">{label}</span>
-        {session && <SessionCommandMark command={session.currentCommand} />}
-        {sessionName && state !== 'not configured' && <span className="resident-session">{sessionName}</span>}
-        <span className="resident-state">{state ?? ''}</span>
-        <span className="resident-header-spacer" />
-        {state === 'not running' && !showsHeaderOnly && (
-          <button type="button" className="resident-action" onClick={() => setLaunching(open => !open)}>
-            {launching ? 'Cancel' : 'Launch'}
-          </button>
-        )}
-        {running && !showsHeaderOnly && (
-          <button type="button" className="resident-action" aria-keyshortcuts="Alt+S" onClick={() => { void paste() }}>
-            Send<span className="resident-chord" aria-hidden="true">Alt+S</span>
-          </button>
-        )}
-        {state !== null && state !== 'not configured' && (
-          <button type="button" className="resident-action" onClick={toggleCollapsed}>
-            {collapsed ? 'Expand' : squeezed ? 'Expand' : 'Collapse'}
-          </button>
-        )}
-      </div>
+      {stripped ? (
+        <button
+          type="button"
+          className="resident-strip"
+          data-ui="resident.strip"
+          aria-label={`Expand the ${label}`}
+          aria-expanded={false}
+          onClick={() => setCollapsedTo(false)}
+          onContextMenu={openMenu}
+        >
+          <span className="resident-strip-line">
+            <span className="resident-label">{label}</span>
+            <span className="resident-state">{state ?? ''}</span>
+          </span>
+        </button>
+      ) : (
+        <div className="resident-header" data-ui="resident.header" onContextMenu={openMenu}>
+          <span className="resident-label">{label}</span>
+          {session && <SessionCommandMark command={session.currentCommand} />}
+          {sessionName && !unconfigured && <span className="resident-session">{sessionName}</span>}
+          <span className="resident-state">{state ?? ''}</span>
+          <span className="resident-header-spacer" />
+          {state === 'not running' && !unconfigured && (
+            <button type="button" className="resident-action" onClick={() => setLaunching(open => !open)}>
+              {launching ? 'Cancel' : 'Launch'}
+            </button>
+          )}
+          {running && (
+            <button type="button" className="resident-action" aria-keyshortcuts="Alt+S" onClick={() => { void paste() }}>
+              Send<span className="resident-chord" aria-hidden="true">Alt+S</span>
+            </button>
+          )}
+        </div>
+      )}
       {showsLauncher && resident && (
         <div className="resident-launcher">
           <Launcher

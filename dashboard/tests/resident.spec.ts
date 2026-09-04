@@ -133,6 +133,43 @@ test.describe('The resident column', () => {
     await expectTerminalFits(reopened)
   })
 
+  // Real geometry is the whole point: the strip's width, the figure the table
+  // and the Send drawer read from it, and the content that must not move.
+  test('closes to a strip a couple of characters wide and opens again on a click', async ({ page }) => {
+    await mockApiRoutes(page)
+    await mockBeadsApiRoutes(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+
+    await openBeadsTab(page)
+    const column = page.getByRole('complementary', { name: 'The Clerk' })
+    await expect(column.locator('.xterm-rows')).toContainText('mock terminal hq-deacon')
+    const open = Math.round((await box(column)).width)
+    const content = page.locator('.beads-content')
+    const contentOpen = Math.round((await box(content)).width)
+    expect(contentOpen).toBeGreaterThanOrEqual(480)
+
+    await column.locator('.resident-header').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Collapse' }).click()
+
+    const strip = column.getByRole('button', { name: 'Expand the Clerk' })
+    await expect(strip).toContainText('Clerk')
+    await expect(strip).toContainText('live')
+    const closed = Math.round((await box(column)).width)
+    expect(closed).toBeLessThanOrEqual(32)
+
+    // The figure the rest of the tab lays itself out against is the strip's.
+    const told = await page.locator('.dashboard-content')
+      .evaluate(node => node.style.getPropertyValue('--resident-width'))
+    expect(told).toBe(`${closed}px`)
+    expect(Math.round((await box(content)).width)).toBeGreaterThanOrEqual(480)
+
+    await strip.click()
+    await expect(column.locator('.xterm-rows')).toContainText('mock terminal hq-deacon')
+    expect(Math.round((await box(column)).width)).toBe(open)
+    expect(Math.round((await box(content)).width)).toBe(contentOpen)
+  })
+
   test('offers Launch with the Clerk folder when its session is absent', async ({ page }) => {
     await mockApiRoutes(page)
     await mockBeadsApiRoutes(page)
