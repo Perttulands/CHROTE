@@ -234,6 +234,13 @@
   display: block;
 }
 
+/* The hairlines are drawn on their own surface, under the dots and the writing.
+   Nothing is aimed at them, so the pointer passes straight through to the
+   drawing above, which is the one element the map answers for. */
+.library-map-links {
+  pointer-events: none;
+}
+
 /* The way back, offered only once the map has been moved. */
 .library-map-reset {
   position: absolute;

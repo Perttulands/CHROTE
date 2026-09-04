@@ -191,6 +191,7 @@ function useMapLayout(graph: LibraryGraph, width: number, height: number): { lay
 export default function LibraryMap({ graph, openPath, matches, hoverPath = null, soloShelf = null, window: recency = 'all', onOpen }: MapProps) {
   const { ref, width, height } = useMeasuredSize()
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const edgeCanvasRef = useRef<HTMLCanvasElement>(null)
   const rendererRef = useRef<MapRenderer | null>(null)
   const [hovered, setHovered] = useState<string | null>(null)
   const [shelf, setShelf] = useState<string | null>(null)
@@ -351,7 +352,7 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
   useLayoutEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    rendererRef.current = createCanvasRenderer(canvas)
+    rendererRef.current = createCanvasRenderer(canvas, edgeCanvasRef.current)
     setPalette(readPalette(ref.current))
     return () => {
       rendererRef.current?.destroy()
@@ -528,6 +529,10 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
       onClick={onClick}
       onMouseLeave={() => { setHovered(null); setShelf(null) }}
     >
+      {/* The hairlines, on a surface of their own beneath the dots and the
+          writing, so the GPU draws thirty thousand of them in one call and the
+          rest of the map is drawn where it always was. */}
+      <canvas ref={edgeCanvasRef} className="library-map-canvas library-map-links" aria-hidden="true" />
       <canvas ref={canvasRef} className="library-map-canvas" role="img" aria-label="The map" />
       {/* One element per page over the drawing, so the map is reachable by
           keyboard and readable by a screen reader. It carries no ink: what the

@@ -113,7 +113,7 @@ test.describe('The Library', () => {
     // while there is one.
     const reset = page.locator('[data-ui="library.map.reset"]')
     await expect(reset).toHaveCount(0)
-    await page.locator('.library-map canvas').hover({ position: { x: 300, y: 200 } })
+    await page.getByRole('img', { name: 'The map' }).hover({ position: { x: 300, y: 200 } })
     await page.mouse.wheel(0, -400)
     await expect(reset).toBeVisible()
     await reset.click()
