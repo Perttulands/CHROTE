@@ -172,8 +172,9 @@ describe('the Beads tab', () => {
     render(<BeadsView />)
     await screen.findByText('Title of ctx-t4ak')
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Ready and in progress' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Open' }))
 
+    expect(screen.getByRole('heading', { name: 'Ready to start' })).toBeInTheDocument()
     const inProgress = screen.getByRole('heading', { name: 'In progress' }).parentElement as HTMLElement
     expect(inProgress).toHaveTextContent('ctx-t4ak')
     expect(inProgress).not.toHaveTextContent('chrote-ep.1')

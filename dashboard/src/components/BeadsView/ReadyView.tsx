@@ -1,5 +1,5 @@
 /**
- * Ready and in progress, side by side: what can be started, and what is
+ * Open work, side by side: what can be started, and what is
  * already claimed. Both are the newest first, because the question this view
  * answers is what to do next.
  */
@@ -26,7 +26,7 @@ function Column({ title, rows }: { title: string; rows: WorkRow[] }) {
 export default function ReadyView({ ready, inProgress }: ReadyViewProps) {
   return (
     <div className="beads-columns">
-      <Column title="Ready" rows={ready} />
+      <Column title="Ready to start" rows={ready} />
       <Column title="In progress" rows={inProgress} />
     </div>
   )

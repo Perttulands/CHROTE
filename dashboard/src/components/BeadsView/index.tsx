@@ -35,7 +35,7 @@ type BeadsTabView = 'map' | 'ready' | 'stale'
 
 const VIEWS: { id: BeadsTabView; label: string }[] = [
   { id: 'map', label: 'Map' },
-  { id: 'ready', label: 'Ready and in progress' },
+  { id: 'ready', label: 'Open' },
   { id: 'stale', label: 'Stale' },
 ]
 

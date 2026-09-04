@@ -73,9 +73,10 @@ test.describe('Beads', () => {
   test('splits ready from in progress, and lists what has gone stale', async ({ page }) => {
     await openBeadsTab(page)
 
-    await page.click('.beads-view-tab:has-text("Ready and in progress")')
+    await page.click('.beads-view-tab:has-text("Open")')
     const ready = page.locator('.beads-column').first()
     const inProgress = page.locator('.beads-column').nth(1)
+    await expect(ready.getByRole('heading')).toHaveText('Ready to start')
     await expect(ready).toContainText('Fix login bug')
     await expect(inProgress).toContainText('Add dark mode')
     await expect(ready).not.toContainText('Blocked by external API')
