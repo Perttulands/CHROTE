@@ -1,28 +1,32 @@
 /**
- * The Library: a reading room over the operator's own context corpus.
+ * The Library: the map of the operator's own context corpus, dived into.
  *
- * A rail, a room, and the Librarian. The shelves, what arrived lately and the
- * proposals in flight down the left; the map of the whole corpus in the middle
- * until a page is chosen, then that page at a reading measure with the map
- * shrunk to a strip of its neighbours above it; the Librarian live in a column
- * at the far edge. The corpus is a Markdown tree under git, so every fact here
- * — a title, a date, an author, a history, a link — is read out of that tree
- * rather than kept anywhere in CHROTE. The one thing written back is the
- * operator's own correction, and it is a commit signed as him.
+ * A rail, the map, and the Librarian. The shelves, what arrived lately and the
+ * proposals in flight down the left; the map of the whole corpus in the middle,
+ * always; the Librarian live in a column at the far edge. Choosing a page dives
+ * into it rather than leaving the map: the map takes that page to the middle
+ * and closer in, and the page opens in a column beside it with its neighbours
+ * as links to travel by and a trail back to where the dive began. Escape ends
+ * the dive and the map is exactly where it was left.
+ *
+ * The corpus is a Markdown tree under git, so every fact here — a title, a
+ * date, an author, a history, a link — is read out of that tree rather than
+ * kept anywhere in CHROTE. The one thing written back is the operator's own
+ * correction, and it is a commit signed as him.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Editor from '../Editor'
 import Markdown from '../Markdown'
 import LibraryMap from './Map'
-import { RECENCY_WINDOWS, type RecencyWindow } from './mapLayout'
+import { RECENCY_WINDOWS, neighboursOf, type RecencyWindow } from './mapLayout'
 import Shelf from './Shelf'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { openBeadCard } from '../../beads/beadCard'
 import { fetchBeadWork, type BeadRow } from '../../beads/beadsApi'
 import { isBeadClosed } from '../../beads/beadStatus'
-import { registerChords } from '../../keys/chords'
+import { useSurface } from '../../keys/dismiss'
 import { getSessionKey } from '../../types'
 import { pasteToResident } from '../../residents/residentPresence'
 import { copyAndAnnounce } from '../../utils/clipboard'
@@ -40,7 +44,6 @@ import {
   libraryWhen,
   savePage,
   searchLibrary,
-  shelfOf,
   type LibraryChange,
   type LibraryGraph,
   type LibraryPage,
@@ -56,7 +59,7 @@ const ARRIVALS = 30
 /** How many commits the history strip shows before "… n more". */
 const HISTORY_STRIP = 3
 
-/** The one line the Librarian and the drawer are handed: which page is open. */
+/** The one line the Librarian and the drawer are handed: the dived-into page. */
 export function libraryReference(path: string | null): string {
   return path ? `library ${path}` : 'library'
 }
@@ -71,9 +74,6 @@ function windowLegend(window: RecencyWindow): string {
 function count(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
-
-/** The middle column shows the map, or the room: a page, a shelf, or a search. */
-type View = 'map' | 'room'
 
 /** What a page is opened for: reading, editing, or its history unfolded. */
 type OpenIntent = 'read' | 'edit' | 'history'
@@ -97,9 +97,12 @@ export default function LibraryView() {
   const [shelf, setShelf] = useState<string | null>(null)
   const [shelfPages, setShelfPages] = useState<LibraryPage[]>([])
   const [page, setPage] = useState<LibraryPageContent | null>(null)
-  const [view, setView] = useState<View>('map')
+  // Every page this dive has passed through, oldest first; the last of them is
+  // the page being read. Empty means no dive is open.
+  const [trail, setTrail] = useState<string[]>([])
   const [recency, setRecency] = useState<RecencyWindow>('all')
   const [historyOpen, setHistoryOpen] = useState(false)
+  const diveRef = useRef<HTMLElement>(null)
 
   const [draft, setDraft] = useState<string | null>(null)
   const [summary, setSummary] = useState('')
@@ -170,18 +173,26 @@ export default function LibraryView() {
     return () => { current = false }
   }, [beadsProject])
 
+  // Diving into a page puts the map back under it — a dive is read against the
+  // map, not instead of it — and adds the page to the trail. A page the dive
+  // has already passed through is not visited twice: the trail is cut back to
+  // it, which is what a step back means.
+  //
   // A row's menu can ask for the page already in the editor or with its whole
   // history unfolded; the page arrives in that state rather than a step short.
   const openPage = useCallback((path: string, intent: OpenIntent = 'read') => {
     setResults(null)
+    setShelf(null)
     setDraft(null)
     fetchPage(path)
       .then(found => {
         setPage(found)
+        setTrail(current => {
+          const at = current.indexOf(found.path)
+          return at === -1 ? [...current, found.path] : current.slice(0, at + 1)
+        })
         setHistoryOpen(intent === 'history')
         setGitError(found.error ?? '')
-        setShelf(shelfOf(found.path) || null)
-        setView('room')
         if (intent === 'edit') {
           setDraft(found.content)
           setSummary(`Edit ${found.title}`)
@@ -193,13 +204,24 @@ export default function LibraryView() {
       })
   }, [announce])
 
+  // A dive ends where it was opened: the page and its trail go, the map stays
+  // exactly where the operator left it.
+  const closeDive = useCallback(() => {
+    setPage(null)
+    setTrail([])
+    setDraft(null)
+    setHistoryOpen(false)
+    setDiscarding(false)
+  }, [])
+
+  useSurface({ open: page !== null, kind: 'work', onClose: closeDive, ref: diveRef })
+
   const openShelf = useCallback((name: string) => {
     setResults(null)
-    setPage(null)
     setDraft(null)
     setShelf(name)
-    setView('room')
-  }, [])
+    closeDive()
+  }, [closeDive])
 
   // The shelf listing follows the reader, whether he chose the shelf or
   // arrived on it through a page.
@@ -228,19 +250,20 @@ export default function LibraryView() {
     searchLibrary(asked)
       .then(found => {
         setResults(found)
-        setView('room')
+        setShelf(null)
+        closeDive()
         announce(`${found.length} ${found.length === 1 ? 'page mentions' : 'pages mention'} "${asked}"`, 'info')
       })
       .catch((cause: unknown) => {
         announce(cause instanceof Error ? cause.message : 'The search failed', 'error')
       })
-  }, [announce, query])
+  }, [announce, closeDive, query])
 
   // The page's Send is the drawer, for any other session; Alt+S is the
   // Librarian's, and pastes the same reference into the column at the right.
   const send = useCallback(() => {
-    openSendToSession({ reference: libraryReference(page?.path ?? shelf) })
-  }, [openSendToSession, page, shelf])
+    openSendToSession({ reference: libraryReference(page?.path ?? null) })
+  }, [openSendToSession, page])
 
   // Send to Librarian is the column at the right where he is living in it: the
   // line lands in his prompt, unsubmitted, exactly as Alt+S puts the open page
@@ -258,13 +281,10 @@ export default function LibraryView() {
       : { reference, launch: { label: 'Launch the Librarian', folder: root } })
   }, [openSendToSession, root, sessions, shelves?.librarianSession])
 
-  // A shelf is open while its listing is the room: not while a page from it is
-  // being read, and not while a search stands in the room's place.
-  const shelfOpen = (name: string) => shelf === name && page === null && results === null
-  const collapseShelf = useCallback(() => {
-    setShelf(null)
-    setView('map')
-  }, [])
+  // A shelf is open while its listing is the room: not while a search stands
+  // in the room's place.
+  const shelfOpen = (name: string) => shelf === name && results === null
+  const collapseShelf = useCallback(() => setShelf(null), [])
 
   const pageMenu = (path: string) => (): MenuGroup[] => [
     {
@@ -294,29 +314,9 @@ export default function LibraryView() {
     },
   ]
 
-  // The room has something to show once a page, a shelf or a search is on the
-  // table; until then the map is all there is, and Alt+R has nowhere to go.
-  const roomHas = results !== null || page !== null || shelf !== null
-  const showMap = view === 'map' || !roomHas
-
-  const toggleView = useCallback(() => {
-    if (!roomHas) return
-    setView(current => (current === 'map' ? 'room' : 'map'))
-  }, [roomHas])
-
-  // Alt+R turns the map over. It is registered only while the tab is mounted,
-  // so it never shadows a chord that shares its key elsewhere; Alt+S is the
-  // resident column's here and pastes the page into the Librarian's prompt.
-  useEffect(() => registerChords([
-    {
-      id: 'library.map',
-      key: 'r',
-      direct: { alt: true, shift: false, key: 'r' },
-      label: 'The map or the reading room',
-      scope: 'global',
-      run: toggleView,
-    },
-  ]), [toggleView])
+  // The map is the room, unless a search or a shelf listing is standing in it.
+  // A dive never displaces it: the page is read in the column beside it.
+  const showMap = results === null && shelf === null
 
   const save = useCallback(async () => {
     if (!page || draft === null) return
@@ -362,16 +362,31 @@ export default function LibraryView() {
       .map(entry => entry.path))
   }, [graph, query, results])
 
+  /** What the map calls a page, for the trail and the two link lists. */
+  const titles = useMemo(
+    () => new Map(graph?.pages.map(entry => [entry.path, entry.title]) ?? []),
+    [graph],
+  )
+  const titleOf = useCallback((path: string) => titles.get(path) ?? path, [titles])
+
+  // Every page one hop away — a written link either way, or a shared tag —
+  // read off the same graph the map draws, so travelling costs no request.
+  const neighbours = useMemo(() => {
+    if (!graph || !page) return []
+    return neighboursOf(graph, page.path)
+      .map(path => ({ path, title: titleOf(path) }))
+      .sort((a, b) => a.title.localeCompare(b.title))
+  }, [graph, page, titleOf])
+
   // The pages that link to the open one, by title, from the same graph the
   // map draws; a backlink is a written link, not a shared tag.
   const backlinks = useMemo(() => {
     if (!graph || !page) return []
-    const titles = new Map(graph.pages.map(entry => [entry.path, entry.title]))
     return graph.links
       .filter(([, to]) => to === page.path)
-      .map(([from]) => ({ path: from, title: titles.get(from) ?? from }))
+      .map(([from]) => ({ path: from, title: titleOf(from) }))
       .sort((a, b) => a.title.localeCompare(b.title))
-  }, [graph, page])
+  }, [graph, page, titleOf])
 
   if (error) return <div className="library-view"><p className="library-error">{error}</p></div>
   if (!shelves) return <div className="library-view"><p className="library-empty">Opening the library…</p></div>
@@ -380,27 +395,35 @@ export default function LibraryView() {
   const mapPages = graph ? graph.pages.filter(entry => entry.shelf !== '').length : 0
   const mapShelves = graph ? new Set(graph.pages.filter(entry => entry.shelf !== '').map(entry => entry.shelf)).size : 0
 
-  const toggle = (
-    <button type="button" className="library-action library-map-toggle" onClick={toggleView} disabled={!roomHas}>
-      {showMap ? 'Reading room' : 'The map'}<span className="library-chord">Alt+R</span>
-    </button>
-  )
-
-  const mapOrWhy = (mode: 'map' | 'strip') => {
+  const mapOrWhy = () => {
     if (graph) {
       return (
         <LibraryMap
           graph={graph}
-          mode={mode}
           openPath={page?.path ?? null}
           matches={matches}
-          window={mode === 'map' ? recency : 'all'}
+          window={recency}
           onOpen={openPage}
         />
       )
     }
     return <p className="library-empty">{graphError || 'Drawing the map…'}</p>
   }
+
+  /** A list of pages as links that travel, the way both link lists read. */
+  const linkList = (heading: string, links: { path: string; title: string }[]) => (
+    <div className="library-links">
+      <h2>{heading}</h2>
+      <p>
+        {links.map((link, index) => (
+          <Fragment key={link.path}>
+            {index > 0 && <span className="library-linked-sep"> · </span>}
+            <button type="button" className="library-link" onClick={() => openPage(link.path)}>{link.title}</button>
+          </Fragment>
+        ))}
+      </p>
+    </div>
+  )
 
   return (
     <div className="library-view">
@@ -412,7 +435,12 @@ export default function LibraryView() {
             value={query}
             placeholder="Search the library…"
             aria-label="Search the library"
-            onChange={event => setQuery(event.target.value)}
+            onChange={event => {
+              setQuery(event.target.value)
+              // An emptied field puts the map back: with the results standing
+              // in the room, there is otherwise no way out of them.
+              if (!event.target.value.trim()) setResults(null)
+            }}
             onKeyDown={event => { if (event.key === 'Enter') runSearch() }}
           />
 
@@ -503,16 +531,14 @@ export default function LibraryView() {
                   ))}
                 </span>
                 <span className="library-map-legend">{windowLegend(recency)}</span>
-                {toggle}
               </div>
-              {mapOrWhy('map')}
+              {mapOrWhy()}
             </div>
           ) : results !== null ? (
             <div className="library-page">
               <div className="library-page-head">
                 <div className="library-page-title-row">
                   <h1>Search</h1>
-                  <div className="library-page-actions">{toggle}</div>
                 </div>
                 <p className="library-page-meta">
                   {results.length} {results.length === 1 ? 'page mentions' : 'pages mention'} “{query.trim()}”
@@ -531,105 +557,109 @@ export default function LibraryView() {
                 ))}
               </div>
             </div>
-          ) : page ? (
-            <>
-              <div className="library-strip" data-ui="library.strip">
-                <div className="library-map-bar">
-                  <span className="library-map-title">Near this page</span>
-                  {toggle}
-                </div>
-                {mapOrWhy('strip')}
-              </div>
-              <div className="library-page">
-                <div className="library-page-head">
-                  <div className="library-page-title-row">
-                    <h1>{page.title}</h1>
-                    <div className="library-page-actions">
-                      {draft === null ? (
-                        <button type="button" className="library-action" onClick={startEdit}>Edit</button>
-                      ) : (
-                        <>
-                          <button type="button" className="library-action library-action-primary" onClick={() => void save()}>Save</button>
-                          <button type="button" className="library-action" onClick={discard}>
-                            {discarding ? 'Confirm' : 'Discard'}
-                          </button>
-                        </>
-                      )}
-                      <button type="button" className="library-action" onClick={send}>
-                        Send
-                      </button>
-                    </div>
-                  </div>
-                  <p className="library-page-meta">
-                    {page.path}
-                    {page.updated ? ` · changed ${libraryWhen(page.updated)} by ${page.author}` : ' · never committed'}
-                  </p>
-                  <div className="library-history-strip">
-                    {page.history.length === 0 && <span className="library-history-none">This page is not committed yet.</span>}
-                    {(historyOpen ? page.history : page.history.slice(0, HISTORY_STRIP)).map(entry => (
-                      <span key={entry.hash} className="library-history">
-                        <span className="library-history-hash">{entry.hash.slice(0, 7)}</span>
-                        <span className="library-history-when">{libraryWhen(entry.time)}</span>
-                        <span className="library-history-message">{entry.message}</span>
-                      </span>
-                    ))}
-                    {!historyOpen && page.history.length > HISTORY_STRIP && (
-                      <button type="button" className="library-history-more" onClick={() => setHistoryOpen(true)}>
-                        … {page.history.length - HISTORY_STRIP} more
-                      </button>
-                    )}
-                  </div>
-                  <div className="library-rule" />
-                </div>
-                {draft === null ? (
-                  <div className="library-body">
-                    <Markdown
-                      content={libraryProse(page.content, page.title)}
-                      basePath={`/${page.path}`}
-                      onOpenPath={path => openPage(path.replace(/^\//, ''))}
-                    />
-                    {backlinks.length > 0 && (
-                      <div className="library-linked-from">
-                        <h2>Linked from</h2>
-                        <p>
-                          {backlinks.map((link, index) => (
-                            <Fragment key={link.path}>
-                              {index > 0 && <span className="library-linked-sep"> · </span>}
-                              <button type="button" className="library-link" onClick={() => openPage(link.path)}>{link.title}</button>
-                            </Fragment>
-                          ))}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="library-editor">
-                    <input
-                      className="library-summary"
-                      type="text"
-                      value={summary}
-                      aria-label="What this edit changes"
-                      onChange={event => setSummary(event.target.value)}
-                    />
-                    <Editor
-                      value={draft}
-                      onChange={setDraft}
-                      onSave={() => void save()}
-                      onCancel={discard}
-                      label={`Editing ${page.path}`}
-                      autoFocus
-                    />
-                  </div>
-                )}
-              </div>
-            </>
           ) : (
             <Shelf shelf={shelf ?? ''} pages={shelfPages} onOpenPage={openPage} pageMenu={pageMenu} />
           )}
         </div>
 
+        {page && (
+          <aside className="library-dive" data-ui="library.dive" ref={diveRef} aria-label={`Reading ${page.title}`}>
+            {/* Where this dive has been. The last step is the page in hand;
+                every earlier one is the way back to it. */}
+            <nav className="library-trail" aria-label="This dive">
+              {trail.map((path, index) => (
+                <Fragment key={path}>
+                  {index > 0 && <span className="library-trail-sep">›</span>}
+                  <button
+                    type="button"
+                    className="library-trail-step"
+                    aria-current={path === page.path ? 'page' : undefined}
+                    onClick={() => openPage(path)}
+                  >
+                    {titleOf(path)}
+                  </button>
+                </Fragment>
+              ))}
+              <button type="button" className="library-action library-dive-close" onClick={closeDive}>
+                Close<span className="library-chord">Esc</span>
+              </button>
+            </nav>
+            <div className="library-page">
+              <div className="library-page-head">
+                <div className="library-page-title-row">
+                  <h1>{page.title}</h1>
+                  <div className="library-page-actions">
+                    {draft === null ? (
+                      <button type="button" className="library-action" onClick={startEdit}>Edit</button>
+                    ) : (
+                      <>
+                        <button type="button" className="library-action library-action-primary" onClick={() => void save()}>Save</button>
+                        <button type="button" className="library-action" onClick={discard}>
+                          {discarding ? 'Confirm' : 'Discard'}
+                        </button>
+                      </>
+                    )}
+                    <button type="button" className="library-action" onClick={send}>
+                      Send
+                    </button>
+                  </div>
+                </div>
+                <p className="library-page-meta">
+                  {page.path}
+                  {page.updated ? ` · changed ${libraryWhen(page.updated)} by ${page.author}` : ' · never committed'}
+                </p>
+                <div className="library-history-strip">
+                  {page.history.length === 0 && <span className="library-history-none">This page is not committed yet.</span>}
+                  {(historyOpen ? page.history : page.history.slice(0, HISTORY_STRIP)).map(entry => (
+                    <span key={entry.hash} className="library-history">
+                      <span className="library-history-hash">{entry.hash.slice(0, 7)}</span>
+                      <span className="library-history-when">{libraryWhen(entry.time)}</span>
+                      <span className="library-history-message">{entry.message}</span>
+                    </span>
+                  ))}
+                  {!historyOpen && page.history.length > HISTORY_STRIP && (
+                    <button type="button" className="library-history-more" onClick={() => setHistoryOpen(true)}>
+                      … {page.history.length - HISTORY_STRIP} more
+                    </button>
+                  )}
+                </div>
+                <div className="library-rule" />
+              </div>
+              {draft === null ? (
+                <div className="library-body">
+                  <Markdown
+                    content={libraryProse(page.content, page.title)}
+                    basePath={`/${page.path}`}
+                    onOpenPath={path => openPage(path.replace(/^\//, ''))}
+                  />
+                  {neighbours.length > 0 && linkList('Neighbours', neighbours)}
+                  {backlinks.length > 0 && linkList('Linked from', backlinks)}
+                </div>
+              ) : (
+                <div className="library-editor">
+                  <input
+                    className="library-summary"
+                    type="text"
+                    value={summary}
+                    aria-label="What this edit changes"
+                    onChange={event => setSummary(event.target.value)}
+                  />
+                  <Editor
+                    value={draft}
+                    onChange={setDraft}
+                    onSave={() => void save()}
+                    onCancel={discard}
+                    label={`Editing ${page.path}`}
+                    autoFocus
+                  />
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
+
         <TableColumn />
-        <ResidentColumn tab="library" reference={libraryReference(page?.path ?? shelf)} />
+        <ResidentColumn tab="library" reference={libraryReference(page?.path ?? null)} />
       </div>
     </div>
   )

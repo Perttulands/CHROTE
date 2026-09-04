@@ -152,7 +152,8 @@ export function nodeOpacity(updated: string, now: number): number {
   return Math.max(OPACITY_FLOOR, 1 - days / FADE_DAYS)
 }
 
-function node(page: LibraryGraphPage, x: number, y: number, now: number, r = nodeRadius(page.words)): MapNode {
+function node(page: LibraryGraphPage, x: number, y: number, now: number): MapNode {
+  const r = nodeRadius(page.words)
   return {
     path: page.path,
     shelf: page.shelf,
@@ -305,44 +306,6 @@ export function layoutMap(graph: LibraryGraph, width: number, height: number, no
   })
 
   return { nodes, edges, clusters, more: 0 }
-}
-
-/** The strip's rows, and the least a column may take. */
-const STRIP_ROWS = 3
-const STRIP_MIN_STEP = 96
-const STRIP_MAX_STEP = 200
-const STRIP_NEIGHBOUR_RADIUS = 5
-const STRIP_OPEN_RADIUS = 9
-
-/**
- * The strip: the open page at the left, its neighbours in three rows beside
- * it, column by column. Neighbours beyond what the width holds are counted
- * rather than crowded.
- */
-export function layoutStrip(graph: LibraryGraph, openPath: string, width: number, height: number, now = Date.now()): MapLayout {
-  const byPath = new Map(graph.pages.map(page => [page.path, page]))
-  const open = byPath.get(openPath)
-  if (!open) return { nodes: [], edges: [], clusters: [], more: 0 }
-
-  const neighbours = neighboursOf(graph, openPath).filter(path => byPath.has(path))
-  const left = Math.round(width * 0.16)
-  const start = Math.round(width * 0.3)
-  const available = Math.max(0, width - start - MAP_SIDE - MAP_LABEL_CHARS * PRIMARY_CHAR)
-  const columnsThatFit = Math.max(1, Math.floor(available / STRIP_MIN_STEP) + 1)
-  const shown = neighbours.slice(0, columnsThatFit * STRIP_ROWS)
-  const columns = Math.max(1, Math.ceil(shown.length / STRIP_ROWS))
-  const step = Math.max(STRIP_MIN_STEP, Math.min(STRIP_MAX_STEP, columns > 1 ? available / (columns - 1) : STRIP_MAX_STEP))
-  const rowsY = [32, Math.round(height / 2), height - 28]
-
-  const nodes: MapNode[] = [node(open, left, Math.round(height / 2), now, STRIP_OPEN_RADIUS)]
-  shown.forEach((path, position) => {
-    const page = byPath.get(path) as LibraryGraphPage
-    const column = Math.floor(position / STRIP_ROWS)
-    const row = position % STRIP_ROWS
-    nodes.push(node(page, Math.round(start + column * step), rowsY[row], now, STRIP_NEIGHBOUR_RADIUS))
-  })
-  const present = new Set(nodes.map(entry => entry.path))
-  return { nodes, edges: edgesAmong(graph, present), clusters: [], more: neighbours.length - shown.length }
 }
 
 interface Box {
