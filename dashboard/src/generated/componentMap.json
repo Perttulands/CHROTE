@@ -8,6 +8,7 @@
   "BeadLinks": "dashboard/src/components/BeadCard.tsx",
   "BeadRow": "dashboard/src/components/BeadsView/BeadRow.tsx",
   "BeadSection": "dashboard/src/components/BeadCard.tsx",
+  "BeadTypeLabel": "dashboard/src/components/BeadTypeLabel.tsx",
   "BeadsView": "dashboard/src/components/BeadsView/index.tsx",
   "BlockedBy": "dashboard/src/components/BeadsView/MapView.tsx",
   "Breadcrumbs": "dashboard/src/components/FilesView/components/Breadcrumbs.tsx",

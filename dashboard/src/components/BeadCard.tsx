@@ -21,7 +21,8 @@ import { beadIdPattern, beadProjectPath, ensureBeadProjects } from '../beads/bea
 import type { BeadDetail, BeadLink } from '../beads/beadsApi'
 import { knownBead, readBead } from '../beads/knownBeads'
 import { beadReference } from '../beads/beadReference'
-import { beadGlyph, beadStatusLabel, formatBeadTime } from '../beads/beadStatus'
+import { beadGlyph, beadStatusLabel, formatBeadTime, isBeadClosed } from '../beads/beadStatus'
+import BeadTypeLabel from './BeadTypeLabel'
 import { nameBeadOnTable } from '../context/TableContext'
 import { useResidentPresent } from '../residents/residentPresence'
 import './BeadCard.css'
@@ -191,11 +192,11 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
         </button>
       </div>
       <div className="bead-card-body">
-        <p className="bead-card-meta">
+        <p className={bead && isBeadClosed(bead.status) ? 'bead-card-meta bead-card-closed' : 'bead-card-meta'}>
           <span className="bead-card-id">{request.id}</span>
           {bead && (
             <>
-              {' · '}{bead.type || 'task'}
+              {' · '}<BeadTypeLabel type={bead.type} />
               {' · '}<span>{beadStatusLabel(bead.status, bead.blockedBy.some(link => link.status !== 'closed'))}</span>
               {' · '}P{bead.priority}
               {' · '}updated {formatBeadTime(bead.updated)}

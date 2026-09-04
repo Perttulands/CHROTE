@@ -89,6 +89,22 @@ describe('a Bead row', () => {
     expect(epic.setExpanded).toHaveBeenCalledTimes(2)
   })
 
+  it('says its type as a word, so the colour is never the only signal', () => {
+    render(
+      <div className="beads-content">
+        {['task', 'decision', 'bug', 'epic', 'feature', 'chore', ''].map((type, index) => (
+          <BeadRow key={type || 'none'} row={{ ...row(`chrote-t${index}`, `A ${type || 'typeless'} Bead`), type }} />
+        ))}
+        <BeadRow row={{ ...row('chrote-done', 'A finished Bead'), status: 'closed' }} />
+      </div>,
+    )
+
+    const words = screen.getAllByRole('button', { name: /Bead/ }).map(button => button.querySelector('.bead-type')?.textContent)
+    // The seventh row records no type; bd calls that a task and so does the row.
+    expect(words).toEqual(['TASK', 'DECISION', 'BUG', 'EPIC', 'FEATURE', 'CHORE', 'TASK', 'TASK'])
+    expect(screen.getByRole('button', { name: /A finished Bead/ })).toHaveTextContent('✓')
+  })
+
   it('offers its actions from a right-click, with the whole subtree on a row with children', () => {
     const epic = fold(true, 2)
     render(
