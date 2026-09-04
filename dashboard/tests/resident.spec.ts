@@ -1,5 +1,5 @@
 /**
- * The resident's column (bead: chrote-5grx.50): the Clerk lives in the Beads
+ * The resident's column (beads: chrote-5grx.50, chrote-z58o): the Clerk lives in the Beads
  * tab, the Bead on the table goes into its prompt on Alt+S, and the column
  * keeps the width it was given. What the browser is the point of here: a live
  * terminal in the column, a chord routed while that terminal has the keyboard,
@@ -63,6 +63,16 @@ async function box(locator: Locator) {
   return value
 }
 
+async function expectTerminalFits(column: Locator) {
+  const terminal = column.locator('.xterm')
+  await expect(terminal).toBeVisible()
+  await expect.poll(async () => terminal.evaluate(element => {
+    const host = element.closest('.terminal-surface-host')!.getBoundingClientRect()
+    const screen = element.querySelector('.xterm-screen')!.getBoundingClientRect()
+    return Math.max(screen.right - host.right, screen.bottom - host.bottom)
+  })).toBeLessThanOrEqual(0)
+}
+
 test.describe('The resident column', () => {
   test('shows the Clerk live, pastes the table into its prompt, and keeps the width it was given', async ({ page }) => {
     const sends: SendRecord[] = []
@@ -77,6 +87,7 @@ test.describe('The resident column', () => {
     await expect(column.locator('.resident-header')).toContainText('hq-deacon')
     await expect(column.locator('.resident-state')).toHaveText('live')
     await expect(column.locator('.xterm-rows')).toContainText('mock terminal hq-deacon')
+    await expectTerminalFits(column)
 
     // A Bead on the table, then Alt+S: the reference lands in the Clerk's
     // prompt on a line of its own, nothing is submitted, no drawer opens, and
@@ -101,6 +112,7 @@ test.describe('The resident column', () => {
     await page.mouse.up()
     const widened = Math.round(before.width) + 80
     expect(Math.round((await box(column)).width)).toBe(widened)
+    await expectTerminalFits(column)
 
     await page.reload()
     await page.waitForSelector('.dashboard')
@@ -108,6 +120,17 @@ test.describe('The resident column', () => {
     const reopened = page.getByRole('complementary', { name: 'The Clerk' })
     await expect(reopened.locator('.resident-state')).toHaveText('live')
     expect(Math.round((await box(reopened)).width)).toBe(widened)
+    await expectTerminalFits(reopened)
+
+    // A narrow workspace squeezes the column to its header. Once the room is
+    // back, the terminal opens against the restored frame and fits it at once.
+    await page.setViewportSize({ width: 1000, height: 900 })
+    await page.click('.bead-row:has-text("Fix login bug") .bead-row-open')
+    await expect(reopened).toHaveClass(/collapsed/)
+    await expect(reopened.locator('.xterm')).toHaveCount(0)
+    await page.keyboard.press('Alt+i')
+    await expect(reopened).not.toHaveClass(/collapsed/)
+    await expectTerminalFits(reopened)
   })
 
   test('offers Launch with the Clerk folder when its session is absent', async ({ page }) => {
