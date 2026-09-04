@@ -116,6 +116,24 @@
   margin-top: 6px;
 }
 
+/* The two tones, each with its Play beside it. */
+.settings-tone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.settings-tone-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 360px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
 /* Slider */
 .settings-slider {
   width: 100%;

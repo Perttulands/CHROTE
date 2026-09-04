@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,6 +23,12 @@ vi.mock('../workspaces/workspacesApi', async () => {
   const actual = await vi.importActual<typeof import('../workspaces/workspacesApi')>('../workspaces/workspacesApi')
   return { ...actual, fetchWorkspaces: () => Promise.resolve([]) }
 })
+
+const playTone = vi.hoisted(() => vi.fn())
+vi.mock('../agents/tones', () => ({
+  audioContext: () => ({ stub: true }),
+  playTone,
+}))
 
 const settings = {
   ...DEFAULT_SETTINGS,
@@ -288,5 +294,59 @@ describe('SettingsView Beads project paths', () => {
     expect(updateSettings).toHaveBeenCalledWith({
       beadsProjectPaths: ['/home/operator/chrote'],
     })
+  })
+})
+
+describe('SettingsView agent events', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // The browser owns the permission. The setting asks for it, reads the answer
+  // back as a word, and stays off unless the answer was yes.
+  it('turns notifications on only when the browser grants them, and reads the answer back as a word', async () => {
+    const requestPermission = vi.fn()
+    class StubNotification {
+      static permission: NotificationPermission = 'default'
+      static requestPermission = requestPermission
+    }
+    vi.stubGlobal('Notification', StubNotification)
+    requestPermission.mockImplementation(async () => { StubNotification.permission = 'denied'; return 'denied' })
+    const updateSettings = vi.fn()
+    mockUseSession.mockReturnValue(sessionReturn(updateSettings))
+
+    render(<SettingsView />)
+
+    const word = () => document.querySelector('[data-ui="settings.notification-permission"]')?.textContent
+    expect(word()).toBe('not asked')
+    const checkbox = screen.getByLabelText('Browser notifications while this tab is hidden')
+    expect(checkbox).not.toBeChecked()
+
+    fireEvent.click(checkbox)
+
+    await waitFor(() => expect(word()).toBe('denied'))
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(announce).toHaveBeenCalledWith('Browser notifications: denied', 'error')
+
+    requestPermission.mockImplementation(async () => { StubNotification.permission = 'granted'; return 'granted' })
+    fireEvent.click(checkbox)
+
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ agentEventNotifications: true }))
+    expect(word()).toBe('granted')
+  })
+
+  it('plays each tone from the Play beside it', () => {
+    mockUseSession.mockReturnValue(sessionReturn(vi.fn()))
+
+    render(<SettingsView />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play the finished tone' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Play the needs-input tone' }))
+
+    expect(playTone.mock.calls.map(([event]) => event)).toEqual(['finished', 'needs-input'])
   })
 })

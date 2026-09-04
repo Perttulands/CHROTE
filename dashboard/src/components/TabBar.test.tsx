@@ -25,6 +25,7 @@ vi.mock('../context/SessionContext', () => ({
     deletePreset: mockState.deletePreset,
     setWindowCount: mockState.setWindowCount,
     workspaceIds: mockState.workspaceIds ?? TERMINAL_WORKSPACE_IDS,
+    sessions: [],
     workspaces: {
       terminal1: {
         windowCount: mockState.windowCount,

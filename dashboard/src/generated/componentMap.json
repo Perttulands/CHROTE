@@ -1,5 +1,6 @@
 {
   "AgentContextSheet": "dashboard/src/components/AgentContextSheet.tsx",
+  "AgentEventsProvider": "dashboard/src/agents/AgentEventsProvider.tsx",
   "AgentStack": "dashboard/src/components/AgentStack.tsx",
   "AgentsView": "dashboard/src/components/AgentsView/index.tsx",
   "App": "dashboard/src/App.tsx",

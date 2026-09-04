@@ -7,6 +7,9 @@ import { MAX_TERMINAL_TAB_COUNT, MIN_TERMINAL_TAB_COUNT, defaultSessionPrefixFor
 import FolderField from './FolderField'
 import { useConfirmInPlace } from './confirmInPlace'
 import { toDisplayPath } from './FilesView/types'
+import { askNotificationPermission, notificationPermissionWord } from '../agents/browserNotifications'
+import { audioContext, playTone } from '../agents/tones'
+import type { AgentEventKind } from '../types'
 
 function normalizeProjectPath(path: string): string {
   const trimmed = path.trim()
@@ -22,6 +25,7 @@ function SettingsView() {
   const { announce } = useStatus()
   const [projectPathInput, setProjectPathInput] = useState('')
   const [nuking, setNuking] = useState(false)
+  const [notificationPermission, setNotificationPermission] = useState(notificationPermissionWord)
   const configuredUsers = normalizeTerminalUsers(terminalUsers.length > 0
     ? terminalUsers
     : [
@@ -68,6 +72,42 @@ function SettingsView() {
 
   const handleRefreshIntervalChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     updateSettings({ autoRefreshInterval: parseInt(e.target.value, 10) })
+  }
+
+  const handleMarksChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateSettings({ agentEventMarks: e.target.checked })
+  }
+
+  const handleToastChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateSettings({ agentEventToast: e.target.checked })
+  }
+
+  const handleTonesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateSettings({ agentEventTones: e.target.checked })
+  }
+
+  // The click is the gesture the browser wants before it will make a sound.
+  const playAgentTone = (event: AgentEventKind) => {
+    const context = audioContext()
+    if (!context) {
+      announce('This browser offers no Web Audio', 'error')
+      return
+    }
+    playTone(event, context)
+  }
+
+  // Turning notifications on asks the browser, and the word beside the setting
+  // reads back what it answered. Anything but granted leaves the setting off:
+  // a setting that is on and does nothing is a lie.
+  const handleNotificationsChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.checked) {
+      updateSettings({ agentEventNotifications: false })
+      return
+    }
+    const word = await askNotificationPermission()
+    setNotificationPermission(word)
+    if (word === 'granted') updateSettings({ agentEventNotifications: true })
+    else announce(`Browser notifications: ${word}`, 'error')
   }
 
   const handleLaunchUserChange = (workspaceId: WorkspaceId, launchUser: LaunchUser) => {
@@ -272,6 +312,109 @@ function SettingsView() {
             })}
           </div>
           <p className="settings-hint">Controls which Unix user's tmux socket new shells attach to in each terminal tab.</p>
+        </div>
+      </section>
+
+      {/* Agent events: the four ways this device can tell the operator. */}
+      <section className="settings-section" data-ui="settings.agent-events">
+        <h2 className="settings-section-title">Agent events</h2>
+        <p className="settings-description">
+          When an agent finishes or needs input, its own hook reports it. How this device passes
+          that on is its own choice; every other device keeps its own. Focusing the session marks
+          the report seen everywhere, whatever is turned on here.
+        </p>
+
+        <div className="settings-field">
+          <label
+            className="settings-label"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={settings.agentEventMarks}
+              onChange={handleMarksChange}
+            />
+            Mark the session&apos;s row and the tab holding it
+          </label>
+          <p className="settings-hint">
+            A dot and the report&apos;s first line, until the session is focused.
+          </p>
+        </div>
+
+        <div className="settings-field">
+          <label
+            className="settings-label"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={settings.agentEventToast}
+              onChange={handleToastChange}
+            />
+            Name the session in the toast
+          </label>
+          <p className="settings-hint">
+            The status line keeps the record either way.
+          </p>
+        </div>
+
+        <div className="settings-field">
+          <label
+            className="settings-label"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={settings.agentEventTones}
+              onChange={handleTonesChange}
+            />
+            Tones
+          </label>
+          <div className="settings-tone-list">
+            <div className="settings-tone-row">
+              <span>Finished: two notes, falling</span>
+              <button
+                type="button"
+                className="settings-btn"
+                aria-label="Play the finished tone"
+                onClick={() => playAgentTone('finished')}
+              >
+                Play
+              </button>
+            </div>
+            <div className="settings-tone-row">
+              <span>Needs input: one note, higher</span>
+              <button
+                type="button"
+                className="settings-btn"
+                aria-label="Play the needs-input tone"
+                onClick={() => playAgentTone('needs-input')}
+              >
+                Play
+              </button>
+            </div>
+          </div>
+          <p className="settings-hint">
+            Made in the browser, 120 ms a note. The browser plays them once you have clicked or typed on the page.
+          </p>
+        </div>
+
+        <div className="settings-field">
+          <label
+            className="settings-label"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={settings.agentEventNotifications}
+              onChange={handleNotificationsChange}
+            />
+            Browser notifications while this tab is hidden
+          </label>
+          <p className="settings-hint">
+            Permission: <span data-ui="settings.notification-permission">{notificationPermission}</span>.
+            Turning this on asks the browser, which grants it only on a secure origin.
+          </p>
         </div>
       </section>
 
