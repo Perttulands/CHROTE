@@ -1,5 +1,5 @@
 import { test, expect, Page } from './fixtures'
-import { mockBeadsProjectsRoute, mockFileApiRoutes, mockLaunchApiRoute, mockSessions, mockTerminalSocket, mockThemeApiRoute, mockWorkspacesRoute } from './mock-api'
+import { mockBeadsProjectsRoute, mockFileApiRoutes, mockLaunchApiRoute, mockPersistentTabApiRoutes, mockSessions, mockTerminalSocket, mockThemeApiRoute, mockWorkspacesRoute } from './mock-api'
 import { dragAndDrop, openSessionsSidecar } from './helpers'
 
 /**
@@ -27,6 +27,7 @@ async function mockApiRoutesWithMutations(page: Page): Promise<Rename[]> {
   // the workspace list carries them, and the launcher asks for it too.
   await mockWorkspacesRoute(page)
   await mockBeadsProjectsRoute(page)
+  await mockPersistentTabApiRoutes(page)
 
   const renames: Rename[] = []
 

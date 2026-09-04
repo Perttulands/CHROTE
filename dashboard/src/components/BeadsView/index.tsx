@@ -51,6 +51,7 @@ export interface BeadsRevealRequest {
 }
 
 interface BeadsViewProps {
+  active?: boolean
   /** A Bead the card asked to be shown here, in its own project. */
   reveal?: BeadsRevealRequest | null
 }
@@ -62,7 +63,7 @@ function projectTally(name: string, rows: { status: string }[]): string {
   return active > 0 ? `${name} ${open} open, ${active} in progress` : `${name} ${open} open`
 }
 
-export default function BeadsView({ reveal }: BeadsViewProps = {}) {
+export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}) {
   const { settings } = useSession()
   const { announce } = useStatus()
   const [projects, setProjects] = useState<BeadProject[]>([])
@@ -250,7 +251,7 @@ export default function BeadsView({ reveal }: BeadsViewProps = {}) {
       </div>
 
       <TableColumn />
-      <ResidentColumn tab="beads" reference={table ? tableReference(table) : null} />
+      <ResidentColumn active={active} tab="beads" reference={table ? tableReference(table) : null} />
     </div>
   )
 }

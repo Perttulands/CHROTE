@@ -322,7 +322,6 @@ export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: S
   await mockTerminalSocket(page)
   await mockThemeApiRoute(page)
   await mockLaunchApiRoute(page)
-  await mockResidentsApiRoute(page)
 
   await page.route(tmuxMousePattern, async route => {
     const body = route.request().postDataJSON() as { enabled?: boolean } | null
@@ -340,6 +339,10 @@ export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: S
   // projects route answers only for manual paths.
   await mockWorkspacesRoute(page)
   await mockBeadsProjectsRoute(page)
+  // These tabs stay mounted after their first paint, including while another
+  // tab is in front. Every browser journey therefore supplies their ordinary
+  // read routes; a test can register a narrower response afterwards.
+  await mockPersistentTabApiRoutes(page)
 
   await page.route(tmuxSessionsPattern, async route => {
     if (route.request().method() === 'POST') {
@@ -411,6 +414,49 @@ export async function mockBeadsProjectsRoute(page: Page, projectsResponse?: obje
       body: JSON.stringify(projectsResponse ?? mockBeadsProjects),
     })
   })
+}
+
+export async function mockAgentContextApiRoutes(page: Page) {
+  await page.route('**/api/agent/tender', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ session: 'tender', beads: '/code/test-project', folder: '/code/tender' }),
+    })
+  })
+
+  await page.route('**/api/agent/context**', async route => {
+    const url = new URL(route.request().url())
+    const folder = url.searchParams.get('folder') ?? ''
+    const harness = url.searchParams.get('harness') ?? 'claude-code'
+    const user = url.searchParams.get('user') ?? ''
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        folder,
+        harness,
+        user,
+        instructions: [{
+          path: `${folder}/${harness === 'codex' ? 'AGENTS.md' : 'CLAUDE.md'}`,
+          scope: 'project',
+          kind: harness === 'codex' ? 'AGENTS.md' : 'CLAUDE.md',
+          readable: true,
+          size: 1200,
+        }],
+        skills: [],
+        memories: [],
+      }),
+    })
+  })
+}
+
+/** The ordinary reads made by the views that stay mounted across tab switches. */
+export async function mockPersistentTabApiRoutes(page: Page) {
+  await mockResidentsApiRoute(page)
+  await mockBeadsApiRoutes(page)
+  await mockLibraryApiRoutes(page)
+  await mockAgentContextApiRoutes(page)
 }
 
 // Beads API mock routes - can be customized per test
