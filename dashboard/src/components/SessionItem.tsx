@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import type { TmuxSession } from '../types'
 import { useSession } from '../context/SessionContext'
+import { useFocusedSession } from '../context/useFocusedSession'
 import { getSessionBadges, getSessionKey, getTerminalLabel, getTerminalUserInitial } from '../types'
 import { SessionCommandMark, SessionLabel } from './sessionLabel'
 import { identityColorFor } from '../theme/theme'
@@ -22,7 +23,8 @@ interface ContextMenuState {
 }
 
 function SessionItem({ session }: SessionItemProps) {
-  const { assignedSessions, handleSessionClick, deleteSession, renameSession, workspaces, workspaceIds, focusedWindowKey, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, terminalUsers } = useSession()
+  const { assignedSessions, handleSessionClick, deleteSession, renameSession, workspaces, workspaceIds, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, terminalUsers } = useSession()
+  const focusedSession = useFocusedSession()
   const theme = useTheme()
   const sessionKey = getSessionKey(session.name, session.unixUser)
   // What the agent inside last reported, while it is news the operator has
@@ -40,12 +42,7 @@ function SessionItem({ session }: SessionItemProps) {
   // Where the operator is typing, said once, in the list he steers from: the
   // row of the session the focused tile is showing. No chip repeats the tile's
   // address back at him.
-  const isInFocusedTile = useMemo(() => {
-    if (!focusedWindowKey) return false
-    return workspaceIds.some(wsId => workspaces[wsId]?.windows.some(
-      w => `${wsId}-${w.id}` === focusedWindowKey && w.activeSession === sessionKey,
-    ))
-  }, [focusedWindowKey, sessionKey, workspaceIds, workspaces])
+  const isInFocusedTile = focusedSession === sessionKey
 
   const userBadgeColor = session.unixUser ? identityColorFor(session.unixUser, terminalUsers, theme) : undefined
   const userBadgeStyle = userBadgeColor

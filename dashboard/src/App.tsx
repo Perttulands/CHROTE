@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react
 import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, useSensor, useSensors, PointerSensor } from '@dnd-kit/core'
 import './App.css'
 import { SessionProvider, useSession } from './context/SessionContext'
+import { useFocusedSession } from './context/useFocusedSession'
 import { StatusProvider } from './context/StatusContext'
 import { AgentEventsProvider } from './agents/AgentEventsProvider'
 import { TableProvider } from './context/TableContext'
@@ -197,17 +198,9 @@ function DashboardContent() {
     windowRevealRequest,
     workspaces,
     workspaceIds,
-    focusedWindowKey,
     openSendToSession,
   } = useSession()
-  const filesSendTarget = useMemo(() => {
-    if (!focusedWindowKey) return null
-    for (const [workspaceId, workspace] of Object.entries(workspaces)) {
-      const terminalWindow = workspace.windows.find(window => `${workspaceId}-${window.id}` === focusedWindowKey)
-      if (terminalWindow?.activeSession) return terminalWindow.activeSession
-    }
-    return null
-  }, [focusedWindowKey, workspaces])
+  const filesSendTarget = useFocusedSession()
   const handleSendFilePath = useCallback((path: string) => {
     if (filesSendTarget) openSendToSession({ targetSessionKey: filesSendTarget, reference: `path ${path}` })
   }, [filesSendTarget, openSendToSession])
