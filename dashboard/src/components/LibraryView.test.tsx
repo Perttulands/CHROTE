@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import LibraryView from './LibraryView'
 import { resetBeadCardForTest, useBeadCardRequest } from '../beads/beadCard'
 import { resetChordsForTest } from '../keys/chords'
+import { resetSurfacesForTest } from '../keys/dismiss'
 import { mountResident, resetResidentForTest } from '../residents/residentPresence'
 import { DEFAULT_SETTINGS } from '../types'
 import type {
@@ -91,6 +92,7 @@ beforeEach(() => {
   resetBeadCardForTest()
   resetChordsForTest()
   resetResidentForTest()
+  resetSurfacesForTest()
   mockState.paste.mockReset()
   mockState.paste.mockResolvedValue(false)
   mockState.openSendToSession.mockReset()
@@ -137,6 +139,14 @@ beforeEach(() => {
       content: '# Test isolation\n\nA serious lab gets a durable path.\n',
       history: [],
     }],
+    ['preferences/tools.md', {
+      path: 'preferences/tools.md',
+      title: 'Tool Preferences',
+      author: 'The Operator',
+      updated: NOW,
+      content: '# Tool Preferences\n\nTools the operator reaches for.\n',
+      history: [],
+    }],
   ])
   mockState.graph = {
     pages: [
@@ -164,7 +174,7 @@ beforeEach(() => {
  * A page's name appears in more than one place on purpose — in the rail, on
  * the map, in a listing — so every query says which region it means.
  */
-function region(name: 'library-left' | 'library-room' | 'library-map' | 'library-strip') {
+function region(name: 'library-left' | 'library-room' | 'library-map' | 'library-dive') {
   const found = document.querySelector<HTMLElement>(`.${name}`)
   if (!found) throw new Error(`the ${name} region is not on screen`)
   return within(found)
@@ -172,6 +182,13 @@ function region(name: 'library-left' | 'library-room' | 'library-map' | 'library
 
 /** The rows of the menu that is open, in the order they are offered. */
 const menuItems = () => screen.getAllByRole('menuitem').map(item => item.querySelector('.menu-row-label')?.textContent)
+
+/** The Neighbours list of the dive, whose links also name pages elsewhere. */
+function neighbours() {
+  const found = document.querySelector<HTMLElement>('.library-links')
+  if (!found) throw new Error('the dive lists no neighbours')
+  return within(found)
+}
 
 /** A page on the map, by the name it carries. */
 function mapNode(title: string) {
@@ -185,16 +202,16 @@ async function openLibrary() {
   await waitFor(() => region('library-map'))
 }
 
-/** Step into a shelf from the rail, then open one of its pages. */
+/** Step into a shelf from the rail, then dive into one of its pages. */
 async function openWorkflowPage() {
   fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
   fireEvent.click(await region('library-room').findByText('Workflow Preferences'))
   await screen.findByText('Prefer small, verifiable changes.')
 }
 
-function pressAltR() {
+function pressEscape() {
   act(() => {
-    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', altKey: true, bubbles: true, cancelable: true }))
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
   })
 }
 
@@ -235,30 +252,47 @@ describe('LibraryView', () => {
     expect(mapNode('Tool Preferences')).not.toHaveClass('hot')
   })
 
-  it('opens a page from the map and shows its neighbours in the strip above it', async () => {
+  it('dives into a page from the map, keeping the map beside it', async () => {
     await openLibrary()
 
     fireEvent.click(mapNode('Workflow Preferences'))
 
     expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
-    expect(screen.getByText('Near this page')).toBeInTheDocument()
-    expect(region('library-strip').getByRole('button', { name: 'Test isolation' })).toBeInTheDocument()
-    expect(region('library-strip').getByRole('button', { name: 'Tool Preferences' })).toBeInTheDocument()
+    // The map is still there, with the dived-into page and its neighbours lit.
+    expect(mapNode('Workflow Preferences')).toHaveClass('hot')
+    expect(neighbours().getByRole('button', { name: 'Test isolation' })).toBeInTheDocument()
+    expect(neighbours().getByRole('button', { name: 'Tool Preferences' })).toBeInTheDocument()
   })
 
-  it('turns the map over with Alt+R and back', async () => {
+  it('travels to a neighbour, grows the trail, and goes back along it', async () => {
     await openLibrary()
     fireEvent.click(mapNode('Workflow Preferences'))
     await screen.findByText('Prefer small, verifiable changes.')
 
-    pressAltR()
-    expect(screen.getByText('The map')).toBeInTheDocument()
-    expect(screen.queryByText('Prefer small, verifiable changes.')).not.toBeInTheDocument()
-    // The open page stays on the table: it and its neighbours are lit.
-    expect(mapNode('Workflow Preferences')).toHaveClass('hot')
+    const trail = () => within(document.querySelector<HTMLElement>('.library-trail')!)
+    const steps = () => Array.from(document.querySelectorAll('.library-trail-step')).map(step => step.textContent)
+    expect(steps()).toEqual(['Workflow Preferences'])
 
-    pressAltR()
+    fireEvent.click(neighbours().getByRole('button', { name: 'Tool Preferences' }))
+    expect(await screen.findByText('Tools the operator reaches for.')).toBeInTheDocument()
+    expect(steps()).toEqual(['Workflow Preferences', 'Tool Preferences'])
+
+    // A step back is a step back: the trail is cut to it, not extended.
+    fireEvent.click(trail().getByRole('button', { name: 'Workflow Preferences' }))
     expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
+    expect(steps()).toEqual(['Workflow Preferences'])
+  })
+
+  it('closes the dive with Escape and leaves the map standing', async () => {
+    await openLibrary()
+    fireEvent.click(mapNode('Workflow Preferences'))
+    await screen.findByText('Prefer small, verifiable changes.')
+
+    pressEscape()
+
+    await waitFor(() => expect(screen.queryByText('Prefer small, verifiable changes.')).not.toBeInTheDocument())
+    expect(document.querySelector('.library-trail')).toBeNull()
+    expect(mapNode('Workflow Preferences')).toBeInTheDocument()
   })
 
   it('lights the pages whose names hold what is being typed', async () => {
@@ -319,13 +353,13 @@ describe('LibraryView', () => {
     expect(screen.getByText('5555555')).toBeInTheDocument()
   })
 
-  it('lists the pages that link here beneath the body, and follows one', async () => {
+  it('lists what this page touches and what touches it, and follows one back', async () => {
     await openLibrary()
     await openWorkflowPage()
 
-    const linkedFrom = document.querySelector<HTMLElement>('.library-linked-from')
-    expect(linkedFrom).toHaveTextContent('Linked from')
-    fireEvent.click(within(linkedFrom!).getByRole('button', { name: 'Test isolation' }))
+    const lists = Array.from(document.querySelectorAll<HTMLElement>('.library-links'))
+    expect(lists.map(list => list.querySelector('h2')?.textContent)).toEqual(['Neighbours', 'Linked from'])
+    fireEvent.click(within(lists[1]).getByRole('button', { name: 'Test isolation' }))
 
     expect(await screen.findByText('A serious lab gets a durable path.')).toBeInTheDocument()
   })

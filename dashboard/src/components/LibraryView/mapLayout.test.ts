@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LibraryGraph } from '../../library/libraryApi'
-import { LABEL_LINE, LANDMARK_LABELS, layoutMap, layoutStrip, neighboursOf, nodeOpacity, placeLabels, withinWindow, type MapNode } from './mapLayout'
+import { LABEL_LINE, LANDMARK_LABELS, layoutMap, neighboursOf, nodeOpacity, placeLabels, withinWindow, type MapNode } from './mapLayout'
 
 const NOW = Date.parse('2026-09-03T12:00:00Z')
 const DAY = 86_400_000
@@ -83,30 +83,14 @@ describe('layoutMap', () => {
   })
 })
 
-describe('layoutStrip', () => {
-  it('puts the open page at the left and every neighbour beside it', () => {
-    const layout = layoutStrip(corpus(), 'knowledge/alpha.md', 960, 150, NOW)
-
-    expect(layout.nodes[0].path).toBe('knowledge/alpha.md')
-    expect(layout.nodes.slice(1).map(node => node.path)).toEqual(['preferences/gamma.md', 'knowledge/beta.md'])
-    layout.nodes.slice(1).forEach(node => expect(node.x).toBeGreaterThan(layout.nodes[0].x))
-    expect(layout.more).toBe(0)
+// The dive's Neighbours list is this function's only reader with a list to
+// show, so what counts as one hop is worth pinning: a written link either
+// way, a shared tag, each page once.
+describe('neighboursOf', () => {
+  it('gathers every page one written link or one shared tag away', () => {
+    expect(neighboursOf(corpus(), 'knowledge/alpha.md')).toEqual(['preferences/gamma.md', 'knowledge/beta.md'])
     expect(neighboursOf(corpus(), 'preferences/gamma.md')).toEqual(['knowledge/alpha.md', 'preferences/delta.md'])
-  })
-
-  it('counts the neighbours a narrow strip cannot hold', () => {
-    const graph = corpus()
-    const hub = 'knowledge/alpha.md'
-    for (let index = 0; index < 20; index++) {
-      const path = `inbox/note-${index}.md`
-      graph.pages.push(page(path))
-      graph.links.push([path, hub])
-    }
-
-    const layout = layoutStrip(graph, hub, 500, 150, NOW)
-
-    expect(layout.nodes.length).toBeLessThan(23)
-    expect(layout.more).toBe(22 - (layout.nodes.length - 1))
+    expect(neighboursOf(corpus(), 'telos/epsilon.md')).toEqual([])
   })
 })
 
