@@ -51,9 +51,13 @@ async function mockLibrarianSend(page: Page, sends: { text: string; submit: stri
 /** The fixture's page whose name is past the measure a label is drawn at. */
 const LONG_TITLE = 'A note whose name runs well past the measure a label is drawn at'
 
-/** A page on the map, by the name it carries. */
+/**
+ * A page on the map, by the name it carries. The drawing is a canvas; what a
+ * page has of its own is the element over it that the keyboard reaches it by,
+ * and that element is what a pointer lands on too.
+ */
 function node(page: Page, title: string) {
-  return page.locator(`.library-map [role="button"][aria-label="${title}"]`)
+  return page.locator(`.library-map button[aria-label="${title}"]`)
 }
 
 test.describe('The Library', () => {
@@ -97,7 +101,7 @@ test.describe('The Library', () => {
     // while there is one.
     const reset = page.locator('[data-ui="library.map.reset"]')
     await expect(reset).toHaveCount(0)
-    await page.locator('.library-map svg').hover({ position: { x: 300, y: 200 } })
+    await page.locator('.library-map canvas').hover({ position: { x: 300, y: 200 } })
     await page.mouse.wheel(0, -400)
     await expect(reset).toBeVisible()
     await reset.click()

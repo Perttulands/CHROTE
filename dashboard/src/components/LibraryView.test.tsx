@@ -380,7 +380,9 @@ describe('LibraryView', () => {
   // page the map lights and brings to the middle.
   it('lights and centres the map on the page under the pointer in the rail', async () => {
     await openLibrary()
-    const drawing = () => document.querySelector('.library-map svg g')?.getAttribute('transform')
+    // Where the map is: the drawing is a canvas, and the layer the pages are
+    // reachable through carries the same transform the canvas is painted with.
+    const drawing = () => document.querySelector<HTMLElement>('.library-map-nodes')?.style.transform
     const before = drawing()
 
     openShelf('preferences')

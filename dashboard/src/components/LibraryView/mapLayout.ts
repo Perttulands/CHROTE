@@ -96,6 +96,23 @@ const LINK_LENGTH = 90
 const TAG_LENGTH = 120
 const CROSS_SHELF_LENGTH = 160
 
+/**
+ * How the pages are kept apart at the size a corpus reaches.
+ *
+ * Two pages push each other only while they are closer than twice the room
+ * they want, which is never more than REPULSION_REACH apart. Below GRID_ABOVE
+ * pages the map simply asks every pair, which is the cheapest thing to read and
+ * exactly what the map has always done. Above it the same pairs are found
+ * through a grid of that reach — every pair within it is in one of the nine
+ * cells around, so nothing is missed — and a step costs the corpus rather than
+ * its square. A page's own cell is offset so a page that wanders left of the
+ * frame during a step still lands on a key of its own.
+ */
+const REPULSION_REACH = 72
+const GRID_ABOVE = 400
+const GRID_STRIDE = 8192
+const GRID_BIAS = 4096
+
 /** Labels the full map carries beyond the hot ones. */
 export const LANDMARK_LABELS = 12
 export const MAP_LABEL_CHARS = 26
@@ -258,23 +275,57 @@ export function layoutMap(graph: LibraryGraph, width: number, height: number, no
       entry.x += (ax - entry.x) * ANCHOR_PULL * k
       entry.y += (ay - entry.y) * ANCHOR_PULL * k
     })
-    for (let a = 0; a < nodes.length; a++) {
-      for (let b = a + 1; b < nodes.length; b++) {
-        const A = nodes[a]
-        const B = nodes[b]
-        const dx = B.x - A.x
-        const dy = B.y - A.y
-        const d2 = dx * dx + dy * dy + 0.01
-        const min = A.r + B.r + 14
-        if (d2 < min * min * 4) {
-          const d = Math.sqrt(d2)
-          const f = ((min * 2 - d) / d) * 0.25 * k
-          A.x -= dx * f
-          A.y -= dy * f
-          B.x += dx * f
-          B.y += dy * f
-        }
+    const push = (A: MapNode, B: MapNode) => {
+      const dx = B.x - A.x
+      const dy = B.y - A.y
+      const d2 = dx * dx + dy * dy + 0.01
+      const min = A.r + B.r + 14
+      if (d2 >= min * min * 4) return
+      const d = Math.sqrt(d2)
+      const f = ((min * 2 - d) / d) * 0.25 * k
+      A.x -= dx * f
+      A.y -= dy * f
+      B.x += dx * f
+      B.y += dy * f
+    }
+    if (nodes.length <= GRID_ABOVE) {
+      for (let a = 0; a < nodes.length; a++) {
+        for (let b = a + 1; b < nodes.length; b++) push(nodes[a], nodes[b])
       }
+    } else {
+      // The same pairs, found instead of scanned for. Two pages only push each
+      // other inside REPULSION_REACH, and a cell that wide means the pairs
+      // within reach are the ones in the nine cells around: the step costs the
+      // corpus rather than its square, which is the difference between a map of
+      // dozens and a map of thousands.
+      const cells = new Map<number, MapNode[]>()
+      const columnOf = (entry: MapNode) => Math.floor(entry.x / REPULSION_REACH) + GRID_BIAS
+      const rowOf = (entry: MapNode) => Math.floor(entry.y / REPULSION_REACH) + GRID_BIAS
+      nodes.forEach(entry => {
+        const at = columnOf(entry) * GRID_STRIDE + rowOf(entry)
+        const bucket = cells.get(at)
+        if (bucket) bucket.push(entry)
+        else cells.set(at, [entry])
+      })
+      cells.forEach((bucket, at) => {
+        for (let a = 0; a < bucket.length; a++) {
+          for (let b = a + 1; b < bucket.length; b++) push(bucket[a], bucket[b])
+        }
+        // Each pair of neighbouring cells is worked once: only the four
+        // neighbours after this one in the walk are asked for.
+        const column = Math.floor(at / GRID_STRIDE)
+        const row = at - column * GRID_STRIDE
+        const neighbours = [
+          cells.get((column + 1) * GRID_STRIDE + row - 1),
+          cells.get((column + 1) * GRID_STRIDE + row),
+          cells.get((column + 1) * GRID_STRIDE + row + 1),
+          cells.get(column * GRID_STRIDE + row + 1),
+        ]
+        neighbours.forEach(other => {
+          if (!other) return
+          bucket.forEach(A => other.forEach(B => push(A, B)))
+        })
+      })
     }
     springs.forEach(({ a, b, want, pull }) => {
       const A = nodes[a]
@@ -332,18 +383,28 @@ function clusterBox(cluster: MapCluster): Box {
 /**
  * Which pages are named, and where the name goes.
  *
+ * The landmarks are placed first and from the layout alone: the largest
+ * accepted pages, up to `landmarks` of them, chosen and positioned without
+ * regard to what the pointer is on. That is what keeps them still — text that
+ * re-placed itself under the pointer jumped, which is what the operator saw.
  * Hot pages — the one on the table, the one under the pointer, their
- * neighbours, and what a search found — are always named. After them the
- * largest accepted pages are named as landmarks, up to `landmarks` of them.
+ * neighbours, and what a search found — are named around the landmarks
+ * afterwards and never displace one.
+ *
  * A name that would sit on another, or on a shelf's label, moves down one
  * line; one that still collides is dropped, unless it is hot, in which case
  * the operator asked for it and it stays on the moved line.
+ *
+ * `suppress` names pages that keep their place in the packing but are not
+ * drawn: the page under the pointer is named by the readout beside it, and
+ * printing it twice was the doubling the operator saw. Reserving its box
+ * rather than dropping it means the pointer still moves nothing.
  */
 export function placeLabels(
   nodes: readonly MapNode[],
   hot: ReadonlySet<string>,
   primary: ReadonlySet<string>,
-  options: { landmarks: number; maxChars: number },
+  options: { landmarks: number; maxChars: number; suppress?: ReadonlySet<string> },
   clusters: readonly MapCluster[] = [],
 ): MapLabel[] {
   const placed: MapLabel[] = []
@@ -369,13 +430,15 @@ export function placeLabels(
     placed.push({ path: entry.path, text, x: left, y: y + 4, primary: isPrimary })
   }
 
-  nodes.filter(entry => hot.has(entry.path)).forEach(entry => tryPlace(entry, true))
-
   const landmarks = nodes
-    .filter(entry => !hot.has(entry.path) && !entry.candidate)
+    .filter(entry => !entry.candidate)
     .sort((a, b) => b.r - a.r || (a.path < b.path ? -1 : 1))
     .slice(0, options.landmarks)
+  const isLandmark = new Set(landmarks.map(entry => entry.path))
   landmarks.forEach(entry => tryPlace(entry, false))
 
-  return placed
+  nodes.filter(entry => hot.has(entry.path) && !isLandmark.has(entry.path)).forEach(entry => tryPlace(entry, true))
+
+  const suppress = options.suppress
+  return suppress ? placed.filter(label => !suppress.has(label.path)) : placed
 }
