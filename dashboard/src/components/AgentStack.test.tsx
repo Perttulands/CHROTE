@@ -145,6 +145,27 @@ describe('AgentStack', () => {
     expect(screen.getByText('skill-19')).toBeInTheDocument()
   })
 
+  it('opens and edits a skill manifest and offers its four file actions', async () => {
+    render(<AgentStack context={context()} />)
+
+    fireEvent.click(screen.getByText('dashboard-development'))
+    await waitFor(() => expect(screen.getByText('The project.')).toBeInTheDocument())
+    expect(mockState.fetchAgentFile).toHaveBeenCalledWith('/srv/chrote/skills/dashboard-development/SKILL.md')
+
+    fireEvent.contextMenu(screen.getByText('dashboard-development'))
+    expect(menuItems()).toEqual(['Open', 'Edit', 'Copy path', 'Send'])
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }))
+    const field = await screen.findByLabelText('Edit /srv/chrote/skills/dashboard-development/SKILL.md')
+    fireEvent.change(field, { target: { value: '# Dashboard development\n' } })
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => expect(mockState.writeTextFile).toHaveBeenCalledWith(
+      '/srv/chrote/skills/dashboard-development/SKILL.md',
+      '# Dashboard development\n',
+    ))
+  })
+
   it('offers the same four actions on an instruction row and a memory row', async () => {
     render(<AgentStack context={context()} />)
 

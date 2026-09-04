@@ -42,7 +42,7 @@ interface AgentStackProps {
   query?: string
 }
 
-type OpenRow = { section: 'instructions' | 'memories'; path: string }
+type OpenRow = { section: 'instructions' | 'skills' | 'memories'; path: string }
 
 function sameRow(left: OpenRow | null, right: OpenRow): boolean {
   return left !== null && left.section === right.section && left.path === right.path
@@ -118,7 +118,7 @@ export default function AgentStack({ context, query = '' }: AgentStackProps) {
     showRow(row)
   }, [open, showRow])
 
-  /** The rows every instruction and memory file offers, wherever it is listed. */
+  /** The actions every file in the stack offers, wherever it is listed. */
   const fileMenu = (row: OpenRow, readable: boolean) => (): MenuGroup[] => {
     const unreadable = readable ? undefined : 'The server cannot read this file'
     return [
@@ -235,13 +235,42 @@ export default function AgentStack({ context, query = '' }: AgentStackProps) {
         <h3>Skills</h3>
         <div className="agent-rule" />
         {skills.length === 0 && <div className="agent-note">No skill reaches this folder.</div>}
-        {(allSkills ? skills : skills.slice(0, SKILL_ROWS)).map(skill => (
-          <div className="agent-row agent-skill" key={skill.path}>
-            <span className="agent-name">{skill.name}</span>
-            <span className="agent-description">{skill.description}</span>
-            <span className="agent-source">{skillSourceLabel(skill)}</span>
-          </div>
-        ))}
+        {(allSkills ? skills : skills.slice(0, SKILL_ROWS)).map(skill => {
+          const path = `${skill.path}/SKILL.md`
+          const row: OpenRow = { section: 'skills', path }
+          const isOpen = sameRow(open, row)
+          return (
+            <div key={skill.path}>
+              <MenuTarget label={`Actions for ${path}`} groups={fileMenu(row, true)}>
+                <div
+                  className={`agent-row agent-skill ${isOpen ? 'open' : ''}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openRow(row)}
+                  onKeyDown={event => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    openRow(row)
+                  }}
+                >
+                  <span className="agent-name">{skill.name}</span>
+                  <span className="agent-description">{skill.description}</span>
+                  <span className="agent-source">{skillSourceLabel(skill)}</span>
+                  {isOpen && content !== null && draft === null && (
+                    <button
+                      type="button"
+                      className="agent-word"
+                      onClick={event => { event.stopPropagation(); setDraft(content) }}
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+              </MenuTarget>
+              {expansion(row, path, false)}
+            </div>
+          )
+        })}
         {hiddenSkills > 0 && (
           <button type="button" className="agent-more" onClick={() => setAllSkills(true)}>
             {hiddenSkills} more

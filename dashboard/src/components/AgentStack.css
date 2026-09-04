@@ -44,6 +44,7 @@
 }
 
 .agent-instruction,
+.agent-skill,
 .agent-memory[role='button'] {
   cursor: pointer;
 }
