@@ -79,7 +79,6 @@
   "SessionTag": "dashboard/src/components/TerminalWindow.tsx",
   "SessionsSection": "dashboard/src/components/HelpView.tsx",
   "SettingsView": "dashboard/src/components/SettingsView.tsx",
-  "Shelf": "dashboard/src/components/LibraryView/Shelf.tsx",
   "ShortcutsSection": "dashboard/src/components/HelpView.tsx",
   "Skeleton": "dashboard/src/components/LoadingSkeleton.tsx",
   "StaleView": "dashboard/src/components/BeadsView/StaleView.tsx",
