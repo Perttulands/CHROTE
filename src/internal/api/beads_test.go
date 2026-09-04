@@ -370,6 +370,27 @@ func TestBeadsHandler_ReadRoutesRejectAnInvalidWorkspaceBeforeRunningBd(t *testi
 	}
 }
 
+func TestBeadsHandler_WorkReportsMissingWorkspaceAsNotFound(t *testing.T) {
+	rootDir := t.TempDir()
+	project := filepath.Join(rootDir, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	t.Setenv("CHROTE_BD_COMMAND", filepath.Join(rootDir, "bd-that-does-not-exist"))
+
+	rec := httptest.NewRecorder()
+	NewBeadsHandler().Work(rec, httptest.NewRequest(http.MethodGet, "/api/beads/work?path="+project, nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("Work status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "no .beads directory") {
+		t.Fatalf("Work response does not describe the missing workspace: %s", rec.Body.String())
+	}
+}
+
 func TestBeadsHandler_WorkKeepsOpenWorkAndTheFinishedChildrenOfOpenEpics(t *testing.T) {
 	rootDir := t.TempDir()
 	projectPath := filepath.Join(rootDir, "project")
@@ -613,6 +634,7 @@ func TestBeadsHandler_UnreadableWorkspaceReportsPermissionRatherThanAbsence(t *t
 		t.Cleanup(func() { _ = os.Chmod(beadsPath, 0o700) })
 	}
 	beadsPath := filepath.Join(project, ".beads")
+	metadataPath := filepath.Join(beadsPath, "metadata.json")
 	if !runBeadsPermissionSubprocess(t, project) {
 		return
 	}
@@ -624,8 +646,8 @@ func TestBeadsHandler_UnreadableWorkspaceReportsPermissionRatherThanAbsence(t *t
 		t.Fatal("unreadable .beads was accepted as a workspace")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, beadsPath) {
-		t.Errorf("error does not name the workspace path %q: %q", beadsPath, msg)
+	if !strings.Contains(msg, metadataPath) {
+		t.Errorf("error does not name the unreadable file %q: %q", metadataPath, msg)
 	}
 	if !strings.Contains(msg, effectiveUsername()) {
 		t.Errorf("error does not name the effective user %q: %q", effectiveUsername(), msg)
@@ -637,14 +659,29 @@ func TestBeadsHandler_UnreadableWorkspaceReportsPermissionRatherThanAbsence(t *t
 		t.Errorf("error suggests destructive re-init for possibly intact data: %q", msg)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+project, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/beads/work?path="+project, nil)
 	rec := httptest.NewRecorder()
+	handler.Work(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Work status = %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, metadataPath) {
+		t.Errorf("Work response does not name the unreadable file %q: %s", metadataPath, body)
+	}
+	if !strings.Contains(body, "permission denied") {
+		t.Errorf("Work response does not state the permission cause: %s", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+project, nil)
+	rec = httptest.NewRecorder()
 	handler.ListProjects(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("ListProjects status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
-	body := rec.Body.String()
+	body = rec.Body.String()
 	if !strings.Contains(body, "permission denied") {
 		t.Errorf("response does not state the permission cause: %s", body)
 	}
