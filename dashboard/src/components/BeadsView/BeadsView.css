@@ -46,7 +46,8 @@
 /* Stores with nothing open fold under one row; opened, they read dimmer than
    the ones with work in them. */
 .beads-rail-more,
-.beads-rail-quiet {
+.beads-rail-quiet,
+.beads-rail-unreadable {
   color: var(--text-dim);
 }
 

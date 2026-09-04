@@ -25,6 +25,11 @@ import (
 type BeadsHandler struct {
 	bdCommand   string
 	execTimeout time.Duration
+
+	storeSummaryMu      sync.Mutex
+	storeSummaries      map[string]storeSummaryCacheEntry
+	storeSummaryRefresh map[string]*storeSummaryRefresh
+	storeSummarySlots   chan struct{}
 }
 
 // NewBeadsHandler creates a new BeadsHandler
@@ -35,8 +40,11 @@ func NewBeadsHandler() *BeadsHandler {
 	}
 
 	return &BeadsHandler{
-		bdCommand:   bdCommand,
-		execTimeout: 60 * time.Second,
+		bdCommand:           bdCommand,
+		execTimeout:         60 * time.Second,
+		storeSummaries:      make(map[string]storeSummaryCacheEntry),
+		storeSummaryRefresh: make(map[string]*storeSummaryRefresh),
+		storeSummarySlots:   make(chan struct{}, workspaceProbeFanOut),
 	}
 }
 
@@ -349,10 +357,57 @@ type beadBrief struct {
 type beadRow struct {
 	beadBrief
 	Updated    string   `json:"updated,omitempty"`
+	DeferUntil string   `json:"deferUntil,omitempty"`
 	Parent     string   `json:"parent,omitempty"`
 	BlockedBy  []string `json:"blockedBy,omitempty"`
 	Blocked    bool     `json:"blocked"`
 	Acceptance string   `json:"acceptance,omitempty"`
+}
+
+// BeadsStatusCounts partitions a store's Beads into the states the rail uses.
+// The groups are exclusive, in this order: closed, in progress, blocked,
+// deferred, then ready open work.
+type BeadsStatusCounts struct {
+	Open       int `json:"open"`
+	InProgress int `json:"inProgress"`
+	Blocked    int `json:"blocked"`
+	Closed     int `json:"closed"`
+	Deferred   int `json:"deferred"`
+}
+
+// BeadsTypeCounts carries every type the Beads rail names, including zeros.
+type BeadsTypeCounts struct {
+	Epic     int `json:"epic"`
+	Task     int `json:"task"`
+	Bug      int `json:"bug"`
+	Feature  int `json:"feature"`
+	Decision int `json:"decision"`
+	Chore    int `json:"chore"`
+}
+
+// BeadsCounts is the one counts projection shared by the workspace list and
+// the Beads rail. It is computed from the store's complete issue list.
+type BeadsCounts struct {
+	Status BeadsStatusCounts `json:"status"`
+	Type   BeadsTypeCounts   `json:"type"`
+}
+
+type storeSummary struct {
+	Prefix        string
+	Counts        BeadsCounts
+	NewestUpdated string
+}
+
+type storeSummaryCacheEntry struct {
+	manifestMtime time.Time
+	summary       storeSummary
+}
+
+type storeSummaryRefresh struct {
+	manifestMtime time.Time
+	done          chan struct{}
+	summary       storeSummary
+	err           error
 }
 
 // beadCard is the Bead the card shows: its own text, and every neighbour it
@@ -468,27 +523,185 @@ func (h *BeadsHandler) projectPrefix(projectPath string) string {
 	return beadPrefix(beadString(issues[0], "id"))
 }
 
-// storeSummary is what the workspace list needs of a store: the prefix its
-// ids carry and how much of it is open. One bd call answers both; a store with
-// nothing open is asked once more for the prefix, because the terminal links
-// on it either way. ok is false when bd could not be asked at all.
-func (h *BeadsHandler) storeSummary(projectPath string) (prefix string, open int, ok bool) {
-	issues, err := h.execBdIssues(projectPath, "list", "--limit", "0")
+// storeManifestMtime is the cache key for the counts projection. Dolt replaces
+// its manifest when a store changes, so the cache expires from the write
+// itself. No timer or sweep is needed.
+func storeManifestMtime(projectPath string) (time.Time, error) {
+	doltRoot := filepath.Join(projectPath, ".beads", "embeddeddolt")
+	databases, err := os.ReadDir(doltRoot)
 	if err != nil {
-		return "", 0, false
+		return time.Time{}, fmt.Errorf("read Dolt databases in %s: %w", doltRoot, err)
 	}
+	for _, database := range databases {
+		if !database.IsDir() {
+			continue
+		}
+		manifest := filepath.Join(doltRoot, database.Name(), ".dolt", "noms", "manifest")
+		info, statErr := os.Stat(manifest)
+		if statErr == nil && info.Mode().IsRegular() {
+			return info.ModTime(), nil
+		}
+		if errors.Is(statErr, fs.ErrPermission) {
+			return time.Time{}, fmt.Errorf("cannot read Dolt manifest %s: %w", manifest, statErr)
+		}
+	}
+	return time.Time{}, fmt.Errorf("no Dolt manifest found in %s", doltRoot)
+}
+
+func deferredUntil(raw map[string]interface{}) string {
+	return firstString(raw["defer_until"], raw["deferUntil"])
+}
+
+func isFutureDefer(raw map[string]interface{}, now time.Time) bool {
+	value := deferredUntil(raw)
+	if value == "" {
+		return false
+	}
+	deferred, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		deferred, err = time.Parse("2006-01-02", value)
+	}
+	return err == nil && deferred.After(now)
+}
+
+func hasActiveBlocker(raw map[string]interface{}, byID map[string]map[string]interface{}) bool {
+	for _, blockerID := range beadDependencyIDs(raw, blocksDependency) {
+		blocker, known := byID[blockerID]
+		if !known || !isClosedBead(blocker) {
+			return true
+		}
+	}
+	return false
+}
+
+func addBeadType(counts *BeadsTypeCounts, issueType string) {
+	switch issueType {
+	case "epic":
+		counts.Epic++
+	case "task":
+		counts.Task++
+	case "bug":
+		counts.Bug++
+	case "feature":
+		counts.Feature++
+	case "decision":
+		counts.Decision++
+	case "chore":
+		counts.Chore++
+	}
+}
+
+// readStoreSummary computes the one complete projection used by the workspace
+// route and the Beads rail. The status counts are exclusive so their sum is the
+// store's total, while the legacy open count can be derived by omitting closed.
+func (h *BeadsHandler) readStoreSummary(projectPath string) (storeSummary, error) {
+	issues, err := h.execBdIssues(projectPath, "list", "--status", "all", "--limit", "0")
+	if err != nil {
+		return storeSummary{}, err
+	}
+	byID := make(map[string]map[string]interface{}, len(issues))
 	for _, issue := range issues {
-		if prefix == "" {
-			prefix = beadPrefix(beadString(issue, "id"))
-		}
-		if beadString(issue, "status") != "closed" {
-			open++
+		if id := beadString(issue, "id"); id != "" {
+			byID[id] = issue
 		}
 	}
-	if prefix == "" {
-		prefix = h.projectPrefix(projectPath)
+
+	now := time.Now()
+	summary := storeSummary{}
+	for _, issue := range issues {
+		if summary.Prefix == "" {
+			summary.Prefix = beadPrefix(beadString(issue, "id"))
+		}
+		updated := firstString(issue["updated_at"], issue["updated"])
+		if updated > summary.NewestUpdated {
+			summary.NewestUpdated = updated
+		}
+		addBeadType(&summary.Counts.Type, firstString(issue["issue_type"], issue["type"]))
+
+		status := beadString(issue, "status")
+		switch {
+		case isClosedBead(issue):
+			summary.Counts.Status.Closed++
+		case status == "in_progress":
+			summary.Counts.Status.InProgress++
+		case status == "blocked" || hasActiveBlocker(issue, byID):
+			summary.Counts.Status.Blocked++
+		case status == "deferred" || isFutureDefer(issue, now):
+			summary.Counts.Status.Deferred++
+		default:
+			summary.Counts.Status.Open++
+		}
 	}
-	return prefix, open, true
+	return summary, nil
+}
+
+func (h *BeadsHandler) ensureStoreSummaryStateLocked() {
+	if h.storeSummaries == nil {
+		h.storeSummaries = make(map[string]storeSummaryCacheEntry)
+	}
+	if h.storeSummaryRefresh == nil {
+		h.storeSummaryRefresh = make(map[string]*storeSummaryRefresh)
+	}
+	if h.storeSummarySlots == nil {
+		h.storeSummarySlots = make(chan struct{}, workspaceProbeFanOut)
+	}
+}
+
+func (h *BeadsHandler) refreshStoreSummary(projectPath string, refresh *storeSummaryRefresh) {
+	h.storeSummarySlots <- struct{}{}
+	summary, err := h.readStoreSummary(projectPath)
+	<-h.storeSummarySlots
+
+	h.storeSummaryMu.Lock()
+	refresh.summary = summary
+	refresh.err = err
+	if err == nil {
+		h.storeSummaries[projectPath] = storeSummaryCacheEntry{
+			manifestMtime: refresh.manifestMtime,
+			summary:       summary,
+		}
+	}
+	if h.storeSummaryRefresh[projectPath] == refresh {
+		delete(h.storeSummaryRefresh, projectPath)
+	}
+	close(refresh.done)
+	h.storeSummaryMu.Unlock()
+}
+
+// cachedStoreSummary returns a matching cached projection at once. A miss
+// starts one background refresh. A follow-up request may wait for that exact
+// refresh after the browser has already painted the store rail.
+func (h *BeadsHandler) cachedStoreSummary(projectPath string, wait bool) (storeSummary, bool, bool, error) {
+	mtime, err := storeManifestMtime(projectPath)
+	if err != nil {
+		return storeSummary{}, false, false, err
+	}
+
+	h.storeSummaryMu.Lock()
+	h.ensureStoreSummaryStateLocked()
+	if cached, ok := h.storeSummaries[projectPath]; ok && cached.manifestMtime.Equal(mtime) {
+		h.storeSummaryMu.Unlock()
+		return cached.summary, true, false, nil
+	}
+	refresh := h.storeSummaryRefresh[projectPath]
+	if refresh == nil {
+		refresh = &storeSummaryRefresh{manifestMtime: mtime, done: make(chan struct{})}
+		h.storeSummaryRefresh[projectPath] = refresh
+		go h.refreshStoreSummary(projectPath, refresh)
+	}
+	done := refresh.done
+	h.storeSummaryMu.Unlock()
+
+	if !wait {
+		return storeSummary{}, false, true, nil
+	}
+	<-done
+	if refresh.err != nil {
+		return storeSummary{}, false, false, refresh.err
+	}
+	// A write during the refresh changes the next request's cache key. This
+	// response can still use the complete snapshot the refresh just produced.
+	return refresh.summary, true, false, nil
 }
 
 // addProjectPrefixes gives every discovered project the prefix its Bead ids
@@ -574,9 +787,10 @@ func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		row := beadRow{
-			beadBrief: beadBriefOf(issue),
-			Updated:   firstString(issue["updated_at"], issue["updated"]),
-			Parent:    parent,
+			beadBrief:  beadBriefOf(issue),
+			Updated:    firstString(issue["updated_at"], issue["updated"]),
+			DeferUntil: deferredUntil(issue),
+			Parent:     parent,
 		}
 		if !closed {
 			for _, blockerID := range beadDependencyIDs(issue, blocksDependency) {

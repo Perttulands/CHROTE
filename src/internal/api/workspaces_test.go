@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -193,7 +194,7 @@ func TestWorkspacesAskBdForEachStoresPrefixAndOpenCount(t *testing.T) {
 	)
 	tree.handler.beads = NewBeadsHandler()
 
-	found := tree.list(t, "?beads=1")
+	found := tree.list(t, "?beads=wait")
 
 	entry, ok := workspaceByPath(found, store)
 	if !ok || entry.BeadsPrefix != "chr" || entry.OpenBeads == nil || *entry.OpenBeads != 2 {
@@ -206,19 +207,127 @@ func TestWorkspacesAskBdForEachStoresPrefixAndOpenCount(t *testing.T) {
 	if calls := strings.Count(string(args), "\n"); calls != 1 {
 		t.Fatalf("bd was called %d times, want once when the open list carries the prefix:\n%s", calls, args)
 	}
+	if strings.TrimSpace(string(args)) != "--json list --status all --limit 0" {
+		t.Fatalf("bd args = %q, want the complete projection", strings.TrimSpace(string(args)))
+	}
 }
 
-func TestWorkspacesAskBdAgainForThePrefixOfAQuietStore(t *testing.T) {
+func TestWorkspacesFirstBeadsResponseDoesNotWaitForTheProjection(t *testing.T) {
 	tree := newWorkspaceTestTree(t)
 	store := filepath.Join(tree.root, "store")
 	makeValidBeadsWorkspace(t, store)
-	makeSequencedBdCommand(t, `{"issues":[]}`, `[{"id":"chr-9zz","status":"closed"}]`)
+
+	dir := t.TempDir()
+	releasePath := filepath.Join(dir, "release")
+	if err := syscall.Mkfifo(releasePath, 0o600); err != nil {
+		t.Fatalf("create release pipe: %v", err)
+	}
+	scriptPath := filepath.Join(dir, "bd")
+	script := "#!/bin/sh\n" +
+		"read release < \"$BD_RELEASE_PIPE\"\n" +
+		"printf '%s' '[{\"id\":\"chr-1aa\",\"status\":\"open\",\"issue_type\":\"task\"}]'\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o700); err != nil {
+		t.Fatalf("write blocking bd: %v", err)
+	}
+	t.Setenv("BD_RELEASE_PIPE", releasePath)
+	t.Setenv("CHROTE_BD_COMMAND", scriptPath)
 	tree.handler.beads = NewBeadsHandler()
 
 	found := tree.list(t, "?beads=1")
+	entry, ok := workspaceByPath(found, store)
+	if !ok || !entry.BeadsSummaryPending || entry.BeadsCounts != nil || entry.OpenBeads != nil {
+		t.Fatalf("first store response = %+v, want the store with a pending projection", entry)
+	}
+
+	release, err := os.OpenFile(releasePath, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open release pipe: %v", err)
+	}
+	if _, err := release.WriteString("continue\n"); err != nil {
+		t.Fatalf("release projection: %v", err)
+	}
+	if err := release.Close(); err != nil {
+		t.Fatalf("close release pipe: %v", err)
+	}
+
+	found = tree.list(t, "?beads=wait")
+	entry, ok = workspaceByPath(found, store)
+	if !ok || entry.BeadsSummaryPending || entry.BeadsCounts == nil || entry.OpenBeads == nil || *entry.OpenBeads != 1 {
+		t.Fatalf("follow-up store response = %+v, want the completed projection", entry)
+	}
+}
+
+func TestWorkspacesReadsThePrefixAndCountsOfAQuietStore(t *testing.T) {
+	tree := newWorkspaceTestTree(t)
+	store := filepath.Join(tree.root, "store")
+	makeValidBeadsWorkspace(t, store)
+	_, argsPath := makeSequencedBdCommand(t, `[{"id":"chr-9zz","status":"closed","issue_type":"task"}]`)
+	tree.handler.beads = NewBeadsHandler()
+
+	found := tree.list(t, "?beads=wait")
 
 	entry, ok := workspaceByPath(found, store)
 	if !ok || entry.BeadsPrefix != "chr" || entry.OpenBeads == nil || *entry.OpenBeads != 0 {
 		t.Fatalf("store = %+v, want the prefix of a closed Bead and nothing open", entry)
+	}
+	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 1 || calls[0] != "--json list --status all --limit 0" {
+		t.Fatalf("bd calls = %#v, want one complete projection", calls)
+	}
+}
+
+func TestWorkspacesStoreProjectionIsCachedUntilTheManifestChanges(t *testing.T) {
+	tree := newWorkspaceTestTree(t)
+	store := filepath.Join(tree.root, "store")
+	makeValidBeadsWorkspace(t, store)
+	first := `[
+		{"id":"chr-1aa","status":"open","issue_type":"epic","updated_at":"2026-09-01T00:00:00Z"},
+		{"id":"chr-2bb","status":"in_progress","issue_type":"task","updated_at":"2026-09-02T00:00:00Z"},
+		{"id":"chr-3cc","status":"open","issue_type":"bug","dependencies":[{"depends_on_id":"chr-2bb","type":"blocks"}]},
+		{"id":"chr-4dd","status":"open","issue_type":"feature","defer_until":"2099-01-01T00:00:00Z"},
+		{"id":"chr-5ee","status":"closed","issue_type":"decision"}
+	]`
+	second := `[{"id":"chr-5ee","status":"closed","issue_type":"decision","updated_at":"2026-09-03T00:00:00Z"}]`
+	_, argsPath := makeSequencedBdCommand(t, first, second)
+	tree.handler.beads = NewBeadsHandler()
+
+	found := tree.list(t, "?beads=wait")
+	entry, ok := workspaceByPath(found, store)
+	if !ok || entry.BeadsCounts == nil {
+		t.Fatalf("store = %+v, want its complete counts projection", entry)
+	}
+	wantStatus := BeadsStatusCounts{Open: 1, InProgress: 1, Blocked: 1, Closed: 1, Deferred: 1}
+	if entry.BeadsCounts.Status != wantStatus {
+		t.Fatalf("status counts = %+v, want %+v", entry.BeadsCounts.Status, wantStatus)
+	}
+	wantTypes := BeadsTypeCounts{Epic: 1, Task: 1, Bug: 1, Feature: 1, Decision: 1}
+	if entry.BeadsCounts.Type != wantTypes {
+		t.Fatalf("type counts = %+v, want %+v", entry.BeadsCounts.Type, wantTypes)
+	}
+	if entry.BeadsNewestUpdate != "2026-09-02T00:00:00Z" || entry.OpenBeads == nil || *entry.OpenBeads != 4 {
+		t.Fatalf("store = %+v, want newest update and four non-closed Beads", entry)
+	}
+
+	_ = tree.list(t, "?beads=wait")
+	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 1 {
+		t.Fatalf("bd was called %d times without a manifest change, want once: %#v", len(calls), calls)
+	}
+
+	manifest := filepath.Join(store, ".beads", "embeddeddolt", "test", ".dolt", "noms", "manifest")
+	info, err := os.Stat(manifest)
+	if err != nil {
+		t.Fatalf("stat manifest: %v", err)
+	}
+	changed := info.ModTime().Add(2 * time.Second)
+	if err := os.Chtimes(manifest, changed, changed); err != nil {
+		t.Fatalf("change manifest mtime: %v", err)
+	}
+
+	found = tree.list(t, "?beads=wait")
+	entry, _ = workspaceByPath(found, store)
+	if entry.OpenBeads == nil || *entry.OpenBeads != 0 || entry.BeadsCounts == nil || entry.BeadsCounts.Status.Closed != 1 {
+		t.Fatalf("store after manifest change = %+v, want the refreshed projection", entry)
+	}
+	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 2 {
+		t.Fatalf("bd was called %d times after a manifest change, want twice: %#v", len(calls), calls)
 	}
 }

@@ -97,10 +97,16 @@ export function filterBeadRows(rows: readonly WorkRow[], query: string): WorkRow
   return rows.filter(row => matchesQuery(row, query))
 }
 
-/** Ready is open work with nothing in its way; in progress is what is claimed. */
-export function readyRows(rows: readonly WorkRow[]): WorkRow[] {
+function isDeferred(row: WorkRow, now: number): boolean {
+  if (!row.deferUntil) return false
+  const until = Date.parse(row.deferUntil)
+  return Number.isFinite(until) && until > now
+}
+
+/** Ready is open work with nothing in its way or deferred to a later date. */
+export function readyRows(rows: readonly WorkRow[], now: number = Date.now()): WorkRow[] {
   return rows
-    .filter(row => !isBeadClosed(row.status) && row.status !== 'in_progress' && !row.blocked)
+    .filter(row => !isBeadClosed(row.status) && row.status !== 'in_progress' && !row.blocked && !isDeferred(row, now))
     .sort(byUpdatedNewestFirst)
 }
 

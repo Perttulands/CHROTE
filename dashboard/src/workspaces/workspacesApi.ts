@@ -14,6 +14,24 @@ import { apiErrorMessage } from '../apiErrors'
 /** Why a folder is on the list. One folder can be there for several reasons. */
 export type WorkspaceSource = 'session' | 'beads' | 'git' | 'store'
 
+export interface BeadsCounts {
+  status: {
+    open: number
+    inProgress: number
+    blocked: number
+    closed: number
+    deferred: number
+  }
+  type: {
+    epic: number
+    task: number
+    bug: number
+    feature: number
+    decision: number
+    chore: number
+  }
+}
+
 export interface Workspace {
   path: string
   sources: WorkspaceSource[]
@@ -23,6 +41,13 @@ export interface Workspace {
   beadsPrefix?: string
   /** How many Beads in the store are not closed. Absent when bd could not say. */
   openBeads?: number
+  /** Complete status and type counts, absent until the server cache is ready. */
+  beadsCounts?: BeadsCounts
+  beadsNewestUpdate?: string
+  /** The store remains listed when its projection cannot be read. */
+  beadsError?: string
+  /** The first response started the manifest-keyed projection in the background. */
+  beadsSummaryPending?: boolean
   /** How many instruction files the folder owns itself. */
   instructions: number
   /** When a session here last saw input or output. Absent without a session. */
@@ -37,11 +62,13 @@ export interface FetchWorkspacesOptions {
    * store on the server, so only the surfaces that read Beads ask for it.
    */
   beads?: boolean
+  /** Wait for a cache miss only after the caller has painted the first list. */
+  waitForBeads?: boolean
   signal?: AbortSignal
 }
 
-export async function fetchWorkspaces({ beads = false, signal }: FetchWorkspacesOptions = {}): Promise<Workspace[]> {
-  const url = beads ? '/api/workspaces?beads=1' : '/api/workspaces'
+export async function fetchWorkspaces({ beads = false, waitForBeads = false, signal }: FetchWorkspacesOptions = {}): Promise<Workspace[]> {
+  const url = beads ? `/api/workspaces?beads=${waitForBeads ? 'wait' : '1'}` : '/api/workspaces'
   const response = await fetch(url, { signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
   if (!response.ok) throw new Error(apiErrorMessage(await response.text(), 'Could not list the workspaces'))
   const body = await response.json() as unknown
