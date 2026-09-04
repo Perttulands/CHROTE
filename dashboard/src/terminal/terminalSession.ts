@@ -174,6 +174,8 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   let connection: TtydConnection | null = null
   let opened = false
   let disposed = false
+  let attachment = 0
+  let fontReady: Promise<FontFace[]> | null = null
   // The last connection was lost rather than ended, so dialling again reaches
   // the same terminal instead of taking a session from whoever holds it.
   let dropped = false
@@ -223,6 +225,22 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
     fitAddon.fit()
   }
 
+  // xterm measures its cell when open() runs. A swapped web font arriving
+  // later leaves that measurement stale until a resize, so the first fit uses
+  // the fallback cell and the resize itself only then teaches xterm the real
+  // one. Open after the terminal font is available instead. The browser's
+  // FontFaceSet is the completion event; no timer or repeated fit is needed.
+  const afterFontReady = (ready: () => void) => {
+    const fonts = document.fonts
+    const font = `${terminal.options.fontSize}px ${terminal.options.fontFamily}`
+    if (!fonts || fonts.check(font)) {
+      ready()
+      return
+    }
+    fontReady ??= fonts.load(font)
+    void fontReady.then(ready, ready)
+  }
+
   const connect = () => {
     dropped = false
     setState('connecting')
@@ -254,15 +272,22 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   return {
     attach(container, attachOptions) {
       if (disposed) return
+      const thisAttachment = ++attachment
       container.appendChild(element)
-      if (!opened) {
-        terminal.open(element)
-        opened = true
+      const finishAttach = () => {
+        if (disposed || thisAttachment !== attachment || !element.parentElement) return
+        if (!opened) {
+          terminal.open(element)
+          opened = true
+        }
+        fit()
+        if (!connection && attachOptions?.connect !== false) connect()
       }
-      fit()
-      if (!connection && attachOptions?.connect !== false) connect()
+      if (opened) finishAttach()
+      else afterFontReady(finishAttach)
     },
     detach() {
+      attachment += 1
       element.remove()
     },
     fit,
