@@ -101,6 +101,8 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   // and the one row opened on what it is. Both are the rail's, not a list's,
   // so a shelf and an arrival behave the same way.
   const [hoverPath, setHoverPath] = useState<string | null>(null)
+  // The shelf the pointer is on in the rail, which the map lights alone.
+  const [hoverShelf, setHoverShelf] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [page, setPage] = useState<LibraryPageContent | null>(null)
   // Every page this dive has passed through, oldest first; the last of them is
@@ -403,6 +405,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
           openPath={page?.path ?? null}
           matches={matches}
           hoverPath={hoverPath}
+          soloShelf={hoverShelf}
           window={recency}
           onOpen={openPage}
         />
@@ -504,6 +507,8 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
                       className={`library-shelf ${shelf === entry.name ? 'active' : ''}`}
                       aria-expanded={shelf === entry.name}
                       onClick={() => openShelf(entry.name)}
+                      onMouseEnter={() => setHoverShelf(entry.name)}
+                      onMouseLeave={() => setHoverShelf(current => (current === entry.name ? null : current))}
                     >
                       <span className="library-shelf-name">{entry.name}</span>
                       <span className="library-shelf-count">{entry.pages}</span>

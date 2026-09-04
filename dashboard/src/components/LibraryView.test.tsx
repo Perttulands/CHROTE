@@ -380,7 +380,9 @@ describe('LibraryView', () => {
   // page the map lights and brings to the middle.
   it('lights and centres the map on the page under the pointer in the rail', async () => {
     await openLibrary()
-    const drawing = () => document.querySelector('.library-map svg g')?.getAttribute('transform')
+    // Where the map is: the drawing is a canvas, and the layer the pages are
+    // reachable through carries the same transform the canvas is painted with.
+    const drawing = () => document.querySelector<HTMLElement>('.library-map-nodes')?.style.transform
     const before = drawing()
 
     openShelf('preferences')
@@ -392,6 +394,20 @@ describe('LibraryView', () => {
 
     fireEvent.mouseLeave(railRow('library-shelves', 'Workflow Preferences'))
     expect(mapNode('Workflow Preferences')).not.toHaveClass('hot')
+  })
+
+  // The other channel: a shelf's row asks about the shelf, and the map answers
+  // by lighting that shelf alone.
+  it('lights one shelf alone while the pointer is on its row in the rail', async () => {
+    await openLibrary()
+    const row = region('library-left').getByRole('button', { name: /^preferences/ })
+
+    fireEvent.mouseEnter(row)
+    expect(mapNode('Workflow Preferences')).not.toHaveAttribute('data-depth')
+    expect(mapNode('Test isolation')).toHaveAttribute('data-depth', 'out')
+
+    fireEvent.mouseLeave(row)
+    expect(mapNode('Test isolation')).not.toHaveAttribute('data-depth')
   })
 
   it('searches the whole corpus and opens a result', async () => {

@@ -51,9 +51,13 @@ async function mockLibrarianSend(page: Page, sends: { text: string; submit: stri
 /** The fixture's page whose name is past the measure a label is drawn at. */
 const LONG_TITLE = 'A note whose name runs well past the measure a label is drawn at'
 
-/** A page on the map, by the name it carries. */
+/**
+ * A page on the map, by the name it carries. The drawing is a canvas; what a
+ * page has of its own is the element over it that the keyboard reaches it by,
+ * and that element is what a pointer lands on too.
+ */
 function node(page: Page, title: string) {
-  return page.locator(`.library-map [role="button"][aria-label="${title}"]`)
+  return page.locator(`.library-map button[aria-label="${title}"]`)
 }
 
 test.describe('The Library', () => {
@@ -79,6 +83,18 @@ test.describe('The Library', () => {
     await expect(node(page, 'Workflow Preferences')).toHaveClass(/hot/)
     await expect(node(page, 'Tool Preferences')).not.toHaveClass(/hot/)
 
+    // The light falls off with distance: the page itself and what it touches
+    // are bright, what they touch is dim, and the rest of the corpus is faded.
+    await expect(node(page, 'Test isolation')).toHaveAttribute('data-depth', '0')
+    await expect(node(page, 'Workflow Preferences')).toHaveAttribute('data-depth', '1')
+    await expect(node(page, 'Tool Preferences')).toHaveAttribute('data-depth', '2')
+    await expect(node(page, LONG_TITLE)).toHaveAttribute('data-depth', 'out')
+
+    // Pointing at a shelf asks about the shelf: its pages stay, the rest dims.
+    await page.locator('.library-map-cluster', { hasText: 'preferences · 2' }).hover()
+    await expect(node(page, 'Workflow Preferences')).not.toHaveAttribute('data-depth')
+    await expect(node(page, 'Test isolation')).toHaveAttribute('data-depth', 'out')
+
     // A name too long for the map's labels is still readable in full under
     // the pointer, where the label beside the dot only shortens it.
     await node(page, LONG_TITLE).hover()
@@ -97,7 +113,7 @@ test.describe('The Library', () => {
     // while there is one.
     const reset = page.locator('[data-ui="library.map.reset"]')
     await expect(reset).toHaveCount(0)
-    await page.locator('.library-map svg').hover({ position: { x: 300, y: 200 } })
+    await page.locator('.library-map canvas').hover({ position: { x: 300, y: 200 } })
     await page.mouse.wheel(0, -400)
     await expect(reset).toBeVisible()
     await reset.click()
@@ -130,6 +146,14 @@ test.describe('The Library', () => {
     await expect(dive.locator('.library-history-message')).toHaveText('Record a workflow preference')
     await expect(page.locator('.library-map')).toBeVisible()
     await expect(page.locator('[data-ui="library.map.reset"]')).toBeVisible()
+
+    // A dive is a reading, so it takes the map near enough to read: the page it
+    // opened carries a card beside its dot saying what the page is, not only
+    // what it is called.
+    const card = page.locator('[data-ui="library.map.hover"]')
+    await expect(card).toContainText('Workflow Preferences')
+    await expect(card).toContainText('preferences ·')
+    await expect(card).toContainText('200 words')
 
     // The trail starts at the page it started at.
     await expect(dive.locator('.library-trail-step')).toHaveText(['Workflow Preferences'])
