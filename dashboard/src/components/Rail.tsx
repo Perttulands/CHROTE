@@ -7,13 +7,13 @@
  * width, and persistence key. The shell keeps 480px for the content beside it.
  */
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useRef } from 'react'
 import type {
   ComponentPropsWithoutRef,
-  CSSProperties,
   ReactNode,
 } from 'react'
 import { useResizableWidth } from '../hooks/useResizableWidth'
+import './Rail.css'
 
 export interface RailProps extends Omit<ComponentPropsWithoutRef<'aside'>, 'children'> {
   label: string
@@ -31,63 +31,6 @@ export interface RailSectionProps extends Omit<ComponentPropsWithoutRef<'section
 
 export type RailScrollProps = ComponentPropsWithoutRef<'div'>
 
-const railBase: CSSProperties = {
-  position: 'relative',
-  display: 'flex',
-  flex: 'none',
-  flexDirection: 'column',
-  gap: 12,
-  minWidth: 0,
-  minHeight: 0,
-  padding: 8,
-  overflow: 'hidden',
-  borderRight: '1px solid var(--divider)',
-  backgroundColor: 'var(--surface-primary)',
-  color: 'var(--text-primary)',
-  fontSize: 13,
-}
-
-const handleBase: CSSProperties = {
-  position: 'absolute',
-  zIndex: 1,
-  top: 0,
-  right: 0,
-  bottom: 0,
-  width: 4,
-  cursor: 'col-resize',
-  touchAction: 'none',
-}
-
-const sectionBase: CSSProperties = {
-  display: 'flex',
-  flex: 'none',
-  flexDirection: 'column',
-  minWidth: 0,
-  minHeight: 0,
-  overflow: 'hidden',
-}
-
-const headingStyle: CSSProperties = {
-  flex: 'none',
-  margin: '0 0 6px',
-  padding: '0 6px',
-  color: 'var(--text-dim)',
-  fontSize: 12,
-  fontWeight: 400,
-  letterSpacing: '0.08em',
-  lineHeight: 1.4,
-  textTransform: 'uppercase',
-}
-
-const scrollBase: CSSProperties = {
-  display: 'flex',
-  flex: '1 1 auto',
-  flexDirection: 'column',
-  minWidth: 0,
-  minHeight: 0,
-  overflowY: 'auto',
-}
-
 export default function Rail({
   label,
   width,
@@ -100,8 +43,6 @@ export default function Rail({
   ...asideProps
 }: RailProps) {
   const railRef = useRef<HTMLElement>(null)
-  const [handleHovered, setHandleHovered] = useState(false)
-  const [handleFocused, setHandleFocused] = useState(false)
   const widest = useCallback(() => {
     const room = railRef.current?.parentElement?.clientWidth || Number.POSITIVE_INFINITY
     return Math.max(minWidth, room - contentMinWidth)
@@ -116,10 +57,6 @@ export default function Rail({
   })
 
   const maximum = widest()
-  const showHover = useCallback(() => setHandleHovered(true), [])
-  const hideHover = useCallback(() => setHandleHovered(false), [])
-  const showFocus = useCallback(() => setHandleFocused(true), [])
-  const hideFocus = useCallback(() => setHandleFocused(false), [])
 
   return (
     <aside
@@ -127,7 +64,7 @@ export default function Rail({
       ref={railRef}
       className={['rail', className].filter(Boolean).join(' ')}
       aria-label={asideProps['aria-label'] ?? label}
-      style={{ ...railBase, ...style, width: renderedWidth }}
+      style={{ ...style, width: renderedWidth }}
     >
       {children}
       <div
@@ -140,16 +77,6 @@ export default function Rail({
         aria-valuemin={Math.round(minWidth)}
         aria-valuemax={Number.isFinite(maximum) ? Math.round(maximum) : undefined}
         tabIndex={0}
-        onPointerEnter={showHover}
-        onPointerLeave={hideHover}
-        onFocus={showFocus}
-        onBlur={hideFocus}
-        style={{
-          ...handleBase,
-          backgroundColor: resizing || handleFocused
-            ? 'var(--accent)'
-            : handleHovered ? 'var(--text-dim)' : undefined,
-        }}
       />
     </aside>
   )
@@ -159,10 +86,10 @@ export function RailSection({ title, fill = false, className, style, children, .
   return (
     <section
       {...sectionProps}
-      className={['rail-section', className].filter(Boolean).join(' ')}
-      style={{ ...sectionBase, ...(fill ? { flex: '1 1 0' } : null), ...style }}
+      className={['rail-section', fill ? 'fill' : '', className].filter(Boolean).join(' ')}
+      style={style}
     >
-      {title !== undefined && <h3 style={headingStyle}>{title}</h3>}
+      {title !== undefined && <h3 className="rail-section-heading">{title}</h3>}
       {children}
     </section>
   )
@@ -173,7 +100,7 @@ export function RailScroll({ className, style, ...scrollProps }: RailScrollProps
     <div
       {...scrollProps}
       className={['rail-scroll', className].filter(Boolean).join(' ')}
-      style={{ ...scrollBase, ...style }}
+      style={style}
     />
   )
 }
