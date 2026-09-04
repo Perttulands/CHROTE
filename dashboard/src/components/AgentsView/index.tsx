@@ -12,6 +12,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import AgentStack from '../AgentStack'
 import Desk from '../Desk'
+import MenuTarget from '../MenuTarget'
+import type { MenuGroup } from '../Menu'
 import TableColumn from '../TableColumn'
 import { HarnessMark } from '../harnessMarks'
 import { useSession } from '../../context/SessionContext'
@@ -31,7 +33,7 @@ import {
   type AgentHarness,
   type AgentTender,
 } from '../../agents/agentContextApi'
-import { fetchWorkspaces, isRunning, type Workspace } from '../../workspaces/workspacesApi'
+import { fetchWorkspaces, isRunning, workspaceName, type Workspace } from '../../workspaces/workspacesApi'
 import './AgentsView.css'
 
 /** How many proposals the right column shows. */
@@ -51,8 +53,16 @@ function ageOf(updated: string | undefined): string {
   return `${Math.floor(hours / 24)}d`
 }
 
-export default function AgentsView() {
-  const { settings, terminalUsers } = useSession()
+interface AgentsViewProps {
+  /**
+   * Puts a folder in front of the Files tab. The tab is not this view's to
+   * switch, so the app that owns both hands the request down.
+   */
+  onOpenInFiles?: (path: string) => void
+}
+
+export default function AgentsView({ onOpenInFiles }: AgentsViewProps = {}) {
+  const { settings, terminalUsers, openSendToSession } = useSession()
   const { announce } = useStatus()
   const theme = useTheme()
   const [harness, setHarness] = useState<AgentHarness>('claude-code')
@@ -142,18 +152,50 @@ export default function AgentsView() {
   const running = useMemo(() => workspaces.filter(isRunning), [workspaces])
   const projects = useMemo(() => workspaces.filter(workspace => !isRunning(workspace)), [workspaces])
 
+  // What a folder offers besides being looked at: an agent started in it, the
+  // folder itself in the Files tab, and the stack this tab is showing handed
+  // to a session. Launch goes through the drawer's launcher, which is the one
+  // place a session is created, with this folder and this harness already in it.
+  const workspaceMenu = (workspace: Workspace) => (): MenuGroup[] => [
+    {
+      id: 'workspace',
+      rows: [
+        {
+          id: 'launch',
+          label: 'Launch here',
+          onSelect: () => openSendToSession({
+            reference: `agents ${workspace.path} ${harness}`,
+            launch: { label: `Launch in ${workspaceName(workspace.path)}`, folder: workspace.path, harness },
+          }),
+        },
+        {
+          id: 'files',
+          label: 'Open in Files',
+          disabled: !onOpenInFiles,
+          onSelect: () => onOpenInFiles?.(workspace.path),
+        },
+        {
+          id: 'send',
+          label: 'Send',
+          onSelect: () => openSendToSession({ reference: `agents ${workspace.path} ${harness}` }),
+        },
+      ],
+    },
+  ]
+
   const workspaceRow = (workspace: Workspace) => (
-    <button
-      type="button"
-      key={workspace.path}
-      className={`agents-rail-row ${workspace.path === folder ? 'active' : ''}`}
-      aria-pressed={workspace.path === folder}
-      title={workspace.sessions.length > 0 ? `${workspace.path} — ${workspace.sessions.join(', ')}` : workspace.path}
-      onClick={() => setFolder(workspace.path)}
-    >
-      <span className="agents-workspace-path">{shortWorkspacePath(workspace.path)}</span>
-      <span className="agents-count">{workspace.instructions}</span>
-    </button>
+    <MenuTarget key={workspace.path} label={`Actions for ${workspace.path}`} groups={workspaceMenu(workspace)}>
+      <button
+        type="button"
+        className={`agents-rail-row ${workspace.path === folder ? 'active' : ''}`}
+        aria-pressed={workspace.path === folder}
+        title={workspace.sessions.length > 0 ? `${workspace.path} — ${workspace.sessions.join(', ')}` : workspace.path}
+        onClick={() => setFolder(workspace.path)}
+      >
+        <span className="agents-workspace-path">{shortWorkspacePath(workspace.path)}</span>
+        <span className="agents-count">{workspace.instructions}</span>
+      </button>
+    </MenuTarget>
   )
 
   return (
