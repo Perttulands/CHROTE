@@ -57,13 +57,6 @@ export interface AgentContext {
   memories: AgentMemory[]
 }
 
-/** The session that tends the instruction layer, as the host configured it. */
-export interface AgentTender {
-  session: string
-  beads: string
-  folder: string
-}
-
 const REQUEST_TIMEOUT_MS = 20000
 
 async function getJson<T>(url: string, failure: string, signal?: AbortSignal): Promise<T> {
@@ -110,10 +103,6 @@ export async function fetchAgentFile(
     signal,
   )
   return body.content
-}
-
-export function fetchAgentTender(signal?: AbortSignal): Promise<AgentTender> {
-  return getJson<AgentTender>('/api/agent/tender', 'Could not read the tender configuration', signal)
 }
 
 /** Bytes as the stack prints them: grouped in threes, never abbreviated. */

@@ -450,14 +450,6 @@ export async function mockBeadsProjectsRoute(page: Page, projectsResponse?: obje
 }
 
 export async function mockAgentContextApiRoutes(page: Page) {
-  await page.route('**/api/agent/tender', async route => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ session: 'tender', beads: '/code/test-project', folder: '/code/tender' }),
-    })
-  })
-
   await page.route('**/api/agent/context**', async route => {
     const url = new URL(route.request().url())
     const folder = url.searchParams.get('folder') ?? ''

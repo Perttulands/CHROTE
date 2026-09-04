@@ -188,7 +188,7 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | Chord | Action |
 | --- | --- |
 | `Alt+1` … `Alt+6` | Terminal tab n, for the tabs that exist |
-| `Alt+B` | Beads tab |
+| `Alt+B` | Beads column |
 | `Alt+L` | Library tab |
 | `Alt+G` | Agents tab |
 | `Alt+W`, `Alt+Shift+W` | Next and previous window in the active tab |
@@ -201,6 +201,9 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | `Alt+I` | Close the table |
 | `Alt+Enter` | Focus the resident's column |
 | `Alt+K` | Keybindings panel |
+
+Leader then `B` opens the Beads tab. It has no direct chord because `Alt+B`
+belongs to the Beads column on every tab.
 
 `Plus` and `Minus` are matched by the character the layout produces, not by
 `Shift`, so `Alt++` and `Alt+=` are the same chord.

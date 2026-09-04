@@ -620,22 +620,3 @@ func TestAgentFileRoute_ServesOnlyWhatTheStackLists(t *testing.T) {
 		}
 	})
 }
-
-// The tab's left column: the home, the configured Beads projects, and the
-// folders near the top of a root that carry instructions of their own.
-func TestAgentTenderRoute_SaysWhatTheHostConfigured(t *testing.T) {
-	host := newAgentTestHost(t)
-	host.handler.tender = AgentTender{Session: "tender", Beads: "/beads", Folder: "/tender"}
-
-	recorder := host.get(t, "/api/agent/tender")
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
-	}
-	var tender AgentTender
-	if err := json.Unmarshal(recorder.Body.Bytes(), &tender); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if tender.Session != "tender" || tender.Beads != "/beads" || tender.Folder != "/tender" {
-		t.Fatalf("tender = %+v, want what the host configured", tender)
-	}
-}

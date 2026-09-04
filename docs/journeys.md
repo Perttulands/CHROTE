@@ -97,9 +97,9 @@ Clerk's prompt, and the operator writes the rest and presses `Enter` there.
 Send to Session carries the same reference to any other session. Writing Beads
 stays with `bd` and the agents, the Clerk among them.
 
-**Chords.** `Alt+B` opens the Beads tab; `Alt+S` pastes the Bead on the table
-into the Clerk's prompt; `Alt+Enter` focuses the Clerk's column; `Alt+I` closes
-the table.
+**Chords.** `Alt+B` toggles the Beads column from any tab; leader then
+`B` opens the Beads tab; `Alt+S` pastes the Bead on the table into the Clerk's
+prompt; `Alt+Enter` focuses the Clerk's column; `Alt+I` closes the table.
 
 ## 4. Understand what an agent sees
 

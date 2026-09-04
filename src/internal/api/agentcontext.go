@@ -139,15 +139,6 @@ type AgentFileResponse struct {
 	Content string `json:"content"`
 }
 
-// AgentTender names the session that tends the instruction layer, as the host
-// configured it. Empty fields mean the host said nothing, and the desk says so.
-// It is the body of GET /api/agent/tender.
-type AgentTender struct {
-	Session string `json:"session"`
-	Beads   string `json:"beads"`
-	Folder  string `json:"folder"`
-}
-
 // AgentContextHandler resolves what an agent sees.
 type AgentContextHandler struct {
 	bdCommand           string
@@ -158,8 +149,6 @@ type AgentContextHandler struct {
 	homeForUser func(string) (string, error)
 	// The roots a folder has to sit under, unless it sits under the home.
 	allowedRoots func() []string
-	// The tender's configuration, read from the environment at construction.
-	tender AgentTender
 }
 
 // NewAgentContextHandler creates a handler over the host's own accounts.
@@ -174,11 +163,6 @@ func NewAgentContextHandler() *AgentContextHandler {
 		managedClaudePolicy: claudeManagedPolicyPath,
 		homeForUser:         defaultHomeForUser,
 		allowedRoots:        core.GetAllowedRoots,
-		tender: AgentTender{
-			Session: strings.TrimSpace(os.Getenv("CHROTE_TENDER_SESSION")),
-			Beads:   strings.TrimSpace(os.Getenv("CHROTE_TENDER_BEADS")),
-			Folder:  strings.TrimSpace(os.Getenv("CHROTE_TENDER_FOLDER")),
-		},
 	}
 }
 
@@ -186,7 +170,6 @@ func NewAgentContextHandler() *AgentContextHandler {
 func (h *AgentContextHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent/context", h.Context)
 	mux.HandleFunc("GET /api/agent/file", h.File)
-	mux.HandleFunc("GET /api/agent/tender", h.Tender)
 }
 
 // defaultHomeForUser answers with the named account's home, or with this
@@ -282,12 +265,6 @@ func (h *AgentContextHandler) File(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	core.WriteJSON(w, http.StatusOK, AgentFileResponse{Path: filepath.Clean(requested), Content: string(content)})
-}
-
-// Tender handles GET /api/agent/tender: the tender the host configured. The
-// folders the Agents tab offers come from GET /api/workspaces.
-func (h *AgentContextHandler) Tender(w http.ResponseWriter, r *http.Request) {
-	core.WriteJSON(w, http.StatusOK, h.tender)
 }
 
 // validateFolder answers with the folder to resolve, or with the code and

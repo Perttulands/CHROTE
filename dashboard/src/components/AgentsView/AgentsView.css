@@ -1,4 +1,4 @@
-/* The Agents tab: a rail, the stack, the proposals, and the tender's desk. */
+/* The Agents tab: a rail, the stack, the table, and the tender's column. */
 
 .agents-view {
   display: flex;
@@ -33,15 +33,6 @@
 .agents-filter:focus {
   outline: none;
   border-color: var(--accent);
-}
-
-.agents-proposals h3 {
-  margin: 0 0 4px;
-  font-size: 12px;
-  font-weight: 400;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-dim);
 }
 
 .agents-rail-row {
@@ -130,87 +121,4 @@
   min-height: 0;
   overflow-y: auto;
   padding-bottom: 8px;
-}
-
-.agents-proposals {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  flex: none;
-  min-height: 0;
-  padding: 10px 12px;
-  overflow-y: auto;
-  border-left: 1px solid var(--divider);
-  background-color: var(--surface-primary);
-}
-
-.agents-proposals-handle {
-  position: absolute;
-  z-index: 1;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 4px;
-  cursor: col-resize;
-  touch-action: none;
-}
-
-.agents-proposals-handle:hover {
-  background-color: var(--text-dim);
-}
-
-.agents-proposals-handle:focus,
-.agents-proposals-handle.dragging {
-  outline: none;
-  background-color: var(--accent);
-}
-
-.agents-proposal {
-  display: flex;
-  flex-direction: column;
-  padding: 7px 6px;
-  border: none;
-  border-left: 2px solid transparent;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.agents-proposal:hover {
-  border-left-color: var(--accent);
-  background-color: var(--surface-secondary);
-}
-
-.agents-proposal-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.agents-proposal-glyph {
-  color: var(--text-secondary);
-}
-
-.agents-proposal-age {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.agents-proposal-title {
-  margin-top: 3px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-secondary);
-}
-
-.agents-proposals-foot {
-  margin-top: auto;
-  padding-top: 10px;
-  font-size: 12px;
-  color: var(--text-dim);
 }

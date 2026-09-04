@@ -305,15 +305,15 @@ nothing.
 Three tabs each host a resident agent as a tmux session in a column at the
 tab's right edge: the Librarian in the Library, the tender in Agents, the Clerk
 in Beads. Each resident is a session name, the folder its launcher starts in
-when the session is absent, and the Beads project whose open Beads are its
-proposals. The Librarian takes its three from the Library variables above,
+when the session is absent, and the Beads project the resident works from.
+The Librarian takes its three from the Library variables above,
 with the corpus root as its folder; the other two have three variables each.
 
 | Variable | What it names |
 | --- | --- |
 | `CHROTE_TENDER_SESSION` | The tender's tmux session, shown in the Agents tab. Unset: the column says the tender is not configured. |
 | `CHROTE_TENDER_FOLDER` | The folder the launcher offers when the tender's session is absent. |
-| `CHROTE_TENDER_BEADS` | The Beads project whose open Beads are the Agents tab's proposals. Unset: no proposals. |
+| `CHROTE_TENDER_BEADS` | The Beads project the tender works from. |
 | `CHROTE_CLERK_SESSION` | The Clerk's tmux session, shown in the Beads tab. Unset: the column says the Clerk is not configured. |
 | `CHROTE_CLERK_FOLDER` | The folder the launcher offers when the Clerk's session is absent. |
 | `CHROTE_CLERK_BEADS` | The Beads project the Clerk works from. |

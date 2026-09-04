@@ -1,6 +1,6 @@
 /**
  * The Beads tab, the Bead card on the table, and the drawer over it
- * (beads: chrote-5grx.15, chrote-5grx.47).
+ * (beads: chrote-5grx.15, chrote-5grx.47, chrote-5grx.74).
  */
 
 import { test, expect, allowBrowserConsoleMessage, type Locator, type Page } from './fixtures'
@@ -38,6 +38,23 @@ test.describe('Beads', () => {
     await expect(page.locator('.bead-row', { hasText: 'One interaction language' })).toBeVisible()
     await expect(page.locator('.bead-map-acceptance').first()).toContainText('Every surface reads the same way')
     await expect(page.locator('.bead-row-blocked').first()).toContainText('blocked by test-ep1.2')
+  })
+
+  test('opens the Beads column from any tab and puts its row on the table', async ({ page }) => {
+    await page.keyboard.press('Alt+b')
+    const column = page.getByRole('complementary', { name: 'Beads column' })
+    await expect(column).toBeVisible()
+    await expect(column.getByRole('heading', { name: 'test', level: 3 })).toBeVisible()
+    const stages = column.getByRole('heading', { level: 4 })
+    await expect(stages).toHaveText(['In progress', 'Ready'])
+
+    await page.keyboard.press('Escape')
+    await expect(column).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Agents', exact: true }).click()
+    await page.keyboard.press('Alt+b')
+    await column.getByRole('button', { name: /test-ep1\.1/ }).click()
+    await expect(page.getByRole('complementary', { name: 'Bead test-ep1.1' })).toContainText('Fix login bug')
   })
 
   test('folds an epic from its title and narrows by search', async ({ page }) => {

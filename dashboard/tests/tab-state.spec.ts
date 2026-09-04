@@ -63,7 +63,6 @@ test('returns to Beads, Library and Agents exactly as they were left', async ({ 
       '/api/library/graph',
       '/api/library/pages',
       '/api/library/page',
-      '/api/agent/tender',
       '/api/agent/context',
     ].includes(url.pathname)) return
     const key = `${url.pathname}${url.search}`

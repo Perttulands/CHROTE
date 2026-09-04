@@ -46,6 +46,7 @@ const FilesView = lazy(() => import('./components/FilesView'))
 const SettingsView = lazy(() => import('./components/SettingsView'))
 const HelpView = lazy(() => import('./components/HelpView'))
 const BeadsView = lazy(() => import('./components/BeadsView'))
+const BeadsColumn = lazy(() => import('./components/BeadsColumn'))
 const LibraryView = lazy(() => import('./components/LibraryView'))
 const AgentsView = lazy(() => import('./components/AgentsView'))
 const SystemStatusView = lazy(() => import('./components/SystemStatusView'))
@@ -189,6 +190,7 @@ function DashboardContent() {
   const [openFilesWorkspaceIds, setOpenFilesWorkspaceIds] = useState<Set<WorkspaceId>>(() => new Set())
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null)
   const [keysPanelOpen, setKeysPanelOpen] = useState(false)
+  const [beadsColumnOpen, setBeadsColumnOpen] = useState(false)
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
   const [beadsRevealRequest, setBeadsRevealRequest] = useState<BeadsRevealRequest | null>(null)
   const {
@@ -242,6 +244,8 @@ function DashboardContent() {
   // The panel is a glance, so the chord that opens it closes it as well.
   const toggleKeysPanel = useCallback(() => setKeysPanelOpen(open => !open), [])
   const handleCloseKeys = useCallback(() => setKeysPanelOpen(false), [])
+  const toggleBeadsColumn = useCallback(() => setBeadsColumnOpen(open => !open), [])
+  const closeBeadsColumn = useCallback(() => setBeadsColumnOpen(false), [])
   const toggleSessionsPanel = useCallback(() => {
     setSessionsDockState(previous => ({ ...previous, open: !previous.open }))
   }, [])
@@ -303,6 +307,7 @@ function DashboardContent() {
     onTabChange: handleTabChange,
     onToggleSessionsPanel: toggleSessionsPanel,
     onOpenSessionsPanel: openSessionsPanel,
+    onToggleBeadsColumn: toggleBeadsColumn,
     onToggleKeysPanel: toggleKeysPanel,
   })
 
@@ -472,6 +477,11 @@ function DashboardContent() {
               </Suspense>
             </ErrorBoundary>
           )}
+          <ErrorBoundary>
+            <Suspense fallback={null}>
+              <BeadsColumn open={beadsColumnOpen} onClose={closeBeadsColumn} />
+            </Suspense>
+          </ErrorBoundary>
           {/* Peek and the image glance float and the Send drawer overlays the
               right edge, all inside the workspace, so the status line stays
               whole beneath them. The table's column is each tab's own: a flex
