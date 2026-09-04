@@ -163,9 +163,10 @@ test.describe('Beads', () => {
 
     await page.click('.bead-card-section .chrote-markdown-token')
 
-    await expect(page.locator('.bead-card-id')).toHaveText('test-ep1.2')
-    await page.getByRole('button', { name: 'Back' }).click()
-    await expect(page.locator('.bead-card-id')).toHaveText('test-ep1.1')
+    const followed = page.getByRole('complementary', { name: 'Bead test-ep1.2' })
+    await expect(followed).toBeVisible()
+    await followed.getByRole('button', { name: 'Back' }).click()
+    await expect(page.getByRole('complementary', { name: 'Bead test-ep1.1' })).toBeVisible()
   })
 
   test('says what refused rather than showing a blank tab', async ({ page }) => {

@@ -70,7 +70,7 @@ type View = 'map' | 'room'
 /** What a page is opened for: reading, editing, or its history unfolded. */
 type OpenIntent = 'read' | 'edit' | 'history'
 
-export default function LibraryView() {
+export default function LibraryView({ active = true }: { active?: boolean } = {}) {
   const { openSendToSession, sessions } = useSession()
   const { announce } = useStatus()
 
@@ -595,7 +595,7 @@ export default function LibraryView() {
         </div>
 
         <TableColumn />
-        <ResidentColumn tab="library" reference={libraryReference(page?.path ?? shelf)} />
+        <ResidentColumn active={active} tab="library" reference={libraryReference(page?.path ?? shelf)} />
       </div>
     </div>
   )

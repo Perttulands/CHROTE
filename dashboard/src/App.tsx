@@ -204,7 +204,6 @@ function DashboardContent() {
   const handleSendFilePath = useCallback((path: string) => {
     if (filesSendTarget) openSendToSession({ targetSessionKey: filesSendTarget, reference: `path ${path}` })
   }, [filesSendTarget, openSendToSession])
-  const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
   const handleFilesOpenChange = useCallback((workspaceId: WorkspaceId, open: boolean) => {
     setOpenFilesWorkspaceIds(previous => {
@@ -403,52 +402,38 @@ function DashboardContent() {
               openFilesRequest={activeTab === workspaceId ? openInFilesRequest : null}
             />
           ))}
-          {persistFilesTabState ? (
-            <div style={{ display: activeTab === 'files' ? 'contents' : 'none' }}>
-              <ErrorBoundary>
-                <Suspense fallback={<ViewFallback />}>
-                  <FilesView
-                    navigateRequest={filesNavigateRequest}
-                    onSendPath={filesSendTarget ? handleSendFilePath : undefined}
-                    sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
-                  />
-                </Suspense>
-              </ErrorBoundary>
-            </div>
-          ) : (
-            activeTab === 'files' && (
-              <ErrorBoundary>
-                <Suspense fallback={<ViewFallback />}>
-                  <FilesView
-                    navigateRequest={filesNavigateRequest}
-                    onSendPath={filesSendTarget ? handleSendFilePath : undefined}
-                    sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
-                  />
-                </Suspense>
-              </ErrorBoundary>
-            )
-          )}
-          {activeTab === 'beads' && (
+          <div style={{ display: activeTab === 'files' ? 'contents' : 'none' }}>
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
-                <BeadsView reveal={beadsRevealRequest} />
+                <FilesView
+                  navigateRequest={filesNavigateRequest}
+                  onSendPath={filesSendTarget ? handleSendFilePath : undefined}
+                  sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
+                />
               </Suspense>
             </ErrorBoundary>
-          )}
-          {activeTab === 'agents' && (
+          </div>
+          <div style={{ display: activeTab === 'beads' ? 'contents' : 'none' }}>
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
-                <AgentsView onOpenInFiles={handleOpenProjectInFiles} />
+                <BeadsView active={activeTab === 'beads'} reveal={beadsRevealRequest} />
               </Suspense>
             </ErrorBoundary>
-          )}
-          {activeTab === 'library' && (
+          </div>
+          <div style={{ display: activeTab === 'agents' ? 'contents' : 'none' }}>
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
-                <LibraryView />
+                <AgentsView active={activeTab === 'agents'} onOpenInFiles={handleOpenProjectInFiles} />
               </Suspense>
             </ErrorBoundary>
-          )}
+          </div>
+          <div style={{ display: activeTab === 'library' ? 'contents' : 'none' }}>
+            <ErrorBoundary>
+              <Suspense fallback={<ViewFallback />}>
+                <LibraryView active={activeTab === 'library'} />
+              </Suspense>
+            </ErrorBoundary>
+          </div>
           {activeTab === 'scheduled' && (
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>

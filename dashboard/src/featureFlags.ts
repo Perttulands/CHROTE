@@ -1,6 +1,5 @@
 export const FEATURE_FLAGS = {
   uiV2: 'chrote-ui-v2',
-  filesPersistTabState: 'chrote-files-persist-tab-state',
   filesResizablePreview: 'chrote-files-resizable-preview',
   serverStatusTab: 'chrote-server-status-tab',
 } as const
@@ -9,7 +8,6 @@ export type FeatureFlagName = keyof typeof FEATURE_FLAGS
 
 const DEFAULT_ENABLED: Record<FeatureFlagName, boolean> = {
   uiV2: false,
-  filesPersistTabState: true,
   filesResizablePreview: true,
   serverStatusTab: true,
 }
