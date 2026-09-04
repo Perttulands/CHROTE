@@ -23,6 +23,10 @@ import { openBeadCard } from '../../beads/beadCard'
 import { fetchBeadWork, type BeadRow } from '../../beads/beadsApi'
 import { isBeadClosed } from '../../beads/beadStatus'
 import { registerChords } from '../../keys/chords'
+import { getSessionKey } from '../../types'
+import { copyAndAnnounce } from '../../utils/clipboard'
+import type { MenuGroup } from '../Menu'
+import MenuTarget from '../MenuTarget'
 import TableColumn from '../TableColumn'
 import {
   fetchChanges,
@@ -62,8 +66,11 @@ function count(n: number, one: string, many = `${one}s`): string {
 /** The middle column shows the map, or the room: a page, a shelf, or a search. */
 type View = 'map' | 'room'
 
+/** What a page is opened for: reading, editing, or its history unfolded. */
+type OpenIntent = 'read' | 'edit' | 'history'
+
 export default function LibraryView() {
-  const { openSendToSession } = useSession()
+  const { openSendToSession, sessions } = useSession()
   const { announce } = useStatus()
 
   const [shelves, setShelves] = useState<LibraryShelves | null>(null)
@@ -153,16 +160,23 @@ export default function LibraryView() {
     return () => { current = false }
   }, [beadsProject])
 
-  const openPage = useCallback((path: string) => {
+  // A row's menu can ask for the page already in the editor or with its whole
+  // history unfolded; the page arrives in that state rather than a step short.
+  const openPage = useCallback((path: string, intent: OpenIntent = 'read') => {
     setResults(null)
     setDraft(null)
     fetchPage(path)
       .then(found => {
         setPage(found)
-        setHistoryOpen(false)
+        setHistoryOpen(intent === 'history')
         setGitError(found.error ?? '')
         setShelf(shelfOf(found.path) || null)
         setView('room')
+        if (intent === 'edit') {
+          setDraft(found.content)
+          setSummary(`Edit ${found.title}`)
+          setDiscarding(false)
+        }
       })
       .catch((cause: unknown) => {
         announce(cause instanceof Error ? cause.message : `Could not open ${path}`, 'error')
@@ -215,6 +229,54 @@ export default function LibraryView() {
   const send = useCallback(() => {
     openSendToSession({ reference: libraryReference(page?.path ?? shelf) })
   }, [openSendToSession, page, shelf])
+
+  // Send to Librarian names the resident: his session while it runs, and the
+  // offer to launch him from the corpus root when it does not. Every row's
+  // hand-off to him goes through here, so the resident column, when it
+  // arrives, replaces the drawer with a paste into his prompt in one place.
+  const sendToLibrarian = useCallback((path: string) => {
+    const name = shelves?.librarianSession ?? ''
+    const live = name ? sessions.find(candidate => candidate.name === name) : undefined
+    openSendToSession(live
+      ? { targetSessionKey: getSessionKey(live.name, live.unixUser), reference: libraryReference(path) }
+      : { reference: libraryReference(path), launch: { label: 'Launch the Librarian', folder: root } })
+  }, [openSendToSession, root, sessions, shelves?.librarianSession])
+
+  // A shelf is open while its listing is the room: not while a page from it is
+  // being read, and not while a search stands in the room's place.
+  const shelfOpen = (name: string) => shelf === name && page === null && results === null
+  const collapseShelf = useCallback(() => {
+    setShelf(null)
+    setView('map')
+  }, [])
+
+  const pageMenu = (path: string) => (): MenuGroup[] => [
+    {
+      id: 'read',
+      rows: [
+        { id: 'open', label: 'Open', onSelect: () => openPage(path) },
+        { id: 'send', label: 'Send to Librarian', chord: 'Alt+S', onSelect: () => sendToLibrarian(path) },
+      ],
+    },
+    {
+      id: 'keep',
+      rows: [
+        { id: 'edit', label: 'Edit', onSelect: () => openPage(path, 'edit') },
+        { id: 'copy-path', label: 'Copy path', onSelect: () => { void copyAndAnnounce(path, path, announce) } },
+        { id: 'history', label: 'History', onSelect: () => openPage(path, 'history') },
+      ],
+    },
+  ]
+
+  const shelfMenu = (name: string) => (): MenuGroup[] => [
+    {
+      id: 'shelf',
+      rows: [
+        { id: 'send', label: 'Send shelf to Librarian', chord: 'Alt+S', onSelect: () => sendToLibrarian(name) },
+        { id: 'collapse', label: 'Collapse', disabled: !shelfOpen(name), onSelect: collapseShelf },
+      ],
+    },
+  ]
 
   // The room has something to show once a page, a shelf or a search is on the
   // table; until then the map is all there is, and Alt+R has nowhere to go.
@@ -338,15 +400,16 @@ export default function LibraryView() {
           <section className="library-section library-shelves">
             <h3>Shelves</h3>
             {shelves.shelves.map(entry => (
-              <button
-                key={entry.path}
-                type="button"
-                className={`library-shelf ${shelf === entry.name ? 'active' : ''}`}
-                onClick={() => openShelf(entry.name)}
-              >
-                <span className="library-shelf-name">{entry.name}</span>
-                <span className="library-shelf-count">{entry.pages}</span>
-              </button>
+              <MenuTarget key={entry.path} label={`Actions for shelf ${entry.name}`} groups={shelfMenu(entry.name)}>
+                <button
+                  type="button"
+                  className={`library-shelf ${shelf === entry.name ? 'active' : ''}`}
+                  onClick={() => openShelf(entry.name)}
+                >
+                  <span className="library-shelf-name">{entry.name}</span>
+                  <span className="library-shelf-count">{entry.pages}</span>
+                </button>
+              </MenuTarget>
             ))}
           </section>
 
@@ -355,18 +418,24 @@ export default function LibraryView() {
             <div className="library-scroll">
               {gitError && <p className="library-git-error">{gitError}</p>}
               {changes.length === 0 && <p className="library-empty">Nothing has arrived yet.</p>}
-              {changes.map(change => (
-                <button
-                  key={change.hash}
-                  type="button"
-                  className="library-arrival"
-                  disabled={change.files.length === 0}
-                  onClick={() => { if (change.files[0]) openPage(change.files[0]) }}
-                >
-                  <span className="library-arrival-when">{libraryWhen(change.time)} · {change.author}</span>
-                  <span className="library-arrival-message">{change.message}</span>
-                </button>
-              ))}
+              {changes.map(change => {
+                const path = change.files[0]
+                const arrival = (
+                  <button
+                    type="button"
+                    className="library-arrival"
+                    disabled={!path}
+                    onClick={() => { if (path) openPage(path) }}
+                  >
+                    <span className="library-arrival-when">{libraryWhen(change.time)} · {change.author}</span>
+                    <span className="library-arrival-message">{change.message}</span>
+                  </button>
+                )
+                // An arrival that touched no page is a fact with nothing to act on.
+                return path
+                  ? <MenuTarget key={change.hash} label={`Actions for ${path}`} groups={pageMenu(path)}>{arrival}</MenuTarget>
+                  : <Fragment key={change.hash}>{arrival}</Fragment>
+              })}
             </div>
           </section>
 
@@ -419,11 +488,13 @@ export default function LibraryView() {
               </div>
               <div className="library-results">
                 {results.map(result => (
-                  <button key={result.path} type="button" className="library-result" onClick={() => openPage(result.path)}>
-                    <span className="library-result-title">{result.title}</span>
-                    <span className="library-result-path">{result.path}{result.line > 0 ? `:${result.line}` : ''}</span>
-                    {result.snippet && <span className="library-result-snippet">{result.snippet}</span>}
-                  </button>
+                  <MenuTarget key={result.path} label={`Actions for ${result.path}`} groups={pageMenu(result.path)}>
+                    <button type="button" className="library-result" onClick={() => openPage(result.path)}>
+                      <span className="library-result-title">{result.title}</span>
+                      <span className="library-result-path">{result.path}{result.line > 0 ? `:${result.line}` : ''}</span>
+                      {result.snippet && <span className="library-result-snippet">{result.snippet}</span>}
+                    </button>
+                  </MenuTarget>
                 ))}
               </div>
             </div>
@@ -520,7 +591,7 @@ export default function LibraryView() {
               </div>
             </>
           ) : (
-            <Shelf shelf={shelf ?? ''} pages={shelfPages} onOpenPage={openPage} />
+            <Shelf shelf={shelf ?? ''} pages={shelfPages} onOpenPage={openPage} pageMenu={pageMenu} />
           )}
         </div>
 
