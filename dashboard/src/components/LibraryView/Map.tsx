@@ -4,8 +4,8 @@
  * Every page is a dot in its shelf's cluster, sized by how much it says and
  * faded by how long ago it moved; a written link is a hairline, a shared tag a
  * dotted one. Pointing at a page names it and lights what it touches; clicking
- * opens it. The same drawing, 150px tall, is the Near-this-page strip over the
- * reading room: the open page at the left and its neighbours beside it.
+ * it dives in: the map takes that page to the middle and closer in, and stays
+ * where it is while the page is read in the column beside it.
  *
  * The arithmetic is in mapLayout.ts. This file only measures its box, keeps
  * the pointer's state, and draws.
@@ -19,7 +19,6 @@ import {
   LANDMARK_LABELS,
   MAP_LABEL_CHARS,
   layoutMap,
-  layoutStrip,
   neighboursOf,
   placeLabels,
   withinWindow,
@@ -28,9 +27,10 @@ import {
 
 export interface MapProps {
   graph: LibraryGraph
-  /** The whole corpus, or the open page and its neighbours in a strip. */
-  mode: 'map' | 'strip'
-  /** The page on the table, lit with its neighbours; null on the landing. */
+  /**
+   * The page being dived into: taken to the middle, lit with its neighbours.
+   * Null on the landing, and again once the dive is closed.
+   */
   openPath: string | null
   /** The pages a search names, lit and labelled; null with no search. */
   matches: ReadonlySet<string> | null
@@ -39,15 +39,12 @@ export interface MapProps {
   onOpen: (path: string) => void
 }
 
-/** The strip's height, which the layout and the stylesheet both know. */
-export const STRIP_HEIGHT = 150
-
 /** What the layout is given before the box has been measured, and in jsdom. */
 const FALLBACK_WIDTH = 960
 const FALLBACK_HEIGHT = 600
 
-/** A strip label may run to its column's width; a map label to one measure. */
-const STRIP_LABEL_CHARS = 22
+/** How far in the map is taken when a page is dived into. */
+export const DIVE_SCALE = 2
 
 /** A page outside the recency window is drawn at this much of itself. */
 const STALE_OPACITY = 0.14
@@ -58,7 +55,7 @@ const HOVER_PAD = 7
 const HOVER_HEIGHT = 20
 const HOVER_GAP = 10
 
-function useMeasuredSize(mode: 'map' | 'strip') {
+function useMeasuredSize() {
   const ref = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: FALLBACK_WIDTH, height: FALLBACK_HEIGHT })
 
@@ -80,27 +77,24 @@ function useMeasuredSize(mode: 'map' | 'strip') {
     const observer = new ResizeObserver(read)
     observer.observe(element)
     return () => observer.disconnect()
-  }, [mode])
+  }, [])
 
-  return { ref, width: size.width, height: mode === 'strip' ? STRIP_HEIGHT : size.height }
+  return { ref, width: size.width, height: size.height }
 }
 
-export default function LibraryMap({ graph, mode, openPath, matches, window: recency = 'all', onOpen }: MapProps) {
-  const { ref, width, height } = useMeasuredSize(mode)
+export default function LibraryMap({ graph, openPath, matches, window: recency = 'all', onOpen }: MapProps) {
+  const { ref, width, height } = useMeasuredSize()
   const [hovered, setHovered] = useState<string | null>(null)
-  const view = useMapTransform({ width, height, enabled: mode === 'map' })
+  const view = useMapTransform({ width, height })
 
   // The pointer's page is forgotten when the drawing changes under it.
-  useEffect(() => { setHovered(null) }, [mode, graph])
+  useEffect(() => { setHovered(null) }, [graph])
 
   // One reading of the clock per drawing, so every node is judged against
   // the same moment and nothing redraws because time passed.
   const now = useMemo(() => Date.now(), [graph])
 
-  const layout = useMemo(
-    () => (mode === 'strip' && openPath ? layoutStrip(graph, openPath, width, height) : layoutMap(graph, width, height)),
-    [graph, mode, openPath, width, height],
-  )
+  const layout = useMemo(() => layoutMap(graph, width, height), [graph, width, height])
 
   const { focus, hot, primary } = useMemo(() => {
     const focus = new Set<string>()
@@ -110,19 +104,32 @@ export default function LibraryMap({ graph, mode, openPath, matches, window: rec
     focus.forEach(path => neighboursOf(graph, path).forEach(other => hot.add(other)))
     const primary = new Set<string>(focus)
     matches?.forEach(path => { hot.add(path); primary.add(path) })
-    if (mode === 'strip') layout.nodes.forEach(node => hot.add(node.path))
     return { focus, hot, primary }
-  }, [graph, hovered, layout, matches, mode, openPath])
+  }, [graph, hovered, matches, openPath])
 
   const labels = useMemo(
-    () => placeLabels(layout.nodes, hot, primary, {
-      landmarks: mode === 'map' ? LANDMARK_LABELS : 0,
-      maxChars: mode === 'map' ? MAP_LABEL_CHARS : STRIP_LABEL_CHARS,
-    }, layout.clusters),
-    [hot, layout, mode, primary],
+    () => placeLabels(layout.nodes, hot, primary, { landmarks: LANDMARK_LABELS, maxChars: MAP_LABEL_CHARS }, layout.clusters),
+    [hot, layout, primary],
   )
 
   const positions = useMemo(() => new Map(layout.nodes.map(node => [node.path, node])), [layout])
+
+  // A dive takes its page to the middle and closer in, wherever it was asked
+  // for: a dot, a neighbour's link in the column, a row in the rail. It is
+  // done once per page, so a map the operator has moved since stays moved.
+  const { centreOn } = view
+  const dived = useRef<string | null>(null)
+  useEffect(() => {
+    if (!openPath) {
+      dived.current = null
+      return
+    }
+    if (dived.current === openPath) return
+    const found = positions.get(openPath)
+    if (!found) return
+    dived.current = openPath
+    centreOn(found, DIVE_SCALE)
+  }, [centreOn, openPath, positions])
 
   const open = (path: string) => (event: ReactKeyboardEvent<SVGGElement>) => {
     if (event.key !== 'Enter' && event.key !== ' ') return
@@ -147,14 +154,14 @@ export default function LibraryMap({ graph, mode, openPath, matches, window: rec
   })()
 
   return (
-    <div ref={ref} className={mode === 'map' ? 'library-map' : 'library-map library-map-strip'} data-ui="library.map">
+    <div ref={ref} className="library-map" data-ui="library.map">
       <svg
         ref={view.ref}
         className={view.moved ? 'moved' : undefined}
         width={width}
         height={height}
         viewBox={`0 0 ${width} ${height}`}
-        aria-label={mode === 'map' ? 'The map' : 'Near this page'}
+        aria-label="The map"
         {...view.handlers}
       >
         <g transform={view.groupTransform}>
@@ -233,7 +240,7 @@ export default function LibraryMap({ graph, mode, openPath, matches, window: rec
           </text>
         )}
       </svg>
-      {mode === 'map' && view.moved && (
+      {view.moved && (
         <button type="button" className="library-map-reset" onClick={view.reset} data-ui="library.map.reset">
           Reset the view
         </button>

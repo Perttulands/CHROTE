@@ -58,7 +58,7 @@ src/
 │   ├── FilesView/                  full Files workspace
 │   ├── TerminalFilesPanel.tsx      terminal-companion Files sidecar
 │   ├── BeadsView/                  Beads workspace and issue surfaces
-│   ├── LibraryView/                the context corpus as a reading room
+│   ├── LibraryView/                the context corpus as a map to dive into
 │   ├── ScheduledTasksView.tsx      schedules and run history
 │   ├── SystemStatusView/           health, resources, and system history
 │   └── SettingsView.tsx            appearance, flags, and session cleanup

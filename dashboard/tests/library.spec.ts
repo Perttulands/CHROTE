@@ -1,13 +1,13 @@
 /**
  * Journey 7, keep the library (beads: chrote-5grx.17, chrote-5grx.55,
- * chrote-5grx.75).
+ * chrote-5grx.75, chrote-5grx.76).
  *
  * One pass through the surface the browser is the point of: land on the map,
  * read a long name in full under the pointer, narrow the recency window, take
- * the map in and put it back, take a page off a shelf, read it with its
- * neighbours above it, turn the map over and back, open a neighbour from it,
- * and hand it to the Librarian in the column at the right. Everything narrower — a date, a title, where a
- * label sits — is a unit test.
+ * the map in and put it back, dive into a page, travel to a neighbour, walk the
+ * trail back, hand the page to the Librarian in the column at the right, and
+ * close the dive with the map still standing. Everything narrower — a date, a
+ * title, where a label sits — is a unit test.
  */
 
 import { test, expect, type Page } from './fixtures'
@@ -56,7 +56,7 @@ function node(page: Page, title: string) {
 }
 
 test.describe('The Library', () => {
-  test('lands on the map, reads a page with its neighbours, turns the map over, and hands it to the Librarian', async ({ page }) => {
+  test('lands on the map, dives into a page, travels to a neighbour and back, and hands it to the Librarian', async ({ page }) => {
     const sends: { text: string; submit: string }[] = []
     await mockApiRoutes(page)
     await mockBeadsApiRoutes(page)
@@ -102,34 +102,26 @@ test.describe('The Library', () => {
     await reset.click()
     await expect(reset).toHaveCount(0)
 
-    // A shelf, then a page off it.
-    await page.click('.library-left .library-shelf:has-text("preferences")')
-    await page.click('.library-result:has-text("Workflow Preferences")')
+    // A dot on the map dives into its page: the page opens beside the map,
+    // the map stays and takes the page it was asked for.
+    await node(page, 'Workflow Preferences').click()
 
-    await expect(page.locator('.library-page-title-row h1')).toHaveText('Workflow Preferences')
-    await expect(page.locator('.library-body')).toContainText('Prefer small, verifiable changes.')
-    await expect(page.locator('.library-page-meta')).toContainText('preferences/workflow.md')
-    await expect(page.locator('.library-history-message')).toHaveText('Record a workflow preference')
-    await expect(page.locator('.library-linked-from')).toContainText('Test isolation')
+    const dive = page.locator('.library-dive')
+    await expect(dive.locator('.library-page-title-row h1')).toHaveText('Workflow Preferences')
+    await expect(dive.locator('.library-body')).toContainText('Prefer small, verifiable changes.')
+    await expect(dive.locator('.library-history-message')).toHaveText('Record a workflow preference')
+    await expect(page.locator('.library-map')).toBeVisible()
+    await expect(page.locator('[data-ui="library.map.reset"]')).toBeVisible()
 
-    // The strip above the page holds its neighbours, and one of them opens.
-    const strip = page.locator('.library-strip')
-    await expect(strip).toContainText('Near this page')
-    await expect(strip.locator('[aria-label="Tool Preferences"]')).toBeVisible()
+    // The trail starts at the page it started at.
+    await expect(dive.locator('.library-trail-step')).toHaveText(['Workflow Preferences'])
 
-    // Alt+R turns the map over with the page still on the table, and back.
-    await page.keyboard.press('Alt+r')
-    await expect(page.locator('.library-map-frame')).toBeVisible()
-    await expect(page.locator('.library-page')).toHaveCount(0)
-    await expect(node(page, 'Workflow Preferences')).toHaveClass(/hot/)
-
-    await node(page, 'Tool Preferences').click()
-    await expect(page.locator('.library-page-title-row h1')).toHaveText('Tool Preferences')
-
-    await page.keyboard.press('Alt+r')
-    await expect(page.locator('.library-map-frame')).toBeVisible()
-    await page.keyboard.press('Alt+r')
-    await expect(page.locator('.library-page-title-row h1')).toHaveText('Tool Preferences')
+    // A neighbour travels, and the trail grows behind the reader.
+    await dive.locator('.library-links', { hasText: 'Neighbours' })
+      .getByRole('button', { name: 'Tool Preferences' }).click()
+    await expect(dive.locator('.library-page-title-row h1')).toHaveText('Tool Preferences')
+    await expect(dive.locator('.library-trail-step')).toHaveText(['Workflow Preferences', 'Tool Preferences'])
+    await expect(node(page, 'Tool Preferences')).toHaveClass(/hot/)
 
     // The Librarian is live in the column at the right, and Alt+S puts the
     // page into its prompt on a line of its own, for the operator to finish.
@@ -140,6 +132,16 @@ test.describe('The Library', () => {
 
     await expect.poll(() => sends).toEqual([{ text: 'library preferences/tools.md\n', submit: 'false' }])
     await expect(page.locator('.status-line')).toContainText("Pasted to 'hq-deacon'")
+
+    // A step of the trail goes back, and cuts the trail to where it went.
+    await dive.locator('.library-trail-step', { hasText: 'Workflow Preferences' }).click()
+    await expect(dive.locator('.library-page-title-row h1')).toHaveText('Workflow Preferences')
+    await expect(dive.locator('.library-trail-step')).toHaveText(['Workflow Preferences'])
+
+    // Escape ends the dive; the map is still there, and still where it was.
+    await page.keyboard.press('Escape')
+    await expect(dive).toHaveCount(0)
+    await expect(node(page, 'Workflow Preferences')).toBeVisible()
   })
 
   // Real layout is the only way to see one section painting over another;
