@@ -176,20 +176,22 @@ filesystem."
 
 1. Step into the library at its map: every page, shelves as labelled clusters,
    wiki links and shared tags as edges, size from length, brightness from
-   recency, candidates dim. Click a page to read it in the reading room, where
-   the map shrinks to a strip of what is near this page.
+   recency, candidates dim. Click a page to dive into it: the map takes it to
+   the middle and closer in, and the page opens in a column beside the map with
+   its neighbours as links to travel by and a trail back through the dive.
 2. Search across everything, and read what changed recently.
 3. Fix an odd wording where you find it; each save is a commit attributed to the
    operator.
 4. Point the Librarian at the page or the shelf.
 
-**Surfaces.** The Library's map and reading room, its search and recent changes
-(1, 2, 3); the editor shared with Files (3); the Librarian's column (4).
+**Surfaces.** The Library's map and the dive column beside it, its search and
+recent changes (1, 2, 3); the editor shared with Files (3); the Librarian's
+column (4).
 
 **End action.** A small manual edit, or paste into the Librarian: `Alt+S` puts
-the page on the table into the Librarian's prompt, and a shelf's menu sends the
-shelf the same way.
+the page being dived into into the Librarian's prompt, and a shelf's menu sends
+the shelf the same way.
 
-**Chords.** `Alt+L` opens the Library tab; `Alt+R` switches between the map and
-the reading room; `Alt+S` pastes the page into the Librarian's prompt;
+**Chords.** `Alt+L` opens the Library tab; `Escape` closes the dive and leaves
+the map where it was; `Alt+S` pastes the page into the Librarian's prompt;
 `Alt+Enter` focuses the Librarian's column.
