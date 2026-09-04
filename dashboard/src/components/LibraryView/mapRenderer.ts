@@ -18,6 +18,7 @@
  */
 
 import type { MapTransform } from '../../hooks/useMapTransform'
+import { dotRadius, type MapCard } from './mapBands'
 import type { MapEdge, MapLabel, MapNode } from './mapLayout'
 
 /** The colours the drawing uses, read from the theme rather than invented. */
@@ -38,8 +39,12 @@ export interface MapPalette {
 export interface MapScene {
   nodes: readonly MapNode[]
   edges: readonly MapEdge[]
-  /** Names to draw beside their dots, already placed in layout coordinates. */
-  labels: readonly MapLabel[]
+  /**
+   * What is written on the map, as one layer per band. There are two of them
+   * only while one band is giving way to the next, and then only until the
+   * fade has run.
+   */
+  text: readonly MapTextLayer[]
   transform: MapTransform
   width: number
   height: number
@@ -50,6 +55,15 @@ export interface MapScene {
   /** Pages outside the recency window, drawn all but out of the way. */
   stale: ReadonlySet<string>
   palette: MapPalette
+}
+
+/** One band's writing, at the strength it is drawn with. */
+export interface MapTextLayer {
+  /** Names beside their dots, already placed in the layout's coordinates. */
+  labels: readonly MapLabel[]
+  /** Cards beside their dots, already placed in the box's coordinates. */
+  cards: readonly MapCard[]
+  alpha: number
 }
 
 export interface MapRenderer {
@@ -67,6 +81,12 @@ export const STALE_OPACITY = 0.14
  * a few pixels. This is what turns ten thousand fills into a handful.
  */
 const SHADES = 8
+
+/** The card's face, and where its first line sits inside its box. */
+const CARD_SIZE = 11
+const CARD_LINE = 14
+const CARD_PAD = 6
+const CARD_BASELINE = 11
 
 /** A dot whose middle is this far outside the box is still stamped. */
 const MARGIN = 12
@@ -230,7 +250,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): MapRenderer | n
       const hot = scene.hot.has(node.path)
       const stale = scene.stale.has(node.path)
       const colour = hot ? scene.palette.accent : node.candidate ? scene.palette.dim : scene.palette.dot
-      const stamp = sprite(colour, shadeOf(node, hot, stale), node.r * scale * ratio)
+      const stamp = sprite(colour, shadeOf(node, hot, stale), dotRadius(node, scale) * ratio)
       context.drawImage(
         stamp.image,
         Math.round((node.x * scale + offsetX) * ratio) - stamp.centre,
@@ -239,7 +259,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): MapRenderer | n
     })
   }
 
-  const drawLabels = (scene: MapScene) => {
+  const drawLabels = (scene: MapScene, layer: MapTextLayer) => {
     // Type is drawn in the box's own coordinates: the drawing zooms, the names
     // keep the one size they are readable at. Each name is drawn over a halo
     // of the background, so a hairline passing beneath it never runs through
@@ -249,13 +269,33 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): MapRenderer | n
     context.lineJoin = 'round'
     context.lineWidth = LABEL_HALO
     context.strokeStyle = scene.palette.background
-    scene.labels.forEach(label => {
+    layer.labels.forEach(label => {
       context.font = `${label.primary ? PRIMARY_SIZE : LABEL_SIZE}px ${scene.palette.family}`
       context.fillStyle = label.primary ? scene.palette.dot : scene.palette.dim
       const x = label.x * scale + offsetX
       const y = label.y * scale + offsetY
       context.strokeText(label.text, x, y)
       context.fillText(label.text, x, y)
+    })
+  }
+
+  const drawCards = (scene: MapScene, layer: MapTextLayer) => {
+    // A card is already placed in the box's coordinates: what the page is, when
+    // it last moved, how long it is, and what it shares a tag with, on its own
+    // ground so the drawing beneath it does not run through the words.
+    if (layer.cards.length === 0) return
+    context.textBaseline = 'alphabetic'
+    context.font = `${CARD_SIZE}px ${scene.palette.family}`
+    context.lineWidth = 1
+    layer.cards.forEach(card => {
+      context.fillStyle = scene.palette.background
+      context.fillRect(card.x, card.y, card.width, card.height)
+      context.strokeStyle = scene.palette.divider
+      context.strokeRect(card.x + 0.5, card.y + 0.5, card.width - 1, card.height - 1)
+      card.lines.forEach((line, index) => {
+        context.fillStyle = index === 0 ? scene.palette.dot : scene.palette.dim
+        context.fillText(line, card.x + CARD_PAD, card.y + CARD_PAD + CARD_LINE * index + CARD_BASELINE)
+      })
     })
   }
 
@@ -283,7 +323,13 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): MapRenderer | n
       context.setTransform(1, 0, 0, 1, 0, 0)
       drawNodes(scene, view, ratio)
       context.setTransform(ratio, 0, 0, ratio, 0, 0)
-      drawLabels(scene)
+      scene.text.forEach(layer => {
+        if (layer.alpha <= 0) return
+        context.globalAlpha = layer.alpha
+        drawLabels(scene, layer)
+        drawCards(scene, layer)
+      })
+      context.globalAlpha = 1
     },
     destroy() {
       context.setTransform(1, 0, 0, 1, 0, 0)

@@ -381,6 +381,9 @@
   cursor: pointer;
   outline: none;
   pointer-events: auto;
+  /* A page is aimed at by the dot the operator sees. Past the landing scale
+     the drawing grows and the dot does not, so neither does the target. */
+  transform: scale(calc(1 / max(1, var(--map-scale, 1))));
 }
 
 /* Past the size the layer is carried whole at, it holds only the named and
@@ -408,11 +411,15 @@
   text-transform: uppercase;
   white-space: nowrap;
   pointer-events: none;
+  /* One band gives way to the next rather than cutting to it. The fade runs
+     when the operator crosses a threshold and at no other time. */
+  transition: opacity 180ms linear;
 }
 
-/* The pointer's page in full, on its own ground so a long name stays read.
-   It is that page's one name: the drawing leaves it out rather than print it
-   twice. */
+/* The page the operator is on, in full, on its own ground so a long name stays
+   read. It is that page's one name: the drawing leaves it out rather than print
+   it twice. Near in it is that page's card, which says what the page is as well
+   as what it is called. */
 .library-map-hover {
   position: absolute;
   display: flex;
@@ -425,6 +432,20 @@
   font-size: 12px;
   white-space: nowrap;
   pointer-events: none;
+}
+
+.library-map-hover.card {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 6px;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+/* The card's first line is the page; what follows describes it. */
+.library-map-hover.card .library-map-hover-line + .library-map-hover-line {
+  color: var(--text-dim);
 }
 
 .library-map-more {

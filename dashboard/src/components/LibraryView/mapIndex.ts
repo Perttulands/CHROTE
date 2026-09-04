@@ -9,6 +9,7 @@
  * be read at the size the corpus will reach rather than the size it has.
  */
 
+import { dotRadius } from './mapBands'
 import type { MapNode } from './mapLayout'
 
 /** The side of one cell, in the layout's coordinates. */
@@ -39,9 +40,17 @@ function key(column: number, row: number): number {
   return column * COLUMN_STRIDE + row
 }
 
-/** The radius at which a page answers the pointer, in layout coordinates. */
-export function reachOf(node: MapNode): number {
-  return Math.max(node.r + REACH, MIN_REACH)
+/**
+ * The radius at which a page answers the pointer, in layout coordinates.
+ *
+ * What the operator aims at is the dot he sees, so the reach is worked out in
+ * the box's pixels — the drawn dot and a little air around it, never less than
+ * a target a pointer can hit — and turned back into the drawing's own
+ * coordinates. Past the landing scale the dot stops growing, so the page it
+ * answers for stops growing with it.
+ */
+export function reachOf(node: MapNode, scale = 1): number {
+  return Math.max(dotRadius(node, scale) + REACH, MIN_REACH) / scale
 }
 
 export function buildIndex(nodes: readonly MapNode[]): MapIndex {
@@ -72,7 +81,7 @@ export function buildIndex(nodes: readonly MapNode[]): MapIndex {
  * both reach the point the nearer one answers, so a small dot drawn over a
  * large one is still reachable.
  */
-export function hitTest(index: MapIndex, x: number, y: number): MapNode | null {
+export function hitTest(index: MapIndex, x: number, y: number, scale = 1): MapNode | null {
   const column = Math.floor((x - index.left) / CELL)
   const row = Math.floor((y - index.top) / CELL)
   let best: MapNode | null = null
@@ -84,7 +93,7 @@ export function hitTest(index: MapIndex, x: number, y: number): MapNode | null {
       for (const position of bucket) {
         const node = index.nodes[position]
         const distance = Math.hypot(node.x - x, node.y - y)
-        const reach = reachOf(node)
+        const reach = reachOf(node, scale)
         if (distance <= reach && distance < bestDistance) {
           best = node
           bestDistance = distance

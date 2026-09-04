@@ -96,7 +96,7 @@ describe('neighboursOf', () => {
 
 describe('placeLabels', () => {
   const at = (path: string, x: number, y: number, r = 4, candidate = false): MapNode => ({
-    path, shelf: 'knowledge', title: path, x, y, r, opacity: 1, updated: '', candidate,
+    path, shelf: 'knowledge', title: path, x, y, r, words: 40, opacity: 1, updated: '', candidate,
   })
 
   it('names the largest accepted pages up to the landmark limit, and every hot page besides', () => {

@@ -22,13 +22,25 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MutableRefObject } from 'react'
 import type {
+  CSSProperties,
   FocusEvent as ReactFocusEvent,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from 'react'
-import type { LibraryGraph } from '../../library/libraryApi'
+import { libraryWhen, type LibraryGraph } from '../../library/libraryApi'
 import { useMapTransform } from '../../hooks/useMapTransform'
+import {
+  BAND_FADE,
+  MID_LABELS,
+  NEAR_SCALE,
+  bandAt,
+  cardSize,
+  dotRadius,
+  placeCards,
+  type MapBand,
+  type MapCard,
+} from './mapBands'
 import { buildIndex, hitTest, reachOf } from './mapIndex'
 import {
   LANDMARK_LABELS,
@@ -37,11 +49,13 @@ import {
   neighboursOf,
   placeLabels,
   withinWindow,
+  type MapLabel,
   type MapLayout,
+  type MapNode,
   type RecencyWindow,
 } from './mapLayout'
 import type { MapLayoutRequest } from './mapLayout.worker'
-import { createCanvasRenderer, readPalette, type MapRenderer, type MapScene } from './mapRenderer'
+import { createCanvasRenderer, readPalette, type MapRenderer, type MapScene, type MapTextLayer } from './mapRenderer'
 
 export interface MapProps {
   graph: LibraryGraph
@@ -66,8 +80,12 @@ export interface MapProps {
 const FALLBACK_WIDTH = 960
 const FALLBACK_HEIGHT = 600
 
-/** How far in the map is taken when a page is dived into. */
-export const DIVE_SCALE = 2
+/**
+ * How far in the map is taken when a page is dived into: far enough that the
+ * page it opened is read as a card rather than as a dot, because a dive is a
+ * reading.
+ */
+export const DIVE_SCALE = NEAR_SCALE
 
 /**
  * How many pages keep a focusable element over the canvas.
@@ -92,6 +110,9 @@ const WORKER_ABOVE = 400
 
 /** What the map draws while a worker is still laying the corpus out. */
 const EMPTY_LAYOUT: MapLayout = { nodes: [], edges: [], clusters: [], more: 0 }
+
+/** How much of a long name a card carries before it is cut. */
+const CARD_CHARS = 34
 
 /** The hover readout's box: one 12px monospaced character, and its padding. */
 const HOVER_CHAR = 7.2
@@ -197,13 +218,112 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
     [layout, now, recency],
   )
 
-  // The page under the pointer is named by the readout beside it, so its name
-  // is kept out of the placement rather than printed a second time.
-  const suppress = useMemo(() => new Set(hovered ? [hovered] : []), [hovered])
-  const labels = useMemo(
-    () => placeLabels(layout.nodes, hot, primary, { landmarks: LANDMARK_LABELS, maxChars: MAP_LABEL_CHARS, suppress }, layout.clusters),
-    [hot, layout, primary, suppress],
-  )
+  // The page the readout names — the one under the pointer, or the one being
+  // read — is named there and nowhere else: printing it twice is what the
+  // operator saw, and its place in the packing is kept so nothing else moves.
+  const named = hovered ?? openPath
+  const suppress = useMemo(() => new Set(named ? [named] : []), [named])
+
+  // Which band the map is in, and the fade from the one it left. The fade is
+  // the only thing here that runs on frames, it runs for a fifth of a second,
+  // and it runs because the operator zoomed.
+  const scale = view.transform.scale
+  const band = bandAt(scale)
+  const [fade, setFade] = useState<{ from: MapBand; mix: number } | null>(null)
+  const wasBand = useRef(band)
+  useEffect(() => {
+    if (wasBand.current === band) return
+    const from = wasBand.current
+    wasBand.current = band
+    const started = performance.now()
+    let handle = requestAnimationFrame(function step() {
+      const mix = Math.min(1, (performance.now() - started) / BAND_FADE)
+      setFade(mix >= 1 ? null : { from, mix })
+      if (mix < 1) handle = requestAnimationFrame(step)
+    })
+    return () => cancelAnimationFrame(handle)
+  }, [band])
+
+  // What a card says about a page: what it is, where it sits, when it last
+  // moved, how long it is, and what it shares a tag with.
+  const tagsOf = useMemo(() => {
+    const found = new Map<string, string[]>()
+    graph.tags.forEach(([from, to, tag]) => {
+      [from, to].forEach(path => {
+        const carried = found.get(path)
+        if (carried) { if (!carried.includes(tag)) carried.push(tag) }
+        else found.set(path, [tag])
+      })
+    })
+    return found
+  }, [graph])
+
+  const describe = useCallback((node: MapNode) => {
+    const title = node.title.length > CARD_CHARS ? `${node.title.slice(0, CARD_CHARS - 1)}…` : node.title
+    const tags = tagsOf.get(node.path)
+    return [
+      title,
+      `${node.shelf} · ${libraryWhen(node.updated, now)}`,
+      `${node.words} words${tags?.length ? ` · ${tags.join(' · ')}` : ''}`,
+    ]
+  }, [now, tagsOf])
+
+  // The page the operator is on, named in full in the box's own coordinates so
+  // it stays legible however far in the map is taken, and turned back on itself
+  // at the right edge rather than drawn off it. Near in, it is that page's card:
+  // the one the reader asked for, in the one place he is looking.
+  const readout = (() => {
+    const node = named ? positions.get(named) : undefined
+    if (!node) return null
+    const card = band === 'near'
+    const lines = card ? describe(node) : [node.title]
+    const size = card
+      ? cardSize(lines)
+      : { width: node.title.length * HOVER_CHAR + HOVER_PAD * 2, height: HOVER_HEIGHT }
+    const point = view.toScreen(node)
+    const radius = dotRadius(node, scale)
+    const right = point.x + radius + HOVER_GAP
+    const wanted = right + size.width > width ? point.x - radius - HOVER_GAP - size.width : right
+    // A narrow map — the one left beside an open dive — may have room for the
+    // readout on neither side, and a name drawn off the box is not a name.
+    const left = Math.max(0, Math.min(width - size.width, wanted))
+    return { card, lines, x: left, y: point.y - size.height / 2, ...size }
+  })()
+
+  // Far away, the shelves and the landmarks. Closer, every page's name. Closer
+  // still, a card each: the same drawing, saying more the nearer it is read.
+  const writing = useCallback((which: MapBand): { labels: MapLabel[]; cards: MapCard[] } => {
+    if (which === 'near') {
+      return {
+        labels: [],
+        cards: placeCards(layout.nodes, {
+          transform: view.transform,
+          width,
+          height,
+          describe,
+          suppress,
+          reserved: readout ? [readout] : [],
+        }),
+      }
+    }
+    return {
+      labels: placeLabels(
+        layout.nodes,
+        hot,
+        primary,
+        { landmarks: which === 'mid' ? MID_LABELS : LANDMARK_LABELS, maxChars: MAP_LABEL_CHARS, suppress, scale },
+        layout.clusters,
+      ),
+      cards: [],
+    }
+  }, [describe, height, hot, layout, primary, readout, scale, suppress, view.transform, width])
+
+  const text: MapTextLayer[] = useMemo(() => {
+    const here = { ...writing(band), alpha: fade ? fade.mix : 1 }
+    return fade ? [{ ...writing(fade.from), alpha: 1 - fade.mix }, here] : [here]
+  }, [band, fade, writing])
+
+  const labels = text[text.length - 1].labels
 
   // The drawing surface is made once and kept; the theme's colours are read
   // off the map itself, so the canvas is painted in the same palette the rest
@@ -223,7 +343,7 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
   const scene: MapScene = useMemo(() => ({
     nodes: layout.nodes,
     edges: layout.edges,
-    labels,
+    text,
     transform: view.transform,
     width,
     height,
@@ -231,24 +351,29 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
     focus,
     stale,
     palette,
-  }), [focus, height, hot, labels, layout, palette, stale, view.transform, width])
+  }), [focus, height, hot, layout, palette, stale, text, view.transform, width])
 
   useEffect(() => { rendererRef.current?.draw(scene) }, [scene])
 
   // A dive takes its page to the middle and closer in, wherever it was asked
   // for: a dot, a neighbour's link in the column, a row in the rail. It is
   // done once per page, so a map the operator has moved since stays moved.
+  //
+  // The page is taken to the middle again if the drawing itself changed under
+  // the dive: opening the column beside the map narrows the map, which lays the
+  // corpus out afresh, and a page centred against the old width would be
+  // anywhere against the new one.
   const { centreOn } = view
-  const dived = useRef<string | null>(null)
+  const dived = useRef<{ path: string; where: typeof positions } | null>(null)
   useEffect(() => {
     if (!openPath) {
       dived.current = null
       return
     }
-    if (dived.current === openPath) return
+    if (dived.current?.path === openPath && dived.current.where === positions) return
     const found = positions.get(openPath)
     if (!found) return
-    dived.current = openPath
+    dived.current = { path: openPath, where: positions }
     centreOn(found, DIVE_SCALE)
   }, [centreOn, openPath, positions])
 
@@ -299,8 +424,8 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
     const box = ref.current?.getBoundingClientRect()
     if (!box) return null
     const point = toWorld({ x: clientX - box.left, y: clientY - box.top })
-    return hitTest(index, point.x, point.y)
-  }, [index, ref, toWorld])
+    return hitTest(index, point.x, point.y, scale)
+  }, [index, ref, scale, toWorld])
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     view.handlers.onPointerMove(event)
@@ -317,18 +442,6 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
     if (found) onOpen(found.path)
   }
 
-  // The pointer's page named in full, in the box's own coordinates so it
-  // stays legible however far in the map is taken, and turned back on itself
-  // at the right edge rather than drawn off it.
-  const readout = (() => {
-    const node = hovered ? positions.get(hovered) : undefined
-    if (!node) return null
-    const point = view.toScreen(node)
-    const boxWidth = node.title.length * HOVER_CHAR + HOVER_PAD * 2
-    const right = point.x + node.r * view.transform.scale + HOVER_GAP
-    const left = right + boxWidth > width ? point.x - node.r * view.transform.scale - HOVER_GAP - boxWidth : right
-    return { title: node.title, x: left, y: point.y - HOVER_HEIGHT / 2, width: boxWidth }
-  })()
 
   // The pages that keep a focusable element: all of them for a corpus of any
   // size a library has, and the named and lit ones beyond that.
@@ -396,7 +509,12 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
       <div
         ref={layerRef}
         className={`library-map-nodes${reachable ? '' : ' sparse'}`}
-        style={{ transform: `translate(${view.transform.x}px, ${view.transform.y}px) scale(${view.transform.scale})` }}
+        style={{
+          transform: `translate(${view.transform.x}px, ${view.transform.y}px) scale(${scale})`,
+          // The pages a pointer aims at keep the size they are aimed at: past
+          // the landing scale the drawing grows and the targets do not.
+          '--map-scale': scale,
+        } as CSSProperties}
       >
         {handles}
       </div>
@@ -405,18 +523,24 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
       {layout.clusters.map(cluster => {
         const point = view.toScreen(cluster)
         return (
-          <span key={cluster.shelf} className="library-map-cluster" style={{ left: point.x, top: point.y }}>
+          <span
+            key={cluster.shelf}
+            className="library-map-cluster"
+            // Near in, every card names its own shelf, so the shelf's own name
+            // gives way rather than sitting over the cards.
+            style={{ left: point.x, top: point.y, opacity: band === 'near' ? 0 : 1 }}
+          >
             {cluster.shelf} · {cluster.count}
           </span>
         )
       })}
       {readout && (
         <span
-          className="library-map-hover"
+          className={`library-map-hover${readout.card ? ' card' : ''}`}
           data-ui="library.map.hover"
-          style={{ left: readout.x, top: readout.y, width: readout.width, height: HOVER_HEIGHT }}
+          style={{ left: readout.x, top: readout.y, width: readout.width, height: readout.height }}
         >
-          {readout.title}
+          {readout.lines.map(line => <span key={line} className="library-map-hover-line">{line}</span>)}
         </span>
       )}
       {drawing && <p className="library-empty">Drawing the map…</p>}

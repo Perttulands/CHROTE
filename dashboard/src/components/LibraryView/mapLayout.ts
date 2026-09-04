@@ -21,6 +21,8 @@ export interface MapNode {
   x: number
   y: number
   r: number
+  /** How long the page is, as the graph counted it. */
+  words: number
   /** 1 for a page that moved today, down to 0.35 after forty days. */
   opacity: number
   /** When git last saw the page, as the graph gives it; '' if never. */
@@ -178,6 +180,7 @@ function node(page: LibraryGraphPage, x: number, y: number, now: number): MapNod
     x,
     y,
     r,
+    words: page.words,
     opacity: nodeOpacity(page.updated, now),
     updated: page.updated,
     candidate: page.candidate,
@@ -375,9 +378,14 @@ function truncate(title: string, maxChars: number): string {
 }
 
 /** The box a shelf's label takes, which no page's name may sit on. */
-function clusterBox(cluster: MapCluster): Box {
-  const width = `${cluster.shelf} · ${cluster.count}`.length * CLUSTER_CHAR + LABEL_PAD
-  return { left: cluster.x - width / 2, right: cluster.x + width / 2, top: cluster.y - 11, bottom: cluster.y + 3 }
+function clusterBox(cluster: MapCluster, scale: number): Box {
+  const width = (`${cluster.shelf} · ${cluster.count}`.length * CLUSTER_CHAR + LABEL_PAD) / scale
+  return {
+    left: cluster.x - width / 2,
+    right: cluster.x + width / 2,
+    top: cluster.y - 11 / scale,
+    bottom: cluster.y + 3 / scale,
+  }
 }
 
 /**
@@ -404,30 +412,35 @@ export function placeLabels(
   nodes: readonly MapNode[],
   hot: ReadonlySet<string>,
   primary: ReadonlySet<string>,
-  options: { landmarks: number; maxChars: number; suppress?: ReadonlySet<string> },
+  options: { landmarks: number; maxChars: number; suppress?: ReadonlySet<string>; scale?: number },
   clusters: readonly MapCluster[] = [],
 ): MapLabel[] {
+  // A name keeps the one size it is readable at however far in the map is
+  // taken, so the room it needs shrinks in the drawing's own coordinates as the
+  // drawing grows: at twice the scale, twice as many names fit between two dots.
+  const scale = options.scale ?? 1
   const placed: MapLabel[] = []
-  const boxes: Box[] = clusters.map(clusterBox)
+  const boxes: Box[] = clusters.map(cluster => clusterBox(cluster, scale))
 
   const tryPlace = (entry: MapNode, isHot: boolean): void => {
     const isPrimary = primary.has(entry.path)
     const text = truncate(entry.title, options.maxChars)
     const charWidth = isPrimary ? PRIMARY_CHAR : DIM_CHAR
-    const left = entry.x + entry.r + LABEL_GAP
-    const right = left + text.length * charWidth + LABEL_PAD
-    const box = (y: number): Box => ({ left, right, top: y - LABEL_HALF, bottom: y + LABEL_HALF })
+    const left = entry.x + (entry.r * Math.min(scale, 1) + LABEL_GAP) / scale
+    const right = left + (text.length * charWidth + LABEL_PAD) / scale
+    const half = LABEL_HALF / scale
+    const box = (y: number): Box => ({ left, right, top: y - half, bottom: y + half })
     const clear = (candidate: Box) => !boxes.some(other => overlaps(other, candidate))
 
     let y = entry.y
     let fits = clear(box(y))
     if (!fits) {
-      y = entry.y + LABEL_LINE
+      y = entry.y + LABEL_LINE / scale
       fits = clear(box(y))
     }
     if (!fits && !isHot) return
     boxes.push(box(y))
-    placed.push({ path: entry.path, text, x: left, y: y + 4, primary: isPrimary })
+    placed.push({ path: entry.path, text, x: left, y: y + 4 / scale, primary: isPrimary })
   }
 
   const landmarks = nodes

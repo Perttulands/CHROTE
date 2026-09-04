@@ -135,6 +135,14 @@ test.describe('The Library', () => {
     await expect(page.locator('.library-map')).toBeVisible()
     await expect(page.locator('[data-ui="library.map.reset"]')).toBeVisible()
 
+    // A dive is a reading, so it takes the map near enough to read: the page it
+    // opened carries a card beside its dot saying what the page is, not only
+    // what it is called.
+    const card = page.locator('[data-ui="library.map.hover"]')
+    await expect(card).toContainText('Workflow Preferences')
+    await expect(card).toContainText('preferences ·')
+    await expect(card).toContainText('200 words')
+
     // The trail starts at the page it started at.
     await expect(dive.locator('.library-trail-step')).toHaveText(['Workflow Preferences'])
 
