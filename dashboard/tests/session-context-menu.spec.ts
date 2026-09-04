@@ -135,6 +135,17 @@ test.describe('Session Context Menu', () => {
     await expect(window.locator('.session-tag:has-text("hq-marshal")')).toBeVisible()
     await expect(window.locator('.session-tag:has-text("hq-commander")')).not.toBeVisible()
 
+    // The header is the session it shows: a right-click on its empty stretch,
+    // away from the tag, opens the same menu the tag does.
+    const header = window.locator('.terminal-window-header')
+    const headerBox = await header.boundingBox()
+    if (!headerBox) throw new Error('the header has no bounding box')
+    await header.click({ button: 'right', position: { x: headerBox.width / 2, y: headerBox.height / 2 } })
+    const headerMenu = page.getByRole('menu', { name: 'Session actions for hq-marshal' })
+    await expect(headerMenu).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(headerMenu).toHaveCount(0)
+
     // Kill confirms where it was chosen: the row arms, then it runs.
     await page.locator('.session-panel .session-item:has-text("hq-marshal")').click({ button: 'right' })
     await page.locator('.menu-sheet .menu-row:has-text("Kill session")').click()
