@@ -14,10 +14,52 @@
   outline: none;
 }
 
-/* Collapsed, by the operator or by the squeeze, the column is its header and
-   takes only what the header's words need. */
+/* Collapsed, by the operator or by the squeeze, the column is a vertical strip:
+   a closed door at the tab's right rather than a missing wall, keeping its
+   hairline and its background, and giving the rest of its width back. */
 .resident-column.collapsed {
+  width: 28px;
+}
+
+/* A host that configured no resident has no column to close: the header says so
+   and takes only the width its words need. */
+.resident-column.bare {
   width: auto;
+}
+
+/* The whole strip is the control that opens the column. The label and the state
+   word run down it as one line, turned on their side. */
+.resident-strip {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 0;
+  padding: 10px 0;
+  border: none;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  outline: none;
+}
+
+.resident-strip-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.resident-strip:hover .resident-label,
+.resident-strip:hover .resident-state,
+.resident-strip:focus-visible .resident-label,
+.resident-strip:focus-visible .resident-state {
+  color: var(--accent);
 }
 
 /* The handle sits on the hairline. It takes colour only while it is the thing

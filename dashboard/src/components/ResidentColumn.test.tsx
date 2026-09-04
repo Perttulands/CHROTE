@@ -199,14 +199,22 @@ describe('the resident column', () => {
     expect(screen.getByTestId('launcher')).toHaveTextContent('clerk in /work/clerk')
   })
 
-  it('collapses to its header and remembers it for the tab', async () => {
+  it('collapses to a strip that says who and how, remembers the tab, and opens on a click', async () => {
     const first = await renderColumn()
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }))
+    fireEvent.contextMenu(screen.getByText('Clerk'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Collapse/ }))
+
+    const strip = screen.getByRole('button', { name: 'Expand the Clerk' })
+    expect(strip).toHaveTextContent('Clerk')
+    expect(strip).toHaveTextContent('idle')
     expect(screen.queryByTestId('terminal-surface')).toBeNull()
     first.unmount()
 
+    // The tab remembers it, and the strip is the only control the closed
+    // column offers: a press on it brings the session back.
     await renderColumn()
     expect(screen.queryByTestId('terminal-surface')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Expand the Clerk' }))
+    await waitFor(() => expect(screen.getByTestId('terminal-surface')).toBeInTheDocument())
   })
 })
