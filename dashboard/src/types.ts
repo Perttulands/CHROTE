@@ -123,6 +123,10 @@ export interface UserSettings {
   hideScrollbar: boolean             // Hide the dead xterm scrollbar gutter in terminals
   keysEnabled: boolean               // Leader chords intercept keys; off hands every key to the pty
   tableWidth: number                 // The table's column at the right, in px; device-local
+  agentEventMarks: boolean           // A mark on the session's row and tab until it is focused; device-local, on
+  agentEventToast: boolean           // The toast naming the session that reported; device-local, on
+  agentEventTones: boolean           // A short tone when an agent finishes or needs input; device-local, off
+  agentEventNotifications: boolean   // A browser notification for the same while this tab is hidden; device-local, off
   residentWidth: number              // A resident's column, in px; 0 means 44 terminal columns at the tile font
   beadsProjectPaths?: string[]       // Manually added beads project paths
 }
@@ -140,6 +144,10 @@ export const DEFAULT_SETTINGS: UserSettings = {
   hideScrollbar: true,
   keysEnabled: true,
   tableWidth: 400,
+  agentEventMarks: true,
+  agentEventToast: true,
+  agentEventTones: false,
+  agentEventNotifications: false,
   residentWidth: 0,
 }
 

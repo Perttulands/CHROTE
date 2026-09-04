@@ -216,6 +216,39 @@
   cursor: inherit;
 }
 
+.session-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* An agent's report the operator has not looked at: a dot before the name and
+   the report's first line beneath it. The row grows for the line; the list
+   scrolls inside the panel, so nothing beside it moves. */
+.session-item.has-event {
+  height: auto;
+  min-height: 28px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.session-event-mark {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--accent);
+}
+
+.session-event-summary {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* A badge says the session is not what it looks like. Marker only, with the
    fact on hover; no colour, because none of these are errors. */
 .session-badges {

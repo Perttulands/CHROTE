@@ -1,5 +1,5 @@
 import { Page, Route } from '@playwright/test'
-import type { SessionsResponse } from '../src/types'
+import type { AgentEvent, SessionsResponse, TmuxSession } from '../src/types'
 import { DEFAULT_THEME } from '../src/theme/theme'
 
 const fileResourcesPattern = /.*\/api\/files\/resources(?:\/.*)?$/
@@ -7,6 +7,7 @@ const themePattern = /.*\/api\/theme\/?$/
 const launchPattern = /.*\/api\/launch\/?$/
 const tmuxMousePattern = /.*\/api\/tmux\/mouse\/?$/
 const tmuxSessionsPattern = /.*\/api\/tmux\/sessions\/?$/
+const agentEventSeenPattern = /.*\/api\/agent\/event\/seen\/?$/
 const workspacesPattern = /.*\/api\/workspaces\/?(\?.*)?$/
 
 // Mock beads data for testing
@@ -366,6 +367,40 @@ export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: S
 
   // Mock WebSocket - just let it fail gracefully
   // The UI should handle disconnected state
+}
+
+/** A session list with one session carrying what its agent last reported. */
+export function sessionsWithLastEvent(base: SessionsResponse, name: string, lastEvent: AgentEvent): SessionsResponse {
+  const withEvent = (session: TmuxSession): TmuxSession => (session.name === name ? { ...session, lastEvent } : session)
+  return {
+    ...base,
+    sessions: base.sessions.map(withEvent),
+    grouped: Object.fromEntries(Object.entries(base.grouped).map(([group, list]) => [group, list.map(withEvent)])),
+    timestamp: new Date().toISOString(),
+  }
+}
+
+export interface AgentEventSeenRequest {
+  session: string
+  unixUser?: string
+}
+
+/**
+ * The seen route, answering as the server does and keeping every body posted
+ * to it, so a journey can prove that focusing the tile told the server.
+ */
+export async function mockAgentEventSeenRoute(page: Page): Promise<AgentEventSeenRequest[]> {
+  const seen: AgentEventSeenRequest[] = []
+  await page.route(agentEventSeenPattern, async route => {
+    const body = route.request().postDataJSON() as AgentEventSeenRequest
+    seen.push(body)
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, session: body.session, unixUser: body.unixUser ?? '' }),
+    })
+  })
+  return seen
 }
 
 export async function mockBeadsProjectsRoute(page: Page, projectsResponse?: object) {

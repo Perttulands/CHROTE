@@ -8,6 +8,8 @@ import DismissiblePanel from './DismissiblePanel'
 import Menu, { type MenuGroup } from './Menu'
 import { CLAIM_EXPLANATION } from './TerminalWindow'
 import { useTerminalPool } from './TerminalPool'
+import { useAgentEventMarks } from '../agents/AgentEventsProvider'
+import { bindingsCarryMark } from '../agents/agentEvents'
 
 export type Tab = WorkspaceId | 'files' | 'beads' | 'library' | 'agents' | 'scheduled' | 'server' | 'settings' | 'help'
 
@@ -53,8 +55,20 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
   // Renaming a tab happens in the tab, in the tab bar, like a session tag.
   const [renaming, setRenaming] = useState<{ workspaceId: WorkspaceId; value: string } | null>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
-  const { settings, updateSettings, saveCurrentLayout, loadPreset, deletePreset, layoutPresets, clearWorkspaceAssignments, setWindowCount, workspaceIds, workspaces } = useSession()
+  const { settings, updateSettings, saveCurrentLayout, loadPreset, deletePreset, layoutPresets, clearWorkspaceAssignments, setWindowCount, workspaceIds, workspaces, sessions } = useSession()
   const pool = useTerminalPool()
+  const marks = useAgentEventMarks()
+
+  // A terminal tab holding a session whose agent reported carries a dot after
+  // its name until that session is focused. Only the windows on screen count:
+  // the dot says the session can be found in this tab.
+  const tabCarriesMark = (id: Tab): boolean => {
+    if (!isTerminalWorkspaceId(id, workspaceIds)) return false
+    const workspace = workspaces[id]
+    if (!workspace) return false
+    return workspace.windows.slice(0, workspace.windowCount)
+      .some(window => bindingsCarryMark(marks, sessions, window.boundSessions))
+  }
 
   const isMobile = useMediaQuery('(max-width: 768px)')
 
@@ -316,6 +330,9 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
         title={tab.external ? `Open ${tab.label.replace(' ↗', '')} in new tab` : undefined}
       >
         {tab.label}
+        {!tab.external && isTerminalWorkspaceId(tab.id, workspaceIds) && (
+          <span className={`tab-event-mark ${tabCarriesMark(tab.id) ? 'on' : ''}`} aria-hidden="true" />
+        )}
         {carries && <span className="tab-menu-caret" aria-hidden="true">▾</span>}
       </button>
     )
@@ -346,6 +363,9 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
                   onClick={() => handleClick(tab)}
                 >
                   {tab.label}
+                  {!tab.external && isTerminalWorkspaceId(tab.id, workspaceIds) && (
+                    <span className={`tab-event-mark ${tabCarriesMark(tab.id) ? 'on' : ''}`} aria-hidden="true" />
+                  )}
                 </button>
               ))}
 
