@@ -188,6 +188,23 @@
 .bead-row-type {
   flex: none;
   width: 72px;
+  font-size: 10px;
+}
+
+/* An epic is the roof the rows beneath it hang from: heavier, and closed off
+   by a hairline so the branch reads as one thing. */
+.bead-row-epic {
+  font-weight: 600;
+  border-bottom: 1px solid var(--divider);
+}
+
+/* Closed, wont_fix and duplicate: the argument is over, so the whole row
+   recedes, id and title with it. */
+.bead-row-closed .bead-row-id,
+.bead-row-closed .bead-row-title,
+.bead-row-closed .bead-row-glyph,
+.bead-row-closed .bead-row-open:hover .bead-row-id,
+.bead-row-closed .bead-row-open:hover .bead-row-title {
   color: var(--text-dim);
 }
 
