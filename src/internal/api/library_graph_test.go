@@ -3,9 +3,39 @@ package api
 import (
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+)
+
+// gitCommitAllAt commits everything at an exact moment. The graph reports when
+// a page arrived and when it last moved; two commits made in the same second
+// would make those two facts indistinguishable, and the test would pass on a
+// slow machine and fail on a fast one.
+func gitCommitAllAt(t *testing.T, repository, message, when string) {
+	t.Helper()
+	runGit(t, repository, "add", "-A")
+	cmd := exec.Command("git",
+		"-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "-m", message)
+	cmd.Dir = repository
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"GIT_CONFIG_SYSTEM="+os.DevNull,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_DATE="+when,
+		"GIT_COMMITTER_DATE="+when,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit %q: %v\n%s", message, err, output)
+	}
+}
+
+// The two moments the corpus is built at, far enough apart to read.
+const (
+	libraryGraphSeededAt  = "2026-01-02T03:04:05+00:00"
+	libraryGraphRevisedAt = "2026-02-03T04:05:06+00:00"
 )
 
 // newLibraryGraphCorpus builds a corpus whose links and tags exercise every
@@ -35,10 +65,10 @@ func newLibraryGraphCorpus(t *testing.T) string {
 	write("preferences/tools.md", "---\nlifecycle: candidate\ntags: [shared, mass]\n---\n# Tools\n")
 	write("preferences/workflow.md", "---\ntags:\n  - shared\n  - mass\n---\n# Workflow\n\n[[notes]]\n")
 	write("telos/goals.md", "---\ntags: [lonely, MASS]\n---\n# Goals\n\n[[preferences/tools.md|the tools]]\n")
-	gitCommitAll(t, root, "Seed the corpus")
+	gitCommitAllAt(t, root, "Seed the corpus", libraryGraphSeededAt)
 
 	write("knowledge/beta.md", "# Beta\n\nOne two three four.\n")
-	gitCommitAll(t, root, "Revise beta")
+	gitCommitAllAt(t, root, "Revise beta", libraryGraphRevisedAt)
 
 	write("telos/uncommitted.md", "# Uncommitted\n")
 	return root
@@ -92,6 +122,33 @@ func TestLibraryGraph(t *testing.T) {
 		}
 		if pages["telos/uncommitted.md"].Updated != "" {
 			t.Fatalf("a page git never saw carries a date: %q", pages["telos/uncommitted.md"].Updated)
+		}
+	})
+
+	// The map's scrubber shows the corpus growing, which needs the date a page
+	// arrived and not only the date it last moved. The corpus carries no such
+	// field, so it comes from the commit that first named the path.
+	t.Run("a page arrived in its first commit and last moved in its newest", func(t *testing.T) {
+		beta := pages["knowledge/beta.md"]
+		alpha := pages["knowledge/alpha.md"]
+		if beta.Created == "" || beta.Updated == "" {
+			t.Fatalf("beta carries no dates: created %q, updated %q", beta.Created, beta.Updated)
+		}
+		if beta.Created >= beta.Updated {
+			t.Fatalf("beta was written then revised, but reads created %q updated %q", beta.Created, beta.Updated)
+		}
+		// Alpha was written once and never touched again.
+		if alpha.Created != alpha.Updated {
+			t.Fatalf("alpha was committed once but reads created %q updated %q", alpha.Created, alpha.Updated)
+		}
+		if beta.Created != alpha.Created {
+			t.Fatalf("both arrived in the same commit but read %q and %q", beta.Created, alpha.Created)
+		}
+		if !strings.HasPrefix(beta.Created, "2026-01-02") || !strings.HasPrefix(beta.Updated, "2026-02-03") {
+			t.Fatalf("beta reads created %q updated %q, not the two commits it has", beta.Created, beta.Updated)
+		}
+		if pages["telos/uncommitted.md"].Created != "" {
+			t.Fatalf("a page git never saw carries an arrival: %q", pages["telos/uncommitted.md"].Created)
 		}
 	})
 

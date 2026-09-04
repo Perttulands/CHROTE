@@ -13,6 +13,7 @@
  */
 
 import type { LibraryGraph, LibraryGraphPage } from '../../library/libraryApi'
+import { momentOf } from './mapMoment'
 
 export interface MapNode {
   path: string
@@ -27,6 +28,13 @@ export interface MapNode {
   opacity: number
   /** When git last saw the page, as the graph gives it; '' if never. */
   updated: string
+  /**
+   * When git first saw the page and when it last did, in milliseconds, or 0
+   * for a page git has never seen. The map is read at a moment, and these are
+   * what a moment is compared against.
+   */
+  createdAt: number
+  updatedAt: number
   candidate: boolean
 }
 
@@ -134,31 +142,6 @@ function seeded(seed: number): () => number {
   }
 }
 
-/** How far back the map counts a page as recent. */
-export type RecencyWindow = 'day' | 'week' | 'month' | 'all'
-
-/** The windows the map bar offers, in the order it offers them. */
-export const RECENCY_WINDOWS: readonly { id: RecencyWindow; label: string; days: number }[] = [
-  { id: 'day', label: 'Day', days: 1 },
-  { id: 'week', label: 'Week', days: 7 },
-  { id: 'month', label: 'Month', days: 30 },
-  { id: 'all', label: 'All', days: 0 },
-]
-
-/**
- * Whether a page moved inside the window. `all` holds everything, including
- * a page git never dated; any narrower window drops that page, because a
- * date nobody knows is not a date inside seven days.
- */
-export function withinWindow(updated: string, window: RecencyWindow, now: number): boolean {
-  if (window === 'all') return true
-  const days = RECENCY_WINDOWS.find(entry => entry.id === window)?.days ?? 0
-  if (days <= 0) return true
-  const at = Date.parse(updated)
-  if (!updated || Number.isNaN(at)) return false
-  return now - at <= days * DAY
-}
-
 export function nodeRadius(words: number): number {
   return Math.max(MIN_RADIUS, Math.min(MAX_RADIUS, Math.sqrt(Math.max(0, words)) / 2.2))
 }
@@ -183,6 +166,8 @@ function node(page: LibraryGraphPage, x: number, y: number, now: number): MapNod
     words: page.words,
     opacity: nodeOpacity(page.updated, now),
     updated: page.updated,
+    createdAt: momentOf(page.created),
+    updatedAt: momentOf(page.updated),
     candidate: page.candidate,
   }
 }

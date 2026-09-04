@@ -137,9 +137,9 @@ beforeEach(() => {
   ])
   mockState.graph = {
     pages: [
-      { path: 'knowledge/testing.md', shelf: 'knowledge', title: 'Test isolation', words: 60, updated: NOW, candidate: false },
-      { path: 'preferences/tools.md', shelf: 'preferences', title: 'Tool Preferences', words: 30, updated: NOW, candidate: false },
-      { path: 'preferences/workflow.md', shelf: 'preferences', title: 'Workflow Preferences', words: 200, updated: NOW, candidate: false },
+      { path: 'knowledge/testing.md', shelf: 'knowledge', title: 'Test isolation', words: 60, updated: NOW, created: NOW, candidate: false },
+      { path: 'preferences/tools.md', shelf: 'preferences', title: 'Tool Preferences', words: 30, updated: NOW, created: NOW, candidate: false },
+      { path: 'preferences/workflow.md', shelf: 'preferences', title: 'Workflow Preferences', words: 200, updated: NOW, created: NOW, candidate: false },
     ],
     links: [['knowledge/testing.md', 'preferences/workflow.md'], ['preferences/workflow.md', 'preferences/tools.md']],
     tags: [['preferences/tools.md', 'preferences/workflow.md', 'tooling']],

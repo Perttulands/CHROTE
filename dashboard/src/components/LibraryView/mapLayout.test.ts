@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LibraryGraph } from '../../library/libraryApi'
-import { LABEL_LINE, LANDMARK_LABELS, layoutMap, neighboursOf, nodeOpacity, placeLabels, withinWindow, type MapNode } from './mapLayout'
+import { LABEL_LINE, LANDMARK_LABELS, layoutMap, neighboursOf, nodeOpacity, placeLabels, type MapNode } from './mapLayout'
 
 const NOW = Date.parse('2026-09-03T12:00:00Z')
 const DAY = 86_400_000
@@ -12,6 +12,7 @@ function page(path: string, words = 40, daysAgo = 1, candidate = false) {
     title: path.replace(/^.*\//, '').replace(/\.md$/, ''),
     words,
     updated: new Date(NOW - daysAgo * DAY).toISOString(),
+    created: new Date(NOW - daysAgo * DAY).toISOString(),
     candidate,
   }
 }
@@ -96,7 +97,7 @@ describe('neighboursOf', () => {
 
 describe('placeLabels', () => {
   const at = (path: string, x: number, y: number, r = 4, candidate = false): MapNode => ({
-    path, shelf: 'knowledge', title: path, x, y, r, words: 40, opacity: 1, updated: '', candidate,
+    path, shelf: 'knowledge', title: path, x, y, r, words: 40, opacity: 1, updated: '', createdAt: 0, updatedAt: 0, candidate,
   })
 
   it('names the largest accepted pages up to the landmark limit, and every hot page besides', () => {
@@ -179,33 +180,5 @@ describe('placeLabels', () => {
 
     expect(label.text).toHaveLength(26)
     expect(label.text.endsWith('…')).toBe(true)
-  })
-})
-
-describe('withinWindow', () => {
-  const ago = (days: number) => new Date(NOW - days * DAY).toISOString()
-
-  it('holds a page the window reaches back to and drops one it does not', () => {
-    expect(withinWindow(ago(0.5), 'day', NOW)).toBe(true)
-    expect(withinWindow(ago(2), 'day', NOW)).toBe(false)
-    expect(withinWindow(ago(6.9), 'week', NOW)).toBe(true)
-    expect(withinWindow(ago(8), 'week', NOW)).toBe(false)
-    expect(withinWindow(ago(8), 'month', NOW)).toBe(true)
-    expect(withinWindow(ago(40), 'month', NOW)).toBe(false)
-  })
-
-  it('keeps the page the window ends on, to the millisecond', () => {
-    expect(withinWindow(ago(7), 'week', NOW)).toBe(true)
-    expect(withinWindow(new Date(NOW - 7 * DAY - 1).toISOString(), 'week', NOW)).toBe(false)
-  })
-
-  it('holds everything under all, including a page git never dated', () => {
-    expect(withinWindow('', 'all', NOW)).toBe(true)
-    expect(withinWindow(ago(4000), 'all', NOW)).toBe(true)
-  })
-
-  it('drops a page with no date, or an unreadable one, from any narrower window', () => {
-    expect(withinWindow('', 'month', NOW)).toBe(false)
-    expect(withinWindow('not a date', 'week', NOW)).toBe(false)
   })
 })

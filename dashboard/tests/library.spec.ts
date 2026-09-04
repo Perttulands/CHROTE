@@ -3,7 +3,7 @@
  * chrote-5grx.75, chrote-5grx.76, chrote-5grx.77).
  *
  * One pass through the surface the browser is the point of: land on the map,
- * read a long name in full under the pointer, narrow the recency window, take
+ * read a long name in full under the pointer, scrub the corpus back in time, take
  * the map in and put it back, open a shelf in the rail and point at one of its
  * pages to bring the map to it, dive into a page, travel to a neighbour, walk
  * the trail back, hand the page to the Librarian in the column at the right,
@@ -100,20 +100,35 @@ test.describe('The Library', () => {
     await node(page, LONG_TITLE).hover()
     await expect(page.locator('[data-ui="library.map.hover"]')).toHaveText(LONG_TITLE)
 
-    // The recency window leaves the corpus in place and steps back from what
-    // has not moved lately; All brings it forward again.
-    await page.click('.library-map-window:has-text("Week")')
-    await expect(page.locator('.library-map-legend')).toHaveText('Dimmed: not changed in the last 7 days')
-    await expect(node(page, LONG_TITLE)).toHaveClass(/stale/)
-    await expect(node(page, 'Test isolation')).not.toHaveClass(/stale/)
-    await page.click('.library-map-window:has-text("All")')
+    // The scrubber reads the map at a moment, and dropped near one of its stops
+    // it takes it, so the four windows the map used to offer as buttons are
+    // still one movement away. A day ago, a page written two days ago is on
+    // the map but has been rewritten since, so it stands back; the page that
+    // has not moved in months was current then and does not.
+    const scrubber = page.locator('[data-ui="library.map.scrubber"]')
+    await expect(page.locator('.library-map-legend')).toHaveText('The corpus as it stands')
+    await scrubber.fill('827')
+    await expect(page.locator('.library-map-legend')).toHaveText('The corpus 1 day ago')
+    await expect(node(page, 'Test isolation')).toHaveClass(/stale/)
     await expect(node(page, LONG_TITLE)).not.toHaveClass(/stale/)
+
+    // A week ago it had not been written at all, and is not on the map.
+    await scrubber.fill('670')
+    await expect(page.locator('.library-map-legend')).toHaveText('The corpus 7 days ago')
+    await expect(node(page, 'Test isolation')).toHaveCount(0)
+    await expect(node(page, LONG_TITLE)).toBeVisible()
+
+    // Back at now the corpus is whole again.
+    await scrubber.fill('1000')
+    await expect(page.locator('.library-map-legend')).toHaveText('The corpus as it stands')
+    await expect(node(page, 'Test isolation')).toBeVisible()
+    await expect(node(page, 'Test isolation')).not.toHaveClass(/stale/)
 
     // The map moves: the wheel takes it in, and the way back is offered only
     // while there is one.
     const reset = page.locator('[data-ui="library.map.reset"]')
     await expect(reset).toHaveCount(0)
-    await page.locator('.library-map canvas').hover({ position: { x: 300, y: 200 } })
+    await page.getByRole('img', { name: 'The map' }).hover({ position: { x: 300, y: 200 } })
     await page.mouse.wheel(0, -400)
     await expect(reset).toBeVisible()
     await reset.click()
@@ -228,6 +243,38 @@ test.describe('The Library', () => {
     const arrivalsScroll = page.locator('.library-arrivals .library-scroll')
     expect(await arrivalsScroll.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
     await expect(page.locator('.library-arrivals .library-row').last()).not.toBeInViewport()
+  })
+
+  // The map is the operator's own picture of his corpus, and a shelf he is not
+  // working in today is noise on it. Hiding one is a device-local preference,
+  // so it must survive the reload that proves it was written down.
+  test('leaves a shelf off the map until it is asked back, across a reload', async ({ page }) => {
+    await mockApiRoutes(page)
+    await mockBeadsApiRoutes(page)
+    await mockLibraryApiRoutes(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+
+    await page.click('.tab:has-text("Library")')
+    await expect(page.locator('.library-map-count')).toHaveText('4 pages · 2 shelves · 2 links · 1 shared tag')
+    await expect(node(page, 'Workflow Preferences')).toBeVisible()
+
+    const row = page.locator('.library-shelf-row', { hasText: 'preferences' })
+    await row.getByRole('button', { name: 'Hide preferences on the map' }).click()
+
+    await expect(page.locator('.library-map-count')).toHaveText('2 pages · 1 shelf · 0 links · 0 shared tags')
+    await expect(node(page, 'Workflow Preferences')).toHaveCount(0)
+
+    await page.reload()
+    await page.waitForSelector('.dashboard')
+    await page.click('.tab:has-text("Library")')
+    await page.waitForSelector('.library-view')
+    await expect(page.locator('.library-map-count')).toHaveText('2 pages · 1 shelf · 0 links · 0 shared tags')
+
+    await page.locator('.library-shelf-row', { hasText: 'preferences' })
+      .getByRole('button', { name: 'Show preferences on the map' }).click()
+    await expect(page.locator('.library-map-count')).toHaveText('4 pages · 2 shelves · 2 links · 1 shared tag')
+    await expect(node(page, 'Workflow Preferences')).toBeVisible()
   })
 
   test('says so when the host has no library', async ({ page }) => {

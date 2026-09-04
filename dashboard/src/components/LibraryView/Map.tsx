@@ -42,17 +42,17 @@ import {
   type MapCard,
 } from './mapBands'
 import { buildIndex, hitTest, reachOf } from './mapIndex'
+import { shelfHues } from './mapShelves'
+import { NOW, currentAt, existedAt } from './mapMoment'
 import { adjacencyOf, depthsFrom, glows, lightOf, type MapLighting } from './mapLight'
 import {
   LANDMARK_LABELS,
   MAP_LABEL_CHARS,
   layoutMap,
   placeLabels,
-  withinWindow,
   type MapLabel,
   type MapLayout,
   type MapNode,
-  type RecencyWindow,
 } from './mapLayout'
 import type { MapLayoutRequest } from './mapLayout.worker'
 import { createCanvasRenderer, readPalette, type MapRenderer, type MapScene, type MapTextLayer } from './mapRenderer'
@@ -76,8 +76,18 @@ export interface MapProps {
    * rail is read against the map rather than instead of it.
    */
   soloShelf?: string | null
-  /** How recently a page must have moved to be drawn at full strength. */
-  window?: RecencyWindow
+  /**
+   * Which hue each shelf is drawn in. The rail works it out from every shelf
+   * the library has, so the two agree even about a shelf with no page on the
+   * map; without it the map reads the shelves it can see for itself.
+   */
+  hues?: ReadonlyMap<string, string>
+  /**
+   * The moment the map is read at: pages that arrived after it are not drawn,
+   * and pages changed since it are drawn all but out of the way. NOW is the
+   * corpus as it stands.
+   */
+  moment?: number
   onOpen: (path: string) => void
 }
 
@@ -188,9 +198,10 @@ function useMapLayout(graph: LibraryGraph, width: number, height: number): { lay
   return { layout: EMPTY_LAYOUT, drawing: true }
 }
 
-export default function LibraryMap({ graph, openPath, matches, hoverPath = null, soloShelf = null, window: recency = 'all', onOpen }: MapProps) {
+export default function LibraryMap({ graph, openPath, matches, hoverPath = null, soloShelf = null, hues: given, moment = NOW, onOpen }: MapProps) {
   const { ref, width, height } = useMeasuredSize()
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const edgeCanvasRef = useRef<HTMLCanvasElement>(null)
   const rendererRef = useRef<MapRenderer | null>(null)
   const [hovered, setHovered] = useState<string | null>(null)
   const [shelf, setShelf] = useState<string | null>(null)
@@ -201,7 +212,27 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
   useEffect(() => { setHovered(null) }, [graph])
 
   const { layout, drawing } = useMapLayout(graph, width, height)
-  const index = useMemo(() => buildIndex(layout.nodes), [layout])
+  // The shelves' colours, from the theme the server served. The rail hands
+  // them down when there is a rail; on its own the map takes the shelves its
+  // own corpus names.
+  const own = useMemo(
+    () => shelfHues(graph.pages.map(page => page.shelf), palette.shelves),
+    [graph, palette],
+  )
+  const hues = given ?? own
+  // The pages the map is drawing at this moment: the ones that had arrived by
+  // it. The drawing works this out for itself, and it is worked out again here
+  // for the writing, the pointer and the keyboard, which must agree with it.
+  const drawn = useMemo(
+    () => (moment === NOW ? layout.nodes : layout.nodes.filter(node => existedAt(node.createdAt, moment))),
+    [layout, moment],
+  )
+  const index = useMemo(() => buildIndex(drawn), [drawn])
+  const drawnByShelf = useMemo(() => {
+    const counted = new Map<string, number>()
+    drawn.forEach(node => counted.set(node.shelf, (counted.get(node.shelf) ?? 0) + 1))
+    return counted
+  }, [drawn])
   const positions = useMemo(() => new Map(layout.nodes.map(node => [node.path, node])), [layout])
 
   // Where the light starts: the page on the table, the page under the pointer
@@ -233,10 +264,7 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
   // One reading of the clock per drawing, so every page is judged against the
   // same moment and nothing redraws because time passed.
   const now = useMemo(() => Date.now(), [graph])
-  const stale = useMemo(
-    () => new Set(layout.nodes.filter(node => !withinWindow(node.updated, recency, now)).map(node => node.path)),
-    [layout, now, recency],
-  )
+
 
   // The page the readout names — the one under the pointer, or the one being
   // read — is named there and nowhere else: printing it twice is what the
@@ -316,7 +344,7 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
     if (which === 'near') {
       return {
         labels: [],
-        cards: placeCards(layout.nodes, {
+        cards: placeCards(drawn, {
           transform: view.transform,
           width,
           height,
@@ -328,7 +356,7 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
     }
     return {
       labels: placeLabels(
-        layout.nodes,
+        drawn,
         hot,
         primary,
         { landmarks: which === 'mid' ? MID_LABELS : LANDMARK_LABELS, maxChars: MAP_LABEL_CHARS, suppress, scale },
@@ -336,7 +364,7 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
       ),
       cards: [],
     }
-  }, [describe, height, hot, layout, primary, readout, scale, suppress, view.transform, width])
+  }, [describe, drawn, height, hot, layout.clusters, primary, readout, scale, suppress, view.transform, width])
 
   const text: MapTextLayer[] = useMemo(() => {
     const here = { ...writing(band), alpha: fade ? fade.mix : 1 }
@@ -351,7 +379,7 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
   useLayoutEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    rendererRef.current = createCanvasRenderer(canvas)
+    rendererRef.current = createCanvasRenderer(canvas, edgeCanvasRef.current)
     setPalette(readPalette(ref.current))
     return () => {
       rendererRef.current?.destroy()
@@ -368,9 +396,10 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
     width,
     height,
     lighting,
-    stale,
+    moment,
+    hues,
     palette,
-  }), [height, layout, lighting, palette, stale, text, view.transform, width])
+  }), [height, hues, layout, lighting, moment, palette, text, view.transform, width])
 
   useEffect(() => { rendererRef.current?.draw(scene) }, [scene])
 
@@ -464,12 +493,12 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
 
   // The pages that keep a focusable element: all of them for a corpus of any
   // size a library has, and the named and lit ones beyond that.
-  const reachable = layout.nodes.length <= MAX_FOCUSABLE
+  const reachable = drawn.length <= MAX_FOCUSABLE
   const focusable = useMemo(() => {
-    if (reachable) return layout.nodes
+    if (reachable) return drawn
     const named = new Set(labels.map(label => label.path))
-    return layout.nodes.filter(node => named.has(node.path) || hot.has(node.path))
-  }, [hot, labels, layout, reachable])
+    return drawn.filter(node => named.has(node.path) || hot.has(node.path))
+  }, [drawn, hot, labels, reachable])
 
   // The layer is built when the drawing changes and not when the pointer moves:
   // what the light does to it is a class set on the pages that changed, not a
@@ -482,7 +511,7 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
         key={node.path}
         type="button"
         data-path={node.path}
-        className={`library-map-node${node.candidate ? ' candidate' : ''}${stale.has(node.path) ? ' stale' : ''}`}
+        className={`library-map-node${node.candidate ? ' candidate' : ''}${currentAt(node.updatedAt, moment) ? '' : ' stale'}`}
         aria-label={node.title}
         style={{ left: node.x - reach, top: node.y - reach, width: reach * 2, height: reach * 2 }}
         onMouseEnter={enter}
@@ -492,7 +521,7 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
         onKeyDown={open}
       />
     )
-  }), [choose, enter, focusable, leave, open, stale])
+  }), [choose, enter, focusable, leave, moment, open])
 
   const layerRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -528,6 +557,10 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
       onClick={onClick}
       onMouseLeave={() => { setHovered(null); setShelf(null) }}
     >
+      {/* The hairlines, on a surface of their own beneath the dots and the
+          writing, so the GPU draws thirty thousand of them in one call and the
+          rest of the map is drawn where it always was. */}
+      <canvas ref={edgeCanvasRef} className="library-map-canvas library-map-links" aria-hidden="true" />
       <canvas ref={canvasRef} className="library-map-canvas" role="img" aria-label="The map" />
       {/* One element per page over the drawing, so the map is reachable by
           keyboard and readable by a screen reader. It carries no ink: what the
@@ -546,7 +579,12 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
       </div>
       {/* Type in the box's coordinates: the drawing zooms, the names keep the
           one size they are readable at. */}
+      {/* A shelf's name over its cluster, counting what is drawn there at this
+          moment. A shelf whose pages had none of them been written yet has no
+          cluster to name. */}
       {layout.clusters.map(cluster => {
+        const here = drawnByShelf.get(cluster.shelf) ?? 0
+        if (here === 0) return null
         const point = view.toScreen(cluster)
         return (
           <span
@@ -556,10 +594,17 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
             onMouseEnter={() => setShelf(cluster.shelf)}
             onMouseLeave={() => setShelf(current => (current === cluster.shelf ? null : current))}
             // Near in, every card names its own shelf, so the shelf's own name
-            // gives way rather than sitting over the cards.
-            style={{ left: point.x, top: point.y, opacity: band === 'near' ? 0 : 1 }}
+            // gives way rather than sitting over the cards. The name carries
+            // the shelf's own colour, which is what makes the map's clusters
+            // and the rail's rows readable as the same seven things.
+            style={{
+              left: point.x,
+              top: point.y,
+              opacity: band === 'near' ? 0 : 1,
+              color: hues.get(cluster.shelf),
+            }}
           >
-            {cluster.shelf} · {cluster.count}
+            {cluster.shelf} · {here}
           </span>
         )
       })}

@@ -45,11 +45,29 @@ describe('loadTheme', () => {
       terminal: { ...DEFAULT_THEME.terminal, ansi: DEFAULT_THEME.terminal.ansi.slice(0, 8) },
     }))],
     ['identity is empty', () => respondWith(themeFixture({ identity: [] }))],
+    ['a shelf hue is not a colour', () => respondWith(themeFixture({ shelves: ['teal'] }))],
     ['an art name could escape its directory', () => respondWith(themeFixture({ art: ['../secret'] }))],
   ])('falls back to the built-in theme when %s', async (_label, makeFetch) => {
     vi.stubGlobal('fetch', makeFetch())
 
     await expect(loadTheme()).resolves.toEqual(DEFAULT_THEME)
+
+    vi.unstubAllGlobals()
+  })
+})
+
+// A theme the operator authored before the map had colour names no shelf hues.
+// Refusing it would take the whole theme away over a field it could not have
+// carried, so the built-in palette answers for that one field.
+describe('a theme without shelf hues', () => {
+  it('keeps the rest of the theme and takes the built-in palette', async () => {
+    const served = { ...themeFixture({ name: 'older-theme' }) } as Partial<Theme>
+    delete served.shelves
+    vi.stubGlobal('fetch', respondWith(served))
+
+    const theme = await loadTheme()
+    expect(theme.name).toBe('older-theme')
+    expect(theme.shelves).toEqual(DEFAULT_THEME.shelves)
 
     vi.unstubAllGlobals()
   })
@@ -87,6 +105,10 @@ describe('applyTheme', () => {
 
     expect(value('--identity-0')).toBe('#4f6d8f')
     expect(value('--identity-3')).toBe('#7a5f8f')
+
+    expect(value('--shelf-0')).toBe('#b67777')
+    expect(Array.from({ length: DEFAULT_THEME.shelves.length }, (_, i) => value(`--shelf-${i}`)))
+      .toEqual(DEFAULT_THEME.shelves)
   })
 
 })

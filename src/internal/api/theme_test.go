@@ -34,6 +34,7 @@ const validThemeJSON = `{
     "ansi": ["#0f0f0f","#f87171","#8bd450","#e5c07b","#6b9fff","#c084fc","#45d6d6","#a3a3a3",
              "#737373","#ff8a8a","#a6e37a","#f0d48a","#8fb5ff","#d3a4ff","#7ae2e2","#ffffff"]
   },
+  "shelves": ["#b67777","#77b6b6"],
   "identity": ["#4f6d8f"],
   "art": ["town.webp"]
 }`
@@ -167,6 +168,20 @@ func TestValidateTheme(t *testing.T) {
 			theme:    themeWithout(t, `"#8bd450"`, `"#gggggg"`),
 			wantErr:  true,
 			wantText: "terminal.ansi[2]",
+		},
+		{
+			name:     "invalid shelf hue",
+			theme:    themeWithout(t, `"shelves": ["#b67777","#77b6b6"]`, `"shelves": ["#b67777","teal"]`),
+			wantErr:  true,
+			wantText: "shelves[1]",
+		},
+		{
+			// A theme authored before the Library's map had colour names no
+			// shelf hues. It is a whole theme still; the dashboard falls back
+			// to its own palette for that one field.
+			name:    "no shelf hues at all",
+			theme:   themeWithout(t, `"shelves": ["#b67777","#77b6b6"],`, ``),
+			wantErr: false,
 		},
 		{
 			name:     "empty identity",

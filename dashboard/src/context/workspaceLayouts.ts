@@ -122,6 +122,11 @@ function mergeSettings(rawSettings: unknown): UserSettings {
       rawSettings.terminalLaunchUsers,
     ),
     terminalLabels: mergeStringMap(rawSettings.terminalLabels),
+    // A shelf the operator left off the map is remembered by name. Anything
+    // else stored under that key is a corrupt state, not a shelf list.
+    libraryHiddenShelves: Array.isArray(rawSettings.libraryHiddenShelves)
+      ? rawSettings.libraryHiddenShelves.filter((name): name is string => typeof name === 'string')
+      : [],
   } as UserSettings
 }
 

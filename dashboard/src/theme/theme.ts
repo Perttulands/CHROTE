@@ -33,6 +33,12 @@ export interface Theme {
   name: string
   ui: ThemeUi
   terminal: TerminalTheme
+  /**
+   * The hues the Library's map draws its shelves in, taken in shelf order.
+   * A theme authored before the map had colour carries none, and the built-in
+   * palette answers instead.
+   */
+  shelves: string[]
   /** Per-Unix-user colours, indexed by the server's terminalUsers order. */
   identity: string[]
   /** Art file names served by GET /api/theme/art/{name}. */
@@ -70,6 +76,17 @@ export const DEFAULT_THEME: Theme = {
       '#737373', '#ff8a8a', '#a6e37a', '#f0d48a', '#8fb5ff', '#d3a4ff', '#7ae2e2', '#ffffff',
     ],
   },
+  // Ten hues spread evenly around the wheel, all at the one lightness and the
+  // one low chroma, so a shelf is told from its neighbours by which colour it
+  // is and never by how loud it is. They are listed so that consecutive
+  // entries are far apart on the wheel rather than in order around it: shelves
+  // take them in shelf order, and two shelves next to each other in the
+  // alphabet are the two the eye most needs told apart. The accent stays out of
+  // them; on this map blue is what the operator is pointing at.
+  shelves: [
+    '#b67777', '#77b6b6', '#84b677', '#a977b6', '#b69d77',
+    '#7790b6', '#77b690', '#b6779d', '#a9b677', '#8477b6',
+  ],
   identity: ['#4f6d8f', '#8f6f3a', '#5f7f5a', '#7a5f8f'],
   art: [],
 }
@@ -113,6 +130,12 @@ export function parseTheme(value: unknown): Theme | null {
   const identity = value.identity
   if (!Array.isArray(identity) || identity.length < 1 || !identity.every(isColor)) return null
 
+  // A theme the operator authored before the map had colour names no shelf
+  // hues. That is not a broken theme, so the built-in palette answers for it
+  // rather than the map losing its colour.
+  const shelves = value.shelves ?? DEFAULT_THEME.shelves
+  if (!Array.isArray(shelves) || !shelves.every(isColor)) return null
+
   const art = value.art ?? []
   if (!Array.isArray(art) || !art.every(name => typeof name === 'string' && ART_NAME_PATTERN.test(name))) return null
 
@@ -130,6 +153,7 @@ export function parseTheme(value: unknown): Theme | null {
       selectionBackground: terminal.selectionBackground,
       ansi: [...ansi],
     },
+    shelves: shelves.length > 0 ? [...shelves] as string[] : [...DEFAULT_THEME.shelves],
     identity: [...identity],
     art: [...art] as string[],
   }
@@ -191,6 +215,7 @@ export function applyTheme(theme: Theme, root: HTMLElement = document.documentEl
   terminal.ansi.forEach((color, index) => set(`--ansi-${index}`, color))
 
   identity.forEach((color, index) => set(`--identity-${index}`, color))
+  theme.shelves.forEach((color, index) => set(`--shelf-${index}`, color))
 }
 
 /**
