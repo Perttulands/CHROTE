@@ -406,6 +406,25 @@ func TestAgentContext_HasNoCodexMemoriesWhenTheHandbookIsAbsent(t *testing.T) {
 	}
 }
 
+func TestAgentContext_BdMemoriesIgnoreSchemaMetadata(t *testing.T) {
+	host := newAgentTestHost(t)
+	folder := filepath.Join(host.root, "project")
+	mkdirAll(t, folder)
+	fakeBd := writeFile(t, filepath.Join(host.root, "bin", "bd"), "#!/bin/sh\nprintf '%s' '{\"schema_version\":1,\"second\":\"two\",\"first\":\"one\"}'\n")
+	if err := os.Chmod(fakeBd, 0o755); err != nil {
+		t.Fatalf("make fake bd executable: %v", err)
+	}
+	host.handler.bdCommand = fakeBd
+
+	memories := host.handler.bdMemories(folder)
+	assertSequence(t, memoryTitles(memories), []string{"first", "second"}, "bd memories")
+	for _, memory := range memories {
+		if memory.Kind != memoryBd || !memory.Readable {
+			t.Fatalf("memory = %+v, want a readable bd memory", memory)
+		}
+	}
+}
+
 func (host *agentTestHost) get(t *testing.T, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()

@@ -784,12 +784,16 @@ func (h *AgentContextHandler) bdMemories(folder string) []AgentMemory {
 	if err != nil {
 		return nil
 	}
-	var entries map[string]string
+	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(output, &entries); err != nil {
 		return nil
 	}
 	keys := make([]string, 0, len(entries))
-	for key := range entries {
+	for key, raw := range entries {
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			continue
+		}
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
