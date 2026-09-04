@@ -111,6 +111,17 @@ func beadsPermissionError(beadsPath string, cause error) error {
 	return fmt.Errorf("cannot access %s as user %s: %w. The workspace may be intact — fix the directory permissions or ACLs instead of re-initializing", beadsPath, effectiveUsername(), cause)
 }
 
+// writeBeadsDirectoryError keeps every route honest about an unreadable store:
+// permission failure means forbidden, while an absent or incomplete workspace
+// remains not found.
+func writeBeadsDirectoryError(w http.ResponseWriter, err error) {
+	if errors.Is(err, fs.ErrPermission) {
+		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		return
+	}
+	core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+}
+
 func effectiveUsername() string {
 	if current, err := user.Current(); err == nil && current.Username != "" {
 		return current.Username
@@ -747,11 +758,7 @@ func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
-		if errors.Is(err, fs.ErrPermission) {
-			core.WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
-			return
-		}
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		writeBeadsDirectoryError(w, err)
 		return
 	}
 
@@ -881,7 +888,7 @@ func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		writeBeadsDirectoryError(w, err)
 		return
 	}
 

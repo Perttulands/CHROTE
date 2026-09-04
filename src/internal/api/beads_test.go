@@ -666,29 +666,41 @@ func TestBeadsHandler_UnreadableWorkspaceReportsPermissionRatherThanAbsence(t *t
 		t.Errorf("error suggests destructive re-init for possibly intact data: %q", msg)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/beads/work?path="+project, nil)
+	readRoutes := []struct {
+		name string
+		path string
+		call func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "work", path: "/api/beads/work?path=" + project, call: handler.Work},
+		{name: "issue detail", path: "/api/beads/issue?path=" + project + "&id=test-1", call: handler.IssueDetail},
+	}
+	for _, route := range readRoutes {
+		t.Run(route.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, route.path, nil)
+			rec := httptest.NewRecorder()
+			route.call(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, metadataPath) {
+				t.Errorf("response does not name the unreadable file %q: %s", metadataPath, body)
+			}
+			if !strings.Contains(body, "permission denied") {
+				t.Errorf("response does not state the permission cause: %s", body)
+			}
+		})
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+project, nil)
 	rec := httptest.NewRecorder()
-	handler.Work(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("Work status = %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, metadataPath) {
-		t.Errorf("Work response does not name the unreadable file %q: %s", metadataPath, body)
-	}
-	if !strings.Contains(body, "permission denied") {
-		t.Errorf("Work response does not state the permission cause: %s", body)
-	}
-
-	req = httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+project, nil)
-	rec = httptest.NewRecorder()
 	handler.ListProjects(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("ListProjects status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
-	body = rec.Body.String()
+	body := rec.Body.String()
 	if !strings.Contains(body, "permission denied") {
 		t.Errorf("response does not state the permission cause: %s", body)
 	}
