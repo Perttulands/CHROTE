@@ -19,7 +19,7 @@ export const AGENT_HARNESSES: { id: AgentHarness; label: string }[] = [
 
 export interface AgentInstruction {
   path: string
-  /** user, ancestor or project: which rung of the stack this is. */
+  /** managed, user, ancestor or project: which rung of the stack this is; conditional for a rule whose paths frontmatter limits it. */
   scope: string
   /** CLAUDE.md, AGENTS.md or settings. */
   kind: string

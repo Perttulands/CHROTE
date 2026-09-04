@@ -52,6 +52,39 @@ export const mockBeadsWork = {
         id: 'test-ep1.4', title: 'Completed feature', status: 'closed', type: 'feature', priority: 3,
         parent: 'test-ep1', updated: staleTimestamp, blocked: false,
       },
+      // A second epic with a shape worth drawing: two chains that block
+      // nothing of each other's, and one Bead that waits for both to finish.
+      // The Flow view has three waves and two lanes to lay out from these.
+      {
+        id: 'test-ep2', title: 'Ship the reading room', status: 'open', type: 'epic', priority: 1,
+        updated: freshTimestamp, acceptance: 'A page opens where it was found', blocked: false,
+      },
+      {
+        id: 'test-ep2.1', title: 'Measure the shelves', status: 'open', type: 'task', priority: 2,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: false,
+      },
+      {
+        id: 'test-ep2.2', title: 'Draw the shelves', status: 'in_progress', type: 'feature', priority: 2,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: false,
+      },
+      {
+        id: 'test-ep2.3', title: 'Index the pages', status: 'open', type: 'task', priority: 2,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: true, blockedBy: ['test-ep2.1'],
+      },
+      {
+        id: 'test-ep2.4', title: 'Search the index', status: 'open', type: 'feature', priority: 2,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: true, blockedBy: ['test-ep2.2'],
+      },
+      {
+        id: 'test-ep2.5', title: 'Open a page from a search', status: 'open', type: 'feature', priority: 1,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: true, blockedBy: ['test-ep2.3', 'test-ep2.4'],
+      },
+      // Finished work keeps its place in the first wave: the server drops a
+      // closed blocker from every blockedBy, so nothing waits on it any more.
+      {
+        id: 'test-ep2.6', title: 'Choose the shelf order', status: 'closed', type: 'decision', priority: 3,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: false,
+      },
     ],
   }
 }
@@ -322,7 +355,6 @@ export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: S
   await mockTerminalSocket(page)
   await mockThemeApiRoute(page)
   await mockLaunchApiRoute(page)
-  await mockResidentsApiRoute(page)
 
   await page.route(tmuxMousePattern, async route => {
     const body = route.request().postDataJSON() as { enabled?: boolean } | null
@@ -340,6 +372,10 @@ export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: S
   // projects route answers only for manual paths.
   await mockWorkspacesRoute(page)
   await mockBeadsProjectsRoute(page)
+  // These tabs stay mounted after their first paint, including while another
+  // tab is in front. Every browser journey therefore supplies their ordinary
+  // read routes; a test can register a narrower response afterwards.
+  await mockPersistentTabApiRoutes(page)
 
   await page.route(tmuxSessionsPattern, async route => {
     if (route.request().method() === 'POST') {
@@ -411,6 +447,49 @@ export async function mockBeadsProjectsRoute(page: Page, projectsResponse?: obje
       body: JSON.stringify(projectsResponse ?? mockBeadsProjects),
     })
   })
+}
+
+export async function mockAgentContextApiRoutes(page: Page) {
+  await page.route('**/api/agent/tender', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ session: 'tender', beads: '/code/test-project', folder: '/code/tender' }),
+    })
+  })
+
+  await page.route('**/api/agent/context**', async route => {
+    const url = new URL(route.request().url())
+    const folder = url.searchParams.get('folder') ?? ''
+    const harness = url.searchParams.get('harness') ?? 'claude-code'
+    const user = url.searchParams.get('user') ?? ''
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        folder,
+        harness,
+        user,
+        instructions: [{
+          path: `${folder}/${harness === 'codex' ? 'AGENTS.md' : 'CLAUDE.md'}`,
+          scope: 'project',
+          kind: harness === 'codex' ? 'AGENTS.md' : 'CLAUDE.md',
+          readable: true,
+          size: 1200,
+        }],
+        skills: [],
+        memories: [],
+      }),
+    })
+  })
+}
+
+/** The ordinary reads made by the views that stay mounted across tab switches. */
+export async function mockPersistentTabApiRoutes(page: Page) {
+  await mockResidentsApiRoute(page)
+  await mockBeadsApiRoutes(page)
+  await mockLibraryApiRoutes(page)
+  await mockAgentContextApiRoutes(page)
 }
 
 // Beads API mock routes - can be customized per test
@@ -524,13 +603,14 @@ export async function mockBeadsApiError(page: Page) {
  * shapes the browser parses in production.
  */
 const libraryChangedAt = new Date(Date.now() - 3 * 3600_000).toISOString()
+const libraryLongAgo = new Date(Date.now() - 90 * 86_400_000).toISOString()
 
 export const mockLibraryShelves = {
   root: '/corpus',
   librarianSession: 'hq-deacon',
   beadsProject: '/code/test-project',
   shelves: [
-    { name: 'knowledge', path: 'knowledge', pages: 1 },
+    { name: 'knowledge', path: 'knowledge', pages: 2 },
     { name: 'preferences', path: 'preferences', pages: 2 },
   ],
 }
@@ -538,6 +618,7 @@ export const mockLibraryShelves = {
 const mockLibraryPages: Record<string, object[]> = {
   knowledge: [
     { path: 'knowledge/testing.md', title: 'Test isolation', updated: libraryChangedAt, author: 'The Operator' },
+    { path: 'knowledge/long.md', title: 'A note whose name runs well past the measure a label is drawn at', updated: libraryLongAgo, author: 'The Operator' },
   ],
   preferences: [
     { path: 'preferences/tools.md', title: 'Tool Preferences', updated: libraryChangedAt, author: 'The Operator' },
@@ -572,6 +653,9 @@ const mockLibraryGraph = {
     { path: 'knowledge/testing.md', shelf: 'knowledge', title: 'Test isolation', words: 60, updated: libraryChangedAt, candidate: false },
     { path: 'preferences/tools.md', shelf: 'preferences', title: 'Tool Preferences', words: 30, updated: libraryChangedAt, candidate: false },
     { path: 'preferences/workflow.md', shelf: 'preferences', title: 'Workflow Preferences', words: 200, updated: libraryChangedAt, candidate: false },
+    // A name past the label measure, last touched long enough ago that any
+    // window narrower than all leaves it behind.
+    { path: 'knowledge/long.md', shelf: 'knowledge', title: 'A note whose name runs well past the measure a label is drawn at', words: 45, updated: libraryLongAgo, candidate: false },
   ],
   links: [['knowledge/testing.md', 'preferences/workflow.md'], ['preferences/workflow.md', 'preferences/tools.md']],
   tags: [['preferences/tools.md', 'preferences/workflow.md', 'tooling']],

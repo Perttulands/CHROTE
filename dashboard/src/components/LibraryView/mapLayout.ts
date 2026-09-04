@@ -23,6 +23,8 @@ export interface MapNode {
   r: number
   /** 1 for a page that moved today, down to 0.35 after forty days. */
   opacity: number
+  /** When git last saw the page, as the graph gives it; '' if never. */
+  updated: string
   candidate: boolean
 }
 
@@ -113,6 +115,31 @@ function seeded(seed: number): () => number {
   }
 }
 
+/** How far back the map counts a page as recent. */
+export type RecencyWindow = 'day' | 'week' | 'month' | 'all'
+
+/** The windows the map bar offers, in the order it offers them. */
+export const RECENCY_WINDOWS: readonly { id: RecencyWindow; label: string; days: number }[] = [
+  { id: 'day', label: 'Day', days: 1 },
+  { id: 'week', label: 'Week', days: 7 },
+  { id: 'month', label: 'Month', days: 30 },
+  { id: 'all', label: 'All', days: 0 },
+]
+
+/**
+ * Whether a page moved inside the window. `all` holds everything, including
+ * a page git never dated; any narrower window drops that page, because a
+ * date nobody knows is not a date inside seven days.
+ */
+export function withinWindow(updated: string, window: RecencyWindow, now: number): boolean {
+  if (window === 'all') return true
+  const days = RECENCY_WINDOWS.find(entry => entry.id === window)?.days ?? 0
+  if (days <= 0) return true
+  const at = Date.parse(updated)
+  if (!updated || Number.isNaN(at)) return false
+  return now - at <= days * DAY
+}
+
 export function nodeRadius(words: number): number {
   return Math.max(MIN_RADIUS, Math.min(MAX_RADIUS, Math.sqrt(Math.max(0, words)) / 2.2))
 }
@@ -125,7 +152,8 @@ export function nodeOpacity(updated: string, now: number): number {
   return Math.max(OPACITY_FLOOR, 1 - days / FADE_DAYS)
 }
 
-function node(page: LibraryGraphPage, x: number, y: number, now: number, r = nodeRadius(page.words)): MapNode {
+function node(page: LibraryGraphPage, x: number, y: number, now: number): MapNode {
+  const r = nodeRadius(page.words)
   return {
     path: page.path,
     shelf: page.shelf,
@@ -134,6 +162,7 @@ function node(page: LibraryGraphPage, x: number, y: number, now: number, r = nod
     y,
     r,
     opacity: nodeOpacity(page.updated, now),
+    updated: page.updated,
     candidate: page.candidate,
   }
 }
@@ -277,44 +306,6 @@ export function layoutMap(graph: LibraryGraph, width: number, height: number, no
   })
 
   return { nodes, edges, clusters, more: 0 }
-}
-
-/** The strip's rows, and the least a column may take. */
-const STRIP_ROWS = 3
-const STRIP_MIN_STEP = 96
-const STRIP_MAX_STEP = 200
-const STRIP_NEIGHBOUR_RADIUS = 5
-const STRIP_OPEN_RADIUS = 9
-
-/**
- * The strip: the open page at the left, its neighbours in three rows beside
- * it, column by column. Neighbours beyond what the width holds are counted
- * rather than crowded.
- */
-export function layoutStrip(graph: LibraryGraph, openPath: string, width: number, height: number, now = Date.now()): MapLayout {
-  const byPath = new Map(graph.pages.map(page => [page.path, page]))
-  const open = byPath.get(openPath)
-  if (!open) return { nodes: [], edges: [], clusters: [], more: 0 }
-
-  const neighbours = neighboursOf(graph, openPath).filter(path => byPath.has(path))
-  const left = Math.round(width * 0.16)
-  const start = Math.round(width * 0.3)
-  const available = Math.max(0, width - start - MAP_SIDE - MAP_LABEL_CHARS * PRIMARY_CHAR)
-  const columnsThatFit = Math.max(1, Math.floor(available / STRIP_MIN_STEP) + 1)
-  const shown = neighbours.slice(0, columnsThatFit * STRIP_ROWS)
-  const columns = Math.max(1, Math.ceil(shown.length / STRIP_ROWS))
-  const step = Math.max(STRIP_MIN_STEP, Math.min(STRIP_MAX_STEP, columns > 1 ? available / (columns - 1) : STRIP_MAX_STEP))
-  const rowsY = [32, Math.round(height / 2), height - 28]
-
-  const nodes: MapNode[] = [node(open, left, Math.round(height / 2), now, STRIP_OPEN_RADIUS)]
-  shown.forEach((path, position) => {
-    const page = byPath.get(path) as LibraryGraphPage
-    const column = Math.floor(position / STRIP_ROWS)
-    const row = position % STRIP_ROWS
-    nodes.push(node(page, Math.round(start + column * step), rowsY[row], now, STRIP_NEIGHBOUR_RADIUS))
-  })
-  const present = new Set(nodes.map(entry => entry.path))
-  return { nodes, edges: edgesAmong(graph, present), clusters: [], more: neighbours.length - shown.length }
 }
 
 interface Box {

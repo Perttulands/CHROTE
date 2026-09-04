@@ -88,16 +88,18 @@ func (h *BeadsHandler) checkBeadsDirectory(projectPath string) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("no .beads directory found in %s. Run 'bd init' to create one", projectPath)
 	}
-	metaInfo, metaErr := os.Stat(filepath.Join(beadsPath, "metadata.json"))
-	doltInfo, doltErr := os.Stat(filepath.Join(beadsPath, "embeddeddolt"))
+	metadataPath := filepath.Join(beadsPath, "metadata.json")
+	doltPath := filepath.Join(beadsPath, "embeddeddolt")
+	metaInfo, metaErr := os.Stat(metadataPath)
+	doltInfo, doltErr := os.Stat(doltPath)
 	// An unreadable workspace must never be reported as a missing one: the data
 	// may be intact, and the 'bd init' suggestion below invites a destructive
 	// re-init (bd init --force discards the workspace).
 	if errors.Is(metaErr, fs.ErrPermission) {
-		return "", beadsPermissionError(beadsPath, metaErr)
+		return "", beadsPermissionError(metadataPath, metaErr)
 	}
 	if errors.Is(doltErr, fs.ErrPermission) {
-		return "", beadsPermissionError(beadsPath, doltErr)
+		return "", beadsPermissionError(doltPath, doltErr)
 	}
 	if metaErr != nil || !metaInfo.Mode().IsRegular() || doltErr != nil || !doltInfo.IsDir() {
 		return "", fmt.Errorf("%s exists but is not a modern bd workspace. Run 'bd init' in %s", beadsPath, projectPath)
@@ -745,6 +747,10 @@ func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			core.WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			return
+		}
 		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 		return
 	}

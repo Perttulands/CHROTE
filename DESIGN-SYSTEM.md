@@ -58,7 +58,7 @@ of them is the wall of buttons the doctrine exists to prevent.
 
 ## The colour rule
 
-The interface is monochrome except where colour carries meaning. Five uses live:
+The interface is monochrome except where colour carries meaning. Six uses live:
 
 | Use | Token | What the colour means |
 | --- | --- | --- |
@@ -67,6 +67,17 @@ The interface is monochrome except where colour carries meaning. Five uses live:
 | The Claude Code mark | `#D97757` | The product's own mark, kept recognisable |
 | Unix-user identity | `--identity-0` … | Which account owns this session |
 | Diffs | `--ansi-2`, `--color-error` | An addition, a removal; always beside a +/- gutter |
+| Bead type | `--ansi-1` … `--ansi-6` | What kind of work this is; always beside the type word |
+
+A Bead's type takes one theme ANSI token, chosen for contrast on the theme
+background, and the type word is written in it so a row reads the same without
+colour: `bug` `--ansi-1`, `feature` `--ansi-2`, `chore` `--ansi-3`, `decision`
+`--ansi-4`, `epic` `--ansi-5`, `task` `--ansi-6`. A type this list does not name
+keeps its word in `--text-dim` rather than an invented hue. A Bead that is
+closed, wont_fix or duplicate is finished arguing: its row is `--text-dim` end
+to end, type, id and title alike, wherever a Bead row is drawn. An epic row is
+heavier and carries a hairline beneath it, because it is the roof its children
+hang from. Status stays the glyph `bd` prints, with the word on hover.
 
 Everything else is gone: per-window accent colours, hashed per-user hues, the
 tmux status bar hue, theme-button glows, and per-severity notification colours.
@@ -188,10 +199,8 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | `Alt+A` | Sessions panel |
 | `Alt+O` | Files panel |
 | `Alt+I` | Close the table |
-| `Alt+R` | The Library's map or its reading room |
 | `Alt+Enter` | Focus the resident's column |
 | `Alt+K` | Keybindings panel |
-| `Alt+R` | The map or the reading room, while the Library tab is active |
 
 `Plus` and `Minus` are matched by the character the layout produces, not by
 `Shift`, so `Alt++` and `Alt+=` are the same chord.
