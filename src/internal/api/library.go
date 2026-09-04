@@ -39,7 +39,8 @@ type LibraryConfig struct {
 	Author string
 	// LibrarianSession is the tmux session the Front desk talks to.
 	LibrarianSession string
-	// BeadsProject is the store whose open Beads are the proposals in flight.
+	// BeadsProject is the Librarian's own Beads store, named to the resident
+	// column by /api/residents. The Library tab itself reads no Beads.
 	BeadsProject string
 }
 
@@ -87,13 +88,12 @@ type LibraryShelf struct {
 
 // LibraryShelvesResponse is the body of GET /api/library/shelves. It carries
 // the configuration the tab needs to draw itself as well as the shelves: the
-// root says whether there is a library at all, and the session and the store
-// say whether the Front desk and the Proposals shelf have anything behind them.
+// root says whether there is a library at all, and the session says whether
+// the Librarian has anything behind him.
 type LibraryShelvesResponse struct {
 	Root             string         `json:"root"`
 	Shelves          []LibraryShelf `json:"shelves"`
 	LibrarianSession string         `json:"librarianSession"`
-	BeadsProject     string         `json:"beadsProject"`
 }
 
 // LibraryPage is one page as a shelf lists it.
@@ -362,7 +362,6 @@ func (h *LibraryHandler) Shelves(w http.ResponseWriter, r *http.Request) {
 		Root:             h.config.Root,
 		Shelves:          make([]LibraryShelf, 0),
 		LibrarianSession: h.config.LibrarianSession,
-		BeadsProject:     h.config.BeadsProject,
 	}
 	if h.config.Root == "" {
 		core.WriteJSON(w, http.StatusOK, response)

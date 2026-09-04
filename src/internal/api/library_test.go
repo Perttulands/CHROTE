@@ -166,7 +166,6 @@ func TestLibraryShelvesCarriesTheConfiguration(t *testing.T) {
 		wantShelf  []string
 		wantPages  map[string]int
 		wantDesk   string
-		wantStore  string
 		wantStatus int
 	}{
 		{
@@ -181,13 +180,11 @@ func TestLibraryShelvesCarriesTheConfiguration(t *testing.T) {
 			config: LibraryConfig{
 				Root:             root,
 				LibrarianSession: "librarian",
-				BeadsProject:     "/corpus/store",
 			},
 			wantRoot:   root,
 			wantShelf:  []string{"knowledge", "preferences"},
 			wantPages:  map[string]int{"knowledge": 2, "preferences": 2},
 			wantDesk:   "librarian",
-			wantStore:  "/corpus/store",
 			wantStatus: http.StatusOK,
 		},
 	}
@@ -214,9 +211,6 @@ func TestLibraryShelvesCarriesTheConfiguration(t *testing.T) {
 			}
 			if response.LibrarianSession != tt.wantDesk {
 				t.Fatalf("librarianSession = %q, want %q", response.LibrarianSession, tt.wantDesk)
-			}
-			if response.BeadsProject != tt.wantStore {
-				t.Fatalf("beadsProject = %q, want %q", response.BeadsProject, tt.wantStore)
 			}
 		})
 	}
