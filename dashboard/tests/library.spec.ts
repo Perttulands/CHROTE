@@ -1,10 +1,12 @@
 /**
- * Journey 7, keep the library (beads: chrote-5grx.17, chrote-5grx.55).
+ * Journey 7, keep the library (beads: chrote-5grx.17, chrote-5grx.55,
+ * chrote-5grx.75).
  *
  * One pass through the surface the browser is the point of: land on the map,
- * take a page off a shelf, read it with its neighbours above it, turn the map
- * over and back, open a neighbour from it, and hand it to the Librarian in
- * the column at the right. Everything narrower — a date, a title, where a
+ * read a long name in full under the pointer, narrow the recency window, take
+ * the map in and put it back, take a page off a shelf, read it with its
+ * neighbours above it, turn the map over and back, open a neighbour from it,
+ * and hand it to the Librarian in the column at the right. Everything narrower — a date, a title, where a
  * label sits — is a unit test.
  */
 
@@ -45,6 +47,9 @@ async function mockLibrarianSend(page: Page, sends: { text: string; submit: stri
   })
 }
 
+/** The fixture's page whose name is past the measure a label is drawn at. */
+const LONG_TITLE = 'A note whose name runs well past the measure a label is drawn at'
+
 /** A page on the map, by the name it carries. */
 function node(page: Page, title: string) {
   return page.locator(`.library-map [role="button"][aria-label="${title}"]`)
@@ -64,7 +69,7 @@ test.describe('The Library', () => {
     await page.waitForSelector('.library-view')
 
     // The library lands on the map: every shelf labelled, every link counted.
-    await expect(page.locator('.library-map-count')).toHaveText('3 pages · 2 shelves · 2 links · 1 shared tag')
+    await expect(page.locator('.library-map-count')).toHaveText('4 pages · 2 shelves · 2 links · 1 shared tag')
     await expect(page.locator('.library-map-cluster', { hasText: 'preferences · 2' })).toBeVisible()
 
     // Pointing at a page lights what it touches; the lit dot is drawn by
@@ -72,6 +77,30 @@ test.describe('The Library', () => {
     await node(page, 'Test isolation').hover()
     await expect(node(page, 'Workflow Preferences')).toHaveClass(/hot/)
     await expect(node(page, 'Tool Preferences')).not.toHaveClass(/hot/)
+
+    // A name too long for the map's labels is still readable in full under
+    // the pointer, where the label beside the dot only shortens it.
+    await node(page, LONG_TITLE).hover()
+    await expect(page.locator('[data-ui="library.map.hover"]')).toHaveText(LONG_TITLE)
+
+    // The recency window leaves the corpus in place and steps back from what
+    // has not moved lately; All brings it forward again.
+    await page.click('.library-map-window:has-text("Week")')
+    await expect(page.locator('.library-map-legend')).toHaveText('Dimmed: not changed in the last 7 days')
+    await expect(node(page, LONG_TITLE)).toHaveClass(/stale/)
+    await expect(node(page, 'Test isolation')).not.toHaveClass(/stale/)
+    await page.click('.library-map-window:has-text("All")')
+    await expect(node(page, LONG_TITLE)).not.toHaveClass(/stale/)
+
+    // The map moves: the wheel takes it in, and the way back is offered only
+    // while there is one.
+    const reset = page.locator('[data-ui="library.map.reset"]')
+    await expect(reset).toHaveCount(0)
+    await page.locator('.library-map svg').hover({ position: { x: 300, y: 200 } })
+    await page.mouse.wheel(0, -400)
+    await expect(reset).toBeVisible()
+    await reset.click()
+    await expect(reset).toHaveCount(0)
 
     // A shelf, then a page off it.
     await page.click('.library-left .library-shelf:has-text("preferences")')
