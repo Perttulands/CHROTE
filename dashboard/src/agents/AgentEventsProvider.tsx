@@ -13,6 +13,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import type { ReactNode } from 'react'
 import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
+import { useFocusedSession } from '../context/useFocusedSession'
 import { getSessionKey } from '../types'
 import type { TmuxSession } from '../types'
 import { agentEventTitle, sessionOfBinding, takeInAgentEvents, type AgentEventLedger } from './agentEvents'
@@ -46,7 +47,7 @@ async function postSeen(session: TmuxSession): Promise<void> {
 }
 
 export function AgentEventsProvider({ children }: { children: ReactNode }) {
-  const { sessions, loading, error, partialAnsweringUsers, focusedWindowKey, workspaces, settings } = useSession()
+  const { sessions, loading, error, partialAnsweringUsers, settings } = useSession()
   const { announce } = useStatus()
   const ledger = useRef<AgentEventLedger>(null)
   // The event time each session was last told seen for, so a poll that has not
@@ -89,14 +90,7 @@ export function AgentEventsProvider({ children }: { children: ReactNode }) {
     }
   }, [landed, sessions, announce])
 
-  const focusedBinding = useMemo(() => {
-    if (!focusedWindowKey) return null
-    for (const [workspaceId, workspace] of Object.entries(workspaces)) {
-      const found = workspace.windows.find(window => `${workspaceId}-${window.id}` === focusedWindowKey)
-      if (found) return found.activeSession
-    }
-    return null
-  }, [focusedWindowKey, workspaces])
+  const focusedBinding = useFocusedSession()
   const focused = focusedBinding ? sessionOfBinding(sessions, focusedBinding) : undefined
 
   // Focus is what seeing means. The mark goes at once; the server is told so

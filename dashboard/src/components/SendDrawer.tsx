@@ -28,6 +28,7 @@ import { useTheme } from '../theme/ThemeContext'
 import { identityColorFor } from '../theme/theme'
 import { isSessionEnded } from '../terminal/tileState'
 import { useSessionEvidence } from '../context/useSessionEvidence'
+import { useFocusedSession } from '../context/useFocusedSession'
 import {
   getSessionKey,
   getSessionNameFromKey,
@@ -105,7 +106,6 @@ export default function SendDrawer() {
     sendToSessionRequest,
     sendToSessionRequestId,
     sessions,
-    workspaces,
     workspaceIds,
     focusedWindowKey,
     terminalUsers,
@@ -138,14 +138,7 @@ export default function SendDrawer() {
   const launch = sendToSessionRequest?.launch
 
   /** The session in the focused tile: what "Send" means with nothing in hand. */
-  const focusedSessionKey = useMemo(() => {
-    if (!focusedWindowKey) return null
-    for (const [workspaceId, workspace] of Object.entries(workspaces)) {
-      const found = workspace.windows.find(window => `${workspaceId}-${window.id}` === focusedWindowKey)
-      if (found?.activeSession) return found.activeSession
-    }
-    return null
-  }, [focusedWindowKey, workspaces])
+  const focusedSessionKey = useFocusedSession()
 
   const focusedWorkspaceId: WorkspaceId = useMemo(() => {
     const prefix = focusedWindowKey?.split('-')[0]
