@@ -5,15 +5,15 @@
  * blocking edges say, so a column is a set of Beads that can be handed out at
  * once, and the number of columns is how long the epic is however many hands
  * work it. The lines are the blocking edges themselves; a band behind a group
- * is a parent inside the epic. Clicking a Bead puts it on the table and brings
- * it to the middle; the arrow keys travel wave to wave and up and down a
+ * is a parent inside the epic. Clicking a Bead puts it on the table without
+ * moving the drawing; the arrow keys travel wave to wave and up and down a
  * column; the wheel and a drag move through the drawing.
  *
  * The arithmetic is in flowLayout.ts, the moving in useMapTransform.ts. This
  * file only chooses the epic, measures its box, and draws.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import BeadTypeLabel from '../BeadTypeLabel'
 import { openBeadCard } from '../../beads/beadCard'
@@ -24,9 +24,11 @@ import {
   NODE_HEIGHT,
   NODE_WIDTH,
   flowCentre,
+  flowComponentKey,
   flowEpics,
   flowNeighbour,
   layoutFlow,
+  layoutFlowComponent,
   type FlowStep,
 } from '../../beads/flowLayout'
 import { useMapTransform } from '../../hooks/useMapTransform'
@@ -40,24 +42,72 @@ const ARROWS: Record<string, FlowStep> = {
   ArrowRight: 'right',
 }
 
-export default function FlowView({ rows }: { rows: WorkRow[] }) {
+export interface FlowRevealRequest {
+  projectPath: string
+  id: string
+  /** The linked component chosen when the menu action was invoked. */
+  graphKey: string
+  nonce: number
+}
+
+export default function FlowView({ rows, reveal }: { rows: WorkRow[]; reveal?: FlowRevealRequest | null }) {
   const table = useTableObject()
   const epics = useMemo(() => flowEpics(rows), [rows])
   // The picker's choice outlives a click on a node; until it is made, the epic
   // on the table is the one being read, and failing that the first in the store.
   const [picked, setPicked] = useState<string | null>(null)
+  const [dismissedReveal, setDismissedReveal] = useState<number | null>(null)
+  const revealTarget = reveal
+    ? rows.find(row => row.projectPath === reveal.projectPath && row.id === reveal.id)
+    : undefined
+  const revealing = revealTarget !== undefined && reveal?.nonce !== dismissedReveal
   const onTable = table?.kind === 'bead'
     ? epics.find(epic => epic.id === table.id && (!table.projectPath || table.projectPath === epic.projectPath))
     : undefined
+
+  // Entering Flow from an epic already on the table chooses that graph. Latch
+  // the choice before a child click replaces the table object, or the fallback
+  // would silently jump to the first epic in the store.
+  useEffect(() => {
+    if (picked === null && onTable) setPicked(beadRowKey(onTable))
+  }, [onTable, picked])
+
   const epic = epics.find(candidate => beadRowKey(candidate) === picked) ?? onTable ?? epics[0]
 
-  const graph = useMemo(() => (epic ? layoutFlow(rows, epic) : EMPTY_FLOW), [epic, rows])
+  const graph = useMemo(
+    () => (revealing && revealTarget
+      ? layoutFlowComponent(rows, revealTarget)
+      : epic ? layoutFlow(rows, epic) : EMPTY_FLOW),
+    [epic, revealTarget, revealing, rows],
+  )
   const { ref: box, width, height } = useMeasuredSize<HTMLDivElement>()
   const { ref, transform, moved, reset, centreOn, handlers, panned } =
     useMapTransform<HTMLDivElement>({ width, height })
   // The buttons, so the arrow keys can hand focus to the Bead next door. A
   // node that leaves the drawing takes its entry with it, on the ref itself.
   const nodeRefs = useRef(new Map<string, HTMLButtonElement>())
+  const centredRequest = useRef<number | null>(null)
+
+  // A menu navigation is explicit movement. Consume its nonce once, after the
+  // target and a real viewport both exist; later table resizes and ordinary
+  // node selections leave this transform alone.
+  useEffect(() => {
+    if (!reveal || !revealing || !revealTarget || width <= 0 || height <= 0) return
+    if (centredRequest.current === reveal.nonce) return
+    const measured = box.current?.getBoundingClientRect()
+    if (!measured || Math.round(measured.width) !== width || Math.round(measured.height) !== height) return
+    const componentKey = flowComponentKey(graph.nodes.map(node => node.row))
+    if (componentKey !== reveal.graphKey) return
+    const target = graph.nodes.find(node => node.row.id === reveal.id)
+    if (!target) return
+    centreOn(flowCentre(target))
+    centredRequest.current = reveal.nonce
+  }, [centreOn, graph, height, reveal, revealTarget, revealing, width])
+
+  const pickEpic = useCallback((key: string) => {
+    if (reveal) setDismissedReveal(reveal.nonce)
+    setPicked(key)
+  }, [reveal])
 
   const travel = useCallback((key: string, step: FlowStep) => {
     const next = flowNeighbour(graph, key, step)
@@ -71,12 +121,12 @@ export default function FlowView({ rows }: { rows: WorkRow[] }) {
     travel(key, step)
   }
 
-  if (epics.length === 0) return <p className="beads-empty">No epic here to flow.</p>
+  if (!revealing && epics.length === 0) return <p className="beads-empty">No epic here to flow.</p>
   if (graph.nodes.length === 0) {
     return (
       <div className="bead-flow-view">
-        {epics.length > 1 && <EpicPicker epics={epics} chosen={epic} onPick={setPicked} />}
-        <p className="beads-empty">{epic.id} has nothing hanging under it yet.</p>
+        {epics.length > 1 && epic && <EpicPicker epics={epics} chosen={epic} onPick={pickEpic} />}
+        <p className="beads-empty">{epic?.id ?? revealTarget?.id} has nothing hanging under it yet.</p>
       </div>
     )
   }
@@ -84,9 +134,11 @@ export default function FlowView({ rows }: { rows: WorkRow[] }) {
   return (
     <div className="bead-flow-view">
       <div className="bead-flow-head">
-        {epics.length > 1
-          ? <EpicPicker epics={epics} chosen={epic} onPick={setPicked} />
-          : <span className="bead-flow-epic-name">{epic.id} · {epic.title}</span>}
+        {revealing && revealTarget
+          ? <span className="bead-flow-epic-name">Linked flow · {revealTarget.id} · {revealTarget.title}</span>
+          : epics.length > 1 && epic
+            ? <EpicPicker epics={epics} chosen={epic} onPick={pickEpic} />
+            : epic && <span className="bead-flow-epic-name">{epic.id} · {epic.title}</span>}
         <span className="bead-flow-tally">
           {graph.waves} {graph.waves === 1 ? 'wave' : 'waves'} · {graph.nodes.length} Beads
         </span>
@@ -95,13 +147,18 @@ export default function FlowView({ rows }: { rows: WorkRow[] }) {
         )}
       </div>
 
-      <div className="bead-flow" ref={box} data-ui="beads.flow">
+      <div
+        className="bead-flow"
+        ref={box}
+        data-ui="beads.flow"
+        data-flow-graph={revealing ? reveal?.graphKey : epic && beadRowKey(epic)}
+      >
         <div
           className="bead-flow-surface"
           ref={ref}
           {...handlers}
           role="group"
-          aria-label={`Flow of ${epic.id}`}
+          aria-label={`Flow of ${revealing ? revealTarget?.id : epic?.id}`}
         >
           <div
             className="bead-flow-canvas"
@@ -162,7 +219,6 @@ export default function FlowView({ rows }: { rows: WorkRow[] }) {
                     // not open the Bead.
                     if (panned()) return
                     openBeadCard(row.id, row.projectPath, row.title)
-                    centreOn(flowCentre(node))
                   }}
                 >
                   <span className="bead-flow-node-line">

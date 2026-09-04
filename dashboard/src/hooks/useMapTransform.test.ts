@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
+import { describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_LIMITS,
   IDENTITY,
@@ -10,6 +12,7 @@ import {
   toWorld,
   wheelFactor,
   zoomAbout,
+  useMapTransform,
 } from './useMapTransform'
 
 describe('zoomAbout', () => {
@@ -96,5 +99,58 @@ describe('isPanned', () => {
     expect(isPanned(IDENTITY)).toBe(false)
     expect(isPanned({ x: 0, y: 1, scale: 1 })).toBe(true)
     expect(isPanned({ x: 0, y: 0, scale: 1.2 })).toBe(true)
+  })
+})
+
+describe('useMapTransform', () => {
+  it('keeps an established viewport when its container changes size', () => {
+    const { result, rerender } = renderHook(
+      ({ width, height }) => useMapTransform<HTMLDivElement>({ width, height }),
+      { initialProps: { width: 900, height: 600 } },
+    )
+
+    act(() => result.current.centreOn({ x: 320, y: 180 }, 1.6))
+    const established = result.current.transform
+
+    // Opening or closing the table changes this box. It must not silently fit
+    // or recenter a drawing the operator has already positioned.
+    rerender({ width: 520, height: 600 })
+    expect(result.current.transform).toEqual(established)
+    rerender({ width: 900, height: 600 })
+    expect(result.current.transform).toEqual(established)
+  })
+
+  it('discards one to three pixels of click wobble and applies a four-pixel pan in full', () => {
+    const { result } = renderHook(() => useMapTransform<HTMLDivElement>({ width: 900, height: 600 }))
+    const surface = {
+      hasPointerCapture: vi.fn(() => false),
+      setPointerCapture: vi.fn(),
+      releasePointerCapture: vi.fn(),
+    }
+    const pointer = (x: number, y = 0) => ({
+      button: 0,
+      pointerId: 1,
+      clientX: x,
+      clientY: y,
+      currentTarget: surface,
+    }) as unknown as ReactPointerEvent<HTMLDivElement>
+
+    for (const wobble of [1, 2, 3]) {
+      act(() => {
+        result.current.handlers.onPointerDown(pointer(0))
+        result.current.handlers.onPointerMove(pointer(wobble))
+        result.current.handlers.onPointerUp(pointer(wobble))
+      })
+      expect(result.current.transform).toEqual(IDENTITY)
+      expect(result.current.panned()).toBe(false)
+    }
+
+    act(() => {
+      result.current.handlers.onPointerDown(pointer(0))
+      result.current.handlers.onPointerMove(pointer(4))
+    })
+    expect(result.current.transform).toEqual({ x: 4, y: 0, scale: 1 })
+    expect(result.current.panned()).toBe(true)
+    expect(surface.setPointerCapture).toHaveBeenCalledWith(1)
   })
 })

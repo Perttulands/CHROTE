@@ -166,6 +166,7 @@ export function useMapTransform<T extends Element = SVGSVGElement>(
   const pinch = useRef<number | null>(null)
   const dragged = useRef(false)
   const travelled = useRef(0)
+  const pendingPan = useRef<MapPoint>({ x: 0, y: 0 })
 
   // The wheel is bound by hand: React's is passive, and a passive listener
   // may not keep the page from scrolling under a zoom.
@@ -187,6 +188,7 @@ export function useMapTransform<T extends Element = SVGSVGElement>(
     if (enabled) return
     contacts.current.clear()
     pinch.current = null
+    pendingPan.current = { x: 0, y: 0 }
     setTransform(IDENTITY)
   }, [enabled])
 
@@ -217,6 +219,7 @@ export function useMapTransform<T extends Element = SVGSVGElement>(
         if (!enabled || event.button !== 0) return
         dragged.current = false
         travelled.current = 0
+        pendingPan.current = { x: 0, y: 0 }
         track(event)
         if (contacts.current.size === 2) pinch.current = spread([...contacts.current.values()])
       },
@@ -242,13 +245,23 @@ export function useMapTransform<T extends Element = SVGSVGElement>(
         // A gesture is a pan once it has travelled past the slop; under that
         // it is a click that wobbled, and the node under it still opens.
         travelled.current += Math.hypot(dx, dy)
-        if (travelled.current >= DRAG_SLOP) holdOn(event)
-        setTransform(current => panBy(current, dx, dy))
+        pendingPan.current = {
+          x: pendingPan.current.x + dx,
+          y: pendingPan.current.y + dy,
+        }
+        if (!dragged.current && travelled.current < DRAG_SLOP) return
+        holdOn(event)
+        const movement = pendingPan.current
+        pendingPan.current = { x: 0, y: 0 }
+        setTransform(current => panBy(current, movement.x, movement.y))
       },
       onPointerUp: (event: ReactPointerEvent<T>) => {
         contacts.current.delete(event.pointerId)
         if (contacts.current.size < 2) pinch.current = null
-        if (contacts.current.size === 0) travelled.current = 0
+        if (contacts.current.size === 0) {
+          travelled.current = 0
+          pendingPan.current = { x: 0, y: 0 }
+        }
         if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
           event.currentTarget.releasePointerCapture?.(event.pointerId)
         }
@@ -256,7 +269,10 @@ export function useMapTransform<T extends Element = SVGSVGElement>(
       onPointerCancel: (event: ReactPointerEvent<T>) => {
         contacts.current.delete(event.pointerId)
         if (contacts.current.size < 2) pinch.current = null
-        if (contacts.current.size === 0) travelled.current = 0
+        if (contacts.current.size === 0) {
+          travelled.current = 0
+          pendingPan.current = { x: 0, y: 0 }
+        }
       },
     }
   }, [enabled, limits])

@@ -13,7 +13,7 @@ vi.mock('../../context/StatusContext', () => ({
 }))
 
 function row(id: string): WorkRow {
-  return { id, title: `Title of ${id}`, status: 'open', type: 'task', priority: 1, blocked: false, projectPath: '/srv/chrote', projectName: 'chrote' }
+  return { id, title: `Title of ${id}`, status: 'open', type: 'task', priority: 1, blocked: false, linked: false, projectPath: '/srv/chrote', projectName: 'chrote' }
 }
 
 function node(id: string, children: BeadTreeNode[] = []): BeadTreeNode {

@@ -66,7 +66,7 @@ beforeEach(() => {
 })
 
 function row(overrides: Partial<BeadRow> & { id: string }): BeadRow {
-  return { title: `Title of ${overrides.id}`, status: 'open', type: 'task', priority: 1, blocked: false, ...overrides }
+  return { title: `Title of ${overrides.id}`, status: 'open', type: 'task', priority: 1, blocked: false, linked: false, ...overrides }
 }
 
 /** A fetch that answers only when the test says so. */

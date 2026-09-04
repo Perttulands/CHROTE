@@ -29,7 +29,7 @@ vi.mock('../beads/beadsApi', async () => {
 })
 
 function row(id: string, status: string, updated: string, blocked = false): BeadRow {
-  return { id, title: `Title ${id}`, status, priority: 1, updated, blocked }
+  return { id, title: `Title ${id}`, status, priority: 1, updated, blocked, linked: false }
 }
 
 function CardProbe() {

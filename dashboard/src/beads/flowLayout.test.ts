@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { flowMembers, flowNeighbour, layoutFlow, NODE_WIDTH, PADDING } from './flowLayout'
+import {
+  flowComponent,
+  flowMembers,
+  flowNeighbour,
+  hasFlowLinks,
+  layoutFlow,
+  layoutFlowComponent,
+  NODE_WIDTH,
+  PADDING,
+} from './flowLayout'
 import type { WorkRow } from './beadsTree'
 
 function row(id: string, extra: Partial<WorkRow> = {}): WorkRow {
@@ -10,6 +19,7 @@ function row(id: string, extra: Partial<WorkRow> = {}): WorkRow {
     type: 'task',
     priority: 2,
     blocked: false,
+    linked: false,
     projectPath: '/code/p',
     projectName: 'p',
     ...extra,
@@ -116,5 +126,25 @@ describe('flowNeighbour', () => {
   it('leaves a column a fixed width apart, so a wave is one stride', () => {
     const a2 = graph.nodes.find(node => node.row.id === 'a2')
     expect(a2?.x).toBe(PADDING + NODE_WIDTH + 64)
+  })
+})
+
+describe('an explicit linked flow', () => {
+  it('contains a child and its epic, including the epic when it is the target', () => {
+    expect(flowComponent(twoChains, twoChains[1]).map(member => member.id))
+      .toEqual(['a1', 'a2', 'b1', 'b2', 'e', 'j'])
+    expect(layoutFlowComponent(twoChains, epic).nodes.some(node => node.row.id === 'e')).toBe(true)
+    expect(hasFlowLinks(twoChains, epic)).toBe(true)
+  })
+
+  it('builds a flow for a standalone dependency pair and rejects an orphan', () => {
+    const blocker = row('loose-a')
+    const blocked = row('loose-b', { blockedBy: ['loose-a'], blocked: true })
+    const orphan = row('alone')
+    const rows = [blocker, blocked, orphan]
+
+    expect(layoutFlowComponent(rows, blocked).nodes.map(node => node.row.id)).toEqual(['loose-a', 'loose-b'])
+    expect(hasFlowLinks(rows, blocked)).toBe(true)
+    expect(hasFlowLinks(rows, orphan)).toBe(false)
   })
 })

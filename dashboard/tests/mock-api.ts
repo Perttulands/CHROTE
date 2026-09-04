@@ -34,59 +34,72 @@ export const mockBeadsWork = {
     beads: [
       {
         id: 'test-ep1', title: 'One interaction language', status: 'open', type: 'epic', priority: 1,
-        updated: freshTimestamp, acceptance: 'Every surface reads the same way', blocked: false,
+        updated: freshTimestamp, acceptance: 'Every surface reads the same way', blocked: false, linked: true,
       },
       {
         id: 'test-ep1.1', title: 'Fix login bug', status: 'open', type: 'bug', priority: 1,
-        parent: 'test-ep1', updated: freshTimestamp, blocked: false,
+        parent: 'test-ep1', updated: freshTimestamp, blocked: false, linked: true,
       },
       {
         id: 'test-ep1.2', title: 'Add dark mode', status: 'in_progress', type: 'feature', priority: 2,
-        parent: 'test-ep1', updated: freshTimestamp, blocked: false,
+        parent: 'test-ep1', updated: freshTimestamp, blocked: false, linked: true,
       },
       {
         id: 'test-ep1.3', title: 'Blocked by external API', status: 'open', type: 'task', priority: 2,
-        parent: 'test-ep1', updated: staleTimestamp, blocked: true, blockedBy: ['test-ep1.2'],
-      },
-      {
-        id: 'test-ep1.4', title: 'Completed feature', status: 'closed', type: 'feature', priority: 3,
-        parent: 'test-ep1', updated: staleTimestamp, blocked: false,
+        parent: 'test-ep1', updated: staleTimestamp, blocked: true, blockedBy: ['test-ep1.2'], linked: true,
       },
       // A second epic with a shape worth drawing: two chains that block
       // nothing of each other's, and one Bead that waits for both to finish.
       // The Flow view has three waves and two lanes to lay out from these.
       {
         id: 'test-ep2', title: 'Ship the reading room', status: 'open', type: 'epic', priority: 1,
-        updated: freshTimestamp, acceptance: 'A page opens where it was found', blocked: false,
+        updated: freshTimestamp, acceptance: 'A page opens where it was found', blocked: false, linked: true,
       },
       {
         id: 'test-ep2.1', title: 'Measure the shelves', status: 'open', type: 'task', priority: 2,
-        parent: 'test-ep2', updated: freshTimestamp, blocked: false,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: false, linked: true,
       },
       {
         id: 'test-ep2.2', title: 'Draw the shelves', status: 'in_progress', type: 'feature', priority: 2,
-        parent: 'test-ep2', updated: freshTimestamp, blocked: false,
+        parent: 'test-ep2', updated: freshTimestamp, blocked: false, linked: true,
       },
       {
         id: 'test-ep2.3', title: 'Index the pages', status: 'open', type: 'task', priority: 2,
-        parent: 'test-ep2', updated: freshTimestamp, blocked: true, blockedBy: ['test-ep2.1'],
+        parent: 'test-ep2', updated: freshTimestamp, blocked: true, blockedBy: ['test-ep2.1'], linked: true,
       },
       {
         id: 'test-ep2.4', title: 'Search the index', status: 'open', type: 'feature', priority: 2,
-        parent: 'test-ep2', updated: freshTimestamp, blocked: true, blockedBy: ['test-ep2.2'],
+        parent: 'test-ep2', updated: freshTimestamp, blocked: true, blockedBy: ['test-ep2.2'], linked: true,
       },
       {
         id: 'test-ep2.5', title: 'Open a page from a search', status: 'open', type: 'feature', priority: 1,
-        parent: 'test-ep2', updated: freshTimestamp, blocked: true, blockedBy: ['test-ep2.3', 'test-ep2.4'],
+        parent: 'test-ep2', updated: freshTimestamp, blocked: true, blockedBy: ['test-ep2.3', 'test-ep2.4'], linked: true,
       },
-      // Finished work keeps its place in the first wave: the server drops a
-      // closed blocker from every blockedBy, so nothing waits on it any more.
       {
-        id: 'test-ep2.6', title: 'Choose the shelf order', status: 'closed', type: 'decision', priority: 3,
-        parent: 'test-ep2', updated: freshTimestamp, blocked: false,
+        id: 'test-alone', title: 'Unlinked note', status: 'open', type: 'task', priority: 3,
+        updated: freshTimestamp, blocked: false, linked: false,
       },
     ],
   }
+}
+
+export const mockOtherBeadsWork = {
+  success: true,
+  timestamp: new Date().toISOString(),
+  data: {
+    prefix: 'other',
+    projectPath: '/code/another-project',
+    beads: [
+      {
+        id: 'other-a', title: 'Prepare loose work', status: 'open', type: 'task', priority: 1,
+        updated: freshTimestamp, blocked: false, linked: true,
+      },
+      {
+        id: 'other-b', title: 'Finish loose work', status: 'open', type: 'task', priority: 2,
+        updated: freshTimestamp, blocked: true, blockedBy: ['other-a'], linked: true,
+      },
+    ],
+  },
 }
 
 export const mockBeadsDetail = {
@@ -106,6 +119,150 @@ export const mockBeadsDetail = {
       blocks: [{ id: 'test-ep1.3', title: 'Blocked by external API', status: 'open', type: 'task', priority: 2 }],
     },
   }
+}
+
+export const mockClosedBeadsWork = {
+  success: true,
+  timestamp: new Date().toISOString(),
+  data: {
+    prefix: 'test',
+    projectPath: '/code/test-project',
+    beads: [
+      {
+        id: 'test-ep1.4', title: 'Completed feature', status: 'closed', type: 'feature', priority: 3,
+        parent: 'test-ep1', updated: freshTimestamp, blocked: false, linked: true,
+      },
+      {
+        id: 'test-ep2.6', title: 'Choose the shelf order', status: 'closed', type: 'decision', priority: 3,
+        parent: 'test-ep2', updated: staleTimestamp, blocked: false, linked: true,
+      },
+    ],
+  },
+}
+
+export const mockQuietClosedBeadsWork = {
+  success: true,
+  timestamp: new Date().toISOString(),
+  data: {
+    prefix: 'quiet',
+    projectPath: '/code/quiet-project',
+    beads: [
+      {
+        id: 'quiet-done', title: 'Archived quiet-store task', status: 'closed', type: 'task', priority: 2,
+        updated: staleTimestamp, blocked: false, linked: false,
+      },
+    ],
+  },
+}
+
+type MockBead = Record<string, unknown> & {
+  id: string
+  title: string
+  status: string
+  priority: number
+  type?: string
+  parent?: string
+  blockedBy?: string[]
+}
+
+function mockBeadLink(row: MockBead) {
+  return { id: row.id, title: row.title, status: row.status, type: row.type, priority: row.priority }
+}
+
+function mockBeadDetailFor(path: string, id: string) {
+  const open = path === '/code/test-project'
+    ? mockBeadsWork.data.beads
+    : path === '/code/another-project' ? mockOtherBeadsWork.data.beads : []
+  const closed = path === '/code/test-project'
+    ? mockClosedBeadsWork.data.beads
+    : path === '/code/quiet-project' ? mockQuietClosedBeadsWork.data.beads : []
+  const rows = [...open, ...closed] as MockBead[]
+  const row = rows.find(candidate => candidate.id === id)
+  if (!row) return mockBeadsDetail
+  const find = (linkedId: string) => rows.find(candidate => candidate.id === linkedId)
+  const parents = row.parent ? [find(row.parent)].filter((candidate): candidate is MockBead => candidate !== undefined) : []
+  const children = rows.filter(candidate => candidate.parent === row.id)
+  const blockedBy = (row.blockedBy ?? []).map(find).filter((candidate): candidate is MockBead => candidate !== undefined)
+  const blocks = rows.filter(candidate => candidate.blockedBy?.includes(row.id))
+  const cardCopy = row.id === 'test-ep1.1' ? {
+    description: 'The login form drops the session. Follows test-ep1.2.',
+    acceptance: 'A login survives a reload.',
+    notes: 'Reported from a terminal.',
+    created: freshTimestamp,
+  } : {}
+  return {
+    success: true,
+    timestamp: new Date().toISOString(),
+    data: {
+      projectPath: path,
+      bead: {
+        ...row,
+        ...cardCopy,
+        parents: parents.map(mockBeadLink),
+        children: children.map(mockBeadLink),
+        blockedBy: blockedBy.map(mockBeadLink),
+        blocks: blocks.map(mockBeadLink),
+      },
+    },
+  }
+}
+
+export const mockFormulaList = {
+  success: true,
+  timestamp: new Date().toISOString(),
+  data: {
+    projectPath: '/code/test-project',
+    formulas: [{
+      name: 'release', type: 'workflow', description: 'Build and ship a release',
+      source: '/code/test-project/.beads/formulas/release.formula.toml', steps: 2, vars: 1,
+    }],
+  },
+}
+
+export const mockFormulaDetail = {
+  success: true,
+  timestamp: new Date().toISOString(),
+  data: {
+    projectPath: '/code/test-project',
+    formula: {
+      formula: 'release', type: 'workflow', description: 'Build and ship a release',
+      source: '/code/test-project/.beads/formulas/release.formula.toml',
+      vars: { target: { required: true, description: 'Release target' } },
+      steps: [
+        { id: 'build', title: 'Build the dashboard' },
+        { id: 'ship', title: 'Ship the dashboard', depends_on: ['build'] },
+      ],
+    },
+  },
+}
+
+export const mockMoleculeList = {
+  success: true,
+  timestamp: new Date().toISOString(),
+  data: {
+    projectPath: '/code/test-project',
+    molecules: [
+      { id: 'test-proto', title: 'Release template', status: 'open', issue_type: 'molecule', is_template: true },
+      { id: 'test-release', title: 'September release', status: 'in_progress', issue_type: 'molecule', is_template: false, source_formula: 'release' },
+    ],
+  },
+}
+
+export const mockMoleculeDetail = {
+  success: true,
+  timestamp: new Date().toISOString(),
+  data: {
+    projectPath: '/code/test-project',
+    molecule: {
+      root: { id: 'test-release', title: 'September release', status: 'in_progress', source_formula: 'release' },
+      issues: [
+        { id: 'test-release.1', title: 'Build the dashboard', status: 'closed' },
+        { id: 'test-release.2', title: 'Ship the dashboard', status: 'open' },
+      ],
+      dependencies: [{ issue_id: 'test-release.2', depends_on_id: 'test-release.1', type: 'blocks' }],
+      variables: { target: 'production' },
+    },
+  },
 }
 
 export const mockSystemStatus = {
@@ -179,11 +336,24 @@ export const mockWorkspaces = [
     sources: ['git', 'store'],
     sessions: [],
     beadsPrefix: 'other',
+    openBeads: 2,
+    instructions: 0,
+    beadsCounts: {
+      status: { open: 1, inProgress: 0, blocked: 1, closed: 3, deferred: 0 },
+      type: { epic: 0, task: 3, bug: 0, feature: 0, decision: 0, chore: 0 },
+    },
+    beadsNewestUpdate: freshTimestamp,
+  },
+  {
+    path: '/code/quiet-project',
+    sources: ['store'],
+    sessions: [],
+    beadsPrefix: 'quiet',
     openBeads: 0,
     instructions: 0,
     beadsCounts: {
-      status: { open: 0, inProgress: 0, blocked: 0, closed: 3, deferred: 0 },
-      type: { epic: 0, task: 3, bug: 0, feature: 0, decision: 0, chore: 0 },
+      status: { open: 0, inProgress: 0, blocked: 0, closed: 1, deferred: 0 },
+      type: { epic: 0, task: 1, bug: 0, feature: 0, decision: 0, chore: 0 },
     },
     beadsNewestUpdate: freshTimestamp,
   },
@@ -513,6 +683,7 @@ export async function mockBeadsApiRoutes(page: Page, options?: {
   projectsResponse?: object
   workResponse?: object
   beadResponse?: object
+  onClosedRequest?: (path: string) => void
 }) {
   // mockApiRoutes already serves the project map, because every terminal asks
   // for it to link the ids in its output. Playwright answers with the most
@@ -524,19 +695,60 @@ export async function mockBeadsApiRoutes(page: Page, options?: {
   // sum of stores rather than the same rows twice.
   await page.route('**/api/beads/work**', async route => {
     const path = new URL(route.request().url()).searchParams.get('path')
-    const empty = { success: true, timestamp: new Date().toISOString(), data: { prefix: 'other', projectPath: path, beads: [] } }
+    const empty = { success: true, timestamp: new Date().toISOString(), data: { prefix: '', projectPath: path, beads: [] } }
+    const work = path === '/code/test-project'
+      ? mockBeadsWork
+      : path === '/code/another-project' ? mockOtherBeadsWork : empty
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(options?.workResponse ?? (path === '/code/test-project' ? mockBeadsWork : empty)),
+      body: JSON.stringify(options?.workResponse ?? work),
     })
   })
 
   await page.route('**/api/beads/issue**', async route => {
+    const url = new URL(route.request().url())
+    const path = url.searchParams.get('path') ?? ''
+    const id = url.searchParams.get('id') ?? ''
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(options?.beadResponse ?? mockBeadsDetail),
+      body: JSON.stringify(options?.beadResponse ?? mockBeadDetailFor(path, id)),
+    })
+  })
+
+  await page.route(/\/api\/beads\/closed(?:\?.*)?$/, async route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? ''
+    options?.onClosedRequest?.(path)
+    const empty = { success: true, timestamp: new Date().toISOString(), data: { prefix: '', projectPath: path, beads: [] } }
+    const answer = path === '/code/test-project'
+      ? mockClosedBeadsWork
+      : path === '/code/quiet-project' ? mockQuietClosedBeadsWork : empty
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(answer) })
+  })
+
+  await page.route(/\/api\/beads\/formula(?:\?.*)?$/, async route => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mockFormulaDetail) })
+  })
+  await page.route(/\/api\/beads\/formulas(?:\?.*)?$/, async route => {
+    const path = new URL(route.request().url()).searchParams.get('path')
+    const empty = { success: true, timestamp: new Date().toISOString(), data: { projectPath: path, formulas: [] } }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(path === '/code/test-project' ? mockFormulaList : empty),
+    })
+  })
+  await page.route(/\/api\/beads\/molecule(?:\?.*)?$/, async route => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mockMoleculeDetail) })
+  })
+  await page.route(/\/api\/beads\/molecules(?:\?.*)?$/, async route => {
+    const path = new URL(route.request().url()).searchParams.get('path')
+    const empty = { success: true, timestamp: new Date().toISOString(), data: { projectPath: path, molecules: [] } }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(path === '/code/test-project' ? mockMoleculeList : empty),
     })
   })
 }

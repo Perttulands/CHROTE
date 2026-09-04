@@ -119,6 +119,52 @@ export function flowEpics(rows: readonly WorkRow[]): WorkRow[] {
   return rows.filter(row => row.type === 'epic').slice().sort(byPriorityThenId)
 }
 
+/**
+ * Every Bead joined to a target by a parent or blocking relationship. This is
+ * the graph an explicit Open in Flow request uses when the target does not sit
+ * neatly inside the epic currently selected in the picker.
+ */
+export function flowComponent(rows: readonly WorkRow[], target: WorkRow): WorkRow[] {
+  const inStore = rows.filter(row => row.projectPath === target.projectPath)
+  const byID = new Map(inStore.map(row => [row.id, row]))
+  if (!byID.has(target.id)) return []
+
+  const neighbours = new Map(inStore.map(row => [row.id, new Set<string>()]))
+  const join = (left: string, right: string) => {
+    if (!byID.has(left) || !byID.has(right)) return
+    neighbours.get(left)?.add(right)
+    neighbours.get(right)?.add(left)
+  }
+  inStore.forEach(row => {
+    if (row.parent) join(row.id, row.parent)
+    row.blockedBy?.forEach(blocker => join(row.id, blocker))
+  })
+
+  const found: WorkRow[] = []
+  const queued = [target.id]
+  const seen = new Set(queued)
+  while (queued.length > 0) {
+    const id = queued.shift() as string
+    const row = byID.get(id)
+    if (row) found.push(row)
+    ;[...(neighbours.get(id) ?? [])].sort().forEach(next => {
+      if (seen.has(next)) return
+      seen.add(next)
+      queued.push(next)
+    })
+  }
+  return found.sort(byPriorityThenId)
+}
+
+export function hasFlowLinks(rows: readonly WorkRow[], target: WorkRow): boolean {
+  return flowComponent(rows, target).length > 1
+}
+
+/** Stable identity for an explicitly constructed connected component. */
+export function flowComponentKey(rows: readonly WorkRow[]): string {
+  return rows.map(row => row.id).sort().join('\u0000')
+}
+
 function edgeName(from: string, to: string): string {
   return `${from}\u0000${to}`
 }
@@ -133,8 +179,7 @@ function edgeName(from: string, to: string): string {
  * so the band behind them is one rectangle, and then priority and id order
  * them, which is the order every other Beads view uses.
  */
-export function layoutFlow(rows: readonly WorkRow[], epic: WorkRow): FlowGraph {
-  const members = flowMembers(rows, epic)
+function layoutMembers(members: readonly WorkRow[], bandRootId?: string): FlowGraph {
   if (members.length === 0) return EMPTY_FLOW
 
   const order = members.slice().sort(byPriorityThenId)
@@ -222,7 +267,7 @@ export function layoutFlow(rows: readonly WorkRow[], epic: WorkRow): FlowGraph {
   const held = new Map<string, FlowNode[]>()
   nodes.forEach(node => {
     const parent = node.row.parent
-    if (!parent || parent === epic.id) return
+    if (!parent || parent === bandRootId) return
     const group = held.get(parent) ?? []
     group.push(node)
     held.set(parent, group)
@@ -253,6 +298,15 @@ export function layoutFlow(rows: readonly WorkRow[], epic: WorkRow): FlowGraph {
     width: PADDING * 2 + waves * NODE_WIDTH + (waves - 1) * COLUMN_GAP,
     height: PADDING * 2 + lanes * NODE_HEIGHT + (lanes - 1) * LANE_GAP,
   }
+}
+
+export function layoutFlow(rows: readonly WorkRow[], epic: WorkRow): FlowGraph {
+  return layoutMembers(flowMembers(rows, epic), epic.id)
+}
+
+/** A one-off flow built around an explicitly requested linked Bead. */
+export function layoutFlowComponent(rows: readonly WorkRow[], target: WorkRow): FlowGraph {
+  return layoutMembers(flowComponent(rows, target))
 }
 
 /** The middle of a node, which is what a click brings to the middle of the box. */

@@ -14,6 +14,7 @@ function row(overrides: Partial<WorkRow> & { id: string }): WorkRow {
     status: 'open',
     priority: 1,
     blocked: false,
+    linked: false,
     projectPath: '/srv/chrote',
     projectName: 'chrote',
     ...overrides,

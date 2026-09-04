@@ -110,7 +110,7 @@ export function getTerminalUserInitial(user: LaunchUser): string {
 }
 
 // User settings for persistent configuration
-export type BeadsViewSetting = 'map' | 'ready' | 'flow' | 'stale'
+export type BeadsViewSetting = 'map' | 'ready' | 'flow' | 'stale' | 'closed'
 
 export interface UserSettings {
   terminalMode: 'tmux'              // Terminal mode (tmux only)

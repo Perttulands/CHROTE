@@ -328,12 +328,13 @@ func decodeBeadsData(t *testing.T, rec *httptest.ResponseRecorder) map[string]in
 
 func TestBeadPrefixReadsTheProjectOutOfAnID(t *testing.T) {
 	cases := map[string]string{
-		"chrote-5grx":    "chrote",
-		"chrote-5grx.15": "chrote",
-		"ctx-t4ak":       "ctx",
-		"ctx-t4ak.1.2":   "ctx",
-		"nothing":        "",
-		"chrote-":        "",
+		"chrote-5grx":     "chrote",
+		"chrote-5grx.15":  "chrote",
+		"chrote-df247db5": "chrote",
+		"ctx-t4ak":        "ctx",
+		"ctx-t4ak.1.2":    "ctx",
+		"nothing":         "",
+		"chrote-":         "",
 	}
 	for id, want := range cases {
 		if got := beadPrefix(id); got != want {
@@ -342,7 +343,34 @@ func TestBeadPrefixReadsTheProjectOutOfAnID(t *testing.T) {
 	}
 }
 
-// Neither read route runs bd against a directory that is not a workspace. No
+func TestBeadsHandler_WorkTreatsAnAbsentEightCharacterSameStoreBlockerAsFinished(t *testing.T) {
+	rootDir := t.TempDir()
+	projectPath := filepath.Join(rootDir, "project")
+	makeValidBeadsWorkspace(t, projectPath)
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	work := `[{"_type":"issue","id":"chrote-5grx","title":"Ready after legacy blocker closed","status":"open","issue_type":"task","priority":1,"dependencies":[{"depends_on_id":"chrote-df247db5","type":"blocks"}]}]`
+	_, argsPath := makeSequencedBdCommand(t, work)
+
+	rec := httptest.NewRecorder()
+	NewBeadsHandler().Work(rec, httptest.NewRequest(http.MethodGet, "/api/beads/work?path="+projectPath, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Work status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if calls := readSequencedBdCalls(t, argsPath); !reflect.DeepEqual(calls, []string{"--json list --status open,in_progress,blocked,deferred --all"}) {
+		t.Fatalf("bd calls = %#v, want the unchanged unfinished command", calls)
+	}
+	rows := decodeBeadsData(t, rec)["beads"].([]interface{})
+	row := rows[0].(map[string]interface{})
+	if row["blocked"] != false {
+		t.Errorf("blocked = %v, want false for absent same-store blocker chrote-df247db5: %s", row["blocked"], rec.Body.String())
+	}
+	if blockers, present := row["blockedBy"]; present {
+		t.Errorf("blockedBy = %v, want no active blockers: %s", blockers, rec.Body.String())
+	}
+}
+
+// No read route runs bd against a directory that is not a workspace. No
 // fake bd is installed on purpose: if either route reached for a command, it
 // would find the operator's real bd and read a store the request never named.
 func TestBeadsHandler_ReadRoutesRejectAnInvalidWorkspaceBeforeRunningBd(t *testing.T) {
@@ -361,7 +389,12 @@ func TestBeadsHandler_ReadRoutesRejectAnInvalidWorkspaceBeforeRunningBd(t *testi
 		call func(http.ResponseWriter, *http.Request)
 	}{
 		{name: "work", path: "/api/beads/work?path=" + partialProject, call: handler.Work},
+		{name: "closed", path: "/api/beads/closed?path=" + partialProject, call: handler.ClosedWork},
 		{name: "issue detail", path: "/api/beads/issue?path=" + partialProject + "&id=test-1", call: handler.IssueDetail},
+		{name: "formulas", path: "/api/beads/formulas?path=" + partialProject, call: handler.Formulas},
+		{name: "formula detail", path: "/api/beads/formula?path=" + partialProject + "&name=test", call: handler.FormulaDetail},
+		{name: "molecules", path: "/api/beads/molecules?path=" + partialProject, call: handler.Molecules},
+		{name: "molecule detail", path: "/api/beads/molecule?path=" + partialProject + "&id=test-1", call: handler.MoleculeDetail},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -395,7 +428,7 @@ func TestBeadsHandler_WorkReportsMissingWorkspaceAsNotFound(t *testing.T) {
 	}
 }
 
-func TestBeadsHandler_WorkKeepsOpenWorkAndTheFinishedChildrenOfOpenEpics(t *testing.T) {
+func TestBeadsHandler_WorkLoadsOnlyUnfinishedWorkAndResolvesMissingSameStoreBlockers(t *testing.T) {
 	rootDir := t.TempDir()
 	projectPath := filepath.Join(rootDir, "project")
 	makeValidBeadsWorkspace(t, projectPath)
@@ -404,17 +437,18 @@ func TestBeadsHandler_WorkKeepsOpenWorkAndTheFinishedChildrenOfOpenEpics(t *test
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
 	work := `[
 		{"_type":"issue","id":"test-ep1","title":"Epic","status":"open","issue_type":"epic","priority":1,
-		 "acceptance_criteria":"Everything under it is done","updated_at":"2026-09-01T00:00:00Z"},
+		 "acceptance_criteria":"Everything under it is done","updated_at":"2026-09-01T00:00:00Z","dependent_count":1},
 		{"_type":"issue","id":"test-ep1.1","title":"Blocked child","status":"open","issue_type":"task","priority":1,
 		 "parent":"test-ep1","updated_at":"2026-09-02T00:00:00Z",
 		 "dependencies":[{"depends_on_id":"test-ep1","type":"parent-child"},
 		                 {"depends_on_id":"test-ep1.2","type":"blocks"},
-		                 {"depends_on_id":"test-done","type":"blocks"}]},
+		                 {"depends_on_id":"test-done","type":"blocks"},
+		                 {"depends_on_id":"other-far","type":"blocks"}]},
 		{"_type":"issue","id":"test-ep1.2","title":"Open blocker","status":"in_progress","issue_type":"task","priority":2,
-		 "parent":"test-ep1","updated_at":"2026-09-03T00:00:00Z","defer_until":"2099-01-01T00:00:00Z"},
-		{"_type":"issue","id":"test-ep1.3","title":"Finished child","status":"closed","issue_type":"task","priority":2,
-		 "parent":"test-ep1","updated_at":"2026-08-01T00:00:00Z"},
-		{"_type":"issue","id":"test-done","title":"Finished elsewhere","status":"closed","issue_type":"task","priority":2}
+		 "parent":"test-ep1","updated_at":"2026-09-03T00:00:00Z","defer_until":"2099-01-01T00:00:00Z","dependency_count":1},
+		{"_type":"issue","id":"test-orphan","title":"Orphan","status":"open","issue_type":"task","priority":3},
+		{"_type":"issue","id":"test-ep1.3","title":"Closed child","status":"closed","issue_type":"task","priority":2,
+		 "parent":"test-ep1","updated_at":"2026-09-01T00:00:00Z"}
 	]`
 	_, argsPath := makeSequencedBdCommand(t, work)
 
@@ -426,8 +460,8 @@ func TestBeadsHandler_WorkKeepsOpenWorkAndTheFinishedChildrenOfOpenEpics(t *test
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Work status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 1 || calls[0] != "--json list --status all --limit 0" {
-		t.Fatalf("bd calls = %#v, want one full list", calls)
+	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 1 || calls[0] != "--json list --status open,in_progress,blocked,deferred --all" {
+		t.Fatalf("bd calls = %#v, want one complete unfinished list", calls)
 	}
 
 	data := decodeBeadsData(t, rec)
@@ -446,11 +480,8 @@ func TestBeadsHandler_WorkKeepsOpenWorkAndTheFinishedChildrenOfOpenEpics(t *test
 		}
 		byID[bead["id"].(string)] = bead
 	}
-	if _, unwanted := byID["test-done"]; unwanted {
-		t.Errorf("a closed Bead outside an open epic is in the map: %s", rec.Body.String())
-	}
-	if _, wanted := byID["test-ep1.3"]; !wanted {
-		t.Errorf("the finished child of an open epic is missing: %s", rec.Body.String())
+	if len(byID) != 4 {
+		t.Errorf("work rows = %d, want only the four unfinished rows: %s", len(byID), rec.Body.String())
 	}
 	if got := byID["test-ep1"]["acceptance"]; got != "Everything under it is done" {
 		t.Errorf("epic acceptance = %v, want its criteria", got)
@@ -465,14 +496,188 @@ func TestBeadsHandler_WorkKeepsOpenWorkAndTheFinishedChildrenOfOpenEpics(t *test
 	if blocked["blocked"] != true {
 		t.Errorf("blocked = %v, want true for a Bead waiting on open work", blocked["blocked"])
 	}
-	if got := blocked["blockedBy"]; !reflect.DeepEqual(got, []interface{}{"test-ep1.2"}) {
-		t.Errorf("blockedBy = %#v, want only the blocker that is still open", got)
+	if got := blocked["blockedBy"]; !reflect.DeepEqual(got, []interface{}{"test-ep1.2", "other-far"}) {
+		t.Errorf("blockedBy = %#v, want the present unfinished blocker and absent foreign-store blocker", got)
 	}
 	if got := blocked["parent"]; got != "test-ep1" {
 		t.Errorf("parent = %v, want test-ep1", got)
 	}
 	if got := blocked["updated"]; got != "2026-09-02T00:00:00Z" {
 		t.Errorf("updated = %v, want the bd timestamp", got)
+	}
+	if byID["test-orphan"]["linked"] != false {
+		t.Errorf("orphan linked = %v, want false", byID["test-orphan"]["linked"])
+	}
+	for _, id := range []string{"test-ep1", "test-ep1.1", "test-ep1.2"} {
+		if byID[id]["linked"] != true {
+			t.Errorf("%s linked = %v, want true", id, byID[id]["linked"])
+		}
+	}
+}
+
+func TestBeadsHandler_ClosedWorkLoadsLazilyAndFiltersFinishedStatuses(t *testing.T) {
+	rootDir := t.TempDir()
+	projectPath := filepath.Join(rootDir, "project")
+	makeValidBeadsWorkspace(t, projectPath)
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	all := `[
+		{"_type":"issue","id":"test-open","title":"Still open","status":"open","issue_type":"task","priority":1},
+		{"_type":"issue","id":"test-closed","title":"Closed orphan","status":"closed","issue_type":"task","priority":2,"updated_at":"2026-09-03T00:00:00Z"},
+		{"_type":"issue","id":"test-wont","title":"Won't fix","status":"wont_fix","issue_type":"bug","priority":3,"updated_at":"2026-09-04T00:00:00Z","dependency_count":1},
+		{"_type":"issue","id":"test-dup","title":"Duplicate","status":"duplicate","issue_type":"epic","priority":1,"acceptance_criteria":"Historical context","updated_at":"2026-09-02T00:00:00Z","dependent_count":1},
+		{"_type":"issue","id":"test-child","title":"Closed child","status":"closed","issue_type":"task","priority":2,"parent":"test-dup","updated_at":"2026-09-01T00:00:00Z"}
+	]`
+	_, argsPath := makeSequencedBdCommand(t, all)
+
+	rec := httptest.NewRecorder()
+	NewBeadsHandler().ClosedWork(rec, httptest.NewRequest(http.MethodGet, "/api/beads/closed?path="+projectPath, nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ClosedWork status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if calls := readSequencedBdCalls(t, argsPath); !reflect.DeepEqual(calls, []string{"--json list --status all --all"}) {
+		t.Fatalf("bd calls = %#v, want the lazy finished-work command", calls)
+	}
+	data := decodeBeadsData(t, rec)
+	rows := data["beads"].([]interface{})
+	if len(rows) != 4 {
+		t.Fatalf("closed rows = %d, want 4 finished rows: %s", len(rows), rec.Body.String())
+	}
+	gotIDs := make([]string, 0, len(rows))
+	for _, item := range rows {
+		gotIDs = append(gotIDs, item.(map[string]interface{})["id"].(string))
+	}
+	if want := []string{"test-wont", "test-closed", "test-dup", "test-child"}; !reflect.DeepEqual(gotIDs, want) {
+		t.Errorf("closed order = %v, want newest first %v", gotIDs, want)
+	}
+	if got := rows[2].(map[string]interface{})["acceptance"]; got != "Historical context" {
+		t.Errorf("closed epic acceptance = %v, want Historical context", got)
+	}
+	linkedByID := make(map[string]bool, len(rows))
+	for _, item := range rows {
+		row := item.(map[string]interface{})
+		linkedByID[row["id"].(string)] = row["linked"].(bool)
+	}
+	if linkedByID["test-closed"] {
+		t.Error("closed orphan is linked, want false")
+	}
+	for _, id := range []string{"test-wont", "test-dup", "test-child"} {
+		if !linkedByID[id] {
+			t.Errorf("%s is not linked, want true", id)
+		}
+	}
+}
+
+func TestBeadsHandler_FormulaAndMoleculeRoutesPreserveCLIDataAndExactCommands(t *testing.T) {
+	rootDir := t.TempDir()
+	projectPath := filepath.Join(rootDir, "project")
+	makeValidBeadsWorkspace(t, projectPath)
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	formulaSource := filepath.Join(projectPath, ".beads", "formulas", "release.formula.toml")
+	formulaList := fmt.Sprintf(`[{"name":"release","type":"workflow","description":"Ship it","source":%q,"steps":2,"vars":1}]`, formulaSource)
+	formulaDetail := fmt.Sprintf(`{"formula":"release","type":"workflow","description":"Ship it","source":%q,"vars":{"target":{"required":true}},"steps":[{"id":"build","title":"Build"},{"id":"ship","title":"Ship","depends_on":["build"]}]}`, formulaSource)
+	moleculeList := `[{"_type":"issue","id":"test-proto","title":"Release template","status":"open","issue_type":"molecule","metadata":{"template":true}},{"_type":"issue","id":"test-mol","title":"Release run","status":"in_progress","issue_type":"molecule","source_formula":"release"}]`
+	moleculeDetail := `{"root":{"id":"test-mol","title":"Release run","status":"in_progress","source_formula":"release"},"issues":[{"id":"test-mol.1","title":"Build","status":"closed"},{"id":"test-mol.2","title":"Ship","status":"open"}],"dependencies":[{"issue_id":"test-mol.2","depends_on_id":"test-mol.1","type":"blocks"}],"variables":{"target":"prod"}}`
+	_, argsPath := makeSequencedBdCommand(t, formulaList, formulaDetail, moleculeList, moleculeDetail)
+	handler := NewBeadsHandler()
+
+	cases := []struct {
+		path string
+		call func(http.ResponseWriter, *http.Request)
+		key  string
+	}{
+		{path: "/api/beads/formulas?path=" + projectPath, call: handler.Formulas, key: "formulas"},
+		{path: "/api/beads/formula?path=" + projectPath + "&name=release", call: handler.FormulaDetail, key: "formula"},
+		{path: "/api/beads/molecules?path=" + projectPath, call: handler.Molecules, key: "molecules"},
+		{path: "/api/beads/molecule?path=" + projectPath + "&id=test-mol", call: handler.MoleculeDetail, key: "molecule"},
+	}
+	var data []map[string]interface{}
+	for _, testCase := range cases {
+		rec := httptest.NewRecorder()
+		testCase.call(rec, httptest.NewRequest(http.MethodGet, testCase.path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want %d: %s", testCase.path, rec.Code, http.StatusOK, rec.Body.String())
+		}
+		decoded := decodeBeadsData(t, rec)
+		if decoded[testCase.key] == nil {
+			t.Fatalf("%s has no %s: %s", testCase.path, testCase.key, rec.Body.String())
+		}
+		data = append(data, decoded)
+	}
+
+	wantCalls := []string{
+		"--json formula list",
+		"--json formula show release",
+		"--json list --type molecule --all --include-templates",
+		"--json mol show test-mol",
+	}
+	if calls := readSequencedBdCalls(t, argsPath); !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("bd calls = %#v, want %#v", calls, wantCalls)
+	}
+	listedFormula := data[0]["formulas"].([]interface{})[0].(map[string]interface{})
+	if listedFormula["source"] != formulaSource {
+		t.Errorf("formula list source = %v, want %s", listedFormula["source"], formulaSource)
+	}
+	shownFormula := data[1]["formula"].(map[string]interface{})
+	if shownFormula["source"] != formulaSource || len(shownFormula["steps"].([]interface{})) != 2 {
+		t.Errorf("formula detail lost provenance or steps: %#v", shownFormula)
+	}
+	shownMolecule := data[3]["molecule"].(map[string]interface{})
+	if shownMolecule["variables"].(map[string]interface{})["target"] != "prod" || len(shownMolecule["dependencies"].([]interface{})) != 1 {
+		t.Errorf("molecule detail lost state or dependencies: %#v", shownMolecule)
+	}
+}
+
+func TestBeadsHandler_FormulasTurnsNullIntoAnEmptyList(t *testing.T) {
+	rootDir := t.TempDir()
+	projectPath := filepath.Join(rootDir, "project")
+	makeValidBeadsWorkspace(t, projectPath)
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	makeSequencedBdCommand(t, "null")
+
+	rec := httptest.NewRecorder()
+	NewBeadsHandler().Formulas(rec, httptest.NewRequest(http.MethodGet, "/api/beads/formulas?path="+projectPath, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Formulas status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if formulas := decodeBeadsData(t, rec)["formulas"].([]interface{}); len(formulas) != 0 {
+		t.Fatalf("formulas = %#v, want empty list", formulas)
+	}
+}
+
+func TestBeadsHandler_FormulasReportsAnUnreadableProjectRegistryInsteadOfEmpty(t *testing.T) {
+	projectPath := os.Getenv("CHROTE_BEADS_PERMISSION_PROJECT")
+	if projectPath == "" {
+		projectPath = makeBeadsPermissionProject(t)
+		formulaDir := filepath.Join(projectPath, ".beads", "formulas")
+		if err := os.MkdirAll(formulaDir, 0o700); err != nil {
+			t.Fatalf("create formula registry: %v", err)
+		}
+		fakeBd := filepath.Join(projectPath, "bd-null")
+		if err := os.WriteFile(fakeBd, []byte("#!/bin/sh\nprintf 'null'\n"), 0o755); err != nil {
+			t.Fatalf("write fake bd: %v", err)
+		}
+		t.Setenv("CHROTE_BD_COMMAND", fakeBd)
+		if err := os.Chmod(formulaDir, 0); err != nil {
+			t.Fatalf("make formula registry unreadable: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(formulaDir, 0o700) })
+	}
+	if !runBeadsPermissionSubprocess(t, projectPath) {
+		return
+	}
+
+	rec := httptest.NewRecorder()
+	NewBeadsHandler().Formulas(rec, httptest.NewRequest(http.MethodGet, "/api/beads/formulas?path="+projectPath, nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Formulas status = %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	formulaDir := filepath.Join(projectPath, ".beads", "formulas")
+	if body := rec.Body.String(); !strings.Contains(body, formulaDir) || !strings.Contains(body, "permission denied") || !strings.Contains(body, effectiveUsername()) {
+		t.Errorf("Formulas did not identify the unreadable registry, user, and cause: %s", body)
 	}
 }
 
@@ -672,7 +877,12 @@ func TestBeadsHandler_UnreadableWorkspaceReportsPermissionRatherThanAbsence(t *t
 		call func(http.ResponseWriter, *http.Request)
 	}{
 		{name: "work", path: "/api/beads/work?path=" + project, call: handler.Work},
+		{name: "closed", path: "/api/beads/closed?path=" + project, call: handler.ClosedWork},
 		{name: "issue detail", path: "/api/beads/issue?path=" + project + "&id=test-1", call: handler.IssueDetail},
+		{name: "formulas", path: "/api/beads/formulas?path=" + project, call: handler.Formulas},
+		{name: "formula detail", path: "/api/beads/formula?path=" + project + "&name=test", call: handler.FormulaDetail},
+		{name: "molecules", path: "/api/beads/molecules?path=" + project, call: handler.Molecules},
+		{name: "molecule detail", path: "/api/beads/molecule?path=" + project + "&id=test-1", call: handler.MoleculeDetail},
 	}
 	for _, route := range readRoutes {
 		t.Run(route.name, func(t *testing.T) {

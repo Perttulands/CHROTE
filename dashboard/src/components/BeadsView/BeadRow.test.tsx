@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import BeadRow from './BeadRow'
+import { FlowNavigationProvider } from './FlowNavigation'
 import { resetBeadCardForTest, useBeadCardRequest } from '../../beads/beadCard'
 import type { WorkRow } from '../../beads/beadsTree'
 
@@ -23,7 +24,7 @@ vi.mock('../../utils/clipboard', () => ({
 }))
 
 function row(id: string, title: string): WorkRow {
-  return { id, title, status: 'open', type: 'task', priority: 1, blocked: false, projectPath: '/srv/chrote', projectName: 'chrote' }
+  return { id, title, status: 'open', type: 'task', priority: 1, blocked: false, linked: false, projectPath: '/srv/chrote', projectName: 'chrote' }
 }
 
 function fold(expanded: boolean, count = 1) {
@@ -116,7 +117,7 @@ describe('a Bead row', () => {
     )
 
     fireEvent.contextMenu(screen.getByText('The epic'))
-    expect(menuItems()).toEqual(['Open', 'Send', 'Copy id', 'Copy id and title', 'Expand all', 'Collapse all'])
+    expect(menuItems()).toEqual(['Open', 'Open in FlowNo linked work', 'Send', 'Copy id', 'Copy id and title', 'Expand all', 'Collapse all'])
     expect(screen.getByRole('menuitem', { name: 'Send' })).toHaveAttribute('aria-keyshortcuts', 'Alt+S')
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Collapse all' }))
@@ -124,7 +125,7 @@ describe('a Bead row', () => {
     expect(screen.queryByRole('menu')).toBeNull()
 
     fireEvent.contextMenu(screen.getByText('A child'))
-    expect(menuItems()).toEqual(['Open', 'Send', 'Copy id', 'Copy id and title'])
+    expect(menuItems()).toEqual(['Open', 'Open in FlowNo linked work', 'Send', 'Copy id', 'Copy id and title'])
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Send' }))
     expect(mockState.openSendToSession).toHaveBeenCalledWith({ reference: 'bead chrote-ep.1: A child' })
@@ -136,5 +137,52 @@ describe('a Bead row', () => {
     fireEvent.contextMenu(screen.getByText('A child'))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Open' }))
     expect(screen.getByTestId('card-request')).toHaveTextContent('chrote-ep.1')
+  })
+
+  it('opens linked work in Flow and leaves the action disabled for an orphan', () => {
+    const reveal = vi.fn()
+    const epic = { ...row('chrote-ep', 'The epic'), type: 'epic', linked: true }
+    const child = { ...row('chrote-ep.1', 'A child'), parent: epic.id, linked: true }
+    const orphan = row('chrote-alone', 'An orphan')
+    render(
+      <FlowNavigationProvider rows={[epic, child, orphan]} reveal={reveal}>
+        <div>
+          <BeadRow row={epic} />
+          <BeadRow row={child} />
+          <BeadRow row={orphan} />
+        </div>
+      </FlowNavigationProvider>,
+    )
+
+    fireEvent.contextMenu(screen.getByText('An orphan'))
+    const unavailable = screen.getByRole('menuitem', { name: 'Open in FlowNo linked work' })
+    expect(unavailable).toBeDisabled()
+    expect(unavailable).toHaveAttribute('title', 'No linked work')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.contextMenu(screen.getByText('A child'))
+    const available = screen.getByRole('menuitem', { name: 'Open in Flow' })
+    expect(available).toBeEnabled()
+    fireEvent.click(available)
+    expect(reveal).toHaveBeenCalledWith(child)
+
+    fireEvent.contextMenu(screen.getByText('The epic'))
+    expect(screen.getByRole('menuitem', { name: 'Open in Flow' })).toBeEnabled()
+  })
+
+  it('trusts the server link count even when the current snapshot omits every neighbour', () => {
+    const reveal = vi.fn()
+    const target = { ...row('chrote-cross', 'Cross-snapshot work'), linked: true }
+    render(
+      <FlowNavigationProvider rows={[target]} reveal={reveal}>
+        <BeadRow row={target} />
+      </FlowNavigationProvider>,
+    )
+
+    fireEvent.contextMenu(screen.getByText('Cross-snapshot work'))
+    const available = screen.getByRole('menuitem', { name: 'Open in Flow' })
+    expect(available).toBeEnabled()
+    fireEvent.click(available)
+    expect(reveal).toHaveBeenCalledWith(target)
   })
 })

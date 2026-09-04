@@ -17,6 +17,7 @@ import { copyAndAnnounce } from '../../utils/clipboard'
 import type { MenuGroup } from '../Menu'
 import MenuTarget from '../MenuTarget'
 import BeadTypeLabel from '../BeadTypeLabel'
+import { useFlowNavigation } from './FlowNavigation'
 
 export interface BeadRowFold {
   /** How many rows open beneath this one. */
@@ -50,6 +51,7 @@ export default function BeadRow({ row, depth = 0, fold, trailing }: BeadRowProps
   const { announce } = useStatus()
   const glyph = beadGlyph(row.status, row.blocked)
   const state = beadStatusLabel(row.status, row.blocked)
+  const flow = useFlowNavigation(row)
   // A closed Bead reads grey end to end; an epic reads heavier, with a hairline
   // beneath it, because it is the roof the rows under it hang from.
   const shape = [
@@ -86,6 +88,13 @@ export default function BeadRow({ row, depth = 0, fold, trailing }: BeadRowProps
       id: 'work',
       rows: [
         { id: 'open', label: 'Open', onSelect: () => openBeadCard(row.id, row.projectPath) },
+        {
+          id: 'open-flow',
+          label: 'Open in Flow',
+          disabled: !flow.linked,
+          reason: flow.linked ? undefined : 'No linked work',
+          onSelect: flow.open,
+        },
         { id: 'send', label: 'Send', chord: 'Alt+S', onSelect: () => openSendToSession({ reference: beadReference(row) }) },
       ],
     },

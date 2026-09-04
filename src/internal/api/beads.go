@@ -55,7 +55,12 @@ func (h *BeadsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/beads/health", h.Health)
 	mux.HandleFunc("GET /api/beads/projects", h.ListProjects)
 	mux.HandleFunc("GET /api/beads/work", h.Work)
+	mux.HandleFunc("GET /api/beads/closed", h.ClosedWork)
 	mux.HandleFunc("GET /api/beads/issue", h.IssueDetail)
+	mux.HandleFunc("GET /api/beads/formulas", h.Formulas)
+	mux.HandleFunc("GET /api/beads/formula", h.FormulaDetail)
+	mux.HandleFunc("GET /api/beads/molecules", h.Molecules)
+	mux.HandleFunc("GET /api/beads/molecule", h.MoleculeDetail)
 }
 
 // getBdVersion returns the bd version or error.
@@ -297,6 +302,27 @@ func requiredIssueID(r *http.Request) (string, string, string) {
 	return id, "", ""
 }
 
+func requiredQueryValue(r *http.Request, key string) (string, string, string) {
+	value := strings.TrimSpace(r.URL.Query().Get(key))
+	if value == "" {
+		return "", "BAD_REQUEST", "Missing required parameter: " + key
+	}
+	return value, "", ""
+}
+
+func (h *BeadsHandler) requestProject(w http.ResponseWriter, r *http.Request) (string, bool) {
+	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
+	if code != "" {
+		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
+		return "", false
+	}
+	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
+		writeBeadsDirectoryError(w, err)
+		return "", false
+	}
+	return projectPath, true
+}
+
 // transformIssue converts raw JSONL issue to frontend-expected format
 
 // Health handles GET /api/beads/health
@@ -376,6 +402,7 @@ type beadRow struct {
 	Parent     string   `json:"parent,omitempty"`
 	BlockedBy  []string `json:"blockedBy,omitempty"`
 	Blocked    bool     `json:"blocked"`
+	Linked     bool     `json:"linked"`
 	Acceptance string   `json:"acceptance,omitempty"`
 }
 
@@ -453,7 +480,7 @@ const maxParentChainDepth = 4
 // A Bead id is its project's prefix and a short random tail, with a dotted
 // child number for each level of nesting. The prefix is what a project is
 // recognised by, in terminal output and in a card's links alike.
-var beadIDPattern = regexp.MustCompile(`^(.+)-[a-z0-9]{3,6}(\.[0-9]+)*$`)
+var beadIDPattern = regexp.MustCompile(`^(.+)-[a-z0-9]{3,8}(\.[0-9]+)*$`)
 
 // beadPrefix reads the project prefix out of one of its Bead ids. An id that
 // does not have the shape yields nothing rather than a guess.
@@ -527,6 +554,27 @@ func isClosedBead(raw map[string]interface{}) bool {
 	}
 }
 
+func positiveBeadCount(value interface{}) bool {
+	switch count := value.(type) {
+	case float64:
+		return count > 0
+	case int:
+		return count > 0
+	case int64:
+		return count > 0
+	default:
+		return false
+	}
+}
+
+// beadIsLinked relies on aggregate relation counts from the list record, so a
+// relation to finished work remains visible without loading that work's body.
+func beadIsLinked(raw map[string]interface{}) bool {
+	return beadString(raw, "parent") != "" ||
+		positiveBeadCount(raw["dependency_count"]) ||
+		positiveBeadCount(raw["dependent_count"])
+}
+
 // projectPrefix asks bd for one Bead of the project and reads its prefix. An
 // empty project has no prefix to report and no ids in anyone's terminal either.
 func (h *BeadsHandler) projectPrefix(projectPath string) string {
@@ -594,6 +642,25 @@ func hasActiveBlocker(raw map[string]interface{}, byID map[string]map[string]int
 		}
 	}
 	return false
+}
+
+// unfinishedBlockers reads dependencies against an unfinished snapshot. A
+// missing same-store blocker is finished, because the status-filtered command
+// deliberately omitted it. A missing foreign-store blocker remains active.
+func unfinishedBlockers(raw map[string]interface{}, byID map[string]map[string]interface{}, prefix string) []string {
+	blockers := make([]string, 0)
+	for _, blockerID := range beadDependencyIDs(raw, blocksDependency) {
+		if blocker, known := byID[blockerID]; known {
+			if !isClosedBead(blocker) {
+				blockers = append(blockers, blockerID)
+			}
+			continue
+		}
+		if prefix == "" || beadPrefix(blockerID) != prefix {
+			blockers = append(blockers, blockerID)
+		}
+	}
+	return blockers
 }
 
 func addBeadType(counts *BeadsTypeCounts, issueType string) {
@@ -759,13 +826,12 @@ func (h *BeadsHandler) addProjectPrefixes(projects []map[string]interface{}) {
 	}
 }
 
-// Work handles GET /api/beads/work: the open work of one project, with the
-// finished children of its open epics, which is what the map, the ready lists
-// and the stale list are all views of.
+// Work handles GET /api/beads/work: the unfinished work of one project, which
+// is what the map, the ready lists and the stale list are all views of.
 //
-// One `bd list --status all` answers all of it: the statuses of the blockers
-// decide what is blocked, and the parents decide what hangs under which epic.
-// Nothing is kept between requests.
+// The installed service CLI applies the explicit multi-status filter while
+// `--all` removes the result limit, so the command returns one complete
+// unfinished snapshot without loading closed rows.
 func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
 	if code != "" {
@@ -778,7 +844,7 @@ func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issues, err := h.execBdIssues(projectPath, "list", "--status", "all", "--limit", "0")
+	issues, err := h.execBdIssues(projectPath, "list", "--status", "open,in_progress,blocked,deferred", "--all")
 	if err != nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
@@ -791,45 +857,26 @@ func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// An open epic is a root of the map, so its finished children come too:
-	// reviewing an epic means seeing what is already done under it.
-	openEpics := make(map[string]bool)
-	for _, issue := range issues {
-		if !isClosedBead(issue) && isEpic(issue) {
-			openEpics[beadString(issue, "id")] = true
-		}
-	}
-
 	beads := make([]beadRow, 0, len(issues))
 	prefix := ""
 	for _, issue := range issues {
 		id := beadString(issue, "id")
-		if id == "" {
+		if id == "" || isClosedBead(issue) {
 			continue
 		}
 		if prefix == "" {
 			prefix = beadPrefix(id)
 		}
 		parent := beadString(issue, "parent")
-		closed := isClosedBead(issue)
-		if closed && !openEpics[parent] {
-			continue
-		}
 		row := beadRow{
 			beadBrief:  beadBriefOf(issue),
 			Updated:    firstString(issue["updated_at"], issue["updated"]),
 			DeferUntil: deferredUntil(issue),
 			Parent:     parent,
+			Linked:     beadIsLinked(issue),
 		}
-		if !closed {
-			for _, blockerID := range beadDependencyIDs(issue, blocksDependency) {
-				if blocker, known := byID[blockerID]; known && isClosedBead(blocker) {
-					continue
-				}
-				row.BlockedBy = append(row.BlockedBy, blockerID)
-			}
-			row.Blocked = len(row.BlockedBy) > 0
-		}
+		row.BlockedBy = unfinishedBlockers(issue, byID, prefix)
+		row.Blocked = len(row.BlockedBy) > 0
 		if isEpic(issue) {
 			row.Acceptance = beadString(issue, "acceptance_criteria")
 		}
@@ -846,6 +893,196 @@ func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 	core.WriteSuccess(w, map[string]interface{}{
 		"beads":       beads,
 		"prefix":      prefix,
+		"projectPath": projectPath,
+	})
+}
+
+// ClosedWork handles GET /api/beads/closed. The dashboard calls this route
+// only when the operator opens Closed, so the normal Beads views never pay to
+// load finished work.
+func (h *BeadsHandler) ClosedWork(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := h.requestProject(w, r)
+	if !ok {
+		return
+	}
+
+	issues, err := h.execBdIssues(projectPath, "list", "--status", "all", "--all")
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
+		return
+	}
+
+	beads := make([]beadRow, 0)
+	prefix := ""
+	for _, issue := range issues {
+		if !isClosedBead(issue) {
+			continue
+		}
+		id := beadString(issue, "id")
+		if id == "" {
+			continue
+		}
+		if prefix == "" {
+			prefix = beadPrefix(id)
+		}
+		row := beadRow{
+			beadBrief: beadBriefOf(issue),
+			Updated:   firstString(issue["updated_at"], issue["updated"]),
+			Parent:    beadString(issue, "parent"),
+			Linked:    beadIsLinked(issue),
+		}
+		if isEpic(issue) {
+			row.Acceptance = beadString(issue, "acceptance_criteria")
+		}
+		beads = append(beads, row)
+	}
+	sort.Slice(beads, func(i, j int) bool {
+		if beads[i].Updated != beads[j].Updated {
+			return beads[i].Updated > beads[j].Updated
+		}
+		return beads[i].ID < beads[j].ID
+	})
+
+	core.WriteSuccess(w, map[string]interface{}{
+		"beads":       beads,
+		"prefix":      prefix,
+		"projectPath": projectPath,
+	})
+}
+
+// Formulas handles GET /api/beads/formulas. Formula list records already
+// carry the resolved source path, so returning the CLI objects preserves the
+// winning file's provenance when search paths shadow a name.
+func (h *BeadsHandler) Formulas(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := h.requestProject(w, r)
+	if !ok {
+		return
+	}
+
+	result, err := h.execBdJSON(projectPath, "formula", "list")
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
+		return
+	}
+	if result == nil {
+		formulaDir := filepath.Join(projectPath, ".beads", "formulas")
+		if err := checkFormulaRegistry(formulaDir); err != nil {
+			if errors.Is(err, fs.ErrPermission) {
+				core.WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			} else {
+				core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
+			}
+			return
+		}
+		result = []interface{}{}
+	}
+	formulas, ok := result.([]interface{})
+	if !ok {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", fmt.Sprintf("bd formula list returned %T, expected JSON array", result))
+		return
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{
+		"formulas":    formulas,
+		"projectPath": projectPath,
+	})
+}
+
+// checkFormulaRegistry distinguishes an absent project registry from one that
+// bd silently skipped because the server user cannot read or search it.
+func checkFormulaRegistry(formulaDir string) error {
+	info, err := os.Stat(formulaDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("cannot access formula registry %s as user %s: %w", formulaDir, effectiveUsername(), err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("formula registry %s is not a directory", formulaDir)
+	}
+	if _, err := os.ReadDir(formulaDir); err != nil {
+		return fmt.Errorf("cannot read formula registry %s as user %s: %w", formulaDir, effectiveUsername(), err)
+	}
+	if _, err := os.Stat(filepath.Join(formulaDir, ".")); err != nil {
+		return fmt.Errorf("cannot search formula registry %s as user %s: %w", formulaDir, effectiveUsername(), err)
+	}
+	return nil
+}
+
+// FormulaDetail handles GET /api/beads/formula: the complete resolved formula,
+// including variables, steps, dependencies, composition rules, and source.
+func (h *BeadsHandler) FormulaDetail(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := h.requestProject(w, r)
+	if !ok {
+		return
+	}
+	name, code, msg := requiredQueryValue(r, "name")
+	if code != "" {
+		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
+		return
+	}
+
+	formula, err := h.execBdJSON(projectPath, "formula", "show", name)
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
+		return
+	}
+	if _, ok := formula.(map[string]interface{}); !ok {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", fmt.Sprintf("bd formula show %s returned %T, expected JSON object", name, formula))
+		return
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{
+		"formula":     formula,
+		"projectPath": projectPath,
+	})
+}
+
+// Molecules handles GET /api/beads/molecules: template protos and instantiated
+// molecule roots, with their current issue fields left intact.
+func (h *BeadsHandler) Molecules(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := h.requestProject(w, r)
+	if !ok {
+		return
+	}
+
+	molecules, err := h.execBdIssues(projectPath, "list", "--type", "molecule", "--all", "--include-templates")
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
+		return
+	}
+	core.WriteSuccess(w, map[string]interface{}{
+		"molecules":   molecules,
+		"projectPath": projectPath,
+	})
+}
+
+// MoleculeDetail handles GET /api/beads/molecule: bd's full graph projection,
+// including root, issues, dependencies, variables, and origin metadata.
+func (h *BeadsHandler) MoleculeDetail(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := h.requestProject(w, r)
+	if !ok {
+		return
+	}
+	id, code, msg := requiredQueryValue(r, "id")
+	if code != "" {
+		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
+		return
+	}
+
+	molecule, err := h.execBdJSON(projectPath, "mol", "show", id)
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
+		return
+	}
+	if _, ok := molecule.(map[string]interface{}); !ok {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", fmt.Sprintf("bd mol show %s returned %T, expected JSON object", id, molecule))
+		return
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{
+		"molecule":    molecule,
 		"projectPath": projectPath,
 	})
 }

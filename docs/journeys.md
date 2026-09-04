@@ -80,8 +80,9 @@ a Bead to the Clerk, the agent that keeps the register.
 3. Read an epic, its goals and its definitions of done.
 4. Read the same epic as a flow: waves of work from left to right, the Beads
    that can run at once stacked in one column, the blocking edges drawn
-   between them. The arrow keys travel it wave by wave and down a column, and
-   a click puts a Bead on the table and brings it to the middle.
+   between them. The arrow keys travel it wave by wave and down a column. An
+   ordinary click puts a Bead on the table without moving the flow; Open in
+   Flow from a row menu explicitly centers that Bead.
 5. Find stale work to clear out.
 6. Open a Bead id printed in terminal output and read it on the table beside
    the session that named it.
