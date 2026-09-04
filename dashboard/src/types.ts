@@ -125,6 +125,7 @@ export interface UserSettings {
   tableWidth: number                 // The table's column at the right, in px; device-local
   agentEventTones: boolean           // A short tone when an agent finishes or needs input; device-local, off
   agentEventNotifications: boolean   // A browser notification for the same while this tab is hidden; device-local, off
+  residentWidth: number              // A resident's column, in px; 0 means 44 terminal columns at the tile font
   beadsProjectPaths?: string[]       // Manually added beads project paths
 }
 
@@ -143,6 +144,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   tableWidth: 400,
   agentEventTones: false,
   agentEventNotifications: false,
+  residentWidth: 0,
 }
 
 export interface TmuxSession {

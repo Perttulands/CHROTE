@@ -1,18 +1,17 @@
 /**
  * The Library: a reading room over the operator's own context corpus.
  *
- * A rail and a room, and a desk. The shelves, what arrived lately and the
+ * A rail, a room, and the Librarian. The shelves, what arrived lately and the
  * proposals in flight down the left; the map of the whole corpus in the middle
  * until a page is chosen, then that page at a reading measure with the map
- * shrunk to a strip of its neighbours above it; the Librarian on duty at the
- * foot. The corpus is a Markdown tree under git, so every fact here — a
- * title, a date, an author, a history, a link — is read out of that tree
+ * shrunk to a strip of its neighbours above it; the Librarian live in a column
+ * at the far edge. The corpus is a Markdown tree under git, so every fact here
+ * — a title, a date, an author, a history, a link — is read out of that tree
  * rather than kept anywhere in CHROTE. The one thing written back is the
  * operator's own correction, and it is a commit signed as him.
  */
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
-import Desk from '../Desk'
 import Editor from '../Editor'
 import Markdown from '../Markdown'
 import LibraryMap from './Map'
@@ -23,6 +22,7 @@ import { openBeadCard } from '../../beads/beadCard'
 import { fetchBeadWork, type BeadRow } from '../../beads/beadsApi'
 import { isBeadClosed } from '../../beads/beadStatus'
 import { registerChords } from '../../keys/chords'
+import ResidentColumn from '../ResidentColumn'
 import TableColumn from '../TableColumn'
 import {
   fetchChanges,
@@ -50,7 +50,7 @@ const ARRIVALS = 30
 /** How many commits the history strip shows before "… n more". */
 const HISTORY_STRIP = 3
 
-/** The one line the desk and the drawer carry: which page is on the table. */
+/** The one line the Librarian and the drawer are handed: which page is open. */
 export function libraryReference(path: string | null): string {
   return path ? `library ${path}` : 'library'
 }
@@ -212,6 +212,8 @@ export default function LibraryView() {
       })
   }, [announce, query])
 
+  // The page's Send is the drawer, for any other session; Alt+S is the
+  // Librarian's, and pastes the same reference into the column at the right.
   const send = useCallback(() => {
     openSendToSession({ reference: libraryReference(page?.path ?? shelf) })
   }, [openSendToSession, page, shelf])
@@ -226,18 +228,10 @@ export default function LibraryView() {
     setView(current => (current === 'map' ? 'room' : 'map'))
   }, [roomHas])
 
-  // Alt+S sends what is on the table and Alt+R turns the map over. Both are
-  // registered only while the tab is mounted, so neither shadows the tile
-  // chord that shares its key.
+  // Alt+R turns the map over. It is registered only while the tab is mounted,
+  // so it never shadows a chord that shares its key elsewhere; Alt+S is the
+  // resident column's here and pastes the page into the Librarian's prompt.
   useEffect(() => registerChords([
-    {
-      id: 'library.send',
-      key: 's',
-      direct: { alt: true, shift: false, key: 's' },
-      label: 'Send this page',
-      scope: 'global',
-      run: send,
-    },
     {
       id: 'library.map',
       key: 'r',
@@ -246,7 +240,7 @@ export default function LibraryView() {
       scope: 'global',
       run: toggleView,
     },
-  ]), [send, toggleView])
+  ]), [toggleView])
 
   const save = useCallback(async () => {
     if (!page || draft === null) return
@@ -452,7 +446,7 @@ export default function LibraryView() {
                         </>
                       )}
                       <button type="button" className="library-action" onClick={send}>
-                        Send<span className="library-chord">Alt+S</span>
+                        Send
                       </button>
                     </div>
                   </div>
@@ -525,15 +519,8 @@ export default function LibraryView() {
         </div>
 
         <TableColumn />
+        <ResidentColumn tab="library" reference={libraryReference(page?.path ?? shelf)} />
       </div>
-
-      <Desk
-        label="Front desk"
-        sessionName={shelves.librarianSession || undefined}
-        reference={libraryReference(page?.path ?? shelf)}
-        placeholder={page ? 'Ask the Librarian about this page…' : 'Ask the Librarian…'}
-        launchFolder={shelves.root}
-      />
     </div>
   )
 }

@@ -39,6 +39,15 @@ release.
   a browser notification while the tab is hidden, both off by default. A
   report already in the list when the page loaded is history and tells
   nothing.
+- Resident agents: the Library, Agents and Beads tabs each show one tmux
+  session live in a column at the tab's right edge, the Librarian, the tender
+  and the Clerk, named by `CHROTE_LIBRARIAN_SESSION`, `CHROTE_TENDER_*` and
+  `CHROTE_CLERK_*` and reported by `GET /api/residents`. The column is 44
+  terminal columns wide by default, resizable and remembered per device;
+  `Alt+S` pastes the tab's reference into the resident's prompt without
+  submitting, `Alt+Enter` focuses it, and an absent session is offered Launch
+  from the resident's folder. The Front desk and Tender desk ask lines are
+  gone: the terminal is the input.
 
 ### Changed
 

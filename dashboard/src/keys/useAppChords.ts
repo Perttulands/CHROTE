@@ -13,6 +13,7 @@
 import { useEffect, useRef } from 'react'
 import { useSession } from '../context/SessionContext'
 import { clearTable } from '../context/TableContext'
+import { focusResident } from '../residents/residentPresence'
 import type { Tab } from '../components/TabBar'
 import { isTerminalWorkspaceId } from '../types'
 import type { WorkspaceId } from '../types'
@@ -144,6 +145,9 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
       // The table is global, so its chord is: it puts the object away whether
       // or not the tab in front is one that shows it.
       { id: 'keys.table', key: 'i', direct: { alt: true, shift: false, key: 'i' }, label: 'Close the table', scope: 'global', run: clearTable },
+      // The resident is the tab's: the chord reaches whichever column is on
+      // screen, and does nothing on a tab that has none.
+      { id: 'keys.resident', key: 'Enter', direct: { alt: true, shift: false, key: 'Enter' }, label: "Focus the tab's resident", scope: 'global', run: () => { focusResident() } },
       { id: 'keys.panel', key: '?', direct: { alt: true, shift: false, key: 'k' }, label: 'Keybindings', scope: 'global', run: () => stateRef.current.surfaces.onToggleKeysPanel() },
       { id: 'keys.off', key: 'k', label: 'Keys off', scope: 'global', run: () => stateRef.current.session.updateSettings({ keysEnabled: false }) },
 

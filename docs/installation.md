@@ -276,7 +276,7 @@ a Markdown tree under git whose top-level directories are its shelves.
 | --- | --- |
 | `CHROTE_LIBRARY_ROOT` | The corpus directory. Unset: the tab reads "No library is configured" and nothing else. |
 | `CHROTE_LIBRARY_AUTHOR` | The git identity the operator's edits are committed as, as `Name <email>`. Unset: an edit is refused with that reason. |
-| `CHROTE_LIBRARIAN_SESSION` | The tmux session the front desk asks. Unset: the desk says no Librarian is configured. |
+| `CHROTE_LIBRARIAN_SESSION` | The tmux session shown in the Library's resident column, the Librarian. Unset: the column says the Librarian is not configured. |
 | `CHROTE_LIBRARY_BEADS` | The Beads project whose open Beads are the proposals in flight. Unset: there is no Proposals shelf. |
 
 ```bash
@@ -297,6 +297,40 @@ nowhere else in the corpus.
 A root that is set but is not a directory is an operator mistake: the server
 refuses to start and logs it, rather than serving a library that answers
 nothing.
+
+### The residents
+
+Three tabs each host a resident agent as a tmux session in a column at the
+tab's right edge: the Librarian in the Library, the tender in Agents, the Clerk
+in Beads. Each resident is a session name, the folder its launcher starts in
+when the session is absent, and the Beads project whose open Beads are its
+proposals. The Librarian takes its three from the Library variables above,
+with the corpus root as its folder; the other two have three variables each.
+
+| Variable | What it names |
+| --- | --- |
+| `CHROTE_TENDER_SESSION` | The tender's tmux session, shown in the Agents tab. Unset: the column says the tender is not configured. |
+| `CHROTE_TENDER_FOLDER` | The folder the launcher offers when the tender's session is absent. |
+| `CHROTE_TENDER_BEADS` | The Beads project whose open Beads are the Agents tab's proposals. Unset: no proposals. |
+| `CHROTE_CLERK_SESSION` | The Clerk's tmux session, shown in the Beads tab. Unset: the column says the Clerk is not configured. |
+| `CHROTE_CLERK_FOLDER` | The folder the launcher offers when the Clerk's session is absent. |
+| `CHROTE_CLERK_BEADS` | The Beads project the Clerk works from. |
+
+```bash
+CHROTE_TENDER_SESSION=tender
+CHROTE_TENDER_FOLDER=/absolute/path/to/tender
+CHROTE_TENDER_BEADS=/absolute/path/to/store
+CHROTE_CLERK_SESSION=clerk
+CHROTE_CLERK_FOLDER=/absolute/path/to/clerk
+CHROTE_CLERK_BEADS=/absolute/path/to/store
+```
+
+`GET /api/residents` reports all three as
+`[{ tab, label, session, folder, beads }]`, one entry per tab in tab order,
+whether or not anything is configured for it; the dashboard reads the residents
+from this route alone. Each resident's charter lives on the host outside this
+repository, and the sessions are started from the column's Launch, not by the
+server.
 
 ## Upgrade
 
