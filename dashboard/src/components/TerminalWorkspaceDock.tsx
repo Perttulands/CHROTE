@@ -4,6 +4,7 @@ import { FolderTree, SquareTerminal } from 'lucide-react'
 import type { WorkspaceId } from '../types'
 import { useSession } from '../context/SessionContext'
 import { useMediaQuery } from '../hooks/useMediaQuery'
+import { registerSurface } from '../keys/dismiss'
 import SessionPanel from './SessionPanel'
 import TerminalArea from './TerminalArea'
 import TerminalFilesPanel from './TerminalFilesPanel'
@@ -23,32 +24,14 @@ interface TerminalWorkspaceDockProps {
   sessionsForcedPinned: boolean
   onFilesOpenChange: (workspaceId: WorkspaceId, open: boolean) => void
   onOpenInFiles: (path: string) => void
+  /** A path asked for from a terminal link, routed here while this dock is the active tab. */
+  openFilesRequest?: { path: string; nonce: number } | null
 }
 
-const ESCAPE_BLOCKERS = '.floating-modal, .session-context-menu, .send-session-modal, [role="dialog"]'
-
-function isVisibleEscapeBlocker(element: Element): boolean {
-  if (!(element instanceof HTMLElement)) return false
-
-  for (let current: HTMLElement | null = element; current; current = current.parentElement) {
-    const style = window.getComputedStyle(current)
-    if (
-      current.hidden
-      || current.hasAttribute('inert')
-      || current.getAttribute('aria-hidden') === 'true'
-      || style.display === 'none'
-      || style.visibility === 'hidden'
-      || style.visibility === 'collapse'
-      || style.opacity === '0'
-    ) return false
-  }
-
-  return element.getClientRects().length > 0
-}
-
-function hasVisibleEscapeBlocker(): boolean {
-  return Array.from(document.querySelectorAll(ESCAPE_BLOCKERS)).some(isVisibleEscapeBlocker)
-}
+// An overlay sidecar is a glance over the terminals: what belongs to it is
+// the panels themselves and the switcher that opens and closes them, so a
+// press on the other panel's trigger still reaches it.
+const SIDECAR_SURFACE = '.session-panel, .terminal-files-panel, .terminal-sidecar-switcher'
 
 function TerminalWorkspaceDock({
   workspaceId,
@@ -57,8 +40,10 @@ function TerminalWorkspaceDock({
   onSessionsDockStateChange,
   onFilesOpenChange,
   onOpenInFiles,
+  openFilesRequest = null,
 }: TerminalWorkspaceDockProps) {
   const { sessions } = useSession()
+  const dockRef = useRef<HTMLDivElement>(null)
   const isNarrow = useMediaQuery('(max-width: 768px)')
   const [filesDockState, setFilesDockState] = useState<WorkspaceFilesDockState>(() => readWorkspaceFilesDockState(workspaceId))
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; requestId: number } | null>(null)
@@ -122,6 +107,11 @@ function TerminalWorkspaceDock({
     setFilesNavigateRequest(previous => previous?.requestId === requestId ? null : previous)
   }, [])
 
+  // A path from a terminal link takes the same way in as the tag's own menu.
+  useEffect(() => {
+    if (openFilesRequest) openFilesAtPath(openFilesRequest.path)
+  }, [openFilesRequest, openFilesAtPath])
+
   const closeAllSidecars = useCallback(() => {
     closeSessions()
     closeFiles()
@@ -132,15 +122,17 @@ function TerminalWorkspaceDock({
     setFilesDockState(previous => ({ ...previous, pinned: !previous.pinned }))
   }, [isNarrow])
 
+  // Unpinned sidecars overlay the terminals, so they are a glance: Escape and a
+  // press outside close them, through the owner, and anything opened on top of
+  // them is reached first.
   useEffect(() => {
     if (!active || openSidecarCount === 0 || anyPinned) return
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      if (hasVisibleEscapeBlocker()) return
-      closeAllSidecars()
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
+    return registerSurface({
+      kind: 'glance',
+      close: closeAllSidecars,
+      contains: target => Array.from(dockRef.current?.querySelectorAll(SIDECAR_SURFACE) ?? [])
+        .some(element => element.contains(target)),
+    })
   }, [active, anyPinned, closeAllSidecars, openSidecarCount])
 
   const sidecarControls = (
@@ -177,6 +169,7 @@ function TerminalWorkspaceDock({
 
   return (
     <div
+      ref={dockRef}
       className="terminal-workspace-dock"
       data-workspace={workspaceId}
       data-active={active}

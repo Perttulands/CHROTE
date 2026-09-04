@@ -220,7 +220,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         })
         return next
       })
-      announce(`Session '${sessionName}' deleted`, 'info')
+      announce(`Session '${sessionName}' deleted`, 'success')
       poll.refreshSessions()
       return true
     } catch (e) {

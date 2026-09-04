@@ -155,8 +155,12 @@ The Sessions panel's plus opens the same launcher.
   Flags are an editable line prefilled with the harness's defaults, a preview
   shows the exact line that will be typed, and a panel lists every flag the
   harness's own `--help` describes, searchable, click to add or remove.
-- Folders are the configured pinned list, the working directories of live
-  sessions as recents, and a browse control.
+- The folder is one field over a list of six rows that keeps its height
+  whatever it holds. Empty, the list is the pinned folders and the working
+  directories of live sessions; a fragment ranks the host's workspaces by fuzzy
+  match on the tail of their paths; an absolute path lists the directories
+  under the typed prefix, dot-directories last. Tab completes the highlighted
+  row, the arrows move, Enter takes the highlighted row or the typed path.
 - The name is derived from folder and harness, suffixed on collision, and
   editable before launching.
 - One quiet button states what will happen, and the new session binds to the
@@ -312,7 +316,9 @@ Open in Files, Copy path and Close as words. The image fits 90% of the
 workspace and is never upscaled. It opens from an image path link in a terminal
 and from a click on an image in the Files panel or tab.
 
-An announcement is a toast in the bottom-centre slot the key echo uses. It
+An announcement that confirms the operator's own action, or reports a failure,
+is a toast in the bottom-centre slot the key echo uses; information such as a
+load or a count takes the status line only. The toast
 fades in over 120 ms, holds for 1800 ms and fades out over 200 ms, one at a
 time with the newest replacing the last, `--text-primary` on
 `--surface-primary` with a 1px `--divider` border, and the error colour for a

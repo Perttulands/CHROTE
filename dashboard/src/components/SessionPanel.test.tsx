@@ -81,7 +81,6 @@ describe('SessionPanel session launcher', () => {
     fireEvent.click(screen.getByTitle('New tmux session'))
 
     screen.getByRole('dialog', { name: /Launch a tmux session/i })
-    expect(document.querySelectorAll('.floating-panel-dismiss-layer')).toHaveLength(1)
     const launchButton = await screen.findByRole('button', { name: 'Launch codex in chrote' })
 
     fireEvent.click(launchButton)

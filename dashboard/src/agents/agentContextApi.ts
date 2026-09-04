@@ -57,24 +57,11 @@ export interface AgentContext {
   memories: AgentMemory[]
 }
 
-export interface AgentWorkspace {
-  path: string
-  /** home, beads or root: why the folder is on the list. */
-  source: string
-  /** How many instruction files the folder owns itself. */
-  instructions: number
-}
-
 /** The session that tends the instruction layer, as the host configured it. */
 export interface AgentTender {
   session: string
   beads: string
   folder: string
-}
-
-export interface AgentWorkspaces {
-  workspaces: AgentWorkspace[]
-  tender: AgentTender
 }
 
 const REQUEST_TIMEOUT_MS = 20000
@@ -125,15 +112,8 @@ export async function fetchAgentFile(
   return body.content
 }
 
-export function fetchAgentWorkspaces(user: string, signal?: AbortSignal): Promise<AgentWorkspaces> {
-  const params = new URLSearchParams()
-  if (user) params.set('user', user)
-  const query = params.toString()
-  return getJson<AgentWorkspaces>(
-    `/api/agent/workspaces${query ? `?${query}` : ''}`,
-    'Could not list the workspaces',
-    signal,
-  )
+export function fetchAgentTender(signal?: AbortSignal): Promise<AgentTender> {
+  return getJson<AgentTender>('/api/agent/tender', 'Could not read the tender configuration', signal)
 }
 
 /** Bytes as the stack prints them: grouped in threes, never abbreviated. */

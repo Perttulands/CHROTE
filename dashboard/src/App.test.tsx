@@ -1,6 +1,7 @@
 import { act, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { resetChordsForTest } from './keys/chords'
 import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from './types'
 
 const mocks = vi.hoisted(() => ({
@@ -81,7 +82,8 @@ vi.mock('./components/TerminalArea', () => ({
 }))
 vi.mock('./components/FilesView', () => ({ default: () => null }))
 vi.mock('./components/SettingsView', () => ({ default: () => null }))
-vi.mock('./components/FloatingModal', () => ({ default: () => null }))
+vi.mock('./components/Peek', () => ({ default: () => null }))
+vi.mock('./components/ImageGlance', () => ({ default: () => null }))
 vi.mock('./components/SendDrawer', () => ({ default: () => null }))
 vi.mock('./components/HelpView', () => ({ default: () => null }))
 vi.mock('./components/BeadsView', () => ({ default: () => null }))
@@ -91,7 +93,9 @@ vi.mock('./components/SystemStatusView', () => ({
 }))
 vi.mock('./components/ScheduledTasksView', () => ({ default: () => null }))
 vi.mock('./components/ErrorBoundary', () => ({ default: ({ children }: { children: React.ReactNode }) => children }))
-vi.mock('./keys/KeysPanel', () => ({ default: () => null }))
+vi.mock('./keys/KeysPanel', () => ({
+  default: ({ isOpen }: { isOpen: boolean }) => (isOpen ? <div data-testid="keys-panel" /> : null),
+}))
 vi.mock('./keys/LeaderStrip', () => ({ default: () => null }))
 vi.mock('./components/LayoutPresetsPanel', () => ({ default: () => null }))
 vi.mock('./components/TerminalPool', () => ({ TerminalPoolProvider: ({ children }: { children: React.ReactNode }) => children }))
@@ -285,5 +289,43 @@ describe('App background sampling', () => {
     const statusView = await screen.findByTestId('system-status-view')
     expect(statusView).toHaveAttribute('data-active', 'false')
     expect(statusView.parentElement).toHaveStyle({ display: 'none' })
+  })
+})
+
+// The keys panel is a glance, so the two ways in are also the ways out: the
+// leader and Alt+K each toggle it.
+describe('App keys panel', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.dndProps = null
+    mocks.windowRevealRequest = null
+    mocks.workspaceIds = null
+    mocks.settings = null
+    mocks.terminal2WindowCount = 2
+    mocks.enabledFlags = []
+    resetChordsForTest()
+  })
+
+  const key = (init: KeyboardEventInit) => {
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }))
+    })
+  }
+  const leader = () => key({ key: ' ', code: 'Space', ctrlKey: true, shiftKey: true })
+  const altK = () => key({ key: 'k', altKey: true })
+
+  it('toggles on the leader and on Alt+K', () => {
+    render(<App />)
+    expect(screen.queryByTestId('keys-panel')).toBeNull()
+
+    leader()
+    expect(screen.getByTestId('keys-panel')).toBeInTheDocument()
+    leader()
+    expect(screen.queryByTestId('keys-panel')).toBeNull()
+
+    altK()
+    expect(screen.getByTestId('keys-panel')).toBeInTheDocument()
+    altK()
+    expect(screen.queryByTestId('keys-panel')).toBeNull()
   })
 })

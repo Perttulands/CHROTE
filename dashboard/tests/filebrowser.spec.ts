@@ -1,5 +1,5 @@
 import { test, expect, Page } from './fixtures'
-import { mockLaunchApiRoute, mockThemeApiRoute } from './mock-api'
+import { mockLaunchApiRoute, mockThemeApiRoute, mockWorkspacesRoute } from './mock-api'
 
 // Files behaviour lives in the unit suite; what is left here needs a real
 // layout engine: a measured viewport box and a real scrolling container.
@@ -19,6 +19,8 @@ async function mockFilebrowserApi(page: Page, options?: {
   rawBody?: string
   rootItems?: typeof mockDirectoryResponse.items
 }) {
+  // The empty window's launcher asks which workspaces exist, to offer them.
+  await mockWorkspacesRoute(page)
   // Mock the tmux sessions API (required for dashboard to load)
   await page.route('**/api/tmux/sessions', async route => {
     await route.fulfill({

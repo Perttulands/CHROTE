@@ -3,6 +3,7 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as Reac
 import { MAX_TEXT_PREVIEW_BYTES, getDownloadUrl, getErrorMessage, probeTextFile, readTextFile } from './FilesView/fileService'
 import type { FileItem } from './FilesView/types'
 import type { FileViewState, MarkdownMode } from './workspaceFilesState'
+import { openImageGlance } from './imageGlance'
 
 export type PreviewKind = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'download'
 export { MAX_TEXT_PREVIEW_BYTES } from './FilesView/fileService'
@@ -391,12 +392,15 @@ function FileViewer({
             <textarea className="fb-editor-textarea" value={content} spellCheck={false} onChange={event => onContentChange?.(event.target.value)} />
           ) : <pre className="fb-plain-text-preview">{content}</pre>
         ) : kind === 'image' ? (
+          // A click on the picture opens the glance for a look at it full size.
           <div className={`fb-media-preview ${viewState.imageFit ? 'is-fit' : 'is-actual'}`}>
-            <img
-              src={getDownloadUrl(item.path)}
-              alt={item.name}
-              style={viewState.imageFit ? undefined : { transform: `scale(${viewState.imageZoom})` }}
-            />
+            <button type="button" className="fb-image-look" onClick={() => openImageGlance(item.path)}>
+              <img
+                src={getDownloadUrl(item.path)}
+                alt={item.name}
+                style={viewState.imageFit ? undefined : { transform: `scale(${viewState.imageZoom})` }}
+              />
+            </button>
           </div>
         ) : kind === 'audio' ? (
           <div className="fb-media-preview"><audio src={getDownloadUrl(item.path)} controls /></div>

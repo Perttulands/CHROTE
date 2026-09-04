@@ -1,0 +1,88 @@
+/* Chrote Dashboard - Peek */
+/* A floating window centred over the workspace, sized by the session it
+   shows: one hairline, no shadow, no radius, no drag, no resize. */
+
+.peek {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  z-index: 1500;
+  display: flex;
+  flex-direction: column;
+  /* Until the session's grid has been measured, the caps stand in. */
+  width: 70%;
+  height: 80%;
+  background-color: var(--surface-primary);
+  border: 1px solid var(--divider);
+  overflow: hidden;
+}
+
+/* The header's height is fixed, and Peek.tsx counts on it when it sizes the
+   window to the session's rows. */
+.peek-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  height: 30px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--divider);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.peek-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peek-word {
+  flex: none;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.peek-word:hover {
+  color: var(--text-primary);
+}
+
+/* Send is the one action here, so it alone takes the accent. */
+.peek-send:hover {
+  color: var(--accent);
+}
+
+.peek-chord {
+  margin-left: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.peek-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+
+.peek-body::-webkit-scrollbar {
+  display: none;
+}
+
+/* Peek on an ended session, treated exactly as the tile treats one: the last
+   frame stays readable but recedes, and it stops taking input that would go
+   nowhere. The note itself is the tile's, class and wording alike. */
+.peek-body.detached .terminal-surface-host {
+  opacity: 0.5;
+  pointer-events: none;
+}

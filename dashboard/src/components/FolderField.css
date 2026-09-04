@@ -1,0 +1,61 @@
+/* The Folder field: an input and, beneath it, a list of a fixed number of rows
+   that scrolls when it holds more. The list is the same height empty, full
+   and in between, so the surface around it never moves as the operator types. */
+
+.folder-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.folder-field-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.folder-field-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 12px;
+  height: calc(var(--folder-field-rows, 6) * 20px);
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.folder-field-rows {
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.folder-field-row,
+.folder-field-note {
+  display: block;
+  height: 20px;
+  line-height: 20px;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-field-row {
+  border-left: 2px solid transparent;
+  cursor: pointer;
+}
+
+.folder-field-row.selected {
+  color: var(--text-primary);
+}
+
+.folder-field-row.highlighted {
+  border-left-color: var(--accent);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.folder-field-note {
+  font-style: italic;
+}

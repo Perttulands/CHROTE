@@ -92,6 +92,12 @@ test('the leader and Alt chords run over a focused terminal, and keys off hands 
   await page.keyboard.press('Escape')
   await expect(panel).toBeHidden()
 
+  // The leader is the way out as well as the way in.
+  await page.keyboard.press(LEADER)
+  await expect(panel).toBeVisible()
+  await page.keyboard.press(LEADER)
+  await expect(panel).toBeHidden()
+
   // The tab chord, with the cursor in a terminal and no leader first.
   await page.keyboard.press('Alt+2')
   await expect(page.locator('.terminal-workspace-dock[data-workspace="terminal2"]')).toHaveAttribute('data-active', 'true')
@@ -106,10 +112,10 @@ test('the leader and Alt chords run over a focused terminal, and keys off hands 
   await page.keyboard.press('Alt+Shift+W')
   await expect(windows.first()).toHaveClass(/focused/)
 
-  // Alt+K is the keybindings panel, and it closes again on Escape.
+  // Alt+K is the keybindings panel, and pressed again it closes it.
   await page.keyboard.press('Alt+k')
   await expect(panel).toBeVisible()
-  await page.keyboard.press('Escape')
+  await page.keyboard.press('Alt+k')
   await expect(panel).toBeHidden()
 
   // Nothing so far was typed at the shell: every one of those was registered.

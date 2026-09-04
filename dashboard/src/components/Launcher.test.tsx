@@ -21,11 +21,17 @@ vi.mock('../context/SessionContext', () => ({
   }),
 }))
 
-vi.mock('./FolderPickerModal', () => ({
-  default: ({ onSelect }: { onSelect: (path: string) => void }) => (
-    <button type="button" onClick={() => onSelect('/srv/picked')}>pick /srv/picked</button>
-  ),
-}))
+vi.mock('../workspaces/workspacesApi', async () => {
+  const actual = await vi.importActual<typeof import('../workspaces/workspacesApi')>('../workspaces/workspacesApi')
+  return { ...actual, fetchWorkspaces: () => Promise.resolve([]) }
+})
+
+vi.mock('./FilesView/fileService', async () => {
+  const actual = await vi.importActual<typeof import('./FilesView/fileService')>('./FilesView/fileService')
+  return { ...actual, fetchDirectory: () => Promise.resolve([]) }
+})
+
+const folderOptions = () => screen.getAllByRole('option').map(option => option.textContent)
 
 const launchOptions = {
   harnesses: [
@@ -115,7 +121,9 @@ describe('Launcher', () => {
     const claude = await screen.findByRole('button', { name: 'Claude Code' })
     expect(claude).toHaveClass('selected')
     expect(screen.getByRole('button', { name: 'Codex' })).not.toHaveClass('selected')
-    expect(screen.getByRole('button', { name: '/srv/chrote' })).toHaveClass('selected')
+    expect(screen.getByLabelText('Folder')).toHaveValue('/srv/chrote')
+    expect(folderOptions()).toEqual(['/srv/chrote', '/srv', '~'])
+    expect(screen.getByRole('option', { name: '/srv/chrote' })).toHaveClass('selected')
     expect(screen.getByLabelText('Session name')).toHaveValue('claude-chrote')
     expect(screen.getByRole('button', { name: 'Launch claude in chrote' })).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith('/api/launch', expect.anything())
@@ -127,12 +135,12 @@ describe('Launcher', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Codex' }))
     expect(screen.getByLabelText('Session name')).toHaveValue('codex-chrote')
 
-    fireEvent.click(screen.getByRole('button', { name: '/srv' }))
+    fireEvent.click(screen.getByRole('option', { name: '/srv' }))
     expect(screen.getByLabelText('Session name')).toHaveValue('codex-srv')
     expect(screen.getByRole('button', { name: 'Launch codex in srv' })).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('Session name'), { target: { value: 'nightwatch' } })
-    fireEvent.click(screen.getByRole('button', { name: '~' }))
+    fireEvent.click(screen.getByRole('option', { name: '~' }))
     expect(screen.getByLabelText('Session name')).toHaveValue('nightwatch')
   })
 
@@ -188,15 +196,15 @@ describe('Launcher', () => {
     window.localStorage.clear()
   })
 
-  it('offers no completion hooks for a shell, which runs no agent', async () => {
+  it('keeps the completion-hook row for a shell but disables it, since a shell runs no agent', async () => {
     render(<Launcher workspaceId="terminal3" />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Shell' }))
 
-    expect(screen.queryByRole('checkbox', { name: 'Notify on completion' })).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Notify on completion' })).toBeDisabled()
   })
 
-  it('offers the folders this user is already working in', async () => {
+  it('offers the folders this user is already working in, after the pinned ones', async () => {
     mockState.sessions = [
       session('one', { id: '$4', cwd: '/srv/context-citadel' }),
       session('two', { id: '$8', cwd: '/srv/chrote-agent-formations' }),
@@ -204,24 +212,35 @@ describe('Launcher', () => {
     ]
     render(<Launcher workspaceId="terminal3" />)
 
-    const recents = await screen.findByText('Recent')
-    expect([...recents.parentElement!.querySelectorAll('.launcher-recent-path')].map(node => node.textContent))
-      .toEqual(['/srv/chrote-agent-formations', '/srv/context-citadel'])
+    await screen.findByRole('button', { name: 'Claude Code' })
+    expect(folderOptions()).toEqual(['/srv/chrote', '/srv', '~', '/srv/chrote-agent-formations', '/srv/context-citadel'])
 
-    fireEvent.click(screen.getByRole('button', { name: '/srv/context-citadel' }))
+    fireEvent.click(screen.getByRole('option', { name: '/srv/context-citadel' }))
     expect(screen.getByLabelText('Session name')).toHaveValue('claude-context-citadel')
   })
 
-  it('takes a folder from the browser and starts there', async () => {
+  it('launches in a typed folder from the Folder field itself', async () => {
     render(<Launcher workspaceId="terminal3" />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Browse…' }))
-    fireEvent.click(screen.getByRole('button', { name: 'pick /srv/picked' }))
-
+    const field = await screen.findByLabelText('Folder')
+    fireEvent.change(field, { target: { value: '/srv/picked' } })
     expect(screen.getByLabelText('Session name')).toHaveValue('claude-picked')
-    fireEvent.click(screen.getByRole('button', { name: 'Launch claude in picked' }))
 
-    await waitFor(() => expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/srv/picked' })))
+    fireEvent.keyDown(field, { key: 'Enter' })
+
+    await waitFor(() => expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'claude-picked',
+      cwd: '/srv/picked',
+    })))
+  })
+
+  it('does not launch into an empty folder', async () => {
+    render(<Launcher workspaceId="terminal3" />)
+
+    const field = await screen.findByLabelText('Folder')
+    fireEvent.change(field, { target: { value: '' } })
+
+    expect(screen.getByRole('button', { name: /^(Launch|Open)/ })).toBeDisabled()
   })
 
   it('offers a shell at home when the server has no launch options to give', async () => {
@@ -254,7 +273,7 @@ describe('Launcher flags', () => {
 
     expect(await screen.findByLabelText('Launch flags')).toHaveValue('--dangerously-skip-permissions')
     expect(screen.getByText('claude --dangerously-skip-permissions')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled()
   })
 
   it('shows each harness its own line, and keeps an edit while the launcher lives', async () => {
@@ -270,23 +289,26 @@ describe('Launcher flags', () => {
     expect(screen.getByLabelText('Launch flags')).toHaveValue('--verbose')
   })
 
-  it('offers Reset once the line differs, and puts the default back', async () => {
+  it('arms Reset once the line differs, and puts the default back', async () => {
     render(<Launcher workspaceId="terminal3" />)
 
     fireEvent.change(await screen.findByLabelText('Launch flags'), { target: { value: '--model opus' } })
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
 
     expect(screen.getByLabelText('Launch flags')).toHaveValue('--dangerously-skip-permissions')
-    expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled()
   })
 
-  it('says nothing about flags for a shell, which takes none', async () => {
+  it('keeps the flags block for a shell, greyed and inert, so nothing above it moves', async () => {
     render(<Launcher workspaceId="terminal3" />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Shell' }))
 
-    expect(screen.queryByLabelText('Launch flags')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Flags…' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Launch flags')).toBeDisabled()
+    expect(screen.getByLabelText('Launch flags')).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Flags…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled()
   })
 
   it('opens the catalogue of the chosen harness and writes what it is told', async () => {

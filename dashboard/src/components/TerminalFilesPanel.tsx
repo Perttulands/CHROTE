@@ -14,6 +14,7 @@ import {
   createFile,
   createFolder,
   deleteItem,
+  fetchDirectory,
   findFiles,
   getDownloadUrl,
   getErrorMessage,
@@ -138,11 +139,41 @@ function TerminalFilesPanel({
     updateFilesState(previous => ({ ...previous, openPath: normalized, selectedPath: normalized }))
   }, [updateFilesState])
 
+  // A requested path is a folder to stand in or a file to read, and only its
+  // parent's listing says which. A file, or a path the listing does not carry,
+  // opens in the viewer, which is where a missing or unreadable file is
+  // reported plainly; a parent that cannot be listed leaves the tree to try.
+  // The request is acknowledged at once, so the answer is kept only until a
+  // newer request replaces it, not until the acknowledgement re-renders.
+  const navigateSequence = useRef(0)
   useEffect(() => {
     if (!navigateRequest) return
-    navigateTo(navigateRequest.path)
-    onNavigateRequestHandled?.(navigateRequest.requestId)
-  }, [navigateRequest, navigateTo, onNavigateRequestHandled])
+    const { path, requestId } = navigateRequest
+    onNavigateRequestHandled?.(requestId)
+    navigateSequence.current += 1
+    const sequence = navigateSequence.current
+    const stillWanted = () => navigateSequence.current === sequence
+    const target = normalizeFilePath(path)
+    const parent = getParentPath(target)
+    if (parent === target) {
+      navigateTo(target)
+      return
+    }
+    void fetchDirectory(parent)
+      .then(siblings => {
+        if (!stillWanted()) return
+        const item = siblings.find(candidate => normalizeFilePath(candidate.path) === target)
+        if (item?.isDir) {
+          navigateTo(target)
+          return
+        }
+        navigateTo(parent)
+        openPath(target)
+      })
+      .catch(() => {
+        if (stillWanted()) navigateTo(target)
+      })
+  }, [navigateRequest, navigateTo, onNavigateRequestHandled, openPath])
 
   const trimmedQuery = query.trim()
 

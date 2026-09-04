@@ -55,7 +55,7 @@ export default function DevMode({ activeTab }: { activeTab: string }) {
     onRef.current = next
     setOn(next)
     if (!next) setSeen(null)
-    announce(next ? 'Dev mode on' : 'Dev mode off', 'info')
+    announce(next ? 'Dev mode on' : 'Dev mode off', 'success')
   }, [announce])
   const applyRef = useRef(apply)
   applyRef.current = apply

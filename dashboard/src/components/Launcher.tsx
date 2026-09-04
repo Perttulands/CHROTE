@@ -8,7 +8,7 @@ import { useSession } from '../context/SessionContext'
 import { useTheme } from '../theme/ThemeContext'
 import { identityColorFor } from '../theme/theme'
 import { HarnessMark, harnessShortName, type HarnessId } from './harnessMarks'
-import FolderPickerModal from './FolderPickerModal'
+import FolderField from './FolderField'
 import FlagPanel from './FlagPanel'
 import type { LaunchFlag } from './launchFlags'
 import { getTerminalUserInitial, resolveLaunchUser } from '../types'
@@ -246,9 +246,15 @@ interface LauncherProps {
    * just launched.
    */
   onLaunched?: (created: { name: string; unixUser: LaunchUser }) => void
+  /**
+   * Reports whether the operator has typed anything over the defaults. A
+   * popover that holds typed text is work in progress, and stays open through
+   * a press outside it; one that holds nothing goes away like a glance.
+   */
+  onTypedChange?: (typed: boolean) => void
 }
 
-export default function Launcher({ workspaceId, attachTo, initialFolder, initialHarness, onLaunched }: LauncherProps) {
+export default function Launcher({ workspaceId, attachTo, initialFolder, initialHarness, onLaunched, onTypedChange }: LauncherProps) {
   const { sessions, settings, terminalUsers, createSession } = useSession()
   const theme = useTheme()
   const options = useLaunchOptions()
@@ -261,7 +267,6 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
   const [chosenFolder, setChosenFolder] = useState<string | null>(null)
   const [chosenUser, setChosenUser] = useState<LaunchUser | null>(null)
   const [typedName, setTypedName] = useState<string | null>(null)
-  const [browsing, setBrowsing] = useState(false)
   const [launching, setLaunching] = useState(false)
   // A flags line the operator edited, kept per harness so switching to Codex
   // and back does not throw away what he wrote for Claude Code. It lives as
@@ -270,6 +275,12 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
   const [flagsOpen, setFlagsOpen] = useState(false)
   const flagsFieldId = useId()
   const [notify, setNotify] = useState(readNotifyPreference)
+  const folderFieldId = useId()
+
+  const typed = typedName !== null || Object.keys(flagEdits).length > 0
+  useEffect(() => {
+    onTypedChange?.(typed)
+  }, [onTypedChange, typed])
 
   const harness = options.harnesses.find(entry => entry.id === chosenHarness) ??
     options.harnesses.find(entry => entry.id === initialHarness) ??
@@ -278,8 +289,10 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
   const defaultUser = resolveLaunchUser(settings, workspaceId, terminalUsers)
   const user = chosenUser ?? defaultUser
 
-  const recents = useMemo(
-    () => recentFolders(sessions, user, options.folders),
+  // What the Folder field offers before anything is typed: the pinned
+  // folders, then where this user's sessions already are.
+  const folderSuggestions = useMemo(
+    () => [...options.folders, ...recentFolders(sessions, user, options.folders)],
     [sessions, user, options.folders],
   )
   const derivedName = useMemo(
@@ -312,15 +325,18 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
     })
   }, [harness.id])
 
-  const launch = useCallback(async () => {
+  // The Folder field's Enter launches with what it just chose, which the
+  // state has not caught up with yet; everything else launches where it is.
+  const launch = useCallback(async (inFolder: string = folder) => {
     const sessionName = name.trim()
-    if (!sessionName || launching) return
+    const cwd = inFolder.trim()
+    if (!sessionName || !cwd || launching) return
     setLaunching(true)
     try {
       const created = await createSession({
         name: sessionName,
         unixUser: user,
-        cwd: folder,
+        cwd,
         harness: harness.id,
         workspaceId,
         ...(flagsOffered ? { flags: flagLine, notify } : {}),
@@ -337,18 +353,6 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
     storeNotifyPreference(enabled)
   }, [])
 
-  const folderOption = (path: string, className: string) => (
-    <button
-      key={path}
-      type="button"
-      className={`${className}${path === folder ? ' selected' : ''}`}
-      aria-pressed={path === folder}
-      onClick={() => setChosenFolder(path)}
-    >
-      {path}
-    </button>
-  )
-
   return (
     <div
       className={`launcher${flagsOpen && flagsOffered ? ' flags-open' : ''}`}
@@ -357,8 +361,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
     >
       {/* The frame is the container the flags panel measures: it docks beside
           the body when the launcher has the room and stacks under it when it
-          does not. The folder picker stays outside it, because a container
-          would become the containing block of its fixed overlay. */}
+          does not. */}
       <div className="launcher-frame">
         <div className="launcher-body">
           <div className="launcher-title">Launch</div>
@@ -383,21 +386,18 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
             )
           })}
 
-          <div className="launcher-label">Folder</div>
-          <div className="launcher-pick" data-ui="launcher.folder">
-            {options.folders.map(path => folderOption(path, 'launcher-option'))}
-            <button type="button" className="launcher-quiet launcher-browse" onClick={() => setBrowsing(true)}>
-              Browse…
-            </button>
+          <label className="launcher-label" htmlFor={folderFieldId}>Folder</label>
+          <div className="launcher-folder" data-ui="launcher.folder">
+            <FolderField
+              id={folderFieldId}
+              value={folder}
+              onChange={setChosenFolder}
+              onSubmit={path => { void launch(path) }}
+              recents={folderSuggestions}
+              ariaLabel="Folder"
+              inputClassName="launcher-name"
+            />
           </div>
-          {recents.length > 0 && (
-            <div className="launcher-recent">
-              <span className="launcher-recent-label">Recent</span>
-              <div className="launcher-recent-paths">
-                {recents.map(path => folderOption(path, 'launcher-recent-path'))}
-              </div>
-            </div>
-          )}
 
           {/* A server with no configured Unix users has no user to choose: the
               session runs as the one account CHROTE was given. */}
@@ -427,51 +427,58 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
           </div>
 
           {/* The flags line is the whole of what will be typed after the
-              binary: the catalogue writes into it, and so may the operator. */}
-          {flagsOffered && (
-            <>
-              <label className="launcher-label" htmlFor={flagsFieldId}>Flags</label>
-              <input
-                id={flagsFieldId}
-                type="text"
-                className="launcher-name launcher-flags"
-                data-ui="launcher.flags"
-                aria-label="Launch flags"
-                value={flagLine}
-                onChange={event => setFlagLine(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Enter') void launch()
-                }}
-              />
-              <div className="launcher-preview" title={commandPreview}>{commandPreview}</div>
-              <div className="launcher-pick">
-                <button
-                  type="button"
-                  className="launcher-quiet"
-                  aria-expanded={flagsOpen}
-                  onClick={() => setFlagsOpen(open => !open)}
-                >
-                  Flags…
-                </button>
-                {flagsEdited && (
-                  <button type="button" className="launcher-quiet launcher-reset" onClick={resetFlags}>
-                    Reset
-                  </button>
-                )}
-              </div>
-              {/* The harness's own completion hooks, installed through its
-                  flags by the server: the session then reports when its
-                  agent finishes or waits. Off means the command runs as typed. */}
-              <label className="launcher-notify">
-                <input
-                  type="checkbox"
-                  checked={notify}
-                  onChange={event => setNotifyPreference(event.target.checked)}
-                />
-                Notify on completion
-              </label>
-            </>
-          )}
+              binary: the catalogue writes into it, and so may the operator.
+              A shell takes none and keeps the block all the same, greyed and
+              inert, so the harness buttons above it stay where they are
+              while the operator clicks through them; Reset keeps its slot
+              for the same reason. */}
+          <label className="launcher-label" htmlFor={flagsFieldId}>Flags</label>
+          <input
+            id={flagsFieldId}
+            type="text"
+            className="launcher-name launcher-flags"
+            data-ui="launcher.flags"
+            aria-label="Launch flags"
+            value={flagsOffered ? flagLine : ''}
+            disabled={!flagsOffered}
+            onChange={event => setFlagLine(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') void launch()
+            }}
+          />
+          <div className="launcher-preview" title={commandPreview}>{flagsOffered ? commandPreview : '\u00a0'}</div>
+          <div className="launcher-pick">
+            <button
+              type="button"
+              className="launcher-quiet"
+              aria-expanded={flagsOpen && flagsOffered}
+              disabled={!flagsOffered}
+              onClick={() => setFlagsOpen(open => !open)}
+            >
+              Flags…
+            </button>
+            <button
+              type="button"
+              className="launcher-quiet launcher-reset"
+              disabled={!flagsEdited}
+              onClick={resetFlags}
+            >
+              Reset
+            </button>
+          </div>
+          {/* The harness's own completion hooks, installed through its
+              flags by the server: the session then reports when its
+              agent finishes or waits. Off means the command runs as typed.
+              A shell keeps the row, disabled, so nothing moves. */}
+          <label className="launcher-notify">
+            <input
+              type="checkbox"
+              checked={flagsOffered && notify}
+              disabled={!flagsOffered}
+              onChange={event => setNotifyPreference(event.target.checked)}
+            />
+            Notify on completion
+          </label>
 
           <label className="launcher-label" htmlFor={nameFieldId}>Name</label>
           <input
@@ -492,7 +499,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
               type="button"
               className="launcher-quiet launcher-launch"
               onClick={() => { void launch() }}
-              disabled={launching || name.trim() === ''}
+              disabled={launching || name.trim() === '' || folder.trim() === ''}
             >
               {launchLabel}
             </button>
@@ -509,14 +516,6 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
           />
         )}
       </div>
-
-      {browsing && (
-        <FolderPickerModal
-          initialPath={folder.startsWith('/') ? folder : '/'}
-          onSelect={path => { setChosenFolder(path); setBrowsing(false) }}
-          onClose={() => setBrowsing(false)}
-        />
-      )}
     </div>
   )
 }

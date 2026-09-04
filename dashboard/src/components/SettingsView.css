@@ -361,11 +361,11 @@
 
 .beads-project-add-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
 }
 
-.beads-project-add-row .settings-input {
+.beads-project-add-row .folder-field {
   flex: 1;
   min-width: 260px;
 }
@@ -398,131 +398,6 @@
 
 .settings-btn-add {
   border-style: dashed;
-}
-
-/* Folder Picker Modal */
-.folder-picker-dialog {
-  max-width: 600px;
-  max-height: 80vh;
-}
-
-.folder-picker-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 300px;
-}
-
-.folder-picker-nav {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.folder-picker-up-btn {
-  background: none;
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  padding: 4px 10px;
-  font-size: 16px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.folder-picker-up-btn:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.folder-picker-up-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.folder-picker-path {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background-color: var(--surface-primary);
-  border-radius: 4px;
-}
-
-.folder-picker-path-label {
-  color: var(--text-dim);
-  font-size: 12px;
-}
-
-.folder-picker-path code {
-  font-family: monospace;
-  font-size: 13px;
-  color: var(--text-primary);
-}
-
-.folder-picker-list {
-  flex: 1;
-  overflow-y: auto;
-  background-color: var(--surface-primary);
-  border: 1px solid var(--divider);
-  border-radius: 6px;
-  min-height: 200px;
-}
-
-.folder-picker-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--divider);
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
-
-.folder-picker-item:last-child {
-  border-bottom: none;
-}
-
-.folder-picker-item:hover {
-  background-color: var(--surface-secondary);
-}
-
-.folder-picker-item.has-beads {
-  background-color: rgba(var(--accent-rgb), 0.05);
-}
-
-.folder-picker-icon {
-  font-size: 16px;
-}
-
-.folder-picker-name {
-  flex: 1;
-  font-size: 13px;
-  color: var(--text-primary);
-}
-
-.folder-picker-loading,
-.folder-picker-error,
-.folder-picker-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 200px;
-  color: var(--text-dim);
-  font-size: 13px;
-}
-
-.folder-picker-error {
-  color: var(--danger, #ff4444);
-}
-
-.beads-badge {
-  background-color: var(--accent);
-  color: var(--surface-primary);
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 500;
 }
 
 /* The one destructive control in Settings. It asks where it stands: a first

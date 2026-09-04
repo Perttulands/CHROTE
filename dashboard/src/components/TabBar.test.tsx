@@ -253,7 +253,6 @@ describe('TabBar navigation', () => {
     openTabMenu()
     expect(screen.queryByRole('menuitem', { name: 'Dashboard Help' })).not.toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: /Rename tab/i })).toBeInTheDocument()
-    expect(document.querySelectorAll('.floating-panel-dismiss-layer')).toHaveLength(1)
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menuitem', { name: /Rename tab/i })).not.toBeInTheDocument()

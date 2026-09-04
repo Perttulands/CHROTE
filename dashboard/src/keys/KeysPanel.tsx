@@ -13,6 +13,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { LEADER_LABEL, chordCaps, directChordLabel, useLeader, type Chord } from './chords'
+import { useSurface } from './dismiss'
 import './KeysPanel.css'
 
 interface KeysPanelProps {
@@ -31,22 +32,18 @@ export default function KeysPanel({ isOpen, onClose }: KeysPanelProps) {
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
   const searchRef = useRef<HTMLInputElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  // A glance: Escape from wherever the cursor is, a press outside, or the
+  // chord that opened it closes it.
+  useSurface({ open: isOpen, kind: 'glance', onClose, ref: panelRef })
 
   useEffect(() => {
     if (!isOpen) return
     setQuery('')
     setCursor(0)
     searchRef.current?.focus()
-    // Escape closes the panel from wherever the cursor happens to be, including
-    // the terminal the chord was pressed over.
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      onClose()
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [isOpen, onClose])
+  }, [isOpen])
 
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -85,7 +82,7 @@ export default function KeysPanel({ isOpen, onClose }: KeysPanelProps) {
   }
 
   return (
-    <div className="keys-panel" data-ui="keys.panel" role="dialog" aria-label="Keybindings" onKeyDown={handleKeyDown}>
+    <div ref={panelRef} className="keys-panel" data-ui="keys.panel" role="dialog" aria-label="Keybindings" onKeyDown={handleKeyDown}>
       <div className="keys-panel-search-row">
         <input
           ref={searchRef}

@@ -36,6 +36,58 @@ test.describe('Launcher', () => {
     await expect(window.locator('.session-tag')).toHaveCount(1)
   })
 
+  test('the Folder field finds a workspace by a fragment and launches in a typed path', async ({ page }) => {
+    await mockApiRoutes(page)
+
+    const created: Array<Record<string, unknown>> = []
+    page.on('request', request => {
+      if (request.method() === 'POST' && request.url().includes('/api/tmux/sessions')) {
+        created.push(JSON.parse(request.postData() || '{}'))
+      }
+    })
+
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    const launcher = page.locator('.terminal-window').first().locator('.launcher')
+    const field = launcher.getByLabel('Folder', { exact: true })
+    const before = await launcher.boundingBox()
+
+    await field.fill('VSK')
+    await expect(launcher.getByRole('option', { name: '/home/operator/repos/VSK-Zone' })).toHaveAttribute('aria-selected', 'true')
+
+    await field.fill('/srv/other')
+    await expect(launcher.getByLabel('Session name')).toHaveValue('claude-other')
+    // Suggestions came and went; the launcher is exactly where and how big it was.
+    expect(await launcher.boundingBox()).toEqual(before)
+
+    await field.press('Enter')
+
+    await expect.poll(() => created).toHaveLength(1)
+    expect(created[0]).toMatchObject({ name: 'claude-other', cwd: '/srv/other', harness: 'claude-code' })
+  })
+
+  test('switching harnesses moves neither the harness buttons nor the frame', async ({ page }) => {
+    await mockApiRoutes(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    const launcher = page.locator('.terminal-window').first().locator('.launcher')
+    const shell = launcher.getByRole('button', { name: 'Shell', exact: true })
+    await expect(launcher.getByLabel('Launch flags')).toBeEnabled()
+    const frameBefore = await launcher.boundingBox()
+    const shellBefore = await shell.boundingBox()
+
+    await shell.click()
+    await expect(launcher.getByLabel('Launch flags')).toBeDisabled()
+    expect(await launcher.boundingBox()).toEqual(frameBefore)
+    expect(await shell.boundingBox()).toEqual(shellBefore)
+
+    await launcher.getByRole('button', { name: 'Claude Code' }).click()
+    await launcher.getByLabel('Launch flags').fill('--verbose')
+    await expect(launcher.getByRole('button', { name: 'Reset' })).toBeEnabled()
+    expect(await launcher.boundingBox()).toEqual(frameBefore)
+    expect(await shell.boundingBox()).toEqual(shellBefore)
+  })
+
   test('the catalogue docks beside the launcher with room, and stacks under it without', async ({ page }) => {
     await mockApiRoutes(page)
     await page.goto('/')

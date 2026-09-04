@@ -2,12 +2,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AgentsView from './index'
 import { DEFAULT_SETTINGS } from '../../types'
-import type { AgentContext, AgentWorkspaces } from '../../agents/agentContextApi'
+import type { AgentContext } from '../../agents/agentContextApi'
+import type { Workspace } from '../../workspaces/workspacesApi'
 
 const mockState = vi.hoisted(() => ({
   announce: vi.fn(),
   fetchAgentContext: vi.fn(),
-  fetchAgentWorkspaces: vi.fn(),
+  fetchWorkspaces: vi.fn(),
   fetchBeadWork: vi.fn(),
 }))
 
@@ -25,8 +26,13 @@ vi.mock('../../agents/agentContextApi', async () => {
     ...actual,
     fetchAgentContext: (folder: string, harness: string, user: string) =>
       mockState.fetchAgentContext(folder, harness, user),
-    fetchAgentWorkspaces: (user: string) => mockState.fetchAgentWorkspaces(user),
+    fetchAgentTender: () => Promise.resolve({ session: 'tender', beads: '/srv', folder: '/srv/ops/tender' }),
   }
+})
+
+vi.mock('../../workspaces/workspacesApi', async () => {
+  const actual = await vi.importActual<typeof import('../../workspaces/workspacesApi')>('../../workspaces/workspacesApi')
+  return { ...actual, fetchWorkspaces: () => mockState.fetchWorkspaces() }
 })
 
 vi.mock('../../beads/beadsApi', () => ({
@@ -39,13 +45,10 @@ vi.mock('../Desk', () => ({
   ),
 }))
 
-const workspaces: AgentWorkspaces = {
-  workspaces: [
-    { path: '/home/operator', source: 'home', instructions: 3 },
-    { path: '/srv/chrote', source: 'root', instructions: 3 },
-  ],
-  tender: { session: 'tender', beads: '/srv', folder: '/srv/ops/tender' },
-}
+const workspaces: Workspace[] = [
+  { path: '/home/operator', sources: ['session'], sessions: ['claude-home'], instructions: 3, lastActivity: '2026-09-03T12:00:00Z' },
+  { path: '/srv/chrote', sources: ['git', 'store'], sessions: [], instructions: 3 },
+]
 
 function context(folder: string, harness: string): AgentContext {
   return {
@@ -62,9 +65,9 @@ describe('AgentsView', () => {
   beforeEach(() => {
     mockState.announce.mockReset()
     mockState.fetchAgentContext.mockReset()
-    mockState.fetchAgentWorkspaces.mockReset()
+    mockState.fetchWorkspaces.mockReset()
     mockState.fetchBeadWork.mockReset()
-    mockState.fetchAgentWorkspaces.mockResolvedValue(workspaces)
+    mockState.fetchWorkspaces.mockResolvedValue(workspaces)
     mockState.fetchAgentContext.mockImplementation((folder: string, harness: string) =>
       Promise.resolve(context(folder, harness)))
     mockState.fetchBeadWork.mockResolvedValue({
@@ -79,6 +82,16 @@ describe('AgentsView', () => {
 
     await waitFor(() => expect(screen.getByText('/home/operator/CLAUDE.md')).toBeInTheDocument())
     expect(mockState.fetchAgentContext).toHaveBeenCalledWith('/home/operator', 'claude-code', 'operator')
+  })
+
+  it('lists the folders live sessions run in before the rest', async () => {
+    render(<AgentsView />)
+    await waitFor(() => expect(screen.getByText('/srv/chrote')).toBeInTheDocument())
+
+    const headings = screen.getAllByRole('heading', { level: 3 }).map(heading => heading.textContent)
+    expect(headings.slice(headings.indexOf('Running'), headings.indexOf('Running') + 2)).toEqual(['Running', 'Projects'])
+    const rows = [...document.querySelectorAll('.agents-workspaces .agents-rail-row')].map(row => row.textContent)
+    expect(rows).toEqual(['/home/operator3', '/srv/chrote3'])
   })
 
   it('resolves the workspace the operator picks', async () => {
