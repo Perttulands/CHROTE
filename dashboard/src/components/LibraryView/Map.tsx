@@ -42,11 +42,11 @@ import {
   type MapCard,
 } from './mapBands'
 import { buildIndex, hitTest, reachOf } from './mapIndex'
+import { adjacencyOf, depthsFrom, glows, lightOf, type MapLighting } from './mapLight'
 import {
   LANDMARK_LABELS,
   MAP_LABEL_CHARS,
   layoutMap,
-  neighboursOf,
   placeLabels,
   withinWindow,
   type MapLabel,
@@ -71,6 +71,11 @@ export interface MapProps {
    * with its neighbours, so a list in the rail is read against the map.
    */
   hoverPath?: string | null
+  /**
+   * The shelf the pointer is on in the rail, which the map lights alone: the
+   * rail is read against the map rather than instead of it.
+   */
+  soloShelf?: string | null
   /** How recently a page must have moved to be drawn at full strength. */
   window?: RecencyWindow
   onOpen: (path: string) => void
@@ -183,11 +188,12 @@ function useMapLayout(graph: LibraryGraph, width: number, height: number): { lay
   return { layout: EMPTY_LAYOUT, drawing: true }
 }
 
-export default function LibraryMap({ graph, openPath, matches, hoverPath = null, window: recency = 'all', onOpen }: MapProps) {
+export default function LibraryMap({ graph, openPath, matches, hoverPath = null, soloShelf = null, window: recency = 'all', onOpen }: MapProps) {
   const { ref, width, height } = useMeasuredSize()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rendererRef = useRef<MapRenderer | null>(null)
   const [hovered, setHovered] = useState<string | null>(null)
+  const [shelf, setShelf] = useState<string | null>(null)
   const [palette, setPalette] = useState(() => readPalette(null))
   const view = useMapTransform<HTMLDivElement>({ width, height })
 
@@ -198,17 +204,31 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
   const index = useMemo(() => buildIndex(layout.nodes), [layout])
   const positions = useMemo(() => new Map(layout.nodes.map(node => [node.path, node])), [layout])
 
-  const { focus, hot, primary } = useMemo(() => {
-    const focus = new Set<string>()
-    if (openPath) focus.add(openPath)
-    if (hovered) focus.add(hovered)
-    if (hoverPath) focus.add(hoverPath)
-    const hot = new Set<string>(focus)
-    focus.forEach(path => neighboursOf(graph, path).forEach(other => hot.add(other)))
-    const primary = new Set<string>(focus)
-    matches?.forEach(path => { hot.add(path); primary.add(path) })
-    return { focus, hot, primary }
-  }, [graph, hovered, hoverPath, matches, openPath])
+  // Where the light starts: the page on the table, the page under the pointer
+  // wherever it is pointed at, and what a search found.
+  const primary = useMemo(() => {
+    const found = new Set<string>()
+    if (openPath) found.add(openPath)
+    if (hovered) found.add(hovered)
+    if (hoverPath) found.add(hoverPath)
+    matches?.forEach(path => found.add(path))
+    return found
+  }, [hovered, hoverPath, matches, openPath])
+
+  const adjacency = useMemo(() => adjacencyOf(graph), [graph])
+  const solo = shelf ?? soloShelf
+  const lighting: MapLighting = useMemo(() => ({
+    depths: primary.size > 0 && solo === null ? depthsFrom(adjacency, primary) : null,
+    solo,
+  }), [adjacency, primary, solo])
+
+  // The pages the map names while the light is on: the neighbourhood itself,
+  // which is what the operator asked about.
+  const hot = useMemo(() => {
+    const found = new Set<string>(solo === null ? [] : primary)
+    lighting.depths?.forEach((depth, path) => { if (depth <= 1) found.add(path) })
+    return found
+  }, [lighting, primary, solo])
 
   // One reading of the clock per drawing, so every page is judged against the
   // same moment and nothing redraws because time passed.
@@ -347,11 +367,10 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
     transform: view.transform,
     width,
     height,
-    hot,
-    focus,
+    lighting,
     stale,
     palette,
-  }), [focus, height, hot, layout, palette, stale, text, view.transform, width])
+  }), [height, layout, lighting, palette, stale, text, view.transform, width])
 
   useEffect(() => { rendererRef.current?.draw(scene) }, [scene])
 
@@ -479,11 +498,18 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
   useEffect(() => {
     const layer = layerRef.current
     if (!layer) return
+    // What the light does to a page is written on the page's own element: the
+    // depth it sits at, which is what a test and a screen reader can read off a
+    // drawing that is one canvas.
     Array.from(layer.children).forEach(element => {
-      const path = (element as HTMLElement).dataset.path
-      element.classList.toggle('hot', path !== undefined && hot.has(path))
+      const handle = element as HTMLElement
+      const node = handle.dataset.path ? positions.get(handle.dataset.path) : undefined
+      const light = node ? lightOf(node, lighting) : null
+      handle.classList.toggle('hot', glows(light))
+      if (light === null) delete handle.dataset.depth
+      else handle.dataset.depth = String(light)
     })
-  }, [handles, hot])
+  }, [handles, lighting, positions])
 
   // The box is one element to three readers: the one that measures it, the one
   // that moves the drawing through it, and the drawing's own coordinates.
@@ -500,7 +526,7 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
       {...view.handlers}
       onPointerMove={onPointerMove}
       onClick={onClick}
-      onMouseLeave={() => setHovered(null)}
+      onMouseLeave={() => { setHovered(null); setShelf(null) }}
     >
       <canvas ref={canvasRef} className="library-map-canvas" role="img" aria-label="The map" />
       {/* One element per page over the drawing, so the map is reachable by
@@ -526,6 +552,9 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
           <span
             key={cluster.shelf}
             className="library-map-cluster"
+            // Pointing at a shelf's name asks about the shelf: it is lit alone.
+            onMouseEnter={() => setShelf(cluster.shelf)}
+            onMouseLeave={() => setShelf(current => (current === cluster.shelf ? null : current))}
             // Near in, every card names its own shelf, so the shelf's own name
             // gives way rather than sitting over the cards.
             style={{ left: point.x, top: point.y, opacity: band === 'near' ? 0 : 1 }}

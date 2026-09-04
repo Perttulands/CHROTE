@@ -410,7 +410,9 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
   white-space: nowrap;
-  pointer-events: none;
+  /* The name is the shelf: pointing at it asks about the shelf, so it takes
+     the pointer where the rest of the writing on the map does not. */
+  cursor: default;
   /* One band gives way to the next rather than cutting to it. The fade runs
      when the operator crosses a threshold and at no other time. */
   transition: opacity 180ms linear;

@@ -83,6 +83,18 @@ test.describe('The Library', () => {
     await expect(node(page, 'Workflow Preferences')).toHaveClass(/hot/)
     await expect(node(page, 'Tool Preferences')).not.toHaveClass(/hot/)
 
+    // The light falls off with distance: the page itself and what it touches
+    // are bright, what they touch is dim, and the rest of the corpus is faded.
+    await expect(node(page, 'Test isolation')).toHaveAttribute('data-depth', '0')
+    await expect(node(page, 'Workflow Preferences')).toHaveAttribute('data-depth', '1')
+    await expect(node(page, 'Tool Preferences')).toHaveAttribute('data-depth', '2')
+    await expect(node(page, LONG_TITLE)).toHaveAttribute('data-depth', 'out')
+
+    // Pointing at a shelf asks about the shelf: its pages stay, the rest dims.
+    await page.locator('.library-map-cluster', { hasText: 'preferences · 2' }).hover()
+    await expect(node(page, 'Workflow Preferences')).not.toHaveAttribute('data-depth')
+    await expect(node(page, 'Test isolation')).toHaveAttribute('data-depth', 'out')
+
     // A name too long for the map's labels is still readable in full under
     // the pointer, where the label beside the dot only shortens it.
     await node(page, LONG_TITLE).hover()

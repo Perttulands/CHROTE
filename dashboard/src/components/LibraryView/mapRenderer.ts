@@ -19,6 +19,7 @@
 
 import type { MapTransform } from '../../hooks/useMapTransform'
 import { dotRadius, type MapCard } from './mapBands'
+import { alphaOf, edgeLight, glows, lightOf, type MapLight, type MapLighting } from './mapLight'
 import type { MapEdge, MapLabel, MapNode } from './mapLayout'
 
 /** The colours the drawing uses, read from the theme rather than invented. */
@@ -48,10 +49,8 @@ export interface MapScene {
   transform: MapTransform
   width: number
   height: number
-  /** Pages drawn at full strength: the focus and everything it touches. */
-  hot: ReadonlySet<string>
-  /** The pages the light starts at: the ends of the hairlines that light up. */
-  focus: ReadonlySet<string>
+  /** What the pointer is asking about, and how far its light reaches. */
+  lighting: MapLighting
   /** Pages outside the recency window, drawn all but out of the way. */
   stale: ReadonlySet<string>
   palette: MapPalette
@@ -73,6 +72,13 @@ export interface MapRenderer {
 
 /** A page outside the recency window is drawn at this much of itself. */
 export const STALE_OPACITY = 0.14
+
+/** How far back a name steps when the light is on its page's neighbours. */
+const DIM_LABEL = 0.6
+const FADED_LABEL = 0.3
+
+/** How far the glow reaches past a lit dot, in the box's pixels. */
+const GLOW = 6
 
 /**
  * How many shades of age the drawing distinguishes. A page's opacity is
@@ -150,9 +156,14 @@ export function readPalette(element: Element | null): MapPalette {
   return palette
 }
 
-/** The alpha a page is drawn at, quantised to the shades the batch allows. */
-function shadeOf(node: MapNode, hot: boolean, stale: boolean): number {
-  const wanted = stale ? STALE_OPACITY : hot ? 1 : node.opacity
+/**
+ * The alpha a page is drawn at, quantised to the shades the batch allows. A page
+ * outside the recency window is held back whatever the light does, because the
+ * window is the operator's own question about what has moved lately.
+ */
+function shadeOf(node: MapNode, light: MapLight, stale: boolean): number {
+  const lit = alphaOf(light) ?? node.opacity
+  const wanted = stale ? Math.min(STALE_OPACITY, lit) : lit
   return Math.max(1, Math.round(wanted * SHADES)) / SHADES
 }
 
@@ -170,13 +181,13 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): MapRenderer | n
   // emptied rather than allowed to grow without end.
   let sprites = new Map<string, Stamp>()
 
-  const sprite = (colour: string, alpha: number, radius: number): Stamp => {
+  const sprite = (colour: string, alpha: number, radius: number, glow: number): Stamp => {
     const size = Math.max(SPRITE_STEP, Math.round(radius / SPRITE_STEP) * SPRITE_STEP)
-    const key = `${colour}|${alpha}|${size}`
+    const key = `${colour}|${alpha}|${size}|${glow}`
     const found = sprites.get(key)
     if (found) return found
     if (sprites.size > MAX_SPRITES) sprites = new Map()
-    const side = Math.ceil(size * 2) + 2
+    const side = Math.ceil(size * 2) + 2 + glow * 2
     const image = document.createElement('canvas')
     image.width = side
     image.height = side
@@ -184,9 +195,16 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): MapRenderer | n
     if (pen) {
       pen.fillStyle = colour
       pen.globalAlpha = alpha
+      // The glow is blurred once, into the stamp, and never again: blurring
+      // every lit dot on every frame is what makes a canvas map crawl.
+      if (glow > 0) {
+        pen.shadowColor = colour
+        pen.shadowBlur = glow
+      }
       pen.beginPath()
       pen.arc(side / 2, side / 2, size, 0, Math.PI * 2)
       pen.fill()
+      if (glow > 0) pen.fill()
     }
     const stamp = { image, centre: side / 2 }
     sprites.set(key, stamp)
@@ -211,7 +229,8 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): MapRenderer | n
     // times rather than thirty thousand. A hairline with both ends off the box
     // is left out: it cannot be seen, and at a corpus of thousands the ones
     // that can be seen are what the frame should cost.
-    const paths = [new Path2D(), new Path2D(), new Path2D(), new Path2D()]
+    const strengths: MapLight[] = [null, 0, 2, 'out']
+    const paths = strengths.map(() => [new Path2D(), new Path2D()])
     let drawn = false
     scene.edges.forEach(edge => {
       const from = positions.get(edge.from)
@@ -219,20 +238,24 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): MapRenderer | n
       if (!from || !to) return
       if (Math.max(from.x, to.x) < view.left || Math.min(from.x, to.x) > view.right) return
       if (Math.max(from.y, to.y) < view.top || Math.min(from.y, to.y) > view.bottom) return
-      const lit = scene.focus.has(edge.from) || scene.focus.has(edge.to)
-      const path = paths[(edge.tag ? 1 : 0) + (lit ? 2 : 0)]
+      const light = edgeLight(lightOf(from, scene.lighting), lightOf(to, scene.lighting), scene.lighting)
+      const kind = light === null ? 0 : light === 'out' ? 3 : light === 2 ? 2 : 1
+      const path = paths[kind][edge.tag ? 1 : 0]
       path.moveTo(from.x, from.y)
       path.lineTo(to.x, to.y)
       drawn = true
     })
     if (!drawn) return
     context.lineWidth = 1 / scene.transform.scale
-    paths.forEach((path, kind) => {
-      const lit = kind >= 2
-      context.setLineDash(kind % 2 === 1 ? [2 / scene.transform.scale, 3 / scene.transform.scale] : [])
-      context.strokeStyle = lit ? scene.palette.accent : scene.palette.divider
-      context.globalAlpha = lit ? 0.8 : 1
-      context.stroke(path)
+    paths.forEach((pair, kind) => {
+      const light = strengths[kind]
+      const lit = light === 0
+      pair.forEach((path, tag) => {
+        context.setLineDash(tag === 1 ? [2 / scene.transform.scale, 3 / scene.transform.scale] : [])
+        context.strokeStyle = lit ? scene.palette.accent : scene.palette.divider
+        context.globalAlpha = lit ? 0.8 : alphaOf(light) ?? 1
+        context.stroke(path)
+      })
     })
     context.setLineDash([])
     context.globalAlpha = 1
@@ -247,10 +270,11 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): MapRenderer | n
     const { scale, x: offsetX, y: offsetY } = scene.transform
     scene.nodes.forEach(node => {
       if (node.x < view.left || node.x > view.right || node.y < view.top || node.y > view.bottom) return
-      const hot = scene.hot.has(node.path)
+      const light = lightOf(node, scene.lighting)
       const stale = scene.stale.has(node.path)
-      const colour = hot ? scene.palette.accent : node.candidate ? scene.palette.dim : scene.palette.dot
-      const stamp = sprite(colour, shadeOf(node, hot, stale), dotRadius(node, scale) * ratio)
+      const lit = glows(light)
+      const colour = lit ? scene.palette.accent : node.candidate ? scene.palette.dim : scene.palette.dot
+      const stamp = sprite(colour, shadeOf(node, light, stale), dotRadius(node, scale) * ratio, lit ? GLOW * ratio : 0)
       context.drawImage(
         stamp.image,
         Math.round((node.x * scale + offsetX) * ratio) - stamp.centre,
@@ -270,6 +294,12 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): MapRenderer | n
     context.lineWidth = LABEL_HALO
     context.strokeStyle = scene.palette.background
     layer.labels.forEach(label => {
+      // A name steps back with the page it names: with the light on, a landmark
+      // outside the neighbourhood would otherwise be the loudest thing left on
+      // the map, which is the opposite of what the pointer asked for.
+      const node = positions.get(label.path)
+      const light = node ? lightOf(node, scene.lighting) : null
+      context.globalAlpha = layer.alpha * (light === 'out' ? FADED_LABEL : light === 2 ? DIM_LABEL : 1)
       context.font = `${label.primary ? PRIMARY_SIZE : LABEL_SIZE}px ${scene.palette.family}`
       context.fillStyle = label.primary ? scene.palette.dot : scene.palette.dim
       const x = label.x * scale + offsetX
@@ -277,6 +307,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): MapRenderer | n
       context.strokeText(label.text, x, y)
       context.fillText(label.text, x, y)
     })
+    context.globalAlpha = layer.alpha
   }
 
   const drawCards = (scene: MapScene, layer: MapTextLayer) => {

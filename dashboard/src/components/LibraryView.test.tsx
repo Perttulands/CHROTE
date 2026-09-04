@@ -396,6 +396,20 @@ describe('LibraryView', () => {
     expect(mapNode('Workflow Preferences')).not.toHaveClass('hot')
   })
 
+  // The other channel: a shelf's row asks about the shelf, and the map answers
+  // by lighting that shelf alone.
+  it('lights one shelf alone while the pointer is on its row in the rail', async () => {
+    await openLibrary()
+    const row = region('library-left').getByRole('button', { name: /^preferences/ })
+
+    fireEvent.mouseEnter(row)
+    expect(mapNode('Workflow Preferences')).not.toHaveAttribute('data-depth')
+    expect(mapNode('Test isolation')).toHaveAttribute('data-depth', 'out')
+
+    fireEvent.mouseLeave(row)
+    expect(mapNode('Test isolation')).not.toHaveAttribute('data-depth')
+  })
+
   it('searches the whole corpus and opens a result', async () => {
     await openLibrary()
 
