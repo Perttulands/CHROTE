@@ -37,10 +37,11 @@ func newAgentTestHost(t *testing.T) *agentTestHost {
 		handler: &AgentContextHandler{
 			// A command that does not exist: bd contributes nothing, and the
 			// rest of the stack is what these tests are about.
-			bdCommand:    filepath.Join(base, "no-such-bd"),
-			execTimeout:  5 * time.Second,
-			homeForUser:  func(string) (string, error) { return home, nil },
-			allowedRoots: func() []string { return []string{root} },
+			bdCommand:           filepath.Join(base, "no-such-bd"),
+			execTimeout:         5 * time.Second,
+			managedClaudePolicy: filepath.Join(base, "etc", "claude-code", "CLAUDE.md"),
+			homeForUser:         func(string) (string, error) { return home, nil },
+			allowedRoots:        func() []string { return []string{root} },
 		},
 	}
 }
@@ -106,8 +107,7 @@ func assertSequence(t *testing.T, got, want []string, what string) {
 }
 
 // The instruction stack is the whole point of the route: the harness's own
-// order, every rung named, and the sibling AGENTS.md carrying its CLAUDE.md's
-// scope because it is the same rung.
+// order, with every rung named exactly once.
 func TestAgentContext_ResolvesTheInstructionStackInLoadingOrder(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -142,7 +142,7 @@ func TestAgentContext_ResolvesTheInstructionStackInLoadingOrder(t *testing.T) {
 			},
 		},
 		{
-			name:    "an AGENTS.md beside a CLAUDE.md is the same rung",
+			name:    "a CLAUDE.md symlink names its AGENTS.md target once",
 			harness: harnessClaudeCode,
 			build: func(t *testing.T, host *agentTestHost) string {
 				folder := filepath.Join(host.root, "project")
@@ -151,9 +151,35 @@ func TestAgentContext_ResolvesTheInstructionStackInLoadingOrder(t *testing.T) {
 				return folder
 			},
 			want: func(host *agentTestHost, folder string) []string {
+				return []string{filepath.Join(folder, "CLAUDE.md")}
+			},
+		},
+		{
+			name:    "a separate AGENTS.md is not a Claude Code instruction",
+			harness: harnessClaudeCode,
+			build: func(t *testing.T, host *agentTestHost) string {
+				folder := filepath.Join(host.root, "project")
+				writeFile(t, filepath.Join(folder, "CLAUDE.md"), "# claude\n")
+				writeFile(t, filepath.Join(folder, "AGENTS.md"), "# another harness\n")
+				return folder
+			},
+			want: func(host *agentTestHost, folder string) []string {
+				return []string{filepath.Join(folder, "CLAUDE.md")}
+			},
+		},
+		{
+			name:    "claude code reads local instructions after shared instructions",
+			harness: harnessClaudeCode,
+			build: func(t *testing.T, host *agentTestHost) string {
+				folder := filepath.Join(host.root, "project")
+				writeFile(t, filepath.Join(folder, "CLAUDE.md"), "# project\n")
+				writeFile(t, filepath.Join(folder, "CLAUDE.local.md"), "# local\n")
+				return folder
+			},
+			want: func(host *agentTestHost, folder string) []string {
 				return []string{
 					filepath.Join(folder, "CLAUDE.md"),
-					filepath.Join(folder, "AGENTS.md"),
+					filepath.Join(folder, "CLAUDE.local.md"),
 				}
 			},
 		},
@@ -200,8 +226,8 @@ func TestAgentContext_ResolvesTheInstructionStackInLoadingOrder(t *testing.T) {
 	}
 }
 
-// A CLAUDE.md that is a symlink to the AGENTS.md listed under it is one file
-// twice, and the stack says so rather than making the operator compare sizes.
+// A CLAUDE.md symlink says which file supplies its bytes without listing that
+// target as another instruction Claude Code loaded.
 func TestAgentContext_NamesTheFileASymlinkedInstructionPointsAt(t *testing.T) {
 	host := newAgentTestHost(t)
 	folder := filepath.Join(host.root, "project")
@@ -209,11 +235,42 @@ func TestAgentContext_NamesTheFileASymlinkedInstructionPointsAt(t *testing.T) {
 	symlink(t, "AGENTS.md", filepath.Join(folder, "CLAUDE.md"))
 
 	resolved := host.handler.resolve(folder, harnessClaudeCode, "", host.home)
+	if len(resolved.Instructions) != 1 {
+		t.Fatalf("instructions = %v, want only CLAUDE.md", instructionPaths(resolved.Instructions))
+	}
 	if got := resolved.Instructions[0].Link; got != "AGENTS.md" {
 		t.Fatalf("link = %q, want %q", got, "AGENTS.md")
 	}
-	if got := resolved.Instructions[1].Link; got != "" {
-		t.Fatalf("the target itself links to %q, want no link", got)
+}
+
+func TestAgentContext_ListsManagedPolicyRulesAndImportsInLoadingOrder(t *testing.T) {
+	host := newAgentTestHost(t)
+	folder := filepath.Join(host.root, "project")
+	managed := writeFile(t, host.handler.managedClaudePolicy, "# Managed\n")
+	claude := writeFile(t, filepath.Join(folder, "CLAUDE.md"), "Read @docs/workflow.md before editing.\n")
+	imported := writeFile(t, filepath.Join(folder, "docs", "workflow.md"), "Read @nested.md only on demand.\n")
+	writeFile(t, filepath.Join(folder, "docs", "nested.md"), "# Not recursively imported\n")
+	rule := writeFile(t, filepath.Join(folder, ".claude", "rules", "a.md"), "# Always loaded\n")
+	conditional := writeFile(t, filepath.Join(folder, ".claude", "rules", "b.md"), "---\npaths:\n  - src/**/*.go\n---\n# Conditional\n")
+
+	resolved := host.handler.resolve(folder, harnessClaudeCode, "", host.home)
+	assertSequence(t, instructionPaths(resolved.Instructions), []string{
+		managed,
+		claude,
+		imported,
+		rule,
+		conditional,
+	}, "instructions")
+	if got := resolved.Instructions[0].Scope; got != scopeManaged {
+		t.Fatalf("managed policy scope = %q, want %q", got, scopeManaged)
+	}
+	for _, index := range []int{1, 2, 3} {
+		if got := resolved.Instructions[index].Scope; got != scopeProject {
+			t.Fatalf("instruction %s scope = %q, want %q", resolved.Instructions[index].Path, got, scopeProject)
+		}
+	}
+	if got := resolved.Instructions[4].Scope; got != scopeConditional {
+		t.Fatalf("conditional rule scope = %q, want %q", got, scopeConditional)
 	}
 }
 
@@ -403,6 +460,25 @@ func TestAgentContext_HasNoCodexMemoriesWhenTheHandbookIsAbsent(t *testing.T) {
 	resolved := host.handler.resolve(folder, harnessCodex, "", host.home)
 	if len(resolved.Memories) != 0 {
 		t.Fatalf("memories = %v, want none", memoryTitles(resolved.Memories))
+	}
+}
+
+func TestAgentContext_BdMemoriesIgnoreSchemaMetadata(t *testing.T) {
+	host := newAgentTestHost(t)
+	folder := filepath.Join(host.root, "project")
+	mkdirAll(t, folder)
+	fakeBd := writeFile(t, filepath.Join(host.root, "bin", "bd"), "#!/bin/sh\nprintf '%s' '{\"schema_version\":1,\"second\":\"two\",\"first\":\"one\"}'\n")
+	if err := os.Chmod(fakeBd, 0o755); err != nil {
+		t.Fatalf("make fake bd executable: %v", err)
+	}
+	host.handler.bdCommand = fakeBd
+
+	memories := host.handler.bdMemories(folder)
+	assertSequence(t, memoryTitles(memories), []string{"first", "second"}, "bd memories")
+	for _, memory := range memories {
+		if memory.Kind != memoryBd || !memory.Readable {
+			t.Fatalf("memory = %+v, want a readable bd memory", memory)
+		}
 	}
 }
 
