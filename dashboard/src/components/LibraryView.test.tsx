@@ -16,6 +16,8 @@ import type {
 const mockState = vi.hoisted(() => ({
   openSendToSession: vi.fn(),
   announce: vi.fn(),
+  copy: vi.fn(),
+  sessions: [] as { name: string; unixUser?: string }[],
   shelves: null as LibraryShelves | null,
   shelvesError: null as Error | null,
   changes: [] as LibraryChange[],
@@ -30,7 +32,15 @@ const mockState = vi.hoisted(() => ({
 }))
 
 vi.mock('../context/SessionContext', () => ({
-  useSession: () => ({ settings: DEFAULT_SETTINGS, openSendToSession: mockState.openSendToSession }),
+  useSession: () => ({
+    settings: DEFAULT_SETTINGS,
+    sessions: mockState.sessions,
+    openSendToSession: mockState.openSendToSession,
+  }),
+}))
+
+vi.mock('../utils/clipboard', () => ({
+  copyAndAnnounce: (text: string, what: string, announce: unknown) => mockState.copy(text, what, announce),
 }))
 
 vi.mock('../context/StatusContext', () => ({
@@ -80,6 +90,8 @@ beforeEach(() => {
   resetChordsForTest()
   mockState.openSendToSession.mockReset()
   mockState.announce.mockReset()
+  mockState.copy.mockReset()
+  mockState.sessions = []
   mockState.shelvesError = null
   mockState.saveError = null
   mockState.gitError = ''
@@ -152,6 +164,9 @@ function region(name: 'library-left' | 'library-room' | 'library-map' | 'library
   if (!found) throw new Error(`the ${name} region is not on screen`)
   return within(found)
 }
+
+/** The rows of the menu that is open, in the order they are offered. */
+const menuItems = () => screen.getAllByRole('menuitem').map(item => item.querySelector('.menu-row-label')?.textContent)
 
 /** A page on the map, by the name it carries. */
 function mapNode(title: string) {
@@ -390,5 +405,80 @@ describe('LibraryView', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
     expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
+  })
+
+  it('offers a page row the five things a page can do, and copies its path', async () => {
+    await openLibrary()
+    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+
+    fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
+    expect(menuItems()).toEqual(['Open', 'Send to Librarian', 'Edit', 'Copy path', 'History'])
+
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Copy path/ }))
+    expect(mockState.copy).toHaveBeenCalledWith(
+      'preferences/workflow.md', 'preferences/workflow.md', mockState.announce,
+    )
+  })
+
+  // Edit and History are a state the page arrives in, not a step to take once
+  // it is open: the menu asked for the page that way.
+  it('opens a page from its menu already in the editor, or with its history unfolded', async () => {
+    await openLibrary()
+    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+
+    fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Edit/ }))
+    expect(await screen.findByRole('textbox', { name: 'Editing preferences/workflow.md' })).toBeInTheDocument()
+
+    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+    fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^History/ }))
+    expect(await screen.findByText('Record a workflow preference')).toBeInTheDocument()
+  })
+
+  it('hands a page to the Librarian where he is running', async () => {
+    mockState.sessions = [{ name: 'librarian', unixUser: 'alice' }]
+    await openLibrary()
+    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+
+    fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Send to Librarian/ }))
+
+    expect(mockState.openSendToSession).toHaveBeenCalledWith({
+      targetSessionKey: 'alice:librarian',
+      reference: 'library preferences/workflow.md',
+    })
+  })
+
+  // With no Librarian session the hand-off is not dead: the drawer opens on
+  // the launcher, at the corpus, with the page already named.
+  it('offers to launch the Librarian when his session is not there', async () => {
+    await openLibrary()
+    fireEvent.click(region('library-left').getByRole('button', { name: /^preferences/ }))
+
+    fireEvent.contextMenu(await region('library-room').findByText('Workflow Preferences'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Send to Librarian/ }))
+
+    expect(mockState.openSendToSession).toHaveBeenCalledWith({
+      reference: 'library preferences/workflow.md',
+      launch: { label: 'Launch the Librarian', folder: '/corpus' },
+    })
+  })
+
+  it('offers a shelf its two actions, and collapses the one it is showing', async () => {
+    await openLibrary()
+    const shelf = () => region('library-left').getByRole('button', { name: /^preferences/ })
+
+    fireEvent.contextMenu(shelf())
+    expect(menuItems()).toEqual(['Send shelf to Librarian', 'Collapse'])
+    expect(screen.getByRole('menuitem', { name: /^Collapse/ })).toBeDisabled()
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    fireEvent.click(shelf())
+    expect(await region('library-room').findByText('Tool Preferences')).toBeInTheDocument()
+
+    fireEvent.contextMenu(shelf())
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Collapse/ }))
+    await waitFor(() => region('library-map'))
   })
 })
