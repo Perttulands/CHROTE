@@ -40,7 +40,7 @@ export default function BeadRow({ row, depth = 0, fold, trailing }: BeadRowProps
   const state = beadStatusLabel(row.status, row.blocked)
 
   const select = () => {
-    openBeadCard(row.id, row.projectPath)
+    openBeadCard(row.id, row.projectPath, row.title)
     fold?.setExpanded(!fold.expanded)
   }
 

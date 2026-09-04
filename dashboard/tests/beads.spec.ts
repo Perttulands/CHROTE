@@ -18,6 +18,11 @@ async function box(locator: Locator) {
 }
 
 test.describe('Beads', () => {
+  // The tab holds a rail, the map, the table and the Clerk's column side by
+  // side; at the default 1280px the squeeze narrows the table before the
+  // widths this journey asserts, so it runs at a desktop width.
+  test.use({ viewport: { width: 1600, height: 900 } })
+
   test.beforeEach(async ({ page }) => {
     await mockApiRoutes(page)
     await mockBeadsApiRoutes(page)

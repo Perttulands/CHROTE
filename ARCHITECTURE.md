@@ -60,7 +60,7 @@ A launched agent's completion is a fact the harness states, not one CHROTE infer
 
 `src/cmd/server/` assembles the process and registers the runtime routes.
 
-- `src/internal/api/` contains tmux, files, Beads, scheduled tasks, the Library, theme, launch, health, and system handlers.
+- `src/internal/api/` contains tmux, files, Beads, scheduled tasks, the Library, the residents, theme, launch, health, and system handlers.
 - `src/internal/proxy/` owns the terminal transport and the pseudo-terminals it attaches on.
 - `src/internal/dashboard/` embeds the built dashboard into the Go binary.
 - `src/internal/scheduled/` contains scheduled-task persistence and execution support.
