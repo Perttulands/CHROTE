@@ -63,7 +63,7 @@ of them is the wall of buttons the doctrine exists to prevent.
 
 ## The colour rule
 
-The interface is monochrome except where colour carries meaning. Six uses live:
+The interface is monochrome except where colour carries meaning. Seven uses live:
 
 | Use | Token | What the colour means |
 | --- | --- | --- |
@@ -73,6 +73,7 @@ The interface is monochrome except where colour carries meaning. Six uses live:
 | Unix-user identity | `--identity-0` … | Which account owns this session |
 | Diffs | `--ansi-2`, `--color-error` | An addition, a removal; always beside a +/- gutter |
 | Bead type | `--ansi-1` … `--ansi-6` | What kind of work this is; always beside the type word |
+| Library shelf | `--shelf-0` … `--shelf-n` | Which shelf a page sits on, on the Library's map and in its rail |
 
 A Bead's type takes one theme ANSI token, chosen for contrast on the theme
 background, and the type word is written in it so a row reads the same without
@@ -92,6 +93,17 @@ plain.
 Identity colours come from the theme, assigned to the server's `terminalUsers`
 in order so a user is the same colour on every device. A user the server does
 not list gets `--text-dim` rather than an invented colour.
+
+Shelf hues come from the theme too, assigned to the corpus's shelves in shelf
+order so a shelf is the same colour on every device and a new shelf takes the
+next hue rather than reshuffling the ones already learned. They are the map's
+answer to the one question a grey dot cannot answer — which part of the library
+am I looking at — so they sit low in chroma and all at one lightness, and the
+count in a rail's shelf row carries its shelf's hue, which makes the rail the
+map's legend. A corpus with more shelves than the theme names hues repeats from
+the start. A candidate page keeps `--text-dim`, because it is a proposal rather
+than a page on a shelf, and the accent stays out of the palette: on the map blue
+is what the operator is pointing at.
 
 ## Typeface
 
@@ -120,7 +132,9 @@ plus a browser reload; the browser holds no theme state.
   host-global tmux state to style anything.
 
 The served document is schema 1: `ui`, `terminal` with exactly sixteen ANSI
-colours, `identity`, and `art`. Every colour is `#rrggbb` or `#rrggbbaa`.
+colours, `identity`, `shelves`, and `art`. `shelves` is optional, because a
+theme authored before the map had colour has none and the built-in palette
+answers for it. Every colour is `#rrggbb` or `#rrggbbaa`.
 [`src/internal/api/theme_default.json`](src/internal/api/theme_default.json) is
 the reference document and the served fallback;
 [`docs/installation.md`](docs/installation.md) documents the environment.
@@ -135,7 +149,7 @@ The theme writes these custom properties on `:root`:
 --accent  --accent-light  --accent-rgb
 --color-error  --color-error-light
 --terminal-background  --terminal-foreground  --ansi-0 … --ansi-15
---identity-0 … --identity-n
+--identity-0 … --identity-n  --shelf-0 … --shelf-n
 ```
 
 Components use tokens rather than hard-coded colours. There are no per-window

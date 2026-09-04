@@ -42,6 +42,7 @@ import {
   type MapCard,
 } from './mapBands'
 import { buildIndex, hitTest, reachOf } from './mapIndex'
+import { shelfHues } from './mapShelves'
 import { adjacencyOf, depthsFrom, glows, lightOf, type MapLighting } from './mapLight'
 import {
   LANDMARK_LABELS,
@@ -76,6 +77,12 @@ export interface MapProps {
    * rail is read against the map rather than instead of it.
    */
   soloShelf?: string | null
+  /**
+   * Which hue each shelf is drawn in. The rail works it out from every shelf
+   * the library has, so the two agree even about a shelf with no page on the
+   * map; without it the map reads the shelves it can see for itself.
+   */
+  hues?: ReadonlyMap<string, string>
   /** How recently a page must have moved to be drawn at full strength. */
   window?: RecencyWindow
   onOpen: (path: string) => void
@@ -188,7 +195,7 @@ function useMapLayout(graph: LibraryGraph, width: number, height: number): { lay
   return { layout: EMPTY_LAYOUT, drawing: true }
 }
 
-export default function LibraryMap({ graph, openPath, matches, hoverPath = null, soloShelf = null, window: recency = 'all', onOpen }: MapProps) {
+export default function LibraryMap({ graph, openPath, matches, hoverPath = null, soloShelf = null, hues: given, window: recency = 'all', onOpen }: MapProps) {
   const { ref, width, height } = useMeasuredSize()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const edgeCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -202,6 +209,14 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
   useEffect(() => { setHovered(null) }, [graph])
 
   const { layout, drawing } = useMapLayout(graph, width, height)
+  // The shelves' colours, from the theme the server served. The rail hands
+  // them down when there is a rail; on its own the map takes the shelves its
+  // own corpus names.
+  const own = useMemo(
+    () => shelfHues(graph.pages.map(page => page.shelf), palette.shelves),
+    [graph, palette],
+  )
+  const hues = given ?? own
   const index = useMemo(() => buildIndex(layout.nodes), [layout])
   const positions = useMemo(() => new Map(layout.nodes.map(node => [node.path, node])), [layout])
 
@@ -370,8 +385,9 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
     height,
     lighting,
     stale,
+    hues,
     palette,
-  }), [height, layout, lighting, palette, stale, text, view.transform, width])
+  }), [height, hues, layout, lighting, palette, stale, text, view.transform, width])
 
   useEffect(() => { rendererRef.current?.draw(scene) }, [scene])
 
@@ -561,8 +577,15 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
             onMouseEnter={() => setShelf(cluster.shelf)}
             onMouseLeave={() => setShelf(current => (current === cluster.shelf ? null : current))}
             // Near in, every card names its own shelf, so the shelf's own name
-            // gives way rather than sitting over the cards.
-            style={{ left: point.x, top: point.y, opacity: band === 'near' ? 0 : 1 }}
+            // gives way rather than sitting over the cards. The name carries
+            // the shelf's own colour, which is what makes the map's clusters
+            // and the rail's rows readable as the same seven things.
+            style={{
+              left: point.x,
+              top: point.y,
+              opacity: band === 'near' ? 0 : 1,
+              color: hues.get(cluster.shelf),
+            }}
           >
             {cluster.shelf} · {cluster.count}
           </span>

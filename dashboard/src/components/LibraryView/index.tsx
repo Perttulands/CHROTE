@@ -22,6 +22,8 @@ import Editor from '../Editor'
 import Markdown from '../Markdown'
 import LibraryMap from './Map'
 import { RECENCY_WINDOWS, neighboursOf, type RecencyWindow } from './mapLayout'
+import { shelfHues } from './mapShelves'
+import { useTheme } from '../../theme/ThemeContext'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { useSurface } from '../../keys/dismiss'
@@ -81,6 +83,7 @@ type OpenIntent = 'read' | 'edit' | 'history'
 export default function LibraryView({ active = true }: { active?: boolean } = {}) {
   const { openSendToSession, sessions, settings, updateSettings } = useSession()
   const { announce } = useStatus()
+  const theme = useTheme()
 
   const [shelves, setShelves] = useState<LibraryShelves | null>(null)
   const [arrivals, setArrivals] = useState<LibraryArrival[]>([])
@@ -386,6 +389,15 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
       .sort((a, b) => a.title.localeCompare(b.title))
   }, [graph, page, titleOf])
 
+  // The shelves' colours, worked out once from every shelf the library has and
+  // handed to both the rail and the map, so a shelf is the same colour in the
+  // list and on the drawing. The rail is then the legend, and there is no
+  // legend.
+  const hues = useMemo(
+    () => shelfHues(shelves?.shelves.map(entry => entry.name) ?? [], theme.shelves),
+    [shelves, theme.shelves],
+  )
+
   const commitRailWidth = useCallback((library: number) => {
     updateSettings({ railWidth: { ...settings.railWidth, library } })
   }, [settings.railWidth, updateSettings])
@@ -406,6 +418,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
           matches={matches}
           hoverPath={hoverPath}
           soloShelf={hoverShelf}
+          hues={hues}
           window={recency}
           onOpen={openPage}
         />
@@ -511,7 +524,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
                       onMouseLeave={() => setHoverShelf(current => (current === entry.name ? null : current))}
                     >
                       <span className="library-shelf-name">{entry.name}</span>
-                      <span className="library-shelf-count">{entry.pages}</span>
+                      <span className="library-shelf-count" style={{ color: hues.get(entry.name) }}>{entry.pages}</span>
                     </button>
                   </MenuTarget>
                   {shelf === entry.name && (

@@ -26,6 +26,10 @@ var themeDefaultJSON []byte
 const (
 	themeFileName = "theme.json"
 	themeArtDir   = "art"
+	// themeShelfHuesWanted is how many shelf hues a theme is expected to name:
+	// as many as a corpus a reader keeps has shelves, with room to grow. Fewer
+	// is allowed and said in the log.
+	themeShelfHuesWanted = 10
 )
 
 var (
@@ -53,8 +57,13 @@ type themeDocument struct {
 	Name     string            `json:"name"`
 	UI       map[string]string `json:"ui"`
 	Terminal themeTerminal     `json:"terminal"`
-	Identity []string          `json:"identity"`
-	Art      []string          `json:"art"`
+	// Shelves are the hues the Library's map draws its shelves in, taken in
+	// shelf order. A theme authored before the map had colour carries none,
+	// and the dashboard falls back to the built-in palette rather than
+	// drawing a colourless map, so the field is optional.
+	Shelves  []string `json:"shelves"`
+	Identity []string `json:"identity"`
+	Art      []string `json:"art"`
 }
 
 type themeTerminal struct {
@@ -238,6 +247,19 @@ func validateTheme(raw []byte) error {
 		if err := validateThemeColor(fmt.Sprintf("terminal.ansi[%d]", index), color); err != nil {
 			return err
 		}
+	}
+
+	for index, color := range theme.Shelves {
+		if err := validateThemeColor(fmt.Sprintf("shelves[%d]", index), color); err != nil {
+			return err
+		}
+	}
+	// A palette shorter than the corpus has shelves makes two shelves the same
+	// colour, which is a picture that says something untrue. It is the
+	// operator's theme to author, so this is said in the log rather than
+	// refused: a map with repeated hues is still a map.
+	if len(theme.Shelves) > 0 && len(theme.Shelves) < themeShelfHuesWanted {
+		log.Printf("Theme names %d shelf hues; a corpus with more shelves than that will repeat one", len(theme.Shelves))
 	}
 
 	if len(theme.Identity) == 0 {

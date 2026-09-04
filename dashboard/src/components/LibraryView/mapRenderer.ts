@@ -44,6 +44,8 @@ export interface MapPalette {
   divider: string
   /** The family names are drawn in, as the theme sets it. */
   family: string
+  /** The hues the shelves take, in shelf order, as the theme names them. */
+  shelves: string[]
 }
 
 export interface MapScene {
@@ -62,6 +64,8 @@ export interface MapScene {
   lighting: MapLighting
   /** Pages outside the recency window, drawn all but out of the way. */
   stale: ReadonlySet<string>
+  /** Which hue each shelf is drawn in. Empty leaves the map in its greys. */
+  hues: ReadonlyMap<string, string>
   palette: MapPalette
 }
 
@@ -108,7 +112,7 @@ const MARGIN = 12
 
 /** The step the stamps' sizes are rounded to, and how many are kept. */
 const SPRITE_STEP = 0.5
-const MAX_SPRITES = 400
+const MAX_SPRITES = 1600
 
 /** A dot as one small image, and where its middle sits inside it. */
 interface Stamp {
@@ -130,7 +134,7 @@ const PRIMARY_SIZE = 12
 const LABEL_HALO = 3
 
 /** The colours the theme is asked for, in the order the palette lists them. */
-const PALETTE_TOKENS: Record<keyof MapPalette, string> = {
+const PALETTE_TOKENS: Record<Exclude<keyof MapPalette, 'shelves'>, string> = {
   background: '--background',
   dot: '--text-secondary',
   dim: '--text-dim',
@@ -146,6 +150,7 @@ const FALLBACK_PALETTE: MapPalette = {
   accent: '#7aa2f7',
   divider: '#303030',
   family: 'ui-monospace, monospace',
+  shelves: [],
 }
 
 /**
@@ -157,19 +162,24 @@ const FALLBACK_PALETTE: MapPalette = {
 export function readPalette(element: Element | null): MapPalette {
   if (!element || typeof getComputedStyle !== 'function') return FALLBACK_PALETTE
   const style = getComputedStyle(element)
-  const palette = { ...FALLBACK_PALETTE }
-  ;(Object.keys(PALETTE_TOKENS) as (keyof MapPalette)[]).forEach(name => {
+  const palette = { ...FALLBACK_PALETTE, shelves: [] as string[] }
+  ;(Object.keys(PALETTE_TOKENS) as Exclude<keyof MapPalette, 'shelves'>[]).forEach(name => {
     const value = style.getPropertyValue(PALETTE_TOKENS[name]).trim()
     if (value) palette[name] = value
   })
+  // The shelf hues are however many the theme wrote, read until one is
+  // missing: the theme decides how many colours a library has, not this file.
+  for (let index = 0; index < MAX_SHELF_HUES; index++) {
+    const hue = style.getPropertyValue(`--shelf-${index}`).trim()
+    if (!hue) break
+    palette.shelves.push(hue)
+  }
   return palette
 }
 
-/**
- * The alpha a page is drawn at, quantised to the shades the batch allows. A page
- * outside the recency window is held back whatever the light does, because the
- * window is the operator's own question about what has moved lately.
- */
+/** How many shelf hues the map will read off a theme before it stops asking. */
+const MAX_SHELF_HUES = 64
+
 /** A colour as three bytes, whatever shape the theme wrote it in. */
 function channelsOf(colour: string): [number, number, number] {
   const text = colour.trim()
@@ -188,15 +198,31 @@ function channelsOf(colour: string): [number, number, number] {
   return [Number(numbers[0]) || 0, Number(numbers[1]) || 0, Number(numbers[2]) || 0]
 }
 
-/** How brightly, and in what, a hairline at this strength is drawn. */
-function edgeInk(light: MapLight, palette: MapPalette): { colour: string; alpha: number } {
+/**
+ * How brightly, and in what, a hairline at this strength is drawn.
+ *
+ * A hairline that is not lit takes the hue of the page it leaves, held well
+ * back: a link then says where it comes from without ever competing with the
+ * dots. One inside the light takes the accent, because there the question is
+ * not which shelf but what the operator is pointing at.
+ */
+function edgeInk(light: MapLight, palette: MapPalette, hue?: string): { colour: string; alpha: number } {
   const lit = light === 0 || light === 1
-  return { colour: lit ? palette.accent : palette.divider, alpha: lit ? LIT_EDGE : alphaOf(light) ?? 1 }
+  if (lit) return { colour: palette.accent, alpha: LIT_EDGE }
+  return { colour: hue ?? palette.divider, alpha: (alphaOf(light) ?? 1) * (hue ? EDGE_HUE : 1) }
 }
+
+/** How much of itself a hairline drawn in its shelf's hue keeps. */
+const EDGE_HUE = 0.55
 
 /** How strongly a hairline inside the light is drawn. */
 const LIT_EDGE = 0.8
 
+/**
+ * The alpha a page is drawn at, quantised to the shades the batch allows. A page
+ * outside the recency window is held back whatever the light does, because the
+ * window is the operator's own question about what has moved lately.
+ */
 function shadeOf(node: MapNode, light: MapLight, stale: boolean): number {
   const lit = alphaOf(light) ?? node.opacity
   const wanted = stale ? Math.min(STALE_OPACITY, lit) : lit
@@ -231,7 +257,7 @@ export function createCanvasRenderer(
   // one is handed down otherwise, which is what tells the layer to leave the
   // buffer it already holds alone.
   let colours: Uint8Array | null = null
-  let painted: { lighting: MapLighting; palette: MapPalette } | null = null
+  let painted: { lighting: MapLighting; palette: MapPalette; hues: ReadonlyMap<string, string> } | null = null
   // One small image per colour, shade and size, kept until the map is thrown
   // away. A zoom asks for sizes it has not stamped before, so the sheet is
   // emptied rather than allowed to grow without end.
@@ -302,7 +328,8 @@ export function createCanvasRenderer(
    * links times two lookups by name.
    */
   const repaint = (scene: MapScene) => {
-    if (colours && painted && painted.lighting === scene.lighting && painted.palette === scene.palette) return colours
+    if (colours && painted && painted.lighting === scene.lighting
+      && painted.palette === scene.palette && painted.hues === scene.hues) return colours
     const strengths = new Int8Array(scene.nodes.length)
     scene.nodes.forEach((node, position) => {
       const light = lightOf(node, scene.lighting)
@@ -311,25 +338,36 @@ export function createCanvasRenderer(
     const decode = (code: number): MapLight => (code < 0 ? null : code === 3 ? 'out' : (code as 0 | 1 | 2))
     // Five strengths, and a colour worked out once for each of them: what a
     // hairline costs here is a lookup, not a parse.
-    const ink = [-1, 0, 1, 2, 3].map(code => {
-      const { colour, alpha } = edgeInk(decode(code), scene.palette)
-      const [r, g, b] = channelsOf(colour)
-      return [r, g, b, Math.round(Math.max(0, Math.min(1, alpha)) * 255)]
-    })
+    // Five strengths for each hue a shelf can be, worked out once: what a
+    // hairline costs here is a lookup, not a parse.
+    const shelves = Array.from(new Set(scene.nodes.map(node => node.shelf)))
+    const ink = new Map<string, number[][]>()
+    const inkFor = (shelf: string) => {
+      const found = ink.get(shelf)
+      if (found) return found
+      const built = [-1, 0, 1, 2, 3].map(code => {
+        const { colour, alpha } = edgeInk(decode(code), scene.palette, scene.hues.get(shelf))
+        const [r, g, b] = channelsOf(colour)
+        return [r, g, b, Math.round(Math.max(0, Math.min(1, alpha)) * 255)]
+      })
+      ink.set(shelf, built)
+      return built
+    }
+    shelves.forEach(inkFor)
     const built = new Uint8Array(scene.edges.length * 4)
     for (let index = 0; index < scene.edges.length; index++) {
       const from = edgeFrom[index]
       const to = edgeTo[index]
       if (from < 0 || to < 0) continue
       const light = edgeLight(decode(strengths[from]), decode(strengths[to]), scene.lighting)
-      const shade = ink[light === null ? 0 : light === 'out' ? 4 : light + 1]
+      const shade = inkFor(scene.nodes[from].shelf)[light === null ? 0 : light === 'out' ? 4 : light + 1]
       built[index * 4] = shade[0]
       built[index * 4 + 1] = shade[1]
       built[index * 4 + 2] = shade[2]
       built[index * 4 + 3] = shade[3]
     }
     colours = built
-    painted = { lighting: scene.lighting, palette: scene.palette }
+    painted = { lighting: scene.lighting, palette: scene.palette, hues: scene.hues }
     return built
   }
 
@@ -342,8 +380,10 @@ export function createCanvasRenderer(
    */
   const strokeEdges = (scene: MapScene, view: Viewport) => {
     const strengths: MapLight[] = [null, 0, 2, 'out']
-    const paths = strengths.map(() => [new Path2D(), new Path2D()])
-    let drawn = false
+    // One path per strength, per kind of link, and per shelf the link leaves,
+    // so a corpus of a dozen shelves is a few dozen strokes however many links
+    // it has rather than one stroke each.
+    const paths = new Map<string, { path: Path2D; kind: number; tag: number; shelf: string }>()
     scene.edges.forEach(edge => {
       const from = positions.get(edge.from)
       const to = positions.get(edge.to)
@@ -352,22 +392,25 @@ export function createCanvasRenderer(
       if (Math.max(from.y, to.y) < view.top || Math.min(from.y, to.y) > view.bottom) return
       const light = edgeLight(lightOf(from, scene.lighting), lightOf(to, scene.lighting), scene.lighting)
       const kind = light === null ? 0 : light === 'out' ? 3 : light === 2 ? 2 : 1
-      const path = paths[kind][edge.tag ? 1 : 0]
+      const tag = edge.tag ? 1 : 0
+      const at = `${kind}|${tag}|${from.shelf}`
+      let batch = paths.get(at)
+      if (!batch) {
+        batch = { path: new Path2D(), kind, tag, shelf: from.shelf }
+        paths.set(at, batch)
+      }
       const control = curveControl(from, to)
-      path.moveTo(from.x, from.y)
-      path.quadraticCurveTo(control.x, control.y, to.x, to.y)
-      drawn = true
+      batch.path.moveTo(from.x, from.y)
+      batch.path.quadraticCurveTo(control.x, control.y, to.x, to.y)
     })
-    if (!drawn) return
+    if (paths.size === 0) return
     context.lineWidth = 1 / scene.transform.scale
-    paths.forEach((pair, kind) => {
-      const { colour, alpha } = edgeInk(strengths[kind], scene.palette)
-      pair.forEach((path, tag) => {
-        context.setLineDash(tag === 1 ? [2 / scene.transform.scale, 3 / scene.transform.scale] : [])
-        context.strokeStyle = colour
-        context.globalAlpha = alpha
-        context.stroke(path)
-      })
+    paths.forEach(batch => {
+      const { colour, alpha } = edgeInk(strengths[batch.kind], scene.palette, scene.hues.get(batch.shelf))
+      context.setLineDash(batch.tag === 1 ? [2 / scene.transform.scale, 3 / scene.transform.scale] : [])
+      context.strokeStyle = colour
+      context.globalAlpha = alpha
+      context.stroke(batch.path)
     })
     context.setLineDash([])
     context.globalAlpha = 1
@@ -385,7 +428,12 @@ export function createCanvasRenderer(
       const light = lightOf(node, scene.lighting)
       const stale = scene.stale.has(node.path)
       const lit = glows(light)
-      const colour = lit ? scene.palette.accent : node.candidate ? scene.palette.dim : scene.palette.dot
+      // A page's colour says which shelf it is on. A candidate is not on one
+      // yet — it is a proposal — so it stays grey, and the map reads at a
+      // glance as what has been accepted, coloured, among what has not.
+      const colour = lit
+        ? scene.palette.accent
+        : node.candidate ? scene.palette.dim : scene.hues.get(node.shelf) ?? scene.palette.dot
       const stamp = sprite(colour, shadeOf(node, light, stale), dotRadius(node, scale) * ratio, lit ? GLOW * ratio : 0)
       context.drawImage(
         stamp.image,
