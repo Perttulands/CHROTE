@@ -17,11 +17,15 @@ import (
 func makeValidBeadsWorkspace(t *testing.T, projectPath string) {
 	t.Helper()
 	beadsPath := filepath.Join(projectPath, ".beads")
-	if err := os.MkdirAll(filepath.Join(beadsPath, "embeddeddolt"), 0700); err != nil {
+	manifestDir := filepath.Join(beadsPath, "embeddeddolt", "test", ".dolt", "noms")
+	if err := os.MkdirAll(manifestDir, 0700); err != nil {
 		t.Fatalf("create embeddeddolt: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(beadsPath, "metadata.json"), []byte(`{"prefix":"test"}`), 0600); err != nil {
 		t.Fatalf("write metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(manifestDir, "manifest"), []byte("manifest\n"), 0600); err != nil {
+		t.Fatalf("write Dolt manifest: %v", err)
 	}
 }
 
@@ -407,7 +411,7 @@ func TestBeadsHandler_WorkKeepsOpenWorkAndTheFinishedChildrenOfOpenEpics(t *test
 		                 {"depends_on_id":"test-ep1.2","type":"blocks"},
 		                 {"depends_on_id":"test-done","type":"blocks"}]},
 		{"_type":"issue","id":"test-ep1.2","title":"Open blocker","status":"in_progress","issue_type":"task","priority":2,
-		 "parent":"test-ep1","updated_at":"2026-09-03T00:00:00Z"},
+		 "parent":"test-ep1","updated_at":"2026-09-03T00:00:00Z","defer_until":"2099-01-01T00:00:00Z"},
 		{"_type":"issue","id":"test-ep1.3","title":"Finished child","status":"closed","issue_type":"task","priority":2,
 		 "parent":"test-ep1","updated_at":"2026-08-01T00:00:00Z"},
 		{"_type":"issue","id":"test-done","title":"Finished elsewhere","status":"closed","issue_type":"task","priority":2}
@@ -453,6 +457,9 @@ func TestBeadsHandler_WorkKeepsOpenWorkAndTheFinishedChildrenOfOpenEpics(t *test
 	}
 	if _, present := byID["test-ep1.2"]["acceptance"]; present {
 		t.Errorf("a task carries acceptance criteria the map never draws: %s", rec.Body.String())
+	}
+	if got := byID["test-ep1.2"]["deferUntil"]; got != "2099-01-01T00:00:00Z" {
+		t.Errorf("deferUntil = %v, want the bd defer_until timestamp", got)
 	}
 	blocked := byID["test-ep1.1"]
 	if blocked["blocked"] != true {

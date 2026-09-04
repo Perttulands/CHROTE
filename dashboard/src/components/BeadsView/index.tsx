@@ -8,7 +8,7 @@
  * and the hand-off out of this tab is the Send drawer.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import FlowView from './FlowView'
 import MapView from './MapView'
 import ReadyView from './ReadyView'
@@ -19,7 +19,7 @@ import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { tableReference, useTableObject } from '../../context/TableContext'
 import { setBeadProjects } from '../../beads/beadIds'
-import { fetchBeadProjects, fetchBeadWork, type BeadProject } from '../../beads/beadsApi'
+import { fetchBeadProjectList, fetchBeadProjects, fetchBeadWork, type BeadProject } from '../../beads/beadsApi'
 import { rememberBeadRows } from '../../beads/knownBeads'
 import {
   buildBeadMap,
@@ -31,13 +31,14 @@ import {
   type WorkRow,
 } from '../../beads/beadsTree'
 import { isBeadClosed } from '../../beads/beadStatus'
+import type { BeadsViewSetting } from '../../types'
 import './BeadsView.css'
 
-type BeadsTabView = 'map' | 'ready' | 'flow' | 'stale'
+type BeadsTabView = BeadsViewSetting
 
 const VIEWS: { id: BeadsTabView; label: string }[] = [
   { id: 'map', label: 'Map' },
-  { id: 'ready', label: 'Ready and in progress' },
+  { id: 'ready', label: 'Open' },
   { id: 'flow', label: 'Flow' },
   { id: 'stale', label: 'Stale' },
 ]
@@ -67,11 +68,13 @@ function projectTally(name: string, rows: { status: string }[]): string {
 }
 
 export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}) {
-  const { settings } = useSession()
+  const { settings, updateSettings } = useSession()
   const { announce } = useStatus()
   const [projects, setProjects] = useState<BeadProject[]>([])
-  const [selected, setSelected] = useState<string>(ALL_PROJECTS)
-  const [view, setView] = useState<BeadsTabView>('map')
+  const [selected, setSelected] = useState<string>(settings.beadsSelectedProject || ALL_PROJECTS)
+  const [view, setView] = useState<BeadsTabView>(
+    VIEWS.some(item => item.id === settings.beadsView) ? settings.beadsView : 'map',
+  )
   const [query, setQuery] = useState('')
   const [staleDays, setStaleDays] = useState(DEFAULT_STALE_DAYS)
   const [rows, setRows] = useState<WorkRow[]>([])
@@ -85,7 +88,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
 
   useEffect(() => {
     let current = true
-    fetchBeadProjects(manualPaths)
+    fetchBeadProjectList()
       .then(found => {
         if (!current) return
         setProjects(found)
@@ -93,6 +96,23 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
         // that actually exist; this is where it learns them.
         setBeadProjects(found)
         if (found.length === 0) setLoading(false)
+
+        void fetchBeadProjects(manualPaths)
+          .then(detailed => {
+            if (!current) return
+            setProjects(detailed)
+            setBeadProjects(detailed)
+            setSelected(previous => {
+              if (previous === ALL_PROJECTS || detailed.some(project => project.path === previous)) return previous
+              updateSettings({ beadsSelectedProject: ALL_PROJECTS })
+              return ALL_PROJECTS
+            })
+          })
+          .catch((cause: unknown) => {
+            if (!current) return
+            const message = cause instanceof Error ? cause.message : 'Could not read Beads counts'
+            announce(`Beads counts unavailable · ${message}`, 'error')
+          })
       })
       .catch((cause: unknown) => {
         if (!current) return
@@ -101,29 +121,60 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
         setLoading(false)
       })
     return () => { current = false }
-  }, [manualPaths])
+  }, [announce, manualPaths, updateSettings])
 
   // A quiet store has nothing open: it is folded in the rail, and "All" does
   // not ask it, because the answer is known to be empty.
-  const openProjects = useMemo(() => projects.filter(project => project.openBeads !== 0), [projects])
-  const quietProjects = useMemo(() => projects.filter(project => project.openBeads === 0), [projects])
-  const chosen = useMemo(
-    () => (selected === ALL_PROJECTS ? openProjects : projects.filter(project => project.path === selected)),
-    [openProjects, projects, selected],
-  )
+  const unreadableProjects = useMemo(() => projects.filter(project => !!project.error), [projects])
+  const readableProjects = useMemo(() => projects.filter(project => !project.error), [projects])
+  const openProjects = useMemo(() => readableProjects.filter(project => project.openBeads !== 0), [readableProjects])
+  const quietProjects = useMemo(() => readableProjects.filter(project => project.openBeads === 0), [readableProjects])
+  const summariesPending = selected === ALL_PROJECTS && projects.some(project => project.summaryPending)
+  const chosen = useMemo(() => {
+    if (summariesPending) return []
+    return selected === ALL_PROJECTS ? openProjects : readableProjects.filter(project => project.path === selected)
+  }, [openProjects, readableProjects, selected, summariesPending])
+  const chosenRef = useRef(chosen)
+  const projectsRef = useRef(projects)
+  chosenRef.current = chosen
+  projectsRef.current = projects
+  const chosenKey = chosen.map(project => project.path).join('\u0000')
   const quietOpen = quietShown || quietProjects.some(project => project.path === selected)
 
   useEffect(() => {
-    if (projects.length === 0) return
+    if (projectsRef.current.length === 0) return
+    if (summariesPending) {
+      setLoading(true)
+      setError(null)
+      return
+    }
+    const loadProjects = chosenRef.current
+    if (loadProjects.length === 0) {
+      setRows([])
+      setLoading(false)
+      const selectedProject = projectsRef.current.find(project => project.path === selected)
+      setError(selectedProject?.error ?? null)
+      if (selectedProject?.error) {
+        announce(`Beads unavailable · ${selectedProject.prefix || selectedProject.name}: ${selectedProject.error}`, 'error')
+      }
+      return
+    }
     let current = true
     setLoading(true)
     setError(null)
-    Promise.all(chosen.map(async project => ({
+    Promise.allSettled(loadProjects.map(async project => ({
       project,
       work: await fetchBeadWork(project.path),
     })))
-      .then(loaded => {
+      .then(settled => {
         if (!current) return
+        const loaded = settled.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])
+        const failures = settled.flatMap((result, index) => {
+          if (result.status === 'fulfilled') return []
+          const project = loadProjects[index]
+          const message = result.reason instanceof Error ? result.reason.message : 'Could not read open work'
+          return [{ project, message }]
+        })
         // The card opens from these rows before the server has answered.
         loaded.forEach(({ project, work }) => rememberBeadRows(project.path, work.beads))
         const all = loaded.flatMap(({ project, work }) => work.beads.map(bead => ({
@@ -133,30 +184,42 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
         })))
         setRows(all)
         setLoading(false)
-        const tally = loaded.map(({ project, work }) => projectTally(project.prefix || project.name, work.beads))
-        announce(`Beads loaded · ${tally.join(' · ')}`, 'info')
-      })
-      .catch((cause: unknown) => {
-        if (!current) return
-        setRows([])
-        setLoading(false)
-        setError(cause instanceof Error ? cause.message : 'Could not read open work')
+        if (loaded.length > 0) {
+          const tally = loaded.map(({ project, work }) => projectTally(project.prefix || project.name, work.beads))
+          announce(`Beads loaded · ${tally.join(' · ')}`, 'info')
+        }
+        if (failures.length > 0) {
+          const failure = failures.map(({ project, message }) => `${project.prefix || project.name}: ${message}`).join(' · ')
+          announce(`Beads unavailable · ${failure}`, 'error')
+          if (loaded.length === 0) setError(failure)
+        }
+        const knownFailures = projectsRef.current.filter(project => !!project.error)
+        if (knownFailures.length > 0) {
+          const failure = knownFailures.map(project => `${project.prefix || project.name}: ${project.error}`).join(' · ')
+          announce(`Beads unavailable · ${failure}`, 'error')
+        }
       })
     return () => { current = false }
-  }, [chosen, projects.length, announce])
+  }, [announce, chosenKey, selected, summariesPending])
 
   useEffect(() => {
     if (!reveal) return
     setSelected(reveal.projectPath)
     setQuery(reveal.id)
     setView('map')
-  }, [reveal])
+    updateSettings({ beadsSelectedProject: reveal.projectPath, beadsView: 'map' })
+  }, [reveal, updateSettings])
 
   const map = useMemo(() => filterBeadTree(buildBeadMap(rows), query), [rows, query])
   const matching = useMemo(() => filterBeadRows(rows, query), [rows, query])
   const selectProject = useCallback((path: string) => {
     setSelected(path)
-  }, [])
+    updateSettings({ beadsSelectedProject: path })
+  }, [updateSettings])
+  const selectView = useCallback((next: BeadsTabView) => {
+    setView(next)
+    updateSettings({ beadsView: next })
+  }, [updateSettings])
 
   return (
     <div className="beads-view">
@@ -177,6 +240,17 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
             title={project.path}
           >
             {project.prefix || project.name}
+          </button>
+        ))}
+        {unreadableProjects.map(project => (
+          <button
+            key={project.path}
+            type="button"
+            className={`beads-rail-item beads-rail-unreadable ${selected === project.path ? 'active' : ''}`}
+            onClick={() => selectProject(project.path)}
+            title={`${project.path}: ${project.error}`}
+          >
+            {project.prefix || project.name} · unreadable
           </button>
         ))}
         {quietProjects.length > 0 && (
@@ -212,7 +286,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
                 role="tab"
                 aria-selected={view === item.id}
                 className={`beads-view-tab ${view === item.id ? 'active' : ''}`}
-                onClick={() => setView(item.id)}
+                onClick={() => selectView(item.id)}
               >
                 {item.label}
               </button>

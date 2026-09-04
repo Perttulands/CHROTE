@@ -9,12 +9,20 @@ import type { BeadRow } from '../beads/beadsApi'
 const mockState = vi.hoisted(() => ({
   openSendToSession: vi.fn(),
   announce: vi.fn(),
+  updateSettings: vi.fn(),
+  settings: null as unknown as typeof DEFAULT_SETTINGS,
+  projectList: null as unknown[] | null,
   projects: [] as unknown[],
   work: new Map<string, unknown>(),
+  fetchBeadWork: vi.fn(),
 }))
 
 vi.mock('../context/SessionContext', () => ({
-  useSession: () => ({ settings: DEFAULT_SETTINGS, openSendToSession: mockState.openSendToSession }),
+  useSession: () => ({
+    settings: mockState.settings,
+    updateSettings: mockState.updateSettings,
+    openSendToSession: mockState.openSendToSession,
+  }),
 }))
 
 vi.mock('../context/StatusContext', () => ({
@@ -22,8 +30,9 @@ vi.mock('../context/StatusContext', () => ({
 }))
 
 vi.mock('../beads/beadsApi', () => ({
+  fetchBeadProjectList: () => Promise.resolve(mockState.projectList ?? mockState.projects),
   fetchBeadProjects: () => Promise.resolve(mockState.projects),
-  fetchBeadWork: (path: string) => Promise.resolve(mockState.work.get(path)),
+  fetchBeadWork: (path: string) => mockState.fetchBeadWork(path),
 }))
 
 vi.mock('./ResidentColumn', () => ({
@@ -47,6 +56,9 @@ function CardProbe() {
 beforeEach(() => {
   mockState.openSendToSession.mockReset()
   mockState.announce.mockReset()
+  mockState.updateSettings.mockReset()
+  mockState.settings = DEFAULT_SETTINGS
+  mockState.projectList = null
   mockState.projects = [
     { name: 'chrote', path: '/srv/chrote', beadsPath: '/srv/chrote/.beads', prefix: 'chrote', openBeads: 3 },
     { name: 'srv', path: '/srv', beadsPath: '/srv/.beads', prefix: 'ctx', openBeads: 1 },
@@ -75,6 +87,11 @@ beforeEach(() => {
     ['/srv/quiet', { prefix: 'qt', projectPath: '/srv/quiet', beads: [] }],
     ['/srv/silent', { prefix: 'sl', projectPath: '/srv/silent', beads: [] }],
   ])
+  mockState.fetchBeadWork.mockReset()
+  mockState.fetchBeadWork.mockImplementation((path: string) => {
+    const answer = mockState.work.get(path)
+    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer)
+  })
 })
 
 afterEach(() => {
@@ -99,6 +116,33 @@ describe('the Beads tab', () => {
     render(<BeadsView />)
     await waitFor(() => expect(mockState.announce).toHaveBeenCalled())
     expect(mockState.announce.mock.calls[0][0]).toBe('Beads loaded · chrote 3 open · ctx 1 open')
+  })
+
+  it('keeps readable stores visible when another store refuses the work request', async () => {
+    mockState.projects.splice(2, 0, {
+      name: 'broken', path: '/srv/broken', beadsPath: '/srv/broken/.beads', prefix: 'bad', openBeads: 2,
+    })
+    mockState.work.set('/srv/broken', new Error('permission denied'))
+
+    render(<BeadsView />)
+
+    expect(await screen.findByText('Title of chrote-ep')).toBeInTheDocument()
+    expect(screen.getByText('Title of ctx-t4ak')).toBeInTheDocument()
+    await waitFor(() => expect(mockState.announce).toHaveBeenCalledWith(
+      'Beads unavailable · bad: permission denied',
+      'error',
+    ))
+  })
+
+  it('lists a known unreadable store instead of loading it through All', async () => {
+    mockState.projects.splice(2, 0, {
+      name: 'broken', path: '/srv/broken', beadsPath: '/srv/broken/.beads', error: 'permission denied',
+    })
+
+    render(<BeadsView />)
+
+    expect(await screen.findByRole('button', { name: 'broken · unreadable' })).toBeInTheDocument()
+    expect(mockState.fetchBeadWork).not.toHaveBeenCalledWith('/srv/broken')
   })
 
   it('folds the stores with nothing open under one row that expands in place', async () => {
@@ -172,10 +216,38 @@ describe('the Beads tab', () => {
     render(<BeadsView />)
     await screen.findByText('Title of ctx-t4ak')
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Ready and in progress' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Open' }))
 
+    expect(screen.getByRole('heading', { name: 'Ready to start' })).toBeInTheDocument()
     const inProgress = screen.getByRole('heading', { name: 'In progress' }).parentElement as HTMLElement
     expect(inProgress).toHaveTextContent('ctx-t4ak')
     expect(inProgress).not.toHaveTextContent('chrote-ep.1')
+  })
+
+  it('restores the selected store and Open view before fetching work', async () => {
+    mockState.settings = {
+      ...DEFAULT_SETTINGS,
+      beadsSelectedProject: '/srv',
+      beadsView: 'ready',
+    }
+
+    render(<BeadsView />)
+
+    expect(await screen.findByRole('button', { name: 'ctx' })).toHaveClass('active')
+    expect(screen.getByRole('tab', { name: 'Open' })).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => expect(mockState.fetchBeadWork).toHaveBeenCalled())
+    expect(mockState.fetchBeadWork.mock.calls[0][0]).toBe('/srv')
+    expect(mockState.fetchBeadWork).not.toHaveBeenCalledWith('/srv/chrote')
+  })
+
+  it('fills counts after the first store list without another click', async () => {
+    mockState.projectList = mockState.projects.map(project => {
+      const { openBeads: _openBeads, ...listed } = project as { openBeads?: number }
+      return { ...listed, summaryPending: true }
+    })
+
+    render(<BeadsView />)
+
+    expect(await screen.findByRole('button', { name: 'More (2 quiet)' })).toBeInTheDocument()
   })
 })

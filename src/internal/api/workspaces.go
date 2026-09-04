@@ -52,8 +52,17 @@ type Workspace struct {
 	// and bd could say.
 	BeadsPrefix string `json:"beadsPrefix,omitempty"`
 	// How many Beads in the store are not closed. Absent when the folder
-	// holds no store or bd could not say.
+	// holds no store or the counts projection is not ready.
 	OpenBeads *int `json:"openBeads,omitempty"`
+	// The complete status and type projection, absent until its manifest-keyed
+	// cache is filled.
+	BeadsCounts *BeadsCounts `json:"beadsCounts,omitempty"`
+	// The newest update in the complete store projection.
+	BeadsNewestUpdate string `json:"beadsNewestUpdate,omitempty"`
+	// Why the store projection could not be read. The store remains listed.
+	BeadsError string `json:"beadsError,omitempty"`
+	// True only on the first response that started a background projection.
+	BeadsSummaryPending bool `json:"beadsSummaryPending,omitempty"`
 	// How many instruction files the folder owns itself.
 	Instructions int `json:"instructions"`
 	// When a session here last saw input or output, RFC 3339 UTC. Empty
@@ -100,12 +109,12 @@ func (h *WorkspacesHandler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // List handles GET /api/workspaces: every workspace, ordered by last session
-// activity and then by path. With beads=1 each store is also asked for its
-// prefix and open count, which costs one bd process per store; the launcher
-// and the Agents rail do not ask, the Beads rail and the terminal's links do.
+// activity and then by path. With beads=1 cached store summaries are included
+// and misses refresh in the background, so the first response never waits for
+// bd. beads=wait is the browser's one follow-up after it has painted the rail.
 func (h *WorkspacesHandler) List(w http.ResponseWriter, r *http.Request) {
-	probe := r.URL.Query().Get("beads") == "1"
-	core.WriteJSON(w, http.StatusOK, h.list(probe))
+	beadsMode := r.URL.Query().Get("beads")
+	core.WriteJSON(w, http.StatusOK, h.list(beadsMode != "", beadsMode == "wait"))
 }
 
 type workspaceEntry struct {
@@ -158,7 +167,7 @@ func (h *WorkspacesHandler) resolveWorkspace(path string) (string, bool) {
 	return resolved, true
 }
 
-func (h *WorkspacesHandler) list(probeStores bool) []Workspace {
+func (h *WorkspacesHandler) list(probeStores bool, waitForStores ...bool) []Workspace {
 	list := &workspaceList{handler: h, entries: map[string]*workspaceEntry{}}
 
 	for _, session := range h.sessions() {
@@ -185,7 +194,8 @@ func (h *WorkspacesHandler) list(probeStores bool) []Workspace {
 		entries = append(entries, entry)
 	}
 	if probeStores {
-		h.probeStores(entries)
+		wait := len(waitForStores) > 0 && waitForStores[0]
+		h.probeStores(entries, wait)
 	}
 
 	found := make([]Workspace, 0, len(entries))
@@ -288,26 +298,40 @@ func (h *WorkspacesHandler) holdsStore(dir string) bool {
 	return err == nil
 }
 
-// probeStores asks bd about every store on the list, a bounded number at a
-// time. Each goroutine writes only its own entry.
-func (h *WorkspacesHandler) probeStores(entries []*workspaceEntry) {
-	var wait sync.WaitGroup
+func openBeadCount(counts BeadsStatusCounts) int {
+	return counts.Open + counts.InProgress + counts.Blocked + counts.Deferred
+}
+
+// probeStores reads every cache hit and starts each miss, a bounded number at
+// a time. Each goroutine writes only its own entry. Waiting is reserved for the
+// browser's one follow-up request after the first response has painted.
+func (h *WorkspacesHandler) probeStores(entries []*workspaceEntry, waitForSummary bool) {
+	var group sync.WaitGroup
 	slots := make(chan struct{}, workspaceProbeFanOut)
 	for _, entry := range entries {
 		if !entry.sources[workspaceSourceStore] {
 			continue
 		}
-		wait.Add(1)
+		group.Add(1)
 		go func(entry *workspaceEntry) {
-			defer wait.Done()
+			defer group.Done()
 			slots <- struct{}{}
 			defer func() { <-slots }()
-			prefix, open, ok := h.beads.storeSummary(entry.Path)
-			entry.BeadsPrefix = prefix
-			if ok {
-				entry.OpenBeads = &open
+			summary, ready, pending, err := h.beads.cachedStoreSummary(entry.Path, waitForSummary)
+			entry.BeadsSummaryPending = pending
+			if err != nil {
+				entry.BeadsError = err.Error()
+				return
 			}
+			if !ready {
+				return
+			}
+			entry.BeadsPrefix = summary.Prefix
+			entry.BeadsCounts = &summary.Counts
+			entry.BeadsNewestUpdate = summary.NewestUpdated
+			open := openBeadCount(summary.Counts.Status)
+			entry.OpenBeads = &open
 		}(entry)
 	}
-	wait.Wait()
+	group.Wait()
 }

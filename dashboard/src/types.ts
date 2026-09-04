@@ -110,6 +110,8 @@ export function getTerminalUserInitial(user: LaunchUser): string {
 }
 
 // User settings for persistent configuration
+export type BeadsViewSetting = 'map' | 'ready' | 'flow' | 'stale'
+
 export interface UserSettings {
   terminalMode: 'tmux'              // Terminal mode (tmux only)
   terminalTabCount: number           // Visible terminal tabs (1-6); shrinking hides, never deletes
@@ -128,6 +130,8 @@ export interface UserSettings {
   agentEventTones: boolean           // A short tone when an agent finishes or needs input; device-local, off
   agentEventNotifications: boolean   // A browser notification for the same while this tab is hidden; device-local, off
   residentWidth: number              // A resident's column, in px; 0 means 44 terminal columns at the tile font
+  beadsSelectedProject: string       // Last selected Beads store, or "all"; device-local
+  beadsView: BeadsViewSetting        // Last selected Beads reading; device-local
   beadsProjectPaths?: string[]       // Manually added beads project paths
 }
 
@@ -149,6 +153,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   agentEventTones: false,
   agentEventNotifications: false,
   residentWidth: 0,
+  beadsSelectedProject: 'all',
+  beadsView: 'map',
 }
 
 export interface TmuxSession {

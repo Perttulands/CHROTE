@@ -6,7 +6,7 @@
  * request that asked for it.
  */
 
-import { fetchWorkspaces, holdsStore, workspaceName } from '../workspaces/workspacesApi'
+import { fetchWorkspaces, holdsStore, workspaceName, type BeadsCounts, type Workspace } from '../workspaces/workspacesApi'
 
 export interface BeadProject {
   name: string
@@ -18,6 +18,10 @@ export interface BeadProject {
   prefix?: string
   /** How many Beads are not closed. Absent when the server could not count. */
   openBeads?: number
+  counts?: BeadsCounts
+  newestUpdate?: string
+  error?: string
+  summaryPending?: boolean
 }
 
 /** A Bead as a link from somewhere else: a row, a parent, a blocker. */
@@ -32,6 +36,7 @@ export interface BeadLink {
 /** A Bead as the map, the ready lists and the stale list draw it. */
 export interface BeadRow extends BeadLink {
   updated?: string
+  deferUntil?: string
   parent?: string
   blockedBy?: string[]
   blocked: boolean
@@ -82,25 +87,38 @@ async function get<T>(path: string, params: Record<string, string | string[]>): 
   return envelope.data
 }
 
-/**
- * Every store on the host: the ones the workspace list found, then the manual
- * paths the operator added in Settings that the list did not already carry.
- */
-export async function fetchBeadProjects(manualPaths: readonly string[] = []): Promise<BeadProject[]> {
-  const [workspaces, manual] = await Promise.all([
-    fetchWorkspaces({ beads: true }),
-    manualPaths.length > 0
-      ? get<{ projects: BeadProject[] }>('/projects', { path: [...manualPaths] }).then(data => data.projects ?? [])
-      : Promise.resolve([] as BeadProject[]),
-  ])
-  const projects: BeadProject[] = workspaces.filter(holdsStore).map(workspace => ({
+function workspaceProjects(workspaces: readonly Workspace[]): BeadProject[] {
+  return workspaces.filter(holdsStore).map(workspace => ({
     name: workspaceName(workspace.path),
     path: workspace.path,
     beadsPath: `${workspace.path}/.beads`,
     source: workspace.sources.includes('beads') ? 'configured' : 'discovered',
     ...(workspace.beadsPrefix ? { prefix: workspace.beadsPrefix } : {}),
     ...(workspace.openBeads !== undefined ? { openBeads: workspace.openBeads } : {}),
+    ...(workspace.beadsCounts ? { counts: workspace.beadsCounts } : {}),
+    ...(workspace.beadsNewestUpdate ? { newestUpdate: workspace.beadsNewestUpdate } : {}),
+    ...(workspace.beadsError ? { error: workspace.beadsError } : {}),
+    ...(workspace.beadsSummaryPending ? { summaryPending: true } : {}),
   }))
+}
+
+/** The stat-only store list used for the Beads tab's first paint. */
+export async function fetchBeadProjectList(): Promise<BeadProject[]> {
+  return workspaceProjects(await fetchWorkspaces({ beads: true }))
+}
+
+/**
+ * Every store with its manifest-keyed projection: the workspace list after its
+ * background fills, then manual paths the operator saved in Settings.
+ */
+export async function fetchBeadProjects(manualPaths: readonly string[] = []): Promise<BeadProject[]> {
+  const [workspaces, manual] = await Promise.all([
+    fetchWorkspaces({ beads: true, waitForBeads: true }),
+    manualPaths.length > 0
+      ? get<{ projects: BeadProject[] }>('/projects', { path: [...manualPaths] }).then(data => data.projects ?? [])
+      : Promise.resolve([] as BeadProject[]),
+  ])
+  const projects = workspaceProjects(workspaces)
   const known = new Set(projects.map(project => project.path))
   for (const project of manual) {
     if (!known.has(project.path)) projects.push(project)

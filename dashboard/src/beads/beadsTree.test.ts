@@ -35,6 +35,7 @@ const DONE = row({ id: 'chrote-ep.3', parent: 'chrote-ep', status: 'closed', typ
 const GRANDCHILD = row({ id: 'chrote-ep.1.1', parent: 'chrote-ep.1', type: 'task', priority: 1 })
 const LOOSE = row({ id: 'chrote-lone', type: 'bug', priority: 2, updated: '2026-08-01T00:00:00Z' })
 const ACTIVE = row({ id: 'chrote-now', status: 'in_progress', type: 'task', updated: '2026-09-03T00:00:00Z' })
+const DEFERRED = row({ id: 'chrote-later', type: 'task', deferUntil: '2099-01-01T00:00:00Z' })
 
 describe('the map', () => {
   const roots = buildBeadMap([DONE, BLOCKED, LOOSE, CHILD, EPIC, GRANDCHILD, ACTIVE])
@@ -68,6 +69,12 @@ describe('ready and in progress', () => {
 
   it('offers only unblocked open work as ready, newest first', () => {
     expect(readyRows(rows).map(item => item.id)).toEqual(['chrote-ep.1', 'chrote-lone'])
+  })
+
+  it('keeps future deferred work on the map but out of ready', () => {
+    expect(readyRows([...rows, DEFERRED], Date.parse('2026-09-04T00:00:00Z')).map(item => item.id))
+      .toEqual(['chrote-ep.1', 'chrote-lone'])
+    expect(buildBeadMap([DEFERRED]).map(node => node.row.id)).toEqual(['chrote-later'])
   })
 
   it('lists what is claimed separately', () => {
