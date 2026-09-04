@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+BD_REAL="${BD_REAL:-/srv/chrote/vendor/@beads/bd/bin/bd.js}"
+BEADS_NORMALIZER="${BEADS_NORMALIZER:-/usr/local/bin/beads-normalize}"
+
+normalize_beads_permissions() {
+  "$BEADS_NORMALIZER" >/dev/null 2>&1 || true
+}
+
+filter_beads_stderr() {
+  sed -u -E '\|^Warning: .*/\.beads has permissions 0770 \(recommended: 0700\)\. Run: chmod 700 .*/\.beads$|d'
+}
+
+normalize_beads_permissions
+node "$BD_REAL" "$@" 2> >(filter_beads_stderr >&2)
+rc=$?
+wait
+normalize_beads_permissions
+exit "$rc"
