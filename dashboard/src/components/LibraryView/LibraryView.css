@@ -213,7 +213,11 @@
   text-transform: uppercase;
 }
 
+/* The bar is one line: the count gives its width up first, then the legend,
+   so the window control and the toggle keep theirs. */
 .library-map-count {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -236,6 +240,64 @@
 
 .library-map svg {
   display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+.library-map svg:active {
+  cursor: grabbing;
+}
+
+/* The way back, offered only once the map has been moved. */
+.library-map-reset {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 4px 10px;
+  background: var(--background);
+  border: 1px solid var(--divider);
+  border-radius: 2px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.library-map-reset:hover {
+  color: var(--text-primary);
+}
+
+/* The recency window, and the one line that says what its dimming means. */
+.library-map-windows {
+  flex: none;
+  display: flex;
+  gap: 8px;
+}
+
+.library-map-window {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.library-map-window:hover {
+  color: var(--text-secondary);
+}
+
+.library-map-window.on {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* A legend that has been cut short explains nothing, so it keeps its width
+   and the count beside it gives ground instead. */
+.library-map-legend {
+  flex: none;
 }
 
 /* The strip is the same drawing at a fixed height, with its own head laid
@@ -268,9 +330,11 @@
   height: 150px;
 }
 
+/* A hairline stays a hairline however far the map is taken in. */
 .library-map-edge {
   stroke: var(--divider);
   stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .library-map-edge.tag {
@@ -304,6 +368,11 @@
   fill: var(--accent);
 }
 
+/* Outside the recency window: still there, all but out of the way. */
+.library-map-node.stale {
+  cursor: default;
+}
+
 .library-map-node:focus-visible .library-map-dot {
   stroke: var(--accent);
   stroke-width: 2;
@@ -330,6 +399,17 @@
 }
 
 .library-map-label.primary {
+  fill: var(--text-primary);
+  font-size: 12px;
+}
+
+/* The pointer's page in full, on its own ground so a long name stays read. */
+.library-map-hover rect {
+  fill: var(--background);
+  stroke: var(--divider);
+}
+
+.library-map-hover text {
   fill: var(--text-primary);
   font-size: 12px;
 }

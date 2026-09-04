@@ -23,6 +23,8 @@ export interface MapNode {
   r: number
   /** 1 for a page that moved today, down to 0.35 after forty days. */
   opacity: number
+  /** When git last saw the page, as the graph gives it; '' if never. */
+  updated: string
   candidate: boolean
 }
 
@@ -113,6 +115,31 @@ function seeded(seed: number): () => number {
   }
 }
 
+/** How far back the map counts a page as recent. */
+export type RecencyWindow = 'day' | 'week' | 'month' | 'all'
+
+/** The windows the map bar offers, in the order it offers them. */
+export const RECENCY_WINDOWS: readonly { id: RecencyWindow; label: string; days: number }[] = [
+  { id: 'day', label: 'Day', days: 1 },
+  { id: 'week', label: 'Week', days: 7 },
+  { id: 'month', label: 'Month', days: 30 },
+  { id: 'all', label: 'All', days: 0 },
+]
+
+/**
+ * Whether a page moved inside the window. `all` holds everything, including
+ * a page git never dated; any narrower window drops that page, because a
+ * date nobody knows is not a date inside seven days.
+ */
+export function withinWindow(updated: string, window: RecencyWindow, now: number): boolean {
+  if (window === 'all') return true
+  const days = RECENCY_WINDOWS.find(entry => entry.id === window)?.days ?? 0
+  if (days <= 0) return true
+  const at = Date.parse(updated)
+  if (!updated || Number.isNaN(at)) return false
+  return now - at <= days * DAY
+}
+
 export function nodeRadius(words: number): number {
   return Math.max(MIN_RADIUS, Math.min(MAX_RADIUS, Math.sqrt(Math.max(0, words)) / 2.2))
 }
@@ -134,6 +161,7 @@ function node(page: LibraryGraphPage, x: number, y: number, now: number, r = nod
     y,
     r,
     opacity: nodeOpacity(page.updated, now),
+    updated: page.updated,
     candidate: page.candidate,
   }
 }

@@ -15,6 +15,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import Editor from '../Editor'
 import Markdown from '../Markdown'
 import LibraryMap from './Map'
+import { RECENCY_WINDOWS, type RecencyWindow } from './mapLayout'
 import Shelf from './Shelf'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
@@ -60,6 +61,13 @@ export function libraryReference(path: string | null): string {
   return path ? `library ${path}` : 'library'
 }
 
+/** The one line under the window control that says what the dimming means. */
+function windowLegend(window: RecencyWindow): string {
+  if (window === 'all') return 'Every page, faded as it ages'
+  const entry = RECENCY_WINDOWS.find(candidate => candidate.id === window)
+  return `Dimmed: not changed in the last ${entry?.days === 1 ? 'day' : `${entry?.days} days`}`
+}
+
 function count(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
@@ -90,6 +98,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   const [shelfPages, setShelfPages] = useState<LibraryPage[]>([])
   const [page, setPage] = useState<LibraryPageContent | null>(null)
   const [view, setView] = useState<View>('map')
+  const [recency, setRecency] = useState<RecencyWindow>('all')
   const [historyOpen, setHistoryOpen] = useState(false)
 
   const [draft, setDraft] = useState<string | null>(null)
@@ -378,7 +387,18 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   )
 
   const mapOrWhy = (mode: 'map' | 'strip') => {
-    if (graph) return <LibraryMap graph={graph} mode={mode} openPath={page?.path ?? null} matches={matches} onOpen={openPage} />
+    if (graph) {
+      return (
+        <LibraryMap
+          graph={graph}
+          mode={mode}
+          openPath={page?.path ?? null}
+          matches={matches}
+          window={mode === 'map' ? recency : 'all'}
+          onOpen={openPage}
+        />
+      )
+    }
     return <p className="library-empty">{graphError || 'Drawing the map…'}</p>
   }
 
@@ -469,6 +489,20 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
                     {count(mapPages, 'page')} · {count(mapShelves, 'shelf', 'shelves')} · {count(graph.links.length, 'link')} · {count(graph.tags.length, 'shared tag')}
                   </span>
                 )}
+                <span className="library-map-windows" role="group" aria-label="The recency window">
+                  {RECENCY_WINDOWS.map(entry => (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      className={`library-map-window${entry.id === recency ? ' on' : ''}`}
+                      aria-pressed={entry.id === recency}
+                      onClick={() => setRecency(entry.id)}
+                    >
+                      {entry.label}
+                    </button>
+                  ))}
+                </span>
+                <span className="library-map-legend">{windowLegend(recency)}</span>
                 {toggle}
               </div>
               {mapOrWhy('map')}

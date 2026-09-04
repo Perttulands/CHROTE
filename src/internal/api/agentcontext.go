@@ -40,17 +40,24 @@ const (
 
 // Where a row sits in the stack, in the harness's own loading order.
 const (
-	scopeUser     = "user"
-	scopeAncestor = "ancestor"
-	scopeProject  = "project"
+	scopeManaged     = "managed"
+	scopeUser        = "user"
+	scopeAncestor    = "ancestor"
+	scopeProject     = "project"
+	scopeConditional = "conditional"
 )
 
 // What a row is: an instruction file the harness reads, or its configuration.
 const (
-	kindClaudeMd = "CLAUDE.md"
-	kindAgentsMd = "AGENTS.md"
-	kindSettings = "settings"
+	kindClaudeMd      = "CLAUDE.md"
+	kindClaudeLocalMd = "CLAUDE.local.md"
+	kindAgentsMd      = "AGENTS.md"
+	kindRule          = "rule"
+	kindImport        = "import"
+	kindSettings      = "settings"
 )
+
+const claudeManagedPolicyPath = "/etc/claude-code/CLAUDE.md"
 
 // Where a skill was reached from.
 const (
@@ -143,8 +150,9 @@ type AgentTender struct {
 
 // AgentContextHandler resolves what an agent sees.
 type AgentContextHandler struct {
-	bdCommand   string
-	execTimeout time.Duration
+	bdCommand           string
+	execTimeout         time.Duration
+	managedClaudePolicy string
 	// How a Unix user becomes a home directory. A field so a test can answer
 	// with a temporary home instead of the host's real accounts.
 	homeForUser func(string) (string, error)
@@ -161,10 +169,11 @@ func NewAgentContextHandler() *AgentContextHandler {
 		bdCommand = "bd"
 	}
 	return &AgentContextHandler{
-		bdCommand:    bdCommand,
-		execTimeout:  30 * time.Second,
-		homeForUser:  defaultHomeForUser,
-		allowedRoots: core.GetAllowedRoots,
+		bdCommand:           bdCommand,
+		execTimeout:         30 * time.Second,
+		managedClaudePolicy: claudeManagedPolicyPath,
+		homeForUser:         defaultHomeForUser,
+		allowedRoots:        core.GetAllowedRoots,
 		tender: AgentTender{
 			Session: strings.TrimSpace(os.Getenv("CHROTE_TENDER_SESSION")),
 			Beads:   strings.TrimSpace(os.Getenv("CHROTE_TENDER_BEADS")),
@@ -325,7 +334,7 @@ func (h *AgentContextHandler) resolve(folder, harness, unixUser, home string) Ag
 		response.Skills = codexSkills(home, folder)
 		response.Memories = codexMemories(home, folder)
 	} else {
-		response.Instructions = claudeInstructions(home, folder)
+		response.Instructions = claudeInstructions(h.managedClaudePolicy, home, folder)
 		response.Skills = claudeSkills(home, folder)
 		response.Memories = claudeMemories(home, folder)
 	}
@@ -337,6 +346,11 @@ func (h *AgentContextHandler) resolve(folder, harness, unixUser, home string) Ag
 func resolvedListsPath(resolved AgentContextResponse, path string) bool {
 	for _, instruction := range resolved.Instructions {
 		if instruction.Path == path {
+			return true
+		}
+	}
+	for _, skill := range resolved.Skills {
+		if filepath.Join(skill.Path, "SKILL.md") == path {
 			return true
 		}
 	}
@@ -402,12 +416,114 @@ func (s *instructionStack) add(path, scope, kind string) bool {
 	return true
 }
 
-// addClaudePair lists a directory's CLAUDE.md and, beside it, its AGENTS.md.
-// The sibling takes the CLAUDE.md's scope, because it is the same rung of the
-// stack — on this host CLAUDE.md is usually a symlink to it.
-func (s *instructionStack) addClaudePair(dir, scope string) {
-	if s.add(filepath.Join(dir, kindClaudeMd), scope, kindClaudeMd) {
-		s.add(filepath.Join(dir, kindAgentsMd), scope, kindAgentsMd)
+// addClaudeInstruction appends one file Claude Code loads and then the files
+// it imports. Imports stop after this one level, matching the route contract:
+// they are listed as context, not recursively reimplemented as a loader.
+func (s *instructionStack) addClaudeInstruction(path, scope, kind, home string) {
+	if !s.add(path, scope, kind) {
+		return
+	}
+	for _, imported := range claudeImports(path, home) {
+		s.add(imported, scope, claudeImportKind(imported))
+	}
+}
+
+// addClaudeFiles lists the files Claude Code itself reads at one directory
+// rung. A CLAUDE.md symlink names its target in Link; the target is not a
+// second loaded instruction unless CLAUDE.md imports it.
+func (s *instructionStack) addClaudeFiles(dir, scope, home string) {
+	s.addClaudeInstruction(filepath.Join(dir, kindClaudeMd), scope, kindClaudeMd, home)
+	s.addClaudeInstruction(filepath.Join(dir, kindClaudeLocalMd), scope, kindClaudeLocalMd, home)
+}
+
+func claudeImportKind(path string) string {
+	switch filepath.Base(path) {
+	case kindAgentsMd:
+		return kindAgentsMd
+	case kindClaudeMd:
+		return kindClaudeMd
+	case kindClaudeLocalMd:
+		return kindClaudeLocalMd
+	default:
+		return kindImport
+	}
+}
+
+// claudeImports extracts the @path tokens Claude Code expands from one loaded
+// instruction file. Relative imports belong to the file that names them.
+func claudeImports(path, home string) []string {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	imports := []string{}
+	seen := map[string]bool{}
+	for _, field := range strings.Fields(string(content)) {
+		token := strings.Trim(field, "`'\"()[]{}<>,;:")
+		if !strings.HasPrefix(token, "@") || len(token) == 1 {
+			continue
+		}
+		candidate := strings.TrimRight(strings.TrimPrefix(token, "@"), ".")
+		var imported string
+		switch {
+		case strings.HasPrefix(candidate, "~/"):
+			imported = filepath.Join(home, strings.TrimPrefix(candidate, "~/"))
+		case filepath.IsAbs(candidate):
+			imported = filepath.Clean(candidate)
+		default:
+			imported = filepath.Join(filepath.Dir(path), candidate)
+		}
+		imported = filepath.Clean(imported)
+		if imported == "." || seen[imported] {
+			continue
+		}
+		seen[imported] = true
+		imports = append(imports, imported)
+	}
+	return imports
+}
+
+func claudeRuleFiles(dir string) []string {
+	files := []string{}
+	collectClaudeRuleFiles(dir, map[string]bool{}, &files)
+	return files
+}
+
+// collectClaudeRuleFiles follows linked rule directories while remembering
+// their real paths, so shared trees load once and cycles stop.
+func collectClaudeRuleFiles(dir string, seenDirs map[string]bool, files *[]string) {
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil || seenDirs[realDir] {
+		return
+	}
+	seenDirs[realDir] = true
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		if info.IsDir() {
+			collectClaudeRuleFiles(path, seenDirs, files)
+			continue
+		}
+		if info.Mode().IsRegular() && strings.EqualFold(filepath.Ext(path), ".md") {
+			*files = append(*files, filepath.Clean(path))
+		}
+	}
+}
+
+func (s *instructionStack) addClaudeRules(dir, scope, home string) {
+	for _, path := range claudeRuleFiles(dir) {
+		ruleScope := scope
+		if _, conditional := readFrontmatter(path)["paths"]; conditional {
+			ruleScope = scopeConditional
+		}
+		s.addClaudeInstruction(path, ruleScope, kindRule, home)
 	}
 }
 
@@ -430,18 +546,23 @@ func ancestorsOf(folder string) []string {
 	return ancestors
 }
 
-// claudeInstructions is the stack Claude Code loads, in its order: the user's
-// own files, then every ancestor from the root down, then the project.
-func claudeInstructions(home, folder string) []AgentInstruction {
+// claudeInstructions is the stack Claude Code loads, in its order: managed
+// policy, the user's own files, every ancestor from the root down, and the
+// project.
+func claudeInstructions(managedPolicy, home, folder string) []AgentInstruction {
 	stack := newInstructionStack()
-	stack.addClaudePair(filepath.Join(home, ".claude"), scopeUser)
-	stack.addClaudePair(home, scopeUser)
+	stack.addClaudeInstruction(managedPolicy, scopeManaged, kindClaudeMd, home)
+	stack.addClaudeFiles(filepath.Join(home, ".claude"), scopeUser, home)
+	stack.addClaudeRules(filepath.Join(home, ".claude", "rules"), scopeUser, home)
+	stack.addClaudeFiles(home, scopeUser, home)
 	stack.add(filepath.Join(home, ".claude", "settings.json"), scopeUser, kindSettings)
 
 	for _, ancestor := range ancestorsOf(folder) {
-		stack.addClaudePair(ancestor, scopeAncestor)
+		stack.addClaudeFiles(ancestor, scopeAncestor, home)
+		stack.addClaudeRules(filepath.Join(ancestor, ".claude", "rules"), scopeAncestor, home)
 	}
-	stack.addClaudePair(folder, scopeProject)
+	stack.addClaudeFiles(folder, scopeProject, home)
+	stack.addClaudeRules(filepath.Join(folder, ".claude", "rules"), scopeProject, home)
 	stack.add(filepath.Join(folder, ".claude", "settings.json"), scopeProject, kindSettings)
 	stack.add(filepath.Join(folder, ".claude", "settings.local.json"), scopeProject, kindSettings)
 	return stack.rows
@@ -784,12 +905,16 @@ func (h *AgentContextHandler) bdMemories(folder string) []AgentMemory {
 	if err != nil {
 		return nil
 	}
-	var entries map[string]string
+	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(output, &entries); err != nil {
 		return nil
 	}
 	keys := make([]string, 0, len(entries))
-	for key := range entries {
+	for key, raw := range entries {
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			continue
+		}
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
