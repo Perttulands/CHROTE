@@ -106,8 +106,9 @@ server waits for `build`; nothing else waits for anything.
 | `browser` | — | dashboard install with Chromium, mocked Playwright at the runner's worker count |
 | `contracts` | `build` | source contracts, built-server contract, public installer smoke |
 
-`govulncheck` and `npm audit` run as their own job on the weekly scheduled
-invocation only.
+Dependency scans (`govulncheck`, `npm audit`) are not a CI job: a scheduled
+run that fails on a transitive advisory is noise nobody acts on. Run them by
+hand when a dependency changes.
 
 The browser worker count is the runner's, set in `dashboard/playwright.config.ts`.
 Pinning it to one worker was the single largest cost in CI: it serialised the

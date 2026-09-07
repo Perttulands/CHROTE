@@ -254,12 +254,19 @@ test.describe('Tile states', () => {
     await expect(activeTag(page)).toHaveText('doomed')
     await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'ended')
 
+    // After the reload the tile is ended either way, but whether it dialled
+    // once more depends on a race the operator never sees: a surface that
+    // attaches before the poll's evidence lands dials and is refused; one that
+    // attaches after it does not dial at all. So the dial count is not the
+    // fact here. The fact is that Restart dials again and the frame shows
+    // that dial's output, not the frame from before the session died.
+    const dialsBeforeRestart = harness.dials.get('doomed') ?? 0
     await tile(page).getByRole('button', { name: 'Restart' }).click()
 
-    // Third dial: the first one before the session died, the second refused
-    // after the reload, this one on the session Restart recreated.
     await expect(windowBody(page)).toHaveAttribute('data-tile-state', 'live')
-    await expect(shownFrame(page)).toContainText('doomed output 3')
+    await expect.poll(() => harness.dials.get('doomed') ?? 0).toBeGreaterThan(dialsBeforeRestart)
+    await expect(shownFrame(page)).toContainText(`doomed output ${harness.dials.get('doomed')}`)
+    await expect(shownFrame(page)).not.toContainText('doomed output 1')
     await expect(activeTag(page)).toHaveText('doomed')
     expect(harness.created).toEqual(['doomed'])
   })
