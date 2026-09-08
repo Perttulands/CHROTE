@@ -7,6 +7,9 @@ uninstaller="$repo_root/uninstall.sh"
 binary="${1:-}"
 expected_version="$(tr -d '\r\n' < "$repo_root/VERSION")"
 expected_commit="${CHROTE_EXPECTED_BUILD_COMMIT:-}"
+if [ -z "$binary" ] && [ "${CHROTE_EXPECTED_BUILD_COMMIT+x}" != x ]; then
+  expected_commit="$(git -C "$repo_root" rev-parse HEAD)"
+fi
 tmux_bin="${CHROTE_TEST_TMUX_BIN:-}"
 if [ -z "$tmux_bin" ]; then
   tmux_bin="$(command -v tmux || true)"
@@ -343,7 +346,9 @@ payload=json.load(open(sys.argv[1]))
 assert payload['status']=='ok', payload
 assert payload['version']==sys.argv[2], payload
 if sys.argv[3]:
-    assert payload['commit']==sys.argv[3], payload
+    assert payload['commit']==sys.argv[3], (
+        f"health commit mismatch: observed {payload['commit']!r}, expected {sys.argv[3]!r}"
+    )
 PY
 
 curl -fsS "http://127.0.0.1:$port/api/tmux/sessions" >"$tmp/sessions.json"
@@ -395,4 +400,5 @@ CHROTE_SERVICE_DIR="$service_dir" \
 [ ! -e "$config_home/chrote/secrets.env" ]
 [ -d "$workspace" ]
 
-printf 'PASS: disposable public installer smoke (health/version, tmux, terminal route, conservative uninstall, explicit purge)\n'
+printf 'PASS: disposable public installer smoke (health/version, tmux, terminal route, conservative uninstall, explicit purge); commit: %s\n' \
+  "${expected_commit:-not checked (no expected commit supplied)}"
