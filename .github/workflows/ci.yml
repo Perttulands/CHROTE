@@ -42,8 +42,7 @@ jobs:
       - name: Build embedded dashboard and server
         run: |
           ./scripts/build-embedded-dashboard.sh
-          cd src
-          go build -trimpath -o ../chrote-server-ci ./cmd/server
+          ./scripts/build-server.sh "$GITHUB_WORKSPACE/chrote-server-ci"
 
       # The stamp travels with the bundle: check-embedded-dashboard.py needs both
       # and reports "bundle or stamp missing" if it gets only one.
@@ -201,7 +200,10 @@ jobs:
       # and its unit -- so a server change that touches no installer file can
       # break it, and one did: 932b7831 left it red for two commits and nothing
       # said so. It reuses the binary the build job produced, so it costs seconds.
+      # The health receipt must name the commit this workflow checked out.
       - name: Public installer smoke on the built binary
+        env:
+          CHROTE_EXPECTED_BUILD_COMMIT: ${{ github.sha }}
         run: |
           # The runner image ships no tmux; the smoke creates and removes its
           # own session on a disposable socket.
