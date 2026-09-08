@@ -237,7 +237,9 @@ belongs to the Beads column on every tab.
 - **Toggles.** A chord that opens a glance closes it when pressed again: the
   leader and `Alt+K` on the keybindings panel, `Alt+P` on Peek.
 - **Echo.** A registered chord that fires shows its key caps at the foot of the
-  workspace for 800 ms. Nothing else echoes, because nothing else was taken.
+  workspace for 800 ms, in the badge a confirmation also wears: the modifier is
+  the filled cap and the key the outlined one. Nothing else echoes, because
+  nothing else was taken.
 - **Scopes.** `global` chords list always, `workspace` chords while a terminal
   tab is active, `tile` chords while a tile is focused. Scope decides what the
   panel shows and what a chord can reach.
@@ -349,11 +351,14 @@ and from a click on an image in the Files panel or tab.
 
 An announcement that confirms the operator's own action, or reports a failure,
 is a toast in the bottom-centre slot the key echo uses; information such as a
-load or a count takes the status line only. The toast
+load or a count takes the status line only. The confirmation is the echo's
+badge with words: a cap for the kind, then the message at cap weight. A
+confirmation fills the cap with `--accent`, a warning leaves it outlined, and a
+failure fills it with `--color-error` and colours the words the same. A copy
+that lands is confirmed this way wherever it was made, the painted terminal
+selection included. The toast
 fades in over 120 ms, holds for 1800 ms and fades out over 200 ms, one at a
-time with the newest replacing the last, `--text-primary` on
-`--surface-primary` with a 1px `--divider` border, and the error colour for a
-failure. The status line, a 28px footer across the full width of the window
+time with the newest replacing the last. The status line, a 28px footer across the full width of the window
 beneath both the Sessions panel and the workspace, keeps the last event with
 its time as the record, so nothing is lost when the toast has gone; only a
 failure takes colour there. When an agent finishes or needs input, its

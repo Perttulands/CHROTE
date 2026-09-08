@@ -80,7 +80,7 @@ test.describe('Agent events', () => {
     list.current = sessionsWithLastEvent(plain, BUILDER, report)
 
     await expect(rowMark).toBeVisible()
-    await expect(page.locator('.toast')).toHaveText(`${BUILDER} finished`)
+    await expect(page.locator('.toast .toast-message')).toHaveText(`${BUILDER} finished`)
     await expect(row.locator('.session-event-summary')).toHaveText('Wrote the tests; all green')
     await expect(tabMark).toHaveClass(/on/)
     // The architect's row and tab say nothing: the report is the builder's.

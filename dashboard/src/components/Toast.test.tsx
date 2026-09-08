@@ -17,7 +17,11 @@ function renderToast() {
       <Toast />
     </StatusProvider>,
   )
-  return { ...rendered, toast: () => rendered.container.querySelector('.toast') }
+  return {
+    ...rendered,
+    toast: () => rendered.container.querySelector('.toast'),
+    cap: () => rendered.container.querySelector('.toast-cap'),
+  }
 }
 
 describe('Toast', () => {
@@ -77,14 +81,22 @@ describe('Toast', () => {
     expect(toast()).not.toBeNull()
   })
 
-  it('colours a failure and nothing else', () => {
-    const { toast } = renderToast()
+  it('caps each kind with its own glyph and colours a failure and nothing else', () => {
+    const { toast, cap } = renderToast()
 
     act(() => announce('Could not copy chrote-5grx.49: the browser refused', 'error'))
     expect(toast()).toHaveClass('toast-failure')
+    expect(cap()).toHaveTextContent('✕')
 
     act(() => announce('Harness did not start', 'warning'))
     expect(toast()).not.toHaveClass('toast-failure')
+    expect(cap()).toHaveTextContent('!')
+    // The warning asks to be read; only a thing that landed fills its cap.
+    expect(cap()).not.toHaveClass('badge-cap-filled')
+
+    act(() => announce('Copied chrote-5grx.49', 'success'))
+    expect(cap()).toHaveTextContent('✓')
+    expect(cap()).toHaveClass('badge-cap-filled')
   })
 
   it('leaves information on the status line and shows no toast for it', () => {

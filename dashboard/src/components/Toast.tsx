@@ -1,6 +1,10 @@
 /**
  * The toast: what CHROTE just said, for as long as it takes to read.
  *
+ * It is the key echo's badge with words: a cap for the kind of the event, then
+ * the message. A confirmation fills the cap with the accent, a warning outlines
+ * it, a failure fills it with the error colour and colours the words too.
+ *
  * It sits in the bottom-centre slot with the key echo, fades in, holds, and
  * fades out, one at a time: a newer announcement replaces the one up and
  * restarts the hold. The status line keeps the same event as the record, so
@@ -10,7 +14,12 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStatus, type StatusEvent } from '../context/StatusContext'
+import '../styles/badge.css'
 import './Toast.css'
+
+// The glyph says the kind before the words are read. It is the cap's whole
+// content and never part of the accessible record, which the status line keeps.
+const CAP_GLYPH: Record<string, string> = { success: '✓', warning: '!', error: '✕' }
 
 export const TOAST_FADE_IN_MS = 120
 export const TOAST_HOLD_MS = 1800
@@ -51,13 +60,21 @@ export default function Toast() {
   if (shown === null) return null
 
   const failure = shown.severity === 'error'
-  const className = ['toast', raised ? 'toast-raised' : '', failure ? 'toast-failure' : ''].filter(Boolean).join(' ')
+  const className = ['badge', 'toast', raised ? 'toast-raised' : '', failure ? 'toast-failure' : '']
+    .filter(Boolean)
+    .join(' ')
+  // A warning is the outlined cap: it asks to be read, it does not report a
+  // thing that landed.
+  const capClass = ['toast-cap', 'badge-cap', shown.severity === 'warning' ? '' : 'badge-cap-filled']
+    .filter(Boolean)
+    .join(' ')
 
   // The status line is the accessible record of the same event; a second live
   // region would read every announcement twice.
   return (
     <div ref={node} className={className} data-ui="toast" aria-hidden="true">
-      {shown.message}
+      <span className={capClass} aria-hidden="true">{CAP_GLYPH[shown.severity] ?? '✓'}</span>
+      <span className="toast-message">{shown.message}</span>
     </div>
   )
 }

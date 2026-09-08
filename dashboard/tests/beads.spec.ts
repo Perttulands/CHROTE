@@ -93,7 +93,7 @@ test.describe('Beads', () => {
     const menu = page.getByRole('menu', { name: 'Actions for test-ep1.1' })
     await menu.getByRole('menuitem', { name: 'Copy id', exact: true }).click()
 
-    await expect(page.locator('.toast')).toHaveText('Copied test-ep1.1')
+    await expect(page.locator('.toast .toast-message')).toHaveText('Copied test-ep1.1')
     await expect(menu).toHaveCount(0)
   })
 
@@ -218,7 +218,7 @@ test.describe('Beads', () => {
     // Copy id confirms as a toast in the bottom-centre slot, and the status
     // line keeps the same event as the record.
     await table.getByRole('button', { name: 'Copy id' }).click()
-    await expect(page.locator('.toast')).toHaveText('Copied test-ep1.1')
+    await expect(page.locator('.toast .toast-message')).toHaveText('Copied test-ep1.1')
     await expect(page.locator('.status-line')).toContainText('Copied test-ep1.1')
 
     const send = table.getByRole('button', { name: 'Send' })

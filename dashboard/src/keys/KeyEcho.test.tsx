@@ -36,11 +36,11 @@ describe('KeyEcho', () => {
 
     press({ key: '1', altKey: true })
 
-    const caps = Array.from(container.querySelectorAll('.key-echo-cap'))
+    const caps = Array.from(container.querySelectorAll('.badge-cap'))
     expect(caps.map(cap => cap.textContent)).toEqual(['ALT', '1'])
     // The modifier is the filled cap; the key is the outlined one.
-    expect(caps[0]).toHaveClass('key-echo-modifier')
-    expect(caps[1]).not.toHaveClass('key-echo-modifier')
+    expect(caps[0]).toHaveClass('badge-cap-filled')
+    expect(caps[1]).not.toHaveClass('badge-cap-filled')
 
     act(() => { vi.advanceTimersByTime(800) })
     expect(container.querySelector('.key-echo')).toBeNull()
@@ -48,7 +48,7 @@ describe('KeyEcho', () => {
     // Every modifier the chord holds gets its own cap, in the order it is said.
     press({ key: 'w', altKey: true, shiftKey: true })
 
-    expect(Array.from(container.querySelectorAll('.key-echo-cap')).map(cap => cap.textContent))
+    expect(Array.from(container.querySelectorAll('.badge-cap')).map(cap => cap.textContent))
       .toEqual(['ALT', 'SHIFT', 'W'])
   })
 

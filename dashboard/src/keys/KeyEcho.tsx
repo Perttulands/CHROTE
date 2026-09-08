@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'react'
 import { useLeader } from './chords'
+import '../styles/badge.css'
 import './KeyEcho.css'
 
 /** How long the badge stays up after a chord fires. */
@@ -28,11 +29,11 @@ export default function KeyEcho() {
   if (shown === null) return null
 
   return (
-    <div className="key-echo" aria-hidden="true">
+    <div className="badge key-echo" aria-hidden="true">
       {shown.caps.map((cap, index) => (
         <span key={`${cap.label}-${index}`} className="key-echo-part">
           {index > 0 && <span className="key-echo-plus">+</span>}
-          <span className={cap.modifier ? 'key-echo-cap key-echo-modifier' : 'key-echo-cap'}>{cap.label}</span>
+          <span className={cap.modifier ? 'badge-cap badge-cap-filled' : 'badge-cap'}>{cap.label}</span>
         </span>
       ))}
     </div>

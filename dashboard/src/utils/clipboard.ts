@@ -73,7 +73,7 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
   return fallbackCopyText(text)
 }
 
-export type CopyAnnouncer = (message: string, severity: 'success' | 'info' | 'error') => void
+export type CopyAnnouncer = (message: string, severity: 'success' | 'error') => void
 
 // The boolean says only that the text did not land; this says what stood in
 // the way, from what the page has to work with.
@@ -84,21 +84,18 @@ function clipboardFailureReason(): string {
 }
 
 /**
- * Copy, wait for the write to settle, and say how it went: "Copied <what>",
- * or "Could not copy <what>: <reason>" as a failure. Every copy action in the
- * dashboard reports through here, so none of them claims success before it
- * has it.
+ * Copy, wait for the write to settle, and say how it went: "Copied <what>" as a
+ * confirmation, or "Could not copy <what>: <reason>" as a failure. Every copy
+ * action in the dashboard reports through here, so none of them claims success
+ * before it has it, and every copy that lands is confirmed the same way.
  */
 export async function copyAndAnnounce(
   text: string,
   what: string,
   announce: CopyAnnouncer,
-  options: { quiet?: boolean } = {},
 ): Promise<boolean> {
   const copied = await copyTextToClipboard(text)
-  // A quiet copy (a painted terminal selection) is a record, not a receipt:
-  // it goes to the status line and raises no toast.
-  if (copied) announce(`Copied ${what}`, options.quiet ? 'info' : 'success')
+  if (copied) announce(`Copied ${what}`, 'success')
   else announce(`Could not copy ${what}: ${clipboardFailureReason()}`, 'error')
   return copied
 }

@@ -1,0 +1,36 @@
+/* The badge: the shape CHROTE speaks in at the foot of the workspace. The key
+   echo wears it for a chord that fired, the toast for a confirmation or a
+   failure. Both are read at a glance and neither travels, so the container and
+   its caps are written once here and each owner adds only its own slot. */
+
+.badge {
+  position: absolute;
+  left: 50%;
+  z-index: 2400;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background-color: var(--surface-primary);
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.badge-cap {
+  padding: 2px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* A filled cap is one shape rather than an outline: the chord's modifier, and
+   the kind of the thing the toast confirms. */
+.badge-cap-filled {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: var(--background);
+}
