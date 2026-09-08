@@ -160,6 +160,7 @@ build_server() {
   fi
 
   require_command go
+  require_command git
   require_command node
   require_command npm
   validate_node_version
@@ -169,10 +170,7 @@ build_server() {
   version="$(version_from_source)"
   log "Building dashboard and Go server from this checkout ($version)..."
   GOTOOLCHAIN=auto "$SCRIPT_DIR/scripts/build-embedded-dashboard.sh"
-  (
-    cd "$SCRIPT_DIR/src"
-    GOTOOLCHAIN=auto go build -trimpath -ldflags "-X main.Version=$version" -o "$destination" ./cmd/server
-  )
+  "$SCRIPT_DIR/scripts/build-server.sh" "$destination"
 }
 
 write_environment() {

@@ -51,7 +51,7 @@ Defaults:
 The installer:
 
 1. builds the dashboard and exact embedded Go binary from the checkout;
-2. injects the version from `VERSION`;
+2. stamps the version from `VERSION` and the checkout's HEAD commit;
 3. installs `chrote-server` and the `chrote-agent-event` hook script under the
    user prefix, side by side;
 4. writes XDG-scoped state paths for schedules, session drops and generated
@@ -383,16 +383,13 @@ npm ci --prefix dashboard
 
 cd src
 go test ./...
-version="$(tr -d '\r\n' < ../VERSION)"
-go build \
-  -trimpath \
-  -ldflags "-X main.Version=$version" \
-  -o ../chrote-server \
-  ./cmd/server
-
 cd ..
+./scripts/build-server.sh ./chrote-server
 ./chrote-server
 ```
+
+The server build script stamps the version from `VERSION` and the HEAD commit of
+this checkout.
 
 Do not build a release from stale embedded assets. The canonical embed script and
 `diff -qr dashboard/dist src/internal/dashboard/dist` must agree first.
