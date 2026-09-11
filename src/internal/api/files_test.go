@@ -384,6 +384,66 @@ func TestFilesHandlerUnreadablePathUnderConfiguredRootReturnsPermissionError(t *
 	}
 }
 
+// A parent the service cannot search is a permission failure, not an invalid
+// path: the response must say so, the way it does for an unreadable file.
+func TestFilesHandlerUnsearchableParentUnderConfiguredRootReturnsPermissionError(t *testing.T) {
+	const helperEnv = "CHROTE_FILES_UNSEARCHABLE_HELPER"
+	if os.Getenv(helperEnv) == "1" {
+		requireUnprivileged(t)
+		mux := http.NewServeMux()
+		NewFilesHandler().RegisterRoutes(mux)
+		path := os.Getenv("CHROTE_FILES_PERMISSION_PATH")
+		for _, route := range []string{"/api/files/raw", "/api/files/resources"} {
+			req := httptest.NewRequest(http.MethodGet, route+filepath.ToSlash(path), nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("%s under unsearchable parent status = %d, want 403: %s", route, rec.Code, rec.Body.String())
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, "PERMISSION_DENIED") || !strings.Contains(strings.ToLower(body), "permission denied") || strings.Contains(body, "Invalid path") {
+				t.Fatalf("%s under unsearchable parent does not report the permission cause plainly: %s", route, body)
+			}
+		}
+		return
+	}
+
+	root, err := os.MkdirTemp("", "chrote-files-unsearchable-")
+	if err != nil {
+		t.Fatalf("create permission fixture root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatalf("make permission fixture root searchable: %v", err)
+	}
+	closed := filepath.Join(root, "closed")
+	if err := os.Mkdir(closed, 0o755); err != nil {
+		t.Fatalf("create closed directory: %v", err)
+	}
+	path := filepath.Join(closed, "picture.png")
+	if err := os.WriteFile(path, []byte("readable if reached"), 0o644); err != nil {
+		t.Fatalf("create fixture under closed directory: %v", err)
+	}
+	if err := os.Chmod(closed, 0); err != nil {
+		t.Fatalf("close the directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(closed, 0o755) })
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestFilesHandlerUnsearchableParentUnderConfiguredRootReturnsPermissionError$")
+	cmd.Env = append(os.Environ(),
+		raceExitPromptly,
+		helperEnv+"=1",
+		"CHROTE_ROOTS="+root,
+		"CHROTE_FILES_PERMISSION_PATH="+path,
+	)
+	if os.Geteuid() == 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534}}
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("unprivileged Files unsearchable-parent probe: %v\n%s", err, output)
+	}
+}
+
 func TestFilesHandlerSymlinkCannotEscapeReadRoot(t *testing.T) {
 	readRoot := t.TempDir()
 	outside := t.TempDir()

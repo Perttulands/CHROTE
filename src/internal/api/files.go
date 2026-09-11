@@ -62,6 +62,10 @@ type PathResult struct {
 	Root   string
 	IsRoot bool
 	Error  string
+	// Err is the operating-system error that stopped the path from being
+	// canonicalised, kept so a search-denied parent is reported as the
+	// permission failure it is rather than as an invalid path.
+	Err error
 }
 
 // SuccessResponse is a simple success response
@@ -168,7 +172,7 @@ func (h *FilesHandler) resolveSafePath(requestPath string) PathResult {
 
 	resolved, err := canonicalPathAllowMissing(normalized)
 	if err != nil {
-		return PathResult{Error: "Invalid path"}
+		return PathResult{Error: "Invalid path", Err: err}
 	}
 	matchedRoot, allowed := isPathUnderAnyRoot(resolved, h.allowedRoots)
 	if !allowed {
@@ -198,7 +202,7 @@ func (h *FilesHandler) resolveMutationPath(requestPath string) PathResult {
 
 	resolvedParent, err := canonicalPathAllowMissing(filepath.Dir(normalized))
 	if err != nil {
-		return PathResult{Error: "Invalid path"}
+		return PathResult{Error: "Invalid path", Err: err}
 	}
 	operationPath := filepath.Join(resolvedParent, filepath.Base(normalized))
 	matchedRoot, allowed := isPathUnderAnyRoot(operationPath, h.allowedRoots)
@@ -631,6 +635,10 @@ func (h *FilesHandler) writeDirectoryListing(w http.ResponseWriter, dirPath stri
 	if dirPath == string(os.PathSeparator) {
 		result = PathResult{Path: dirPath, Root: dirPath}
 	}
+	if errors.Is(result.Err, os.ErrPermission) {
+		writeFilesUseError(w, result.Err, true)
+		return
+	}
 	if result.Error != "" || (result.IsRoot && result.Path == "") {
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", "Path not allowed")
 		return
@@ -720,6 +728,10 @@ func (h *FilesHandler) GetResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + pathVal
 	result := h.resolveSafePath(requestPath)
 
+	if errors.Is(result.Err, os.ErrPermission) {
+		writeFilesUseError(w, result.Err, true)
+		return
+	}
 	if result.Error != "" {
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", result.Error)
 		return
@@ -770,6 +782,10 @@ func (h *FilesHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
 	result := h.resolveSafePath(requestPath)
 
+	if errors.Is(result.Err, os.ErrPermission) {
+		writeFilesUseError(w, result.Err, true)
+		return
+	}
 	if result.Error != "" || result.IsRoot || filepath.Clean(result.Path) == filepath.Clean(result.Root) {
 		errMsg := result.Error
 		if errMsg == "" {
@@ -824,6 +840,10 @@ func (h *FilesHandler) RenameResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
 	result := h.resolveMutationPath(requestPath)
 
+	if errors.Is(result.Err, os.ErrPermission) {
+		writeFilesUseError(w, result.Err, true)
+		return
+	}
 	if result.Error != "" || result.IsRoot || filepath.Clean(result.Path) == filepath.Clean(result.Root) {
 		errMsg := result.Error
 		if errMsg == "" {
@@ -888,6 +908,10 @@ func (h *FilesHandler) DeleteResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
 	result := h.resolveMutationPath(requestPath)
 
+	if errors.Is(result.Err, os.ErrPermission) {
+		writeFilesUseError(w, result.Err, true)
+		return
+	}
 	if result.Error != "" || result.IsRoot || filepath.Clean(result.Path) == filepath.Clean(result.Root) {
 		errMsg := result.Error
 		if errMsg == "" {
@@ -920,6 +944,10 @@ func (h *FilesHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
 	result := h.resolveSafePath(requestPath)
 
+	if errors.Is(result.Err, os.ErrPermission) {
+		writeFilesUseError(w, result.Err, true)
+		return
+	}
 	if result.Error != "" || result.IsRoot {
 		errMsg := result.Error
 		if result.IsRoot {

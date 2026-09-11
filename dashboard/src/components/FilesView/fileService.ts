@@ -287,6 +287,21 @@ export async function readTextFile(path: string, maxBytes = MAX_TEXT_PREVIEW_BYT
   return new TextDecoder().decode(bytes)
 }
 
+/**
+ * Why a file could not be read, in the words the Files panel uses, or null
+ * when the server serves it after all. For an <img> that failed, which never
+ * says why.
+ */
+export async function describeReadFailure(path: string): Promise<string | null> {
+  try {
+    const response = await fetchRawFile(path)
+    await response.body?.cancel()
+    return null
+  } catch (error) {
+    return getErrorMessage(error, 'read')
+  }
+}
+
 async function fetchRawFile(path: string): Promise<Response> {
   let response: Response
   try {

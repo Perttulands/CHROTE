@@ -7,6 +7,12 @@ import { resetSurfacesForTest } from '../keys/dismiss'
 import { renderHook } from '@testing-library/react'
 
 const statusMocks = vi.hoisted(() => ({ announce: vi.fn() }))
+const fileServiceMocks = vi.hoisted(() => ({ describeReadFailure: vi.fn().mockResolvedValue(null) }))
+
+vi.mock('./FilesView/fileService', async importOriginal => ({
+  ...(await importOriginal<typeof import('./FilesView/fileService')>()),
+  describeReadFailure: fileServiceMocks.describeReadFailure,
+}))
 
 vi.mock('../context/StatusContext', () => ({
   useStatus: () => ({ status: null, announce: statusMocks.announce }),
@@ -82,12 +88,14 @@ describe('ImageGlance', () => {
     expect(container.querySelector('.image-glance')).toBeNull()
   })
 
-  it('says so when the picture cannot be loaded', () => {
+  it('says so when the picture cannot be loaded, and why once the route has said', async () => {
+    fileServiceMocks.describeReadFailure.mockResolvedValueOnce('Permission denied')
     render(<ImageGlance />)
     act(() => openImageGlance('/srv/evidence/gone.png'))
 
     fireEvent.error(screen.getByRole('img', { name: 'gone.png' }))
     expect(screen.getByText('Could not load /srv/evidence/gone.png.')).toBeInTheDocument()
+    expect(await screen.findByText('Could not load /srv/evidence/gone.png: Permission denied.')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     expect(screen.queryByRole('dialog')).toBeNull()

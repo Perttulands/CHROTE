@@ -12,7 +12,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import PanelPath from './PanelPath'
-import { getDownloadUrl } from './FilesView/fileService'
+import { describeReadFailure, getDownloadUrl } from './FilesView/fileService'
 import { getFileBaseName } from './FileViewer'
 import { closeImageGlance, useImageGlanceRequest } from './imageGlance'
 import { openInFiles } from '../terminal/openInFiles'
@@ -63,7 +63,7 @@ export function imageGlanceSize(
 type Picture =
   | { state: 'loading' }
   | { state: 'shown'; natural: { width: number; height: number } }
-  | { state: 'failed' }
+  | { state: 'failed'; reason: string | null }
 
 function ImageGlance() {
   const request = useImageGlanceRequest()
@@ -71,6 +71,8 @@ function ImageGlance() {
   const glanceRef = useRef<HTMLDivElement>(null)
   const [picture, setPicture] = useState<Picture>({ state: 'loading' })
   const [size, setSize] = useState<ImageGlanceSize | null>(null)
+  const nonceRef = useRef(request?.nonce)
+  nonceRef.current = request?.nonce
 
   useSurface({ open: request !== null, kind: 'glance', onClose: closeImageGlance, ref: glanceRef })
 
@@ -139,7 +141,7 @@ function ImageGlance() {
       </div>
       <div className="image-glance-body">
         {picture.state === 'failed' ? (
-          <p className="image-glance-note">Could not load {path}.</p>
+          <p className="image-glance-note">Could not load {path}{picture.reason ? `: ${picture.reason}` : ''}.</p>
         ) : (
           <img
             key={request.nonce}
@@ -150,9 +152,16 @@ function ImageGlance() {
               const { naturalWidth, naturalHeight } = event.currentTarget
               setPicture(naturalWidth > 0 && naturalHeight > 0
                 ? { state: 'shown', natural: { width: naturalWidth, height: naturalHeight } }
-                : { state: 'failed' })
+                : { state: 'failed', reason: null })
             }}
-            onError={() => setPicture({ state: 'failed' })}
+            onError={() => {
+              // The <img> never says why. Ask the route once, in words.
+              const { nonce } = request
+              setPicture({ state: 'failed', reason: null })
+              void describeReadFailure(path).then(reason => {
+                if (reason && nonceRef.current === nonce) setPicture({ state: 'failed', reason })
+              })
+            }}
           />
         )}
       </div>
