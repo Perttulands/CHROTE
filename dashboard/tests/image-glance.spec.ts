@@ -8,8 +8,10 @@ import { mockApiRoutes } from './mock-api'
  * opens the picture in a glance rather than in Files. Escape with the
  * terminal focused closes it and sends nothing to the pane, a press outside
  * closes it, and a non-image path still opens Files. The Files panel's own
- * picture opens the same glance on a click. Link hit-testing and the image's
- * pixels need a real browser, which is why this is here.
+ * picture opens the same glance on a click, and a corner dragged there is the
+ * size every later glance opens at (bead: chrote-dx3r). Link hit-testing, the
+ * image's pixels and a real pointer drag through pointer capture need a real
+ * browser, which is why these are here.
  */
 
 const TTYD_OUTPUT = 0x30
@@ -130,12 +132,10 @@ test.describe('the image glance', () => {
     await expect(glance).toHaveCount(0)
   })
 
-  test('opens from the picture in the Files panel', async ({ page }) => {
-    await mockApiRoutes(page)
-    await mockFiles(page)
+  /** The Files panel left open on the picture, as the operator left it. */
+  async function seedPanelOnPicture(page: Page) {
     await page.addInitScript(state => {
       localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
-      // The panel left open on the picture, as the operator left it.
       localStorage.setItem('chrote.workspaceFiles.v1', JSON.stringify({
         version: 1,
         workspaces: {
@@ -150,6 +150,12 @@ test.describe('the image glance', () => {
         },
       }))
     }, seededState())
+  }
+
+  test('opens from the picture in the Files panel', async ({ page }) => {
+    await mockApiRoutes(page)
+    await mockFiles(page)
+    await seedPanelOnPicture(page)
     await page.goto('/')
     await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
 
@@ -166,5 +172,52 @@ test.describe('the image glance', () => {
 
     await glance.getByRole('button', { name: 'Close' }).click()
     await expect(glance).toHaveCount(0)
+  })
+
+  test('opens at the size a corner was dragged to, and again after a reload', async ({ page }) => {
+    await mockApiRoutes(page)
+    await mockFiles(page)
+    await seedPanelOnPicture(page)
+    await page.goto('/')
+
+    const openGlance = async () => {
+      const panel = page.locator('.terminal-files-panel')
+      if (!(await panel.isVisible())) {
+        await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
+      }
+      const picture = panel.getByRole('button', { name: 'shot.png' })
+      await expect(picture).toBeVisible()
+      await picture.click()
+      const glance = page.locator('.image-glance')
+      await expect(glance).toBeVisible()
+      return glance
+    }
+
+    const glance = await openGlance()
+    // The picture is three pixels wide, so the glance opens tiny: its own
+    // size, not a minimum.
+    const opened = (await glance.boundingBox())!
+    expect(opened.width).toBeLessThan(100)
+
+    // Drag the bottom-right corner out. The window is centred, so the corner
+    // follows the pointer while the window grows around its middle.
+    await page.mouse.move(opened.x + opened.width - 2, opened.y + opened.height - 2)
+    await page.mouse.down()
+    await page.mouse.move(opened.x + opened.width + 200, opened.y + opened.height + 150, { steps: 10 })
+    await page.mouse.up()
+
+    const dragged = (await glance.boundingBox())!
+    expect(dragged.width).toBeGreaterThan(opened.width + 300)
+    expect(dragged.height).toBeGreaterThan(opened.height + 200)
+
+    await page.reload()
+    const reopened = await openGlance()
+    const after = (await reopened.boundingBox())!
+    expect(Math.round(after.width)).toBe(Math.round(dragged.width))
+    expect(Math.round(after.height)).toBe(Math.round(dragged.height))
+
+    // The word in the header gives the picture the say back.
+    await reopened.getByRole('button', { name: 'Reset size' }).click()
+    await expect.poll(async () => (await reopened.boundingBox())!.width).toBeLessThan(100)
   })
 })
