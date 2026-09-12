@@ -1,6 +1,7 @@
 /* Chrote Dashboard - the image glance */
-/* A floating window centred over the workspace, sized to the picture: one
-   hairline, no shadow, no radius, no drag, no resize. */
+/* A floating window centred over the workspace, sized to the picture until
+   the operator drags an edge or a corner: one hairline, no shadow, no radius,
+   no drag of the window itself. The handles are FloatingFrameHandles.css's. */
 
 .image-glance {
   position: absolute;
@@ -15,7 +16,8 @@
 }
 
 /* The header's height is fixed, and ImageGlance.tsx counts on it when it
-   sizes the window to the picture. */
+   sizes the window to the picture and when it fits the picture into a window
+   the operator sized. */
 .image-glance-header {
   display: flex;
   align-items: center;

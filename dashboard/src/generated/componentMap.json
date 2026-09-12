@@ -41,6 +41,7 @@
   "FilesView": "dashboard/src/components/FilesView/index.tsx",
   "FilesViewContent": "dashboard/src/components/FilesView/FilesViewContent.tsx",
   "FlagPanel": "dashboard/src/components/FlagPanel.tsx",
+  "FloatingFrameHandles": "dashboard/src/components/FloatingFrameHandles.tsx",
   "FlowNavigationProvider": "dashboard/src/components/BeadsView/FlowNavigation.tsx",
   "FlowView": "dashboard/src/components/BeadsView/FlowView.tsx",
   "FolderField": "dashboard/src/components/FolderField.tsx",

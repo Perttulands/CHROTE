@@ -1,0 +1,53 @@
+/* Chrote Dashboard - the floating window's resize handles */
+/* Hairlines on the window's own edges, in the manner of the docked column
+   handles: invisible until one is the thing in hand. Corners are drawn after
+   the edges and sit above them, so a corner takes the corner. */
+
+.floating-frame-handle {
+  position: absolute;
+  z-index: 2;
+  touch-action: none;
+  outline: none;
+}
+
+.floating-frame-handle:hover,
+.floating-frame-handle:focus-visible,
+.floating-frame-handle.dragging {
+  background-color: var(--text-dim);
+}
+
+.floating-frame-handle[data-handle='n'],
+.floating-frame-handle[data-handle='s'] {
+  left: 0;
+  right: 0;
+  height: 4px;
+  cursor: row-resize;
+}
+
+.floating-frame-handle[data-handle='n'] { top: 0; }
+.floating-frame-handle[data-handle='s'] { bottom: 0; }
+
+.floating-frame-handle[data-handle='w'],
+.floating-frame-handle[data-handle='e'] {
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+}
+
+.floating-frame-handle[data-handle='w'] { left: 0; }
+.floating-frame-handle[data-handle='e'] { right: 0; }
+
+.floating-frame-handle[data-handle='nw'],
+.floating-frame-handle[data-handle='ne'],
+.floating-frame-handle[data-handle='sw'],
+.floating-frame-handle[data-handle='se'] {
+  width: 12px;
+  height: 12px;
+  z-index: 3;
+}
+
+.floating-frame-handle[data-handle='nw'] { top: 0; left: 0; cursor: nwse-resize; }
+.floating-frame-handle[data-handle='ne'] { top: 0; right: 0; cursor: nesw-resize; }
+.floating-frame-handle[data-handle='sw'] { bottom: 0; left: 0; cursor: nesw-resize; }
+.floating-frame-handle[data-handle='se'] { bottom: 0; right: 0; cursor: nwse-resize; }

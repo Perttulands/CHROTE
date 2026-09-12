@@ -3,9 +3,11 @@
  *
  * The caller owns the width and where it is stored. Pass the element whose
  * rendered width should be measured, the current limits, and an `onCommit`
- * sink. The hook owns pointer capture, direction-aware drag math, 16px arrow
- * steps, clamping, and committing only when a drag ends successfully. Widths
- * are pixels unless `pixelsPerUnit` adapts an existing caller-owned unit.
+ * sink. The hook owns direction-aware drag math, clamping, and committing only
+ * when a drag ends successfully; the pointer capture, the 16px arrow step and
+ * the clamp itself come from `resizeGesture`, which the floating-window frame
+ * shares. Widths are pixels unless `pixelsPerUnit` adapts an existing
+ * caller-owned unit.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -14,6 +16,7 @@ import type {
   PointerEventHandler,
   RefObject,
 } from 'react'
+import { RESIZE_KEYBOARD_STEP, capturePointerDrag, clampLength } from './resizeGesture'
 
 export type ResizeEdge = 'left' | 'right'
 
@@ -38,23 +41,10 @@ export interface ResizableWidth {
   handleProps: ResizableWidthHandleProps
 }
 
-const KEYBOARD_STEP = 16
-
-function finiteOr(value: number, fallback: number): number {
-  return Number.isFinite(value) ? value : fallback
-}
-
-/** Clamp a width even when a caller supplies reversed or non-finite limits. */
-function clampResizableWidth(width: number, minWidth: number, maxWidth: number): number {
-  const minimum = Math.max(0, finiteOr(minWidth, 0))
-  const maximum = Math.max(minimum, finiteOr(maxWidth, Number.POSITIVE_INFINITY))
-  return Math.min(maximum, Math.max(minimum, finiteOr(width, minimum)))
-}
-
 function keyDelta(key: string, edge: ResizeEdge): number {
   if (key !== 'ArrowLeft' && key !== 'ArrowRight') return 0
   const towardEdge = edge === 'right' ? key === 'ArrowRight' : key === 'ArrowLeft'
-  return towardEdge ? KEYBOARD_STEP : -KEYBOARD_STEP
+  return towardEdge ? RESIZE_KEYBOARD_STEP : -RESIZE_KEYBOARD_STEP
 }
 
 export function useResizableWidth<T extends HTMLElement>({
@@ -71,7 +61,7 @@ export function useResizableWidth<T extends HTMLElement>({
   const [dragWidth, setDragWidth] = useState<number | null>(null)
 
   const limit = useCallback((next: number) => (
-    clampResizableWidth(next, minWidth, maxWidth())
+    clampLength(next, minWidth, maxWidth())
   ), [maxWidth, minWidth])
 
   const unitScale = useCallback(() => {
@@ -110,33 +100,15 @@ export function useResizableWidth<T extends HTMLElement>({
     const grabbedWidth = measured > 0 ? measured / scale : limit(width)
     const direction = edge === 'right' ? 1 : -1
 
-    const move = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) return
-      const next = limit(grabbedWidth + direction * (moveEvent.clientX - grabbedAt) / scale)
-      dragWidthRef.current = next
-      setDragWidth(next)
-    }
-
-    const finish = (finishEvent: PointerEvent) => {
-      if (finishEvent.pointerId === pointerId) stopActiveDrag(true)
-    }
-
-    const cancel = (cancelEvent: PointerEvent) => {
-      if (cancelEvent.pointerId === pointerId) stopActiveDrag(false)
-    }
-
-    const cleanup = () => {
-      handle.removeEventListener('pointermove', move)
-      handle.removeEventListener('pointerup', finish)
-      handle.removeEventListener('pointercancel', cancel)
-      if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId)
-    }
-
-    cleanupRef.current = cleanup
-    handle.setPointerCapture(pointerId)
-    handle.addEventListener('pointermove', move)
-    handle.addEventListener('pointerup', finish)
-    handle.addEventListener('pointercancel', cancel)
+    cleanupRef.current = capturePointerDrag(handle, pointerId, {
+      move: moveEvent => {
+        const next = limit(grabbedWidth + direction * (moveEvent.clientX - grabbedAt) / scale)
+        dragWidthRef.current = next
+        setDragWidth(next)
+      },
+      finish: () => stopActiveDrag(true),
+      cancel: () => stopActiveDrag(false),
+    })
   }, [edge, elementRef, limit, stopActiveDrag, unitScale, width])
 
   const onKeyDown = useCallback<KeyboardEventHandler<HTMLDivElement>>(event => {
