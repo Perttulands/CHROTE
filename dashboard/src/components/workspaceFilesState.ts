@@ -7,8 +7,6 @@ export interface FileViewState {
   markdownMode: MarkdownMode
   fontSize: number
   markdownSplitPercent: number
-  imageZoom: number
-  imageFit: boolean
 }
 
 export interface WorkspaceFilesState {
@@ -45,8 +43,6 @@ export const DEFAULT_FILE_VIEW_STATE: FileViewState = {
   markdownMode: 'preview',
   fontSize: 15,
   markdownSplitPercent: 50,
-  imageZoom: 1,
-  imageFit: true,
 }
 
 export const DEFAULT_SESSIONS_DOCK_STATE: SessionsDockState = {

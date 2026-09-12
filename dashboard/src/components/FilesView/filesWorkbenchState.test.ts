@@ -27,8 +27,6 @@ describe('Files workbench persistence', () => {
           markdownMode: 'split',
           fontSize: 17,
           markdownSplitPercent: 62,
-          imageZoom: 1.4,
-          imageFit: true,
         },
       },
     })

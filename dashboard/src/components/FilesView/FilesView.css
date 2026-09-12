@@ -946,6 +946,15 @@
   max-height: 100%;
 }
 
+/* At a zoom level the picture is drawn at the pixels the operator asked for,
+   and the view scrolls to it rather than shrinking it. */
+.fb-media-preview.is-actual img,
+.fb-media-preview.is-actual .fb-image-look {
+  max-width: none;
+  max-height: none;
+  margin: auto;
+}
+
 /* The picture is a control: a press on it opens the image glance. */
 .fb-image-look {
   display: flex;

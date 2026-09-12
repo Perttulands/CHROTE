@@ -37,7 +37,8 @@
   color: var(--text-primary);
 }
 
-.image-glance-size {
+.image-glance-size,
+.image-glance-zoom {
   flex: none;
   color: var(--text-dim);
   font-size: 12px;
@@ -59,23 +60,25 @@
   color: var(--text-primary);
 }
 
-/* The picture on the terminal background, at its own size or scaled down to
-   fit, never up. Until it is sized the image is not drawn at all, so nothing
-   flashes at the wrong size. */
+/* The picture on the terminal background, drawn at the zoom level. Until it
+   is sized the image is not drawn at all, so nothing flashes at the wrong
+   size; when the level draws it larger than the window it scrolls inside it. */
 .image-glance-body {
   flex: 1;
   min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  overflow: auto;
   background-color: var(--background);
 }
 
 .image-glance-body img {
   display: block;
-  max-width: 100%;
-  max-height: 100%;
+  margin: auto;
+  max-width: none;
+  max-height: none;
+  flex: none;
 }
 
 .image-glance-body img:not([style]) {

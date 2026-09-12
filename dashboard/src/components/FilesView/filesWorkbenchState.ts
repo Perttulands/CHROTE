@@ -65,8 +65,6 @@ function sanitizeFileViewState(value: unknown): FileViewState {
     markdownMode,
     fontSize: finiteNumber(value.fontSize, DEFAULT_FILE_VIEW_STATE.fontSize, 11, 28),
     markdownSplitPercent: finiteNumber(value.markdownSplitPercent, DEFAULT_FILE_VIEW_STATE.markdownSplitPercent, 20, 80),
-    imageZoom: finiteNumber(value.imageZoom, 1, 0.1, 8),
-    imageFit: value.imageFit !== false,
   }
 }
 

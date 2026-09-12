@@ -4,6 +4,16 @@ import { MAX_TEXT_PREVIEW_BYTES, getDownloadUrl, getErrorMessage, probeTextFile,
 import type { FileItem } from './FilesView/types'
 import type { FileViewState, MarkdownMode } from './workspaceFilesState'
 import { openImageGlance } from './imageGlance'
+import {
+  IMAGE_ZOOM_FIT,
+  IMAGE_ZOOM_ONE_TO_ONE,
+  setImageZoom,
+  stepImageZoom,
+  useImageZoom,
+  zoomPercentWord,
+  zoomedPixels,
+  type PixelSize,
+} from './imageZoom'
 import { useResizableWidth } from '../hooks/useResizableWidth'
 
 export type PreviewKind = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'download'
@@ -261,6 +271,20 @@ function FileViewer({
   const [probedFile, setProbedFile] = useState<{ path: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [imagePixels, setImagePixels] = useState<PixelSize | null>(null)
+  // The picture is drawn at the one zoom level the glance and the Files panel
+  // draw theirs at, so a level set anywhere is the level everywhere.
+  const zoomLevel = useImageZoom()
+  const zoomedImage = zoomedPixels(imagePixels, zoomLevel)
+  const stepZoom = useCallback((direction: 1 | -1) => {
+    const natural = imagePixels
+    if (!natural) return
+    const scroll = scrollRef.current
+    const room = scroll
+      ? { width: scroll.clientWidth, height: scroll.clientHeight }
+      : natural
+    setImageZoom(stepImageZoom(zoomLevel, natural, room, direction))
+  }, [imagePixels, zoomLevel])
   const declaredKind = getPreviewKind(item)
   const probedContent = probedFile?.path === item.path ? probedFile.content : null
   const kind = declaredKind === 'download' && probedContent !== null ? 'text' : declaredKind
@@ -295,6 +319,7 @@ function FileViewer({
     setLoading(false)
     setError(null)
     setProbedFile(null)
+    setImagePixels(null)
     if (controlledContent !== undefined || (declaredKind !== 'text' && declaredKind !== 'download')) return
     if (item.size > MAX_TEXT_PREVIEW_BYTES) {
       if (declaredKind === 'text') setError('File is too large for inline viewing')
@@ -348,10 +373,11 @@ function FileViewer({
       {kind === 'image' && (
         <div className="fb-viewer-controls" aria-label="Image view controls">
           <button type="button" disabled={!onPrevious} onClick={() => onPrevious?.()}>Previous</button>
-          <button type="button" onClick={() => patchViewState({ imageFit: !viewState.imageFit })}>{viewState.imageFit ? 'Actual size' : 'Fit'}</button>
-          <button type="button" aria-label="Zoom out" onClick={() => patchViewState({ imageZoom: Math.max(0.1, viewState.imageZoom - 0.1), imageFit: false })}>−</button>
-          <span>{Math.round(viewState.imageZoom * 100)}%</span>
-          <button type="button" aria-label="Zoom in" onClick={() => patchViewState({ imageZoom: Math.min(8, viewState.imageZoom + 0.1), imageFit: false })}>+</button>
+          <button type="button" aria-pressed={zoomLevel.kind === 'fit'} onClick={() => setImageZoom(IMAGE_ZOOM_FIT)}>Fit</button>
+          <button type="button" aria-pressed={zoomLevel.kind === 'percent' && zoomLevel.percent === 100} onClick={() => setImageZoom(IMAGE_ZOOM_ONE_TO_ONE)}>1:1</button>
+          <button type="button" aria-label="Zoom out" onClick={() => stepZoom(-1)}>−</button>
+          <span>{zoomLevel.kind === 'fit' ? 'Fit' : zoomPercentWord(zoomLevel.percent)}</span>
+          <button type="button" aria-label="Zoom in" onClick={() => stepZoom(1)}>+</button>
           <button type="button" disabled={!onNext} onClick={() => onNext?.()}>Next</button>
         </div>
       )}
@@ -401,12 +427,16 @@ function FileViewer({
           ) : <pre className="fb-plain-text-preview">{content}</pre>
         ) : kind === 'image' ? (
           // A click on the picture opens the glance for a look at it full size.
-          <div className={`fb-media-preview ${viewState.imageFit ? 'is-fit' : 'is-actual'}`}>
+          <div className={`fb-media-preview ${zoomedImage ? 'is-actual' : 'is-fit'}`}>
             <button type="button" className="fb-image-look" onClick={() => openImageGlance(item.path)}>
               <img
                 src={getDownloadUrl(item.path)}
                 alt={item.name}
-                style={viewState.imageFit ? undefined : { transform: `scale(${viewState.imageZoom})` }}
+                style={zoomedImage ? { width: zoomedImage.width, height: zoomedImage.height } : undefined}
+                onLoad={event => setImagePixels({
+                  width: event.currentTarget.naturalWidth,
+                  height: event.currentTarget.naturalHeight,
+                })}
               />
             </button>
           </div>

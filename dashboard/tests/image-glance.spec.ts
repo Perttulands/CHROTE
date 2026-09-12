@@ -16,6 +16,7 @@ import { mockApiRoutes } from './mock-api'
 
 const TTYD_OUTPUT = 0x30
 const IMAGE_PATH = '/tmp/shot.png'
+const OTHER_IMAGE_PATH = '/tmp/other.png'
 const TEXT_PATH = '/tmp/notes.txt'
 /** A 3 by 2 PNG, red. */
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEElEQVR4nGM4IScHQQxwFgBBAAYZPEVBlgAAAABJRU5ErkJggg==', 'base64')
@@ -63,8 +64,8 @@ async function mockFiles(page: Page) {
   })
 }
 
-/** A terminal that prints both paths on one line, and records what is typed at it. */
-async function serveTerminal(page: Page) {
+/** A terminal that prints the given paths on one line, and records what is typed at it. */
+async function serveTerminal(page: Page, line = `saved ${IMAGE_PATH} and ${TEXT_PATH}`) {
   const typed: string[] = []
   const grid = { columns: 0 }
   await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
@@ -72,7 +73,7 @@ async function serveTerminal(page: Page) {
       const text = typeof message === 'string' ? message : message.toString('utf8')
       if (text.startsWith('{')) {
         grid.columns = (JSON.parse(text) as { columns: number }).columns
-        ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(`saved ${IMAGE_PATH} and ${TEXT_PATH}`)]))
+        ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(line)]))
       } else if (text.startsWith('0')) {
         typed.push(text.slice(1))
       }
@@ -219,5 +220,43 @@ test.describe('the image glance', () => {
     // The word in the header gives the picture the say back.
     await reopened.getByRole('button', { name: 'Reset size' }).click()
     await expect.poll(async () => (await reopened.boundingBox())!.width).toBeLessThan(100)
+  })
+
+  /**
+   * The level is the operator's, not the picture's (bead: chrote-4689): a step
+   * taken on one picture is the level the next picture opens at. The key has
+   * to reach the model past a focused terminal, which is browser-only.
+   */
+  test('carries the stepped zoom level to the next picture', async ({ page }) => {
+    await mockApiRoutes(page)
+    await mockFiles(page)
+    const { grid } = await serveTerminal(page, `saved ${IMAGE_PATH} and ${OTHER_IMAGE_PATH}`)
+    await page.addInitScript(state => {
+      localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
+    }, seededState())
+    await page.goto('/')
+    await expect(page.locator('.terminal-window-body .xterm-rows')).toContainText(IMAGE_PATH)
+
+    const firstPoint = await pointAt(page, grid.columns, 6 + IMAGE_PATH.length / 2)
+    const secondPoint = await pointAt(page, grid.columns, 6 + IMAGE_PATH.length + 5 + OTHER_IMAGE_PATH.length / 2)
+
+    await page.mouse.click(firstPoint.x, firstPoint.y)
+    const glance = page.locator('.image-glance')
+    await expect(glance).toBeVisible()
+    // Three pixels wide inside a window that fits it: drawn at 1:1.
+    await expect(glance.locator('.image-glance-zoom')).toHaveText('100%')
+
+    await page.keyboard.press('Alt+Equal')
+    await expect(glance.locator('.image-glance-zoom')).toHaveText('125%')
+    await expect.poll(async () => (await glance.locator('img').boundingBox())?.width).toBe(4)
+
+    await page.keyboard.press('Escape')
+    await expect(glance).toHaveCount(0)
+
+    await page.mouse.click(secondPoint.x, secondPoint.y)
+    await expect(glance).toBeVisible()
+    await expect(glance.locator('.image-glance-path')).toHaveAttribute('title', OTHER_IMAGE_PATH)
+    await expect(glance.locator('.image-glance-zoom')).toHaveText('125%')
+    await expect.poll(async () => (await glance.locator('img').boundingBox())?.width).toBe(4)
   })
 })
