@@ -4,9 +4,11 @@
  * Every surface that can name something an agent should act on — a tile, a
  * session row, Peek, the file viewer, the Bead on the table — opens this
  * drawer and hands it a reference. The drawer overlays the right edge of the
- * workspace at 380px, above the table's column, and nothing beneath it moves:
- * the card that opened it stays mounted where it was, and closing the drawer
- * reveals it unchanged with the focus back where it was taken from.
+ * workspace, above the table's column, and nothing beneath it moves: the card
+ * that opened it stays mounted where it was, and closing the drawer reveals it
+ * unchanged with the focus back where it was taken from. A handle at its inner
+ * edge resizes it the way the docked columns resize, and the width it is given
+ * is remembered per device.
  *
  * The reference is shown, not editable: it names the thing the operator was
  * looking at, and an edited reference names nothing. The note beneath it is
@@ -21,7 +23,9 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { useSession } from '../context/SessionContext'
+import { useResizableWidth } from '../hooks/useResizableWidth'
 import { useSurface } from '../keys/dismiss'
 import { useTerminalPool } from './TerminalPool'
 import { useTheme } from '../theme/ThemeContext'
@@ -46,6 +50,21 @@ import './SendDrawer.css'
 
 /** The picker's own row for a session that does not exist yet. */
 const NEW_AGENT = 'new-agent'
+
+/** The drawer's width with nothing remembered, and the least it can be. */
+const DRAWER_WIDTH_DEFAULT = 380
+const DRAWER_WIDTH_MIN = 320
+/** What the workspace beneath the drawer keeps before the drawer stops widening. */
+const DRAWER_CONTENT_MIN = 480
+
+/**
+ * A remembered width is trusted only as far as it is a width: anything else is
+ * the default, and nothing narrower than the minimum is honoured.
+ */
+export function clampSendDrawerWidth(width: unknown): number {
+  if (typeof width !== 'number' || !Number.isFinite(width)) return DRAWER_WIDTH_DEFAULT
+  return Math.max(DRAWER_WIDTH_MIN, Math.round(width))
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -112,6 +131,8 @@ export default function SendDrawer() {
     closeSendToSession,
     listSessionPanes,
     sendToSession,
+    settings,
+    updateSettings,
   } = useSession()
   const pool = useTerminalPool()
   const theme = useTheme()
@@ -189,6 +210,25 @@ export default function SendDrawer() {
   // A work surface: Escape closes it while it is the topmost thing open, and
   // a click outside leaves it where it is.
   useSurface({ open, kind: 'work', onClose: closeSendToSession, ref: drawerRef })
+
+  /** The widest the drawer may be here: the workspace keeps its 480px. */
+  const widest = useCallback(() => {
+    const room = drawerRef.current?.parentElement?.clientWidth || Number.POSITIVE_INFINITY
+    return Math.max(DRAWER_WIDTH_MIN, room - DRAWER_CONTENT_MIN)
+  }, [])
+
+  const commitWidth = useCallback((sendDrawerWidth: number) => {
+    updateSettings({ sendDrawerWidth })
+  }, [updateSettings])
+
+  const resize = useResizableWidth({
+    elementRef: drawerRef,
+    width: clampSendDrawerWidth(settings?.sendDrawerWidth),
+    minWidth: DRAWER_WIDTH_MIN,
+    maxWidth: widest,
+    edge: 'left',
+    onCommit: commitWidth,
+  })
 
   const target = useMemo(
     () => (selected && selected !== NEW_AGENT ? resolveTarget(selected, sessions, evidence) : null),
@@ -357,7 +397,23 @@ export default function SendDrawer() {
   }
 
   return (
-    <aside ref={drawerRef} className="send-drawer" role="dialog" aria-label="Send to session">
+    <aside
+      ref={drawerRef}
+      className="send-drawer"
+      role="dialog"
+      aria-label="Send to session"
+      style={{ width: resize.width } as CSSProperties}
+    >
+      <div
+        {...resize.handleProps}
+        className={`send-drawer-handle${resize.resizing ? ' dragging' : ''}`}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize Send drawer"
+        aria-valuenow={Math.round(resize.width)}
+        aria-valuemin={DRAWER_WIDTH_MIN}
+        tabIndex={0}
+      />
       <div className="send-drawer-header">
         <span className="send-drawer-title">Send to session</span>
         <button

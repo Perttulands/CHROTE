@@ -126,6 +126,7 @@ export interface UserSettings {
   keysEnabled: boolean               // Leader chords intercept keys; off hands every key to the pty
   tableWidth: number                 // The table's column at the right, in px; device-local
   beadsColumnWidth: number           // The global Beads column, in px; device-local
+  sendDrawerWidth: number            // The Send drawer, in px; device-local
   railWidth: {                       // Left rails, in px; device-local
     beads: number
     library: number
@@ -156,6 +157,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   keysEnabled: true,
   tableWidth: 400,
   beadsColumnWidth: 360,
+  sendDrawerWidth: 380,
   railWidth: {
     beads: 240,
     library: 240,

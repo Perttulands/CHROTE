@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SendToSessionRequest, TerminalWorkspace, TmuxSession, WorkspaceId } from '../types'
+import type { SendToSessionRequest, TerminalWorkspace, TmuxSession, UserSettings, WorkspaceId } from '../types'
 import { DEFAULT_SETTINGS } from '../types'
 import { sessionEvidenceFrom } from '../terminal/tileState'
 import SendDrawer, { composeMessage } from './SendDrawer'
@@ -40,6 +40,8 @@ const mockState = vi.hoisted(() => ({
   sendToSession: vi.fn(),
   createSession: vi.fn(),
   scrollToBottom: vi.fn(),
+  settings: null as UserSettings | null,
+  updateSettings: vi.fn(),
 }))
 
 vi.mock('../context/SessionContext', () => ({
@@ -51,7 +53,8 @@ vi.mock('../context/SessionContext', () => ({
     workspaceIds: ['terminal1'] as WorkspaceId[],
     focusedWindowKey: mockState.focusedWindowKey,
     terminalUsers: ['alice', 'build'],
-    settings: DEFAULT_SETTINGS,
+    settings: mockState.settings ?? DEFAULT_SETTINGS,
+    updateSettings: mockState.updateSettings,
     createSession: mockState.createSession,
     sessionEvidence: sessionEvidenceFrom({
       sessions: mockState.sessions,
@@ -91,6 +94,7 @@ async function renderOpen(request: SendToSessionRequest) {
 describe('SendDrawer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockState.settings = null
     mockState.request = null
     mockState.requestId = 0
     mockState.sessions = [...ALL_SESSIONS]
@@ -99,6 +103,25 @@ describe('SendDrawer', () => {
     mockState.listSessionPanes.mockResolvedValue([RESOLVED_PANE])
     mockState.sendToSession.mockResolvedValue({ outcome: 'sent', message: "Pasted to 'alice-shell' (%1)" })
     mockState.createSession.mockResolvedValue('shell-home')
+  })
+
+  // The drawer opens at whatever width this device last gave it, and the
+  // handle's arrow step hands the new width back to be remembered.
+  it('opens at the width it remembers and commits the width the handle sets', async () => {
+    mockState.settings = { ...DEFAULT_SETTINGS, sendDrawerWidth: 420 }
+    await renderOpen({ targetSessionKey: 'alice:alice-shell' })
+
+    expect(screen.getByRole('dialog', { name: 'Send to session' })).toHaveStyle({ width: '420px' })
+
+    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize Send drawer' }), { key: 'ArrowLeft' })
+    expect(mockState.updateSettings).toHaveBeenCalledWith({ sendDrawerWidth: 436 })
+  })
+
+  it('falls back to its default width when nothing usable is remembered', async () => {
+    mockState.settings = { ...DEFAULT_SETTINGS, sendDrawerWidth: Number.NaN }
+    await renderOpen({ targetSessionKey: 'alice:alice-shell' })
+
+    expect(screen.getByRole('dialog', { name: 'Send to session' })).toHaveStyle({ width: '380px' })
   })
 
   it('draws nothing until a surface opens it', () => {

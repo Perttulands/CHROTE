@@ -9,7 +9,8 @@
      other session, and the resident stays in view beyond it. */
   right: var(--resident-width, 0px);
   bottom: 0;
-  width: 380px;
+  /* The width is the operator's: the component sets it from the width it
+     remembers, and the handle at the inner edge changes it. */
   max-width: 100%;
   z-index: 1500;
   display: flex;
@@ -17,6 +18,29 @@
   background-color: var(--surface-primary);
   border-left: 1px solid var(--divider);
   overflow: hidden;
+}
+
+/* An invisible edge, like the docked columns': it shows itself under the
+   pointer and while it is being dragged. */
+.send-drawer-handle {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.send-drawer-handle:hover {
+  background-color: var(--text-dim);
+}
+
+.send-drawer-handle:focus-visible,
+.send-drawer-handle.dragging {
+  background-color: var(--accent);
 }
 
 .send-drawer-header {
