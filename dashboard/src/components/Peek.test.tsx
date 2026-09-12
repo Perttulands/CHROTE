@@ -90,6 +90,39 @@ describe('Peek', () => {
   afterEach(() => {
     resetSurfacesForTest()
     resetChordsForTest()
+    window.localStorage.clear()
+  })
+
+  it('opens at the size the operator dragged a peek to, until Reset size gives the session the say back', () => {
+    window.localStorage.setItem('chrote.floatingWindowSize.v1', JSON.stringify({
+      version: 1,
+      sizes: { peek: { width: 600, height: 400 } },
+    }))
+    // The frame measures the window's parent, so the peek is rendered into a
+    // workspace of a known size rather than jsdom's zero-sized body.
+    const workspace = document.createElement('div')
+    Object.defineProperty(workspace, 'clientWidth', { value: 1280 })
+    Object.defineProperty(workspace, 'clientHeight', { value: 800 })
+    document.body.appendChild(workspace)
+
+    render(<Peek />, { container: workspace })
+    const peek = screen.getByRole('dialog', { name: 'Peek alice-shell' })
+
+    // The remembered size decides over whatever the session's grid asks for.
+    expect(peek.style.width).toBe('600px')
+    expect(peek.style.height).toBe('400px')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset size' }))
+
+    // The session decides again: no tile shows it, so it is the fallback 100
+    // columns at the measured cell, and the workspace's height cap.
+    const { width, height } = peekSize(
+      { cols: PEEK_FALLBACK_COLS, rows: null, cellWidth: 14 * 0.6, cellHeight: Math.ceil(14 * 1.2) },
+      { width: 1280, height: 800 },
+    )
+    expect(peek.style.width).toBe(`${width}px`)
+    expect(peek.style.height).toBe(`${height}px`)
+    expect(screen.queryByRole('button', { name: 'Reset size' })).toBeNull()
   })
 
   it('offers Send from the header without closing the peek', () => {

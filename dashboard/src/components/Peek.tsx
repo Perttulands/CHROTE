@@ -2,20 +2,37 @@
  * Peek: a second look at a session, as a floating window centred over the
  * workspace.
  *
- * It is a glance. Its size comes from the session it shows — the pane's own
- * columns and rows at the tile font size, so the peek shows the pane as it
- * is — capped at 70% of the workspace's width and 80% of its height; a
- * session no tile is showing is taken at 100 columns. There is no drag and
- * no resize. Dismissal is the owner's: a press outside closes it and is
- * consumed, Escape closes it from anywhere including its own terminal, and
- * Alt+P toggles it. The header carries the mark, the name, Send and Close
- * as words.
+ * It is a glance. Its default size comes from the session it shows — the
+ * pane's own columns and rows at the tile font size, so the peek shows the
+ * pane as it is — capped at 70% of the workspace's width and 80% of its
+ * height; a session no tile is showing is taken at 100 columns. The operator
+ * resizes it from any edge or corner through the shared floating-window
+ * frame, and that size is remembered for every later peek until Reset size
+ * gives the session the say again.
+ *
+ * The terminal fills whatever size the window has, the way a tile's does,
+ * rather than showing a pane of fixed size inside a scrolling window: this is
+ * the same TerminalSurface, which fits its grid to its box and sends the
+ * columns and rows it arrived at down its own connection. Whether the tmux
+ * pane reflows to them is tmux's answer and not Peek's, and that is what
+ * makes filling safe. A peek attaches with `-f ignore-size`
+ * (src/internal/proxy/terminal.go), so while a tile holds the sizing seat the
+ * pane keeps the tile's size and a resized peek only shows more or less room
+ * around it — a resized peek cannot fight the tile showing the same session.
+ * When nothing else sizes the window, the peek is the client tmux sizes it
+ * by, and the pane reflows to the window the operator drew. That is the rule
+ * a tile already obeys.
+ *
+ * Dismissal is the owner's: a press outside closes it and is consumed, Escape
+ * closes it from anywhere including its own terminal, and Alt+P toggles it.
+ * The header carries the mark, the name, Send and Close as words.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from '../context/SessionContext'
 import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
 import TerminalSurface, { useTerminalSession } from './TerminalSurface'
+import FloatingFrameHandles from './FloatingFrameHandles'
 import { useTerminalPool } from './TerminalPool'
 import { SessionCommandMark } from './sessionLabel'
 import { terminalSocketUrl } from '../terminal/ttydProtocol'
@@ -23,6 +40,8 @@ import { isSessionEnded } from '../terminal/tileState'
 import { useSessionEvidence } from '../context/useSessionEvidence'
 import { useSurface } from '../keys/dismiss'
 import { registerChords, type Chord } from '../keys/chords'
+import { useFloatingFrame } from '../hooks/useFloatingFrame'
+import type { FrameSize } from '../hooks/floatingWindowSize'
 import { TERMINAL_FONT_FAMILY } from '../theme/theme'
 import './Peek.css'
 
@@ -64,10 +83,12 @@ export function peekSize(grid: PeekGrid, workspace: { width: number; height: num
   return { width, height }
 }
 
-interface PeekFrame {
-  width: number
-  height: number
-  /** True once the size was taken against the peek's own terminal. */
+/**
+ * What the session asks the window to be: the pane's grid, at the cell the
+ * peek's own terminal draws it with.
+ */
+interface PeekContent extends PeekGrid {
+  /** True once the cell was taken from the peek's own terminal. */
   settled: boolean
 }
 
@@ -88,7 +109,7 @@ function Peek() {
   const { floatingSession, closeFloatingModal, openSendToSession, settings, sessions } = useSession()
   const pool = useTerminalPool()
   const peekRef = useRef<HTMLDivElement>(null)
-  const [frame, setFrame] = useState<PeekFrame | null>(null)
+  const [content, setContent] = useState<PeekContent | null>(null)
 
   const displayName = floatingSession ? getSessionNameFromKey(floatingSession) : ''
   const keyUser = floatingSession ? getSessionUserFromKey(floatingSession) : ''
@@ -121,62 +142,56 @@ function Peek() {
 
   useSurface({ open: floatingSession !== null, kind: 'glance', onClose: closeFloatingModal, ref: peekRef })
 
-  // The grid the window is sized for: the pane's own, as the tile showing the
-  // session draws it, or the fallback when no tile shows it.
-  const wantedGrid = (): { cols: number; rows: number | null } => {
-    const tile = floatingSession ? pool.terminals.get(floatingSession)?.grid() ?? null : null
-    return { cols: tile?.cols ?? PEEK_FALLBACK_COLS, rows: tile?.rows ?? null }
-  }
-
-  const sizeFor = (cell: { width: number; height: number }): { width: number; height: number } | null => {
-    const workspace = peekRef.current?.parentElement
-    if (!workspace) return null
-    const wanted = wantedGrid()
-    return peekSize(
-      { cols: wanted.cols, rows: wanted.rows, cellWidth: cell.width, cellHeight: cell.height },
-      { width: workspace.clientWidth, height: workspace.clientHeight },
-    )
-  }
-
-  // A first size before the first paint, from whatever cell is at hand: a
-  // tile's, or the font measured directly. It is provisional while the peek's
-  // own terminal has yet to measure its cell, because a terminal opened before
-  // the terminal font landed keeps the fallback font's cell, and only the
-  // peek's own says what its columns will cost.
+  // The grid the window is sized for, taken before the first paint: the
+  // pane's own as the tile showing the session draws it, at whatever cell is
+  // at hand — a tile's, or the font measured directly. The cell is provisional
+  // while the peek's own terminal has yet to measure one, because a terminal
+  // opened before the terminal font landed keeps the fallback font's cell, and
+  // only the peek's own says what its columns will cost. The workspace is the
+  // frame's to measure, and it measures it again on a window resize.
   useLayoutEffect(() => {
-    if (!floatingSession) return
-    const provisional = () => {
-      const any = pool.terminals.get(floatingSession)?.grid()
-        ?? Array.from(pool.terminals.values()).map(entry => entry.grid()).find(grid => grid !== null)
-        ?? null
-      const cell = any ? { width: any.cellWidth, height: any.cellHeight } : measureCell(settings.fontSize)
-      const next = sizeFor(cell)
-      if (next) setFrame({ ...next, settled: !canOpenSession })
+    if (!floatingSession) {
+      setContent(null)
+      return
     }
-    provisional()
-    // The operator's own resize is the one thing that moves the window after
-    // that, and it is measured against the peek's terminal by then.
-    const resize = () => {
-      const cell = terminal?.grid()
-      const next = cell ? sizeFor({ width: cell.cellWidth, height: cell.cellHeight }) : null
-      if (next) setFrame({ ...next, settled: true })
-    }
-    window.addEventListener('resize', resize)
-    return () => window.removeEventListener('resize', resize)
-    // sizeFor reads refs and the pool; the effect keys on what can change them.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const tile = pool.terminals.get(floatingSession)?.grid() ?? null
+    const any = tile
+      ?? Array.from(pool.terminals.values()).map(entry => entry.grid()).find(grid => grid !== null)
+      ?? null
+    const cell = any ? { width: any.cellWidth, height: any.cellHeight } : measureCell(settings.fontSize)
+    setContent({
+      cols: tile?.cols ?? PEEK_FALLBACK_COLS,
+      rows: tile?.rows ?? null,
+      cellWidth: cell.width,
+      cellHeight: cell.height,
+      settled: !canOpenSession,
+    })
   }, [floatingSession, pool.terminals, settings.fontSize, canOpenSession])
 
   // Settle against the peek's own terminal once it has opened and measured.
   // The child surface attaches it in its own effect, which runs before this
   // one, so the cell is known here; the window shows only once it is.
   useEffect(() => {
-    if (!floatingSession || !terminal || frame === null || frame.settled) return
+    if (!floatingSession || !terminal || content === null || content.settled) return
     const cell = terminal.grid()
-    const next = cell ? sizeFor({ width: cell.cellWidth, height: cell.cellHeight }) : null
-    setFrame(next ? { ...next, settled: true } : { ...frame, settled: true })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [floatingSession, terminal, frame])
+    setContent(cell
+      ? { ...content, cellWidth: cell.cellWidth, cellHeight: cell.cellHeight, settled: true }
+      : { ...content, settled: true })
+  }, [floatingSession, terminal, content])
+
+  // The session asks for its own size; a size the operator dragged overrides
+  // it, for this session and every later one.
+  const contentSize = useCallback(
+    (workspace: FrameSize) => (content ? peekSize(content, workspace) : null),
+    [content],
+  )
+  const frame = useFloatingFrame({
+    kind: 'peek',
+    elementRef: peekRef,
+    open: floatingSession !== null,
+    label: 'session',
+    contentSize,
+  })
 
   // While Peek is open, Alt+S sends to the session it shows, and Alt+P with no
   // tile focused closes it; over a focused tile the tile's own chord decides,
@@ -200,6 +215,11 @@ function Peek() {
 
   if (!floatingSession) return null
 
+  // A remembered size is right the moment it is read; a size derived from the
+  // session is not shown until the peek's own terminal has said what a cell
+  // costs, so the window is never drawn at one size and corrected to another.
+  const shown = frame.remembered || content?.settled === true
+
   return (
     <div
       ref={peekRef}
@@ -207,8 +227,11 @@ function Peek() {
       data-ui="peek"
       role="dialog"
       aria-label={`Peek ${displayName}`}
-      style={frame ? { width: frame.width, height: frame.height, visibility: frame.settled ? undefined : 'hidden' } : undefined}
+      style={frame.size
+        ? { width: frame.size.width, height: frame.size.height, visibility: shown ? undefined : 'hidden' }
+        : undefined}
     >
+      <FloatingFrameHandles frame={frame} />
       <div className="peek-header">
         <SessionCommandMark command={session?.currentCommand} />
         <span className="peek-name">{displayName}</span>
@@ -220,6 +243,9 @@ function Peek() {
         <button type="button" className="peek-word peek-send" onClick={() => openSendToSession({ targetSessionKey: floatingSession })}>
           Send<span className="peek-chord" aria-hidden="true">Alt+S</span>
         </button>
+        {frame.remembered && (
+          <button type="button" className="peek-word" onClick={frame.resetSize}>Reset size</button>
+        )}
         <button type="button" className="peek-word" onClick={closeFloatingModal}>Close</button>
       </div>
       <div className={ended ? 'peek-body detached' : 'peek-body'}>

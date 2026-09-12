@@ -1,6 +1,8 @@
 /* Chrote Dashboard - Peek */
-/* A floating window centred over the workspace, sized by the session it
-   shows: one hairline, no shadow, no radius, no drag, no resize. */
+/* A floating window centred over the workspace, sized by the session it shows
+   until the operator resizes it from the shared frame's handles: one hairline,
+   no shadow, no radius, no drag. The handles are drawn by
+   FloatingFrameHandles.css, on this window's own edges. */
 
 .peek {
   position: absolute;

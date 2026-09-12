@@ -10,6 +10,10 @@ import { openSessionsSidecar } from './helpers'
  * over another tile, switches it. The press outside and Escape from inside
  * the peeked terminal are the dismissal owner's and are proved in
  * dismiss.spec.ts; what is here is what is Peek's own.
+ *
+ * The size a corner is dragged to is the size every later peek opens at, on
+ * whatever session (bead: chrote-mc8d). A real pointer drag through pointer
+ * capture needs a real browser, which is why that one is here.
  */
 
 const TTYD_OUTPUT = 0x30
@@ -133,5 +137,52 @@ test.describe('Peek', () => {
 
     await peek.getByRole('button', { name: 'Close' }).click()
     await expect(peek).toHaveCount(0)
+  })
+
+  test('keeps the size a corner was dragged to for the next peek, on another session', async ({ page }) => {
+    await mockApiRoutes(page)
+    await serveTerminals(page)
+    await page.addInitScript(state => {
+      localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
+    }, seededState())
+    await page.goto('/')
+
+    const windows = page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-window')
+    await windows.first().locator('.xterm-screen').click()
+    await expect(windows.first()).toHaveClass(/focused/)
+
+    const peek = page.locator('.peek')
+    await page.keyboard.press('Alt+p')
+    await expect(peek).toBeVisible()
+    await expect(peek.locator('.peek-name')).toHaveText('main')
+    const opened = (await peek.boundingBox())!
+
+    // Drag the bottom-right corner in. The window is centred, so it shrinks
+    // around its middle by twice the pointer's travel.
+    await page.mouse.move(opened.x + opened.width - 2, opened.y + opened.height - 2)
+    await page.mouse.down()
+    await page.mouse.move(opened.x + opened.width - 152, opened.y + opened.height - 102, { steps: 10 })
+    await page.mouse.up()
+
+    const dragged = (await peek.boundingBox())!
+    expect(dragged.width).toBeLessThan(opened.width - 200)
+    expect(dragged.height).toBeLessThan(opened.height - 100)
+
+    // Closed, and reopened on the other session: the operator sized the
+    // window, not the session inside it.
+    await peek.getByRole('button', { name: 'Close' }).click()
+    await expect(peek).toHaveCount(0)
+    await page.keyboard.press('Alt+w')
+    await expect(windows.nth(1)).toHaveClass(/focused/)
+    await page.keyboard.press('Alt+p')
+    await expect(peek.locator('.peek-name')).toHaveText('gt-gastown-jack')
+
+    const reopened = (await peek.boundingBox())!
+    expect(Math.round(reopened.width)).toBe(Math.round(dragged.width))
+    expect(Math.round(reopened.height)).toBe(Math.round(dragged.height))
+
+    // The word in the header gives the session the say back.
+    await peek.getByRole('button', { name: 'Reset size' }).click()
+    await expect.poll(async () => (await peek.boundingBox())!.width).toBeGreaterThan(dragged.width)
   })
 })
