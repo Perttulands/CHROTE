@@ -23,6 +23,7 @@ import Editor from './Editor'
 import Markdown from './Markdown'
 import PanelPath from './PanelPath'
 import { openImageGlance } from './imageGlance'
+import { useImageZoom, zoomedPixels } from './imageZoom'
 import {
   getPreviewKind,
   getFileBaseName,
@@ -149,6 +150,9 @@ function FilePanelViewer({ path, onBack, onOpenPath, onSend }: FilePanelViewerPr
   const [diff, setDiff] = useState<FileDiffResult | null>(null)
   const [saving, setSaving] = useState(false)
   const [pixels, setPixels] = useState<{ width: number; height: number } | null>(null)
+  // One zoom level governs every picture, here as in the glance.
+  const zoomLevel = useImageZoom()
+  const zoomed = zoomedPixels(pixels, zoomLevel)
 
   const name = getFileBaseName(path)
   const item = useMemo(() => makeFileItemFromPath(path), [path])
@@ -275,13 +279,15 @@ function FilePanelViewer({ path, onBack, onOpenPath, onSend }: FilePanelViewerPr
         ) : error ? (
           <p className="files-panel-note">{error}</p>
         ) : kind === 'image' ? (
-          // The picture at the panel's width, its pixels beneath it, and the
-          // glance a click away for a look at it full size.
+          // The picture at the zoom level — the panel's width while that is
+          // fit — its pixels beneath it, and the glance a click away for a
+          // look at it full size.
           <>
-            <button type="button" className="files-panel-image" onClick={() => openImageGlance(path)}>
+            <button type="button" className={zoomed ? 'files-panel-image is-zoomed' : 'files-panel-image'} onClick={() => openImageGlance(path)}>
               <img
                 src={getDownloadUrl(path)}
                 alt={name}
+                style={zoomed ? { width: zoomed.width, height: zoomed.height } : undefined}
                 onLoad={event => setPixels({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
               />
             </button>

@@ -213,10 +213,10 @@
   min-height: 100%;
 }
 
-.fb-file-viewer .fb-media-preview.is-actual img {
+.fb-file-viewer .fb-media-preview.is-actual img,
+.fb-file-viewer .fb-media-preview.is-actual .fb-image-look {
   max-width: none;
   max-height: none;
-  transform-origin: center center;
 }
 
 .fb-file-viewer .fb-pdf-preview {
@@ -430,6 +430,16 @@
   max-width: 100%;
   height: auto;
   display: block;
+}
+
+/* At a zoom level the picture is drawn at the pixels the operator asked for,
+   and the panel scrolls to it rather than shrinking it. */
+.files-panel-image.is-zoomed {
+  width: max-content;
+}
+
+.files-panel-image.is-zoomed img {
+  max-width: none;
 }
 
 .files-panel-image:focus-visible {

@@ -44,6 +44,25 @@ describe('the size rule', () => {
   it('never upscales a small picture', () => {
     expect(imageGlanceSize({ width: 3, height: 2 }, workspace).image).toEqual({ width: 3, height: 2 })
   })
+
+  it('draws the picture at the level, and caps the window when the level is bigger than the workspace', () => {
+    // 1:1 on a picture wider than the workspace: the picture keeps its pixels
+    // and the window stops at 90%, so the picture scrolls inside it.
+    const actual = imageGlanceSize({ width: 4000, height: 1000 }, workspace, { kind: 'percent', percent: 100 })
+    expect(actual.image).toEqual({ width: 4000, height: 1000 })
+    expect(actual.width).toBe(1152)
+    expect(actual.height).toBe(Math.min(720, 1000 + 2 + IMAGE_GLANCE_HEADER_PX))
+
+    // A percent is whole pixels, and a picture is never drawn away to nothing.
+    expect(imageGlanceSize({ width: 801, height: 601 }, workspace, { kind: 'percent', percent: 33 }).image)
+      .toEqual({ width: 264, height: 198 })
+    expect(imageGlanceSize({ width: 3, height: 2 }, workspace, { kind: 'percent', percent: 10 }).image)
+      .toEqual({ width: 1, height: 1 })
+
+    // A small picture at 1:1 is the window's size, as fit already made it.
+    expect(imageGlanceSize({ width: 3, height: 2 }, workspace, { kind: 'percent', percent: 100 }))
+      .toEqual(imageGlanceSize({ width: 3, height: 2 }, workspace))
+  })
 })
 
 describe('ImageGlance', () => {

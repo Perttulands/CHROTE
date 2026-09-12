@@ -78,6 +78,12 @@ export interface UseFloatingFrameOptions<T extends HTMLElement> {
   /** The size the content asks for, given the measured workspace. */
   contentSize: (bounds: FrameSize) => FrameSize | null
   minimum?: FrameSize
+  /**
+   * Told the size a drag or a key step settled on, after it is remembered. A
+   * caller whose content has its own idea of size — the image glance's zoom
+   * level — reads the size the operator asked for from here.
+   */
+  onResize?: (size: FrameSize) => void
 }
 
 export interface FloatingFrame {
@@ -100,6 +106,7 @@ export function useFloatingFrame<T extends HTMLElement>({
   label,
   contentSize,
   minimum = FLOATING_WINDOW_MINIMUM[kind],
+  onResize,
 }: UseFloatingFrameOptions<T>): FloatingFrame {
   const [bounds, setBounds] = useState<FrameSize | null>(null)
   const [remembered, setRemembered] = useState<FrameSize | null>(null)
@@ -146,10 +153,16 @@ export function useFloatingFrame<T extends HTMLElement>({
     cleanupRef.current = null
   }, [])
 
+  // Kept in a ref so the caller may hand a fresh closure on every render
+  // without every handle's props being rebuilt.
+  const onResizeRef = useRef(onResize)
+  onResizeRef.current = onResize
+
   const commit = useCallback((size: FrameSize) => {
     const held = clampFrameSize(size, minimum, bounds)
     writeFloatingWindowSize(kind, held)
     setRemembered(held)
+    onResizeRef.current?.(held)
   }, [bounds, kind, minimum])
 
   const stopActiveDrag = useCallback((keep: boolean) => {
