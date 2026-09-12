@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ImageGlance, { IMAGE_GLANCE_HEADER_PX, imageGlanceSize } from './ImageGlance'
 import { openImageGlance, resetImageGlanceForTest } from './imageGlance'
+import { resetImageZoomForTest } from './imageZoom'
 import { resetOpenInFilesForTest, useOpenInFilesRequest } from '../terminal/openInFiles'
 import { resetSurfacesForTest } from '../keys/dismiss'
 import { renderHook } from '@testing-library/react'
@@ -73,6 +74,7 @@ describe('ImageGlance', () => {
 
   afterEach(() => {
     resetImageGlanceForTest()
+    resetImageZoomForTest()
     resetOpenInFilesForTest()
     resetSurfacesForTest()
   })
@@ -105,6 +107,23 @@ describe('ImageGlance', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open in Files' }))
     expect(files.result.current?.path).toBe('/srv/evidence/frame.png')
     expect(container.querySelector('.image-glance')).toBeNull()
+  })
+
+  it('steps the level from the header words, so a picture opened without a workspace still zooms', () => {
+    render(<ImageGlance />)
+    act(() => openImageGlance('/srv/evidence/frame.png'))
+    const image = screen.getByRole('img', { name: 'frame.png' })
+    Object.defineProperty(image, 'naturalWidth', { value: 320, configurable: true })
+    Object.defineProperty(image, 'naturalHeight', { value: 200, configurable: true })
+    fireEvent.load(image)
+
+    fireEvent.click(screen.getByRole('button', { name: '1:1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    const stepped = JSON.parse(localStorage.getItem('chrote.imageZoom.v1') || 'null')
+    expect(stepped.percent).toBeGreaterThan(100)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
+    expect(JSON.parse(localStorage.getItem('chrote.imageZoom.v1') || 'null')).toEqual({ version: 1, percent: 100 })
   })
 
   it('says so when the picture cannot be loaded, and why once the route has said', async () => {

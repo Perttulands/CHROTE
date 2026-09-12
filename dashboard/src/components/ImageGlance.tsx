@@ -25,7 +25,7 @@
  * window itself never exceeds the workspace; the frame clamps it.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PanelPath from './PanelPath'
 import FloatingFrameHandles from './FloatingFrameHandles'
 import { describeReadFailure, getDownloadUrl } from './FilesView/fileService'
@@ -158,19 +158,21 @@ function ImageGlance() {
   const zoomRef = useRef<{ level: ImageZoomLevel; natural: PixelSize | null; room: FrameSize | null }>({ level, natural, room })
   zoomRef.current = { level, natural, room }
   const open = request !== null
+  // The step is a word in the header as well as a key: the keys are the
+  // workspace's, and a picture opened from the Files tab has no workspace.
+  const step = useCallback((direction: 1 | -1) => () => {
+    const { level: at, natural: pixels, room: inside } = zoomRef.current
+    if (!pixels || !inside) return
+    setImageZoom(stepImageZoom(at, pixels, inside, direction))
+  }, [])
   const chords = useMemo<readonly Chord[]>(() => {
-    const step = (direction: 1 | -1) => () => {
-      const { level: at, natural: pixels, room: inside } = zoomRef.current
-      if (!pixels || !inside) return
-      setImageZoom(stepImageZoom(at, pixels, inside, direction))
-    }
     return [
       { id: 'image.zoomIn', key: '=', direct: { alt: true, key: '+', layoutKeys: ['='] }, label: 'Zoom the picture in', scope: 'workspace', run: step(1) },
       { id: 'image.zoomOut', key: '-', direct: { alt: true, key: '-' }, label: 'Zoom the picture out', scope: 'workspace', run: step(-1) },
       { id: 'image.zoomFit', key: '0', direct: { alt: true, key: '0' }, label: 'Fit the picture to the window', scope: 'workspace', run: () => setImageZoom(IMAGE_ZOOM_FIT) },
       { id: 'image.zoomActual', key: '1', direct: { alt: true, key: '1' }, label: 'Show the picture at 1:1', scope: 'workspace', run: () => setImageZoom(IMAGE_ZOOM_ONE_TO_ONE) },
     ]
-  }, [])
+  }, [step])
   useEffect(() => {
     if (!open) return
     return registerChords(chords)
@@ -215,7 +217,9 @@ function ImageGlance() {
         >
           1:1
         </button>
+        <button type="button" className="image-glance-word" aria-label="Zoom out" onClick={step(-1)}>−</button>
         <span className="image-glance-zoom">{percent === null ? '' : zoomPercentWord(percent)}</span>
+        <button type="button" className="image-glance-word" aria-label="Zoom in" onClick={step(1)}>+</button>
         <button
           type="button"
           className="image-glance-word"
