@@ -32,5 +32,5 @@ anything. Revival requires a scoped Bead and a current product decision.
 
 Those annotated tags are archaeology for a future product decision, not seams
 that CHROTE promises to retain. The standalone agent workbench is
-[Archon](https://github.com/Perttulands/chrote-agent-formations); its README and
+[Archon](https://github.com/Perttulands/Archon-agentgraphs); its README and
 runtime contract describe the current product.

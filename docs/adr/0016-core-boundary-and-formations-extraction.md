@@ -5,7 +5,7 @@
 - **Owners:** CHROTE maintainers
 
 This records the August 2026 repository split. The independent product is now
-[Archon](https://github.com/Perttulands/chrote-agent-formations), with its own
+[Archon](https://github.com/Perttulands/Archon-agentgraphs), with its own
 CLI, daemon, UI and release. The historical names and experimental status below
 describe the decision at that time; CHROTE's ownership boundary still applies.
 
@@ -23,7 +23,7 @@ trusted operator what the configured service can already reach.
    Settings. Optional local adapters may remain isolated and degradable.
 2. Formations, Archon, the Agents view, and their active specifications and
    history belong in
-   [chrote-agent-formations](https://github.com/Perttulands/chrote-agent-formations),
+   [chrote-agent-formations](https://github.com/Perttulands/Archon-agentgraphs),
    where they remain experimental and outside CHROTE's release promise.
 3. Recovery, restore, cleanup, migration, and one-off repair are agent skills or
    operator procedures, not CHROTE request-path features. CHROTE must not kill
