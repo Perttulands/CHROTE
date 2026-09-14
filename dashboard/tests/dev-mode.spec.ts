@@ -59,12 +59,20 @@ async function toggleDevMode(page: Page) {
   await expect(panel).toBeHidden()
 }
 
+async function expectBackgroundContent(page: Page) {
+  // These hidden views render their loaded data in the same update that emits
+  // their announcement. Both Beads stores must finish before that update.
+  await expect(page.locator('.agents-view .agent-path')).toHaveText(/\/CLAUDE\.md$/)
+  await expect(page.locator('.library-shelf-name')).toHaveText(['knowledge', 'preferences'])
+  await expect(page.locator('.beads-view .bead-row', { hasText: 'One interaction language' })).toHaveCount(1)
+  await expect(page.locator('.beads-view .bead-row', { hasText: 'Prepare loose work' })).toHaveCount(1)
+}
+
 for (const completion of ['before enabling', 'while enabled'] as const) {
   test(`dev mode identifies and hands off with background reads completing ${completion}`, async ({ page }) => {
     let release!: () => void
     const held = new Promise<void>(resolve => { release = resolve })
     const backgroundReads = ['**/api/agent/context**', '**/api/beads/work**', '**/api/library/shelves**']
-    const received = backgroundReads.map(pattern => page.waitForResponse(pattern))
     await openWorkspace(page, async page => {
       for (const pattern of backgroundReads) {
         await page.route(pattern, async route => {
@@ -76,7 +84,7 @@ for (const completion of ['before enabling', 'while enabled'] as const) {
 
     if (completion === 'before enabling') {
       release()
-      await Promise.all(received)
+      await expectBackgroundContent(page)
     }
     await toggleDevMode(page)
 
@@ -95,7 +103,7 @@ for (const completion of ['before enabling', 'while enabled'] as const) {
 
     if (completion === 'while enabled') {
       release()
-      await Promise.all(received)
+      await expectBackgroundContent(page)
     }
 
     // The tag is its own component and says so.
