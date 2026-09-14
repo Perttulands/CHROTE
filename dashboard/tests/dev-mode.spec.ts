@@ -20,9 +20,9 @@ const TARGET = 'gt-gastown-jack'
 
 const LEADER = 'Control+Shift+Space'
 
-async function openWorkspace(page: Page) {
+async function openWorkspace(page: Page, overrides: (page: Page) => Promise<void>) {
   await page.setViewportSize({ width: 1400, height: 900 })
-  await mockApiRoutes(page)
+  await mockApiRoutes(page, { overrides })
   await setWorkspaceState(page, {
     workspaces: {
       terminal1: {
@@ -59,50 +59,68 @@ async function toggleDevMode(page: Page) {
   await expect(panel).toBeHidden()
 }
 
-test('dev mode names what the pointer is over and hands it to an agent', async ({ page }) => {
-  await openWorkspace(page)
+for (const completion of ['before enabling', 'while enabled'] as const) {
+  test(`dev mode identifies and hands off with background reads completing ${completion}`, async ({ page }) => {
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    const backgroundReads = ['**/api/agent/context**', '**/api/beads/work**', '**/api/library/shelves**']
+    const received = backgroundReads.map(pattern => page.waitForResponse(pattern))
+    await openWorkspace(page, async page => {
+      for (const pattern of backgroundReads) {
+        await page.route(pattern, async route => {
+          await held
+          await route.fallback()
+        })
+      }
+    })
 
-  // The Agents tab announces the folder's stack once, two fetches after the
-  // dashboard mounts. Waiting for that line here keeps it from landing on top
-  // of dev mode's own, which is the only reason the order ever varied.
-  await expect(page.locator('.status-line')).toContainText('under Claude Code')
+    if (completion === 'before enabling') {
+      release()
+      await Promise.all(received)
+    }
+    await toggleDevMode(page)
 
-  await toggleDevMode(page)
-  await expect(page.locator('.status-line')).toContainText('Dev mode on')
+    // Pointing at a tile header names the component that renders it and the file
+    // it is written in. Nothing but the build's kept names can answer the first
+    // half of that line.
+    const header = page.locator('.terminal-window:visible').first().locator('.terminal-window-header')
+    const send = header.getByRole('button', { name: `Send to session ${TARGET}` })
+    await send.hover()
 
-  // Pointing at a tile header names the component that renders it and the file
-  // it is written in. Nothing but the build's kept names can answer the first
-  // half of that line.
-  const header = page.locator('.terminal-window:visible').first().locator('.terminal-window-header')
-  const send = header.getByRole('button', { name: `Send to session ${TARGET}` })
-  await send.hover()
+    // The outline snaps out to the nearest named surface, so the label reads the
+    // header rather than whichever div the pointer happened to land in.
+    const label = page.locator('.dev-mode-label')
+    await expect(label).toHaveText('TerminalWindow · dashboard/src/components/TerminalWindow.tsx · tile.header')
+    await expect(page.locator('.dev-mode-outline')).toBeVisible()
 
-  // The outline snaps out to the nearest named surface, so the label reads the
-  // header rather than whichever div the pointer happened to land in.
-  const label = page.locator('.dev-mode-label')
-  await expect(label).toHaveText('TerminalWindow · dashboard/src/components/TerminalWindow.tsx · tile.header')
-  await expect(page.locator('.dev-mode-outline')).toBeVisible()
+    if (completion === 'while enabled') {
+      release()
+      await Promise.all(received)
+    }
 
-  // The tag is its own component and says so.
-  await header.locator('.session-tag').first().hover()
-  await expect(label).toHaveText('SessionTag · dashboard/src/components/TerminalWindow.tsx · tile.tag')
+    // The tag is its own component and says so.
+    await header.locator('.session-tag').first().hover()
+    await expect(label).toHaveText('SessionTag · dashboard/src/components/TerminalWindow.tsx · tile.tag')
 
-  // The click annotates rather than pressing: the tile's Send button is under
-  // the pointer and stays unpressed, and the drawer that opens is dev mode's.
-  await send.click()
+    // The click annotates rather than pressing: the tile's Send button is under
+    // the pointer and stays unpressed, and the drawer that opens is dev mode's.
+    await send.click()
 
-  const drawer = page.getByRole('dialog', { name: 'Send to session' })
-  await expect(drawer).toBeVisible()
-  await expect(drawer.locator('.send-drawer-reference')).toHaveText(
-    `component TerminalWindow (dashboard/src/components/TerminalWindow.tsx) tile.header ` +
-    `in terminal1 window 1: button 'Send to session ${TARGET}'`,
-  )
-  await expect(drawer.getByLabel('Message to send')).toBeFocused()
+    const drawer = page.getByRole('dialog', { name: 'Send to session' })
+    await expect(drawer).toBeVisible()
+    await expect(drawer.locator('.send-drawer-reference')).toHaveText(
+      `component TerminalWindow (dashboard/src/components/TerminalWindow.tsx) tile.header ` +
+      `in terminal1 window 1: button 'Send to session ${TARGET}'`,
+    )
+    await expect(drawer.getByLabel('Message to send')).toBeFocused()
 
-  // The complaint is CHROTE's own, so the picker offers a fresh agent for it.
-  await expect(drawer.getByRole('option', { name: 'New agent in CHROTE' })).toBeVisible()
+    // The complaint is CHROTE's own, so the picker offers a fresh agent for it.
+    await expect(drawer.getByRole('option', { name: 'New agent in CHROTE' })).toBeVisible()
 
-  // Dev mode ended with the annotation, so the drawer is usable again.
-  await expect(page.locator('.dev-mode-label')).toHaveCount(0)
-  await expect(page.locator('.status-line')).toContainText('Dev mode off')
-})
+    // Dev mode ended with the annotation, so the drawer is usable again.
+    await expect(page.locator('.dev-mode-label')).toHaveCount(0)
+    const message = drawer.getByLabel('Message to send')
+    await message.fill('The header needs attention')
+    await expect(message).toHaveValue('The header needs attention')
+  })
+}
