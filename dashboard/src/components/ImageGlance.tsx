@@ -25,7 +25,7 @@
  * window itself never exceeds the workspace; the frame clamps it.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import PanelPath from './PanelPath'
 import FloatingFrameHandles from './FloatingFrameHandles'
 import { describeReadFailure, getDownloadUrl } from './FilesView/fileService'
@@ -47,7 +47,6 @@ import {
 } from './imageZoom'
 import { openInFiles } from '../terminal/openInFiles'
 import { useSurface } from '../keys/dismiss'
-import { registerChords, type Chord } from '../keys/chords'
 import { useFloatingFrame } from '../hooks/useFloatingFrame'
 import type { FrameSize } from '../hooks/floatingWindowSize'
 import { useStatus } from '../context/StatusContext'
@@ -148,35 +147,18 @@ function ImageGlance() {
     setPicture({ state: 'loading' })
   }, [request?.nonce])
 
-  // The keys the level answers to while the glance is open. They are ordinary
-  // chords, and they are the terminal workspace's scope because that is where
-  // a picture is looked at and because Plus and Minus already belong to the
-  // window count there: same scope, later registration, so the glance takes
-  // the key back while it is open and gives it up when it closes.
+  // The level's words in the header are its whole interface. A picture is
+  // looked at from the Files tab or the Files panel's pop-out, where the
+  // terminal workspace's keys do not reach, so there are no chords for it.
   const room = frame.size ? imageRoom(frame.size) : null
   const natural = picture.state === 'shown' ? picture.natural : null
   const zoomRef = useRef<{ level: ImageZoomLevel; natural: PixelSize | null; room: FrameSize | null }>({ level, natural, room })
   zoomRef.current = { level, natural, room }
-  const open = request !== null
-  // The step is a word in the header as well as a key: the keys are the
-  // workspace's, and a picture opened from the Files tab has no workspace.
-  const step = useCallback((direction: 1 | -1) => () => {
+  const step = (direction: 1 | -1) => () => {
     const { level: at, natural: pixels, room: inside } = zoomRef.current
     if (!pixels || !inside) return
     setImageZoom(stepImageZoom(at, pixels, inside, direction))
-  }, [])
-  const chords = useMemo<readonly Chord[]>(() => {
-    return [
-      { id: 'image.zoomIn', key: '=', direct: { alt: true, key: '+', layoutKeys: ['='] }, label: 'Zoom the picture in', scope: 'workspace', run: step(1) },
-      { id: 'image.zoomOut', key: '-', direct: { alt: true, key: '-' }, label: 'Zoom the picture out', scope: 'workspace', run: step(-1) },
-      { id: 'image.zoomFit', key: '0', direct: { alt: true, key: '0' }, label: 'Fit the picture to the window', scope: 'workspace', run: () => setImageZoom(IMAGE_ZOOM_FIT) },
-      { id: 'image.zoomActual', key: '1', direct: { alt: true, key: '1' }, label: 'Show the picture at 1:1', scope: 'workspace', run: () => setImageZoom(IMAGE_ZOOM_ONE_TO_ONE) },
-    ]
-  }, [step])
-  useEffect(() => {
-    if (!open) return
-    return registerChords(chords)
-  }, [chords, open])
+  }
 
   if (!request) return null
 
