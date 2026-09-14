@@ -84,7 +84,6 @@ async function openWorkspace(page: Page, sends: SendRecord[]) {
   await page.setViewportSize({ width: 1400, height: 900 })
   await mockApiRoutes(page)
   await mockSendRoutes(page, sends)
-  await page.goto('/')
   await setWorkspaceState(page, {
     workspaces: {
       terminal1: {
@@ -97,7 +96,7 @@ async function openWorkspace(page: Page, sends: SendRecord[]) {
       terminal2: { windowCount: 2, windows: [] },
     },
   })
-  await page.reload()
+  await page.goto('/')
   await expect(page.locator('.terminal-window:visible')).toHaveCount(2)
 }
 

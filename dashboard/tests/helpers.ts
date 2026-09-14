@@ -40,7 +40,7 @@ const STORAGE_KEY = 'chrote-dashboard-state';
 
 /**
  * Write a StoredStateV2 object into localStorage so the dashboard
- * picks it up on the next page load / reload.
+ * picks it up on its first load. Call before navigation. Reloads retain edits.
  *
  * The caller provides a partial shape — sensible defaults are merged in.
  *
@@ -87,8 +87,11 @@ export async function setWorkspaceState(
     settings: { ...defaults.settings, ...state.settings },
   };
 
-  await page.evaluate(
-    ([key, value]) => localStorage.setItem(key, value),
+  if (page.url() !== 'about:blank') throw new Error('Seed workspace state before navigation');
+  await page.addInitScript(
+    ([key, value]) => {
+      if (localStorage.getItem(key) === null) localStorage.setItem(key, value);
+    },
     [STORAGE_KEY, JSON.stringify(merged)] as const,
   );
 }

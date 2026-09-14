@@ -145,7 +145,10 @@ export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
     })
 
     await use(page)
-    await page.waitForTimeout(100).catch(() => undefined)
+    // Closing the page ends this scenario's observed lifecycle. Keep the
+    // listeners attached until close completes; future application activity
+    // is cancelled, not claimed to have drained. Tests await the effects they own.
+    await page.close()
 
     const annotatedAllowedMessages = testInfo.annotations
       .filter((annotation) => annotation.type === 'allowed-browser-console')

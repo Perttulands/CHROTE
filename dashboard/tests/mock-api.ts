@@ -545,7 +545,10 @@ export async function mockResidentsApiRoute(page: Page, residents: object[] = mo
   })
 }
 
-export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: SessionsResponse }) {
+export async function mockApiRoutes(page: Page, options?: {
+  sessionsResponse?: SessionsResponse
+  overrides?: (page: Page) => Promise<void>
+}) {
   await mockTerminalSocket(page)
   await mockThemeApiRoute(page)
   await mockLaunchApiRoute(page)
@@ -568,7 +571,7 @@ export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: S
   await mockBeadsProjectsRoute(page)
   // These tabs stay mounted after their first paint, including while another
   // tab is in front. Every browser journey therefore supplies their ordinary
-  // read routes; a test can register a narrower response afterwards.
+  // read routes; scenario overrides replace defaults before navigation.
   await mockPersistentTabApiRoutes(page)
 
   await page.route(tmuxSessionsPattern, async route => {
@@ -595,8 +598,9 @@ export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: S
     })
   })
 
-  // Mock WebSocket - just let it fail gracefully
-  // The UI should handle disconnected state
+  // Playwright gives the most recently registered route precedence. Install
+  // scenario responses here, before the first application request can start.
+  await options?.overrides?.(page)
 }
 
 /** A session list with one session carrying what its agent last reported. */
