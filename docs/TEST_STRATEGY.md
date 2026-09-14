@@ -93,18 +93,45 @@ one mocked primary-action journey.
 
 ## CI
 
-CI runs five jobs in parallel, split along their real dependencies rather than
-listed in one serial script. The dashboard bundle is embedded into the Go binary
-by a compile-time directive and is not tracked, so every job that compiles the
-server waits for `build`; nothing else waits for anything.
+CI runs on pushes to `main` and `master`, pull requests targeting either branch,
+and manual `workflow_dispatch`. It always runs document and host-neutrality
+checks. The `changes` job selects whether the five product jobs are also needed.
+
+`scripts/ci-product-required.py` contains the documentation allowlist. It admits
+named root narrative Markdown files, Markdown under `docs/`, and images under
+`docs/assets/` or `docs/images/`. Agent instructions, executable or symlink
+changes, and all other paths require full product checks. Mixed changes do too.
+The classifier includes deleted paths and both sides of a rename. Missing bases,
+empty diffs and classification errors default to full product checks.
+
+Push runs compare the previous branch commit with the pushed commit. PR runs
+compare the target base with GitHub's proposed merge commit and test that merge.
+Manual dispatch always runs all product checks, including for a documentation
+commit. Use it when the exact candidate needs full-product evidence.
 
 | job | depends on | contents |
 | --- | --- | --- |
-| `build` | — | Node and Go setup, dashboard install, embedded bundle, server binary; publishes both as artifacts |
+| `build` | `changes` | Node and Go setup, dashboard install, embedded bundle, stamped server binary; publishes both as artifacts |
 | `go` | `build` | gofmt, vet, race tests against the downloaded bundle; installs no Node |
-| `unit` | — | dashboard install without a browser, vitest, eslint |
-| `browser` | — | dashboard install with Chromium, mocked Playwright at the runner's worker count |
-| `contracts` | `build` | source contracts, built-server contract, public installer smoke |
+| `unit` | `changes` | dashboard install without a browser, vitest, eslint |
+| `browser` | `changes` | dashboard install with Chromium, mocked Playwright at the runner's worker count |
+| `contracts` | `build` | embedded parity, built-server contract, public installer smoke with exact-commit verification |
+
+The `docs` job runs independently. `CI result` checks that every selected job
+succeeded and that product jobs were skipped only for a documentation-only run.
+Failures, cancellations and unexpected skips cannot produce a successful result.
+The workflow itself is never skipped by a path filter.
+
+The product jobs share the bundle and binary produced by `build`. Go compilation
+needs the embedded bundle, so `go` and `contracts` wait for it. `unit` and
+`browser` can run alongside `build` once classification finishes.
+
+[`CONTRIBUTING.md`](../CONTRIBUTING.md#stable-local-gates) has the full local
+recipe, including `scripts/build-server.sh` and explicit build-commit verification
+in the installation smoke. Record the tested commit and hosted run URL. A
+successful documentation-only run is not deployment evidence, and a successful
+PR merge candidate does not replace validation of the resulting main commit.
+Hosted CI does not deploy the service.
 
 Dependency scans (`govulncheck`, `npm audit`) are not a CI job: a scheduled
 run that fails on a transitive advisory is noise nobody acts on. Run them by

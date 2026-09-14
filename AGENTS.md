@@ -68,4 +68,13 @@ python3 scripts/host-neutrality.py
 git diff --check
 ```
 
-CI runs `scripts/test-public-install.sh` against the binary it built on every push. That gate covers the installed product — its routes, its environment contract, and its unit — so any server change can break it, which is why it is no longer conditional. Locally, run both modes when you change the installer. Runtime deployment is separate from repository verification and requires the operator-approved local target.
+CI validates pushes and pull requests targeting `main` or `master`. Documentation
+changes on the explicit allowlist run document and host-neutrality checks; other
+changes run the five product jobs, including installer smoke against the stamped
+binary. Manual `workflow_dispatch` always runs the full product checks.
+
+Read `CONTRIBUTING.md` when reproducing CI or collecting exact-commit evidence.
+A documentation-only success does not prove the built product. Before deployment,
+require full-product success for the candidate commit. Runtime deployment is
+separate and requires the operator-approved local target. When changing the
+installer, run its smoke in both source and binary modes locally.
