@@ -42,6 +42,10 @@ type LibraryConfig struct {
 	// BeadsProject is the Librarian's own Beads store, named to the resident
 	// column by /api/residents. The Library tab itself reads no Beads.
 	BeadsProject string
+	// LinkRoots bounds where a linked page under the projects shelf may point.
+	// Empty means any regular Markdown file outside the corpus: the Librarian
+	// placed the link, and the corpus is his to point from.
+	LinkRoots []string
 }
 
 // libraryAuthorPattern is the "Name <email>" form git itself writes. It is
@@ -68,6 +72,10 @@ const (
 	libraryGitTimeout = 20 * time.Second
 	// libraryPageExtension is what counts as a page.
 	libraryPageExtension = ".md"
+	// libraryLinkedShelf is the one shelf whose pages may be symlinks to
+	// Markdown elsewhere on the host: the projects shelf holds each project's
+	// own README under a Library path, never a copy of it.
+	libraryLinkedShelf = "projects"
 	// librarySnippetLimit bounds one search snippet.
 	librarySnippetLimit = 200
 )
@@ -199,6 +207,20 @@ func LoadLibraryConfig() (LibraryConfig, error) {
 	if config.Author != "" && !libraryAuthorPattern.MatchString(config.Author) {
 		return LibraryConfig{}, fmt.Errorf("CHROTE_LIBRARY_AUTHOR %q must read \"Name <email>\"", config.Author)
 	}
+	for _, raw := range filepath.SplitList(strings.TrimSpace(os.Getenv("CHROTE_LIBRARY_LINK_ROOTS"))) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		resolved, err := filepath.Abs(raw)
+		if err != nil {
+			return LibraryConfig{}, fmt.Errorf("CHROTE_LIBRARY_LINK_ROOTS %q: %w", raw, err)
+		}
+		if canonical, err := filepath.EvalSymlinks(resolved); err == nil {
+			resolved = canonical
+		}
+		config.LinkRoots = append(config.LinkRoots, filepath.Clean(resolved))
+	}
 	return config, nil
 }
 
@@ -246,6 +268,15 @@ func (h *LibraryHandler) resolveLibraryPath(requested string) (string, error) {
 		return "", errors.New("Path is outside the library")
 	}
 	absolute := filepath.Join(h.config.Root, filepath.FromSlash(cleaned))
+	if info, err := os.Lstat(absolute); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		// A linked page is named by its link, which is inside the corpus even
+		// though the file it reads is not. Any other symlink is refused, even
+		// one that happens to point back into the corpus.
+		if h.isLinkedPage(absolute) {
+			return absolute, nil
+		}
+		return "", errors.New("Path is outside the library")
+	}
 	canonical, err := canonicalPathAllowMissing(absolute)
 	if err != nil {
 		return "", errors.New("Path is outside the library")
@@ -254,6 +285,58 @@ func (h *LibraryHandler) resolveLibraryPath(requested string) (string, error) {
 		return "", errors.New("Path is outside the library")
 	}
 	return canonical, nil
+}
+
+// isLinkedPage reports whether absolute, a path inside the corpus root, is a
+// symlink the Library follows: it sits under the projects shelf in a directory
+// that is really inside the corpus, and it points at a regular Markdown file
+// outside the corpus and inside a configured link root, when any is set. A
+// symlink anywhere else, to anything else, is not a page.
+func (h *LibraryHandler) isLinkedPage(absolute string) bool {
+	relative := h.libraryRelative(absolute)
+	if relative == "" || !strings.HasPrefix(relative, libraryLinkedShelf+"/") || !isLibraryPage(relative) {
+		return false
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(absolute))
+	if err != nil || parent != filepath.Dir(absolute) {
+		return false
+	}
+	info, err := os.Lstat(absolute)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	target, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return false
+	}
+	targetInfo, err := os.Stat(target)
+	if err != nil || !targetInfo.Mode().IsRegular() || !isLibraryPage(target) {
+		return false
+	}
+	if target == h.config.Root || strings.HasPrefix(target, h.config.Root+string(os.PathSeparator)) {
+		return false
+	}
+	if len(h.config.LinkRoots) == 0 {
+		return true
+	}
+	for _, root := range h.config.LinkRoots {
+		if target == root || strings.HasPrefix(target, root+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// isPageEntry is the walkers' one test for "this entry is a page": a regular
+// Markdown file, or a linked one the projects shelf admits.
+func (h *LibraryHandler) isPageEntry(walked string, entry fs.DirEntry) bool {
+	if !isLibraryPage(entry.Name()) {
+		return false
+	}
+	if entry.Type().IsRegular() {
+		return true
+	}
+	return entry.Type()&fs.ModeSymlink != 0 && h.isLinkedPage(walked)
 }
 
 // libraryRelative is the corpus-relative spelling of an absolute path, which is
@@ -380,7 +463,7 @@ func (h *LibraryHandler) Shelves(w http.ResponseWriter, r *http.Request) {
 		response.Shelves = append(response.Shelves, LibraryShelf{
 			Name:  entry.Name(),
 			Path:  entry.Name(),
-			Pages: countLibraryPages(filepath.Join(h.config.Root, entry.Name())),
+			Pages: h.countLibraryPages(filepath.Join(h.config.Root, entry.Name())),
 		})
 	}
 	sort.Slice(response.Shelves, func(i, j int) bool {
@@ -389,7 +472,7 @@ func (h *LibraryHandler) Shelves(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, http.StatusOK, response)
 }
 
-func countLibraryPages(directory string) int {
+func (h *LibraryHandler) countLibraryPages(directory string) int {
 	count := 0
 	_ = filepath.WalkDir(directory, func(walked string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -401,7 +484,7 @@ func countLibraryPages(directory string) int {
 			}
 			return nil
 		}
-		if entry.Type().IsRegular() && isLibraryPage(entry.Name()) {
+		if h.isPageEntry(walked, entry) {
 			count++
 		}
 		return nil
@@ -444,7 +527,7 @@ func (h *LibraryHandler) Pages(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		}
-		if !entry.Type().IsRegular() || !isLibraryPage(entry.Name()) {
+		if !h.isPageEntry(walked, entry) {
 			return nil
 		}
 		relative := h.libraryRelative(walked)
@@ -582,7 +665,7 @@ func (h *LibraryHandler) Search(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		}
-		if !entry.Type().IsRegular() || !isLibraryPage(entry.Name()) {
+		if !h.isPageEntry(walked, entry) {
 			return nil
 		}
 		if read >= librarySearchCandidateLimit {
@@ -697,6 +780,11 @@ func (h *LibraryHandler) SavePage(w http.ResponseWriter, r *http.Request) {
 	info, err := os.Stat(absolute)
 	if err != nil || info.IsDir() {
 		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "No such page")
+		return
+	}
+	if h.isLinkedPage(absolute) {
+		core.WriteError(w, http.StatusForbidden, "FORBIDDEN",
+			"A linked page is its project's own file; edit it in the project")
 		return
 	}
 	relative := h.libraryRelative(absolute)

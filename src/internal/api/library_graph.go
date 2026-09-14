@@ -277,7 +277,7 @@ func (h *LibraryHandler) Graph(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		}
-		if !entry.Type().IsRegular() || !isLibraryPage(entry.Name()) {
+		if !h.isPageEntry(walked, entry) {
 			return nil
 		}
 		if len(pages) >= libraryGraphPageLimit {

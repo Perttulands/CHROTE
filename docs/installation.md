@@ -271,7 +271,7 @@ seen for every device.
 
 ### The Library
 
-Four variables describe the context corpus the Library tab reads. The corpus is
+Five variables describe the context corpus the Library tab reads. The corpus is
 a Markdown tree under git whose top-level directories are its shelves.
 
 | Variable | What it names |
@@ -280,12 +280,14 @@ a Markdown tree under git whose top-level directories are its shelves.
 | `CHROTE_LIBRARY_AUTHOR` | The git identity the operator's edits are committed as, as `Name <email>`. Unset: an edit is refused with that reason. |
 | `CHROTE_LIBRARIAN_SESSION` | The tmux session shown in the Library's resident column, the Librarian. Unset: the column says the Librarian is not configured. |
 | `CHROTE_LIBRARY_BEADS` | The Beads project the Librarian works from, named as his store on `/api/residents`. Unset: he is named with no store. |
+| `CHROTE_LIBRARY_LINK_ROOTS` | Where a page under the corpus's `projects/` shelf may point. That shelf holds each project's own README as a symlink under a Library path, never a copy; the Library lists, reads, searches and maps it there, read-only, with the corpus's own history of the link. A symlink anywhere else, or to anything but a regular Markdown file outside the corpus, is not a page. Colon-separated directories. Unset: any Markdown file outside the corpus. |
 
 ```bash
 CHROTE_LIBRARY_ROOT=/absolute/path/to/corpus
 CHROTE_LIBRARY_AUTHOR="Example Operator <operator@example.invalid>"
 CHROTE_LIBRARIAN_SESSION=librarian
 CHROTE_LIBRARY_BEADS=/absolute/path/to/corpus
+CHROTE_LIBRARY_LINK_ROOTS=/absolute/path/to/projects:/absolute/path/to/more
 ```
 
 `GET /api/library/shelves` reports the root, the shelves and their page counts,
