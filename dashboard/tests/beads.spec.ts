@@ -39,16 +39,6 @@ test.describe('Beads', () => {
     await page.waitForSelector('.dashboard')
   })
 
-  test('opens on the map of every configured store', async ({ page }) => {
-    await openBeadsTab(page)
-
-    await expect(page.locator('.beads-rail-item').first()).toHaveText('All')
-    await expect(page.locator('.beads-rail-item.active')).toHaveText('All')
-    await expect(page.locator('.bead-row', { hasText: 'One interaction language' })).toBeVisible()
-    await expect(page.locator('.bead-map-acceptance').first()).toContainText('Every surface reads the same way')
-    await expect(page.locator('.bead-row-blocked').first()).toContainText('blocked by test-ep1.2')
-  })
-
   test('opens the Beads column from any tab and puts its row on the table', async ({ page }) => {
     await page.keyboard.press('Alt+b')
     const column = page.getByRole('complementary', { name: 'Beads column' })
@@ -137,68 +127,6 @@ test.describe('Beads', () => {
     await expectFlowNodeCentred(page, 'other-b')
   })
 
-  test('splits ready from in progress, and lists what has gone stale', async ({ page }) => {
-    await openBeadsTab(page)
-
-    await page.click('.beads-view-tab:has-text("Open")')
-    const ready = page.locator('.beads-column').first()
-    const inProgress = page.locator('.beads-column').nth(1)
-    await expect(ready.getByRole('heading')).toHaveText('Ready to start')
-    await expect(ready).toContainText('Fix login bug')
-    await expect(inProgress).toContainText('Add dark mode')
-    await expect(ready).not.toContainText('Blocked by external API')
-
-    await page.click('.beads-view-tab:has-text("Stale")')
-    await expect(page.locator('.bead-row')).toHaveCount(1)
-    await expect(page.locator('.bead-row')).toContainText('Blocked by external API')
-    await expect(page.locator('.bead-row-age')).toContainText('days')
-  })
-
-  test('explores templates and loads closed work only when asked', async ({ page }) => {
-    const closedRequests: string[] = []
-    page.on('request', request => {
-      if (request.url().includes('/api/beads/closed')) closedRequests.push(request.url())
-    })
-    await page.reload()
-    await page.waitForSelector('.dashboard')
-    await openBeadsTab(page)
-
-    expect(closedRequests).toHaveLength(0)
-    await expect(page.getByText('Completed feature', { exact: true })).toHaveCount(0)
-
-    await page.getByRole('button', { name: 'test', exact: true }).click()
-    await expect(page.getByText('Formulas', { exact: true })).toBeVisible()
-    await expect(page.getByText('Template protos', { exact: true })).toBeVisible()
-    await expect(page.getByText('Molecules', { exact: true })).toBeVisible()
-
-    await page.getByRole('button', { name: 'release', exact: true }).click()
-    const formula = page.locator('.beads-template-detail')
-    await expect(formula.getByRole('heading', { name: 'release', level: 1 })).toBeVisible()
-    await expect(formula).toContainText('/code/test-project/.beads/formulas/release.formula.toml')
-    await expect(formula).toContainText('Build the dashboard')
-    await expect(formula).toContainText('Depends on')
-    await expect(formula.locator('button')).toHaveCount(0)
-
-    await page.getByText('September release', { exact: true }).click()
-    const molecule = page.locator('.beads-template-detail')
-    await expect(molecule).toContainText('Dependencies')
-    await expect(molecule).toContainText('production')
-
-    await page.getByRole('button', { name: 'All', exact: true }).click()
-    await page.getByRole('tab', { name: 'Closed' }).click()
-    await expect(page.getByText('Completed feature', { exact: true })).toBeVisible()
-    await expect(page.getByText('Archived quiet-store task', { exact: true })).toBeVisible()
-    expect(closedRequests).toHaveLength(3)
-
-    await page.getByLabel('Search closed Beads').fill('quiet-store')
-    await expect(page.getByText('Archived quiet-store task', { exact: true })).toBeVisible()
-    await expect(page.getByText('Completed feature', { exact: true })).toHaveCount(0)
-
-    await page.getByRole('tab', { name: 'Map' }).click()
-    await page.getByRole('tab', { name: 'Closed' }).click()
-    expect(closedRequests).toHaveLength(3)
-  })
-
   // The right edge, end to end: a Bead goes on the table from the map, the
   // drawer lies over the table's column and gives it back on Escape, the same
   // Bead is in a column beside the tiles on a terminal tab, the column's drag
@@ -215,11 +143,9 @@ test.describe('Beads', () => {
     await expect(table).toContainText('A login survives a reload.')
     await expect(table.locator('.bead-card-fields')).toContainText('test-ep1')
 
-    // Copy id confirms as a toast in the bottom-centre slot, and the status
-    // line keeps the same event as the record.
+    // Copy confirms in the toast; background messages may replace the status line.
     await table.getByRole('button', { name: 'Copy id' }).click()
     await expect(page.locator('.toast .toast-message')).toHaveText('Copied test-ep1.1')
-    await expect(page.locator('.status-line')).toContainText('Copied test-ep1.1')
 
     const send = table.getByRole('button', { name: 'Send' })
     await send.click()

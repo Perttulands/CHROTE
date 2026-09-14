@@ -15,6 +15,7 @@ const TTYD_OUTPUT = 0x30
 
 interface GridEvent extends Handshake {
   kind: 'handshake' | 'resize'
+  session: string
 }
 
 interface Handshake { columns: number; rows: number }
@@ -23,13 +24,14 @@ interface Handshake { columns: number; rows: number }
 async function recordAnnouncedGrids(page: Page): Promise<GridEvent[]> {
   const grids: GridEvent[] = []
   await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
+    const session = new URL(ws.url()).searchParams.getAll('arg')[1]!
     ws.onMessage(message => {
       const text = typeof message === 'string' ? message : message.toString('utf8')
       if (text.startsWith('{')) {
-        grids.push({ ...JSON.parse(text) as Handshake, kind: 'handshake' })
+        grids.push({ ...JSON.parse(text) as Handshake, kind: 'handshake', session })
         ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from('$ ')]))
       } else if (text.startsWith('1')) {
-        grids.push({ ...JSON.parse(text.slice(1)) as Handshake, kind: 'resize' })
+        grids.push({ ...JSON.parse(text.slice(1)) as Handshake, kind: 'resize', session })
       }
     })
   })
@@ -125,19 +127,27 @@ test.describe('Terminal auto-fit', () => {
 
     await page.goto('/')
     const windows = page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-window')
-    await expect.poll(() => grids.filter(event => event.kind === 'handshake').length).toBe(2)
+    const sessions = ['main', 'hq-deacon']
+    const latestGrid = (session: string) => grids.filter(event => event.session === session).at(-1)
+    await expect.poll(() => sessions.every(session => latestGrid(session))).toBe(true)
     await expectScreensInsideHosts(page)
 
-    grids.length = 0
+    const tallRows = sessions.map(session => latestGrid(session)!.rows)
     await page.keyboard.press('Alt+=')
     await expect(windows).toHaveCount(3)
-    await expect.poll(() => grids.filter(event => event.kind === 'resize').length).toBe(2)
+    // ResizeObserver may coalesce or emit several resizes. Every session must
+    // receive a shorter grid when the layout gains a second row.
+    await expect.poll(() => sessions.every((session, index) => (
+      latestGrid(session)!.rows < tallRows[index]
+    ))).toBe(true)
     await expectScreensInsideHosts(page)
 
-    grids.length = 0
+    const shortRows = sessions.map(session => latestGrid(session)!.rows)
     await page.keyboard.press('Alt+-')
     await expect(windows).toHaveCount(2)
-    await expect.poll(() => grids.filter(event => event.kind === 'resize').length).toBe(2)
+    await expect.poll(() => sessions.every((session, index) => (
+      latestGrid(session)!.rows > shortRows[index]
+    ))).toBe(true)
     await expectScreensInsideHosts(page)
   })
 })

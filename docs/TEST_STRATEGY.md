@@ -28,19 +28,18 @@ protects in a comment above it, or delete it.
 
 ## What the suites cost
 
-Measured on a 16-core host, September 2026, after the rationalization.
+Measurements from September 2026. Counts are executed cases, not source-file
+matches. Wall time includes runner setup and varies with host load.
 
 | suite | files | cases | wall |
 | --- | --- | --- | --- |
-| Go, race enabled | 29 | 198 test functions | 3.9s |
-| Dashboard unit | 67 | 657 | 5.8s |
-| Mocked Playwright | 21 | 36 | 17.7s at four workers |
+| Go, race enabled, earlier measurement | 29 | 198 test functions | 3.9s |
+| Dashboard unit, September 14 | 97 | 896 | 8.22s |
+| Mocked Playwright, September 14 | 25 | 57 | Pending browser verification |
 
-The numbers that matter about that table are the ratios. A browser case
-costs roughly two seconds; a unit case costs under ten milliseconds. That is
-the whole argument for the rule about journeys and widgets, and it is why
-deleting a third of the unit suite saved no measurable time while cutting
-the browser suite saved most of a CI run.
+Choose the test layer by what the regression needs to expose it. Browser startup
+and rendering cost more than component rendering, but moving a geometry check
+to jsdom would lose the behavior it protects.
 
 ## Test matrix
 
@@ -66,6 +65,21 @@ redial on visibility change, real pointer drags through the drag library onto re
 tile geometry, container queries measured by bounding boxes, focus surviving
 mount, and key routing between the document listener and the terminal's hidden
 textarea. Everything else is cheaper one layer down.
+
+Beads map contents, ready/stale grouping, template details and lazy loading of
+closed work belong to `BeadsView.test.tsx`. The browser suite covers its keyboard
+entrypoints, menus, table placement and Flow geometry. Library's unconfigured
+state belongs to `LibraryView.test.tsx`; canvas interaction and scroll extents
+remain browser checks. Preset limits belong to `useWorkspaceLayouts.test.ts`;
+the browser saves, restores and deletes a real bound layout across a reload.
+
+Announcements are events, not readiness markers. `StatusLine.test.tsx` proves
+that the newest announcement replaces the previous one. A browser journey
+checks the action's result, such as a sent payload or an open drawer, without
+requiring its status message to outlive unrelated background requests.
+Resize checks likewise inspect each session's announced dimensions and the
+rendered terminal bounds. The number of ResizeObserver deliveries is not a
+protocol guarantee.
 
 ### The gate that is not in CI
 

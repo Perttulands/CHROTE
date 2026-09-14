@@ -114,21 +114,6 @@ test.describe('the image glance', () => {
     return glance
   }
 
-  test('opens from the picture in the Files tab', async ({ page }) => {
-    await mockApiRoutes(page)
-    await mockFiles(page)
-    await page.addInitScript(state => {
-      localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
-    }, seededState())
-    await page.goto('/')
-
-    const glance = await openGlanceFromFilesTab(page)
-    await expect(glance.locator('.image-glance-size')).toHaveText('3 × 2')
-
-    await glance.getByRole('button', { name: 'Close' }).click()
-    await expect(glance).toHaveCount(0)
-  })
-
   test('opens at the size a corner was dragged to, and again after a reload', async ({ page }) => {
     await mockApiRoutes(page)
     await mockFiles(page)

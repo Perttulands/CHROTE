@@ -188,7 +188,6 @@ test.describe('The Library', () => {
     await page.keyboard.press('Alt+s')
 
     await expect.poll(() => sends).toEqual([{ text: 'library preferences/tools.md\n', submit: 'false' }])
-    await expect(page.locator('.status-line')).toContainText("Pasted to 'hq-deacon'")
 
     // A step of the trail goes back, and cuts the trail to where it went.
     await dive.locator('.library-trail-step', { hasText: 'Workflow Preferences' }).click()
@@ -275,19 +274,5 @@ test.describe('The Library', () => {
       .getByRole('button', { name: 'Show preferences on the map' }).click()
     await expect(page.locator('.library-map-count')).toHaveText('4 pages · 2 shelves · 2 links · 1 shared tag')
     await expect(node(page, 'Workflow Preferences')).toBeVisible()
-  })
-
-  test('says so when the host has no library', async ({ page }) => {
-    await mockApiRoutes(page)
-    await mockBeadsApiRoutes(page)
-    await mockLibraryApiRoutes(page, {
-      shelves: { root: '', shelves: [], librarianSession: '' },
-    })
-    await page.goto('/')
-    await page.waitForSelector('.dashboard')
-
-    await page.click('.tab:has-text("Library")')
-
-    await expect(page.locator('.library-view')).toContainText('No library is configured')
   })
 })

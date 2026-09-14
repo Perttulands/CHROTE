@@ -133,6 +133,5 @@ test.describe('the Send to Session drawer', () => {
 
     await expect(drawer).toHaveCount(0)
     expect(sends).toEqual([{ text: 'status please', submit: 'true' }])
-    await expect(page.locator('.status-line')).toContainText(`Pasted to '${TARGET}'`)
   })
 })

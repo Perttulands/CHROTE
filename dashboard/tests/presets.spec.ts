@@ -23,32 +23,6 @@ function restoreRows(page: Page) {
   return page.locator('.menu-submenu .menu-row')
 }
 
-// Helper: seed localStorage with N presets so we can test the limit without saving 10 times via UI
-function buildPresetJSON(count: number): string {
-  const presets = Array.from({ length: count }, (_, i) => ({
-    id: `preset-seed-${i}`,
-    name: `Seed Preset ${i + 1}`,
-    createdAt: Date.now() - (count - i) * 1000,
-    workspaces: {
-      terminal1: {
-        windows: [
-          { id: 'terminal1-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
-          { id: 'terminal1-window-1', boundSessions: [], activeSession: null, colorIndex: 1 },
-        ],
-        windowCount: 2,
-      },
-      terminal2: {
-        windows: [
-          { id: 'terminal2-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
-          { id: 'terminal2-window-1', boundSessions: [], activeSession: null, colorIndex: 1 },
-        ],
-        windowCount: 2,
-      },
-    },
-  }))
-  return JSON.stringify(presets)
-}
-
 test.describe('Layout Presets', () => {
   test.beforeEach(async ({ page }) => {
     await mockApiRoutes(page)
@@ -67,10 +41,9 @@ test.describe('Layout Presets', () => {
 
   // One journey through the whole preset lifecycle, because every step needs
   // the dashboard mounted and a layout worth saving: name one, keep it across
-  // a reload, restore it over a different binding, delete it, and hit the
-  // ceiling. Saving is the only way a preset comes into being, so the order is
-  // the operator's order.
-  test('names a preset, keeps it across a reload, restores it, deletes it, and states the ceiling', async ({ page }) => {
+  // a reload, restore it over a different binding, and delete it. The preset
+  // ceiling and its announcement are covered by useWorkspaceLayouts.test.ts.
+  test('names a preset, keeps it across a reload, restores it, and deletes it', async ({ page }) => {
     await openTabMenu(page)
     await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
     await expect(restoreRows(page)).toHaveText(['No presets'])
@@ -121,11 +94,5 @@ test.describe('Layout Presets', () => {
     await page.locator('.menu-row', { hasText: 'Restore preset' }).click()
     await expect(restoreRows(page)).toHaveText(['Second'])
     await page.keyboard.press('Escape')
-
-    // The limit is stated on the status line, where every announcement lands.
-    await page.evaluate(json => localStorage.setItem('chrote-dashboard-presets', json), buildPresetJSON(10))
-    await page.reload()
-    await savePreset(page, 'One More')
-    await expect(page.locator('.status-line')).toContainText('Maximum 10 presets reached')
   })
 })
