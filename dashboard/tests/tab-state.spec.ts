@@ -85,8 +85,12 @@ test('returns to Beads, Library and Agents exactly as they were left', async ({ 
   await expect(page.getByRole('complementary', { name: 'Bead test-ep1.1' })).toContainText('Fix login bug')
   await page.keyboard.press('Alt+Enter')
   await expect(page.getByRole('complementary', { name: 'The Clerk' }).locator('.xterm-helper-textarea')).toBeFocused()
+  // Start paste from the tab control so the resident's final focus proves
+  // delivery completed. Seeing the mock request alone leaves that focus pending.
+  await page.getByRole('button', { name: 'Beads', exact: true }).focus()
   await page.keyboard.press('Alt+s')
   await expect.poll(() => sends[sends.length - 1]).toEqual({ session: 'main', text: 'bead test-ep1.1: Fix login bug\n' })
+  await expect(page.getByRole('complementary', { name: 'The Clerk' }).locator('.xterm-helper-textarea')).toBeFocused()
 
   await page.getByRole('button', { name: 'Library', exact: true }).click()
   await page.locator('.library-shelf', { hasText: 'preferences' }).click()
@@ -96,8 +100,10 @@ test('returns to Beads, Library and Agents exactly as they were left', async ({ 
   await expect(page.getByRole('heading', { name: 'Workflow Preferences' })).toBeVisible()
   await page.keyboard.press('Alt+Enter')
   await expect(page.getByRole('complementary', { name: 'The Librarian' }).locator('.xterm-helper-textarea')).toBeFocused()
+  await page.getByRole('button', { name: 'Library', exact: true }).focus()
   await page.keyboard.press('Alt+s')
   await expect.poll(() => sends[sends.length - 1]).toEqual({ session: 'hq-deacon', text: 'library preferences/workflow.md\n' })
+  await expect(page.getByRole('complementary', { name: 'The Librarian' }).locator('.xterm-helper-textarea')).toBeFocused()
 
   await page.getByRole('button', { name: 'Agents', exact: true }).click()
   await page.locator('.agents-view').getByTitle('/code/test-project').click()
@@ -105,11 +111,18 @@ test('returns to Beads, Library and Agents exactly as they were left', async ({ 
   await expect(page.locator('.agents-view').getByRole('button', { name: /\/code\/test-project\/CLAUDE\.md/ })).toBeVisible()
   await page.keyboard.press('Alt+Enter')
   await expect(page.getByRole('complementary', { name: 'The Tender' }).locator('.xterm-helper-textarea')).toBeFocused()
+  await page.getByRole('button', { name: 'Agents', exact: true }).focus()
   await page.keyboard.press('Alt+s')
   await expect.poll(() => sends[sends.length - 1]).toEqual({ session: 'hq-mayor', text: 'agents /code/test-project claude-code\n' })
+  await expect(page.getByRole('complementary', { name: 'The Tender' }).locator('.xterm-helper-textarea')).toBeFocused()
 
   await page.keyboard.press('Alt+k')
-  await page.getByRole('textbox', { name: 'Search keybindings' }).fill('Paste into the')
+  const search = page.getByRole('textbox', { name: 'Search keybindings' })
+  // Opening clears the previous query before focusing. Filling earlier can
+  // have that effect erase the new filter after Playwright has entered it.
+  await expect(search).toBeFocused()
+  await search.fill('Paste into the')
+  await expect(search).toHaveValue('Paste into the')
   const residentChord = page.locator('.keys-panel-chord')
   await expect(residentChord).toHaveCount(1)
   await expect(residentChord).toContainText('ALT + S')

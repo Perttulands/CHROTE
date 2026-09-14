@@ -84,7 +84,9 @@ test('the leader and Alt chords run over a focused terminal, and keys off hands 
   // Tile chords are listed because a tile is focused; the scope is real.
   await expect(panel).toContainText("Peek the tile's session")
 
-  // The leader's window is already shut, so the next key is search text.
+  // The opening effect clears the old query and then focuses this field.
+  // Its focus, not unrelated panel content, makes the next key search text.
+  await expect(panel.getByRole('textbox', { name: 'Search keybindings' })).toBeFocused()
   await page.keyboard.type('window')
   await expect(panel.locator('.keys-panel-search')).toHaveValue('window')
   await expect(panel.locator('.keys-panel-chord')).toHaveCount(5)
