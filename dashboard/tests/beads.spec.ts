@@ -75,15 +75,17 @@ test.describe('Beads', () => {
   })
 
   // The row's menu from a real right-click, and the copy it runs landing on
-  // the clipboard from a menu click: the toast is the receipt.
-  test('copies a Bead\'s id from its row\'s menu', async ({ page }) => {
+  // the clipboard from a menu click.
+  test('copies a Bead\'s id from its row\'s menu', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    await page.evaluate(() => navigator.clipboard.writeText('before-copy'))
     await openBeadsTab(page)
 
     await page.locator('.bead-row', { hasText: 'Fix login bug' }).click({ button: 'right' })
     const menu = page.getByRole('menu', { name: 'Actions for test-ep1.1' })
     await menu.getByRole('menuitem', { name: 'Copy id', exact: true }).click()
 
-    await expect(page.locator('.toast .toast-message')).toHaveText('Copied test-ep1.1')
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('test-ep1.1')
     await expect(menu).toHaveCount(0)
   })
 
@@ -131,7 +133,9 @@ test.describe('Beads', () => {
   // drawer lies over the table's column and gives it back on Escape, the same
   // Bead is in a column beside the tiles on a terminal tab, the column's drag
   // handle sets a width that outlives a reload, and Alt+I puts it all away.
-  test('puts a Bead on the table, hands it over, and keeps it across tabs at the width it was given', async ({ page }) => {
+  test('puts a Bead on the table, hands it over, and keeps it across tabs at the width it was given', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    await page.evaluate(() => navigator.clipboard.writeText('before-copy'))
     const grid = page.locator('.terminal-grid[data-workspace="terminal1"]')
     const gridBefore = await box(grid)
 
@@ -143,9 +147,9 @@ test.describe('Beads', () => {
     await expect(table).toContainText('A login survives a reload.')
     await expect(table.locator('.bead-card-fields')).toContainText('test-ep1')
 
-    // Copy confirms in the toast; background messages may replace the status line.
+    // Read the clipboard result; announcement emission belongs to the unit tests.
     await table.getByRole('button', { name: 'Copy id' }).click()
-    await expect(page.locator('.toast .toast-message')).toHaveText('Copied test-ep1.1')
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('test-ep1.1')
 
     const send = table.getByRole('button', { name: 'Send' })
     await send.click()
