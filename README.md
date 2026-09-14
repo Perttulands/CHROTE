@@ -188,3 +188,5 @@ CHROTE v2 is alpha. `VERSION` holds the current number and
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+<!-- Temporary documentation-only CI routing verification. -->
