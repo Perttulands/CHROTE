@@ -79,7 +79,7 @@ vi.mock('./TerminalArea', () => ({
   ),
 }))
 
-function DockHarness() {
+function DockHarness({ openFilesRequest = null }: { openFilesRequest?: { path: string; nonce: number } | null }) {
   const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
   const [filesOpen, setFilesOpen] = useState(false)
   const handleFilesOpenChange = useCallback((_workspaceId: string, open: boolean) => {
@@ -99,6 +99,7 @@ function DockHarness() {
       sessionsForcedPinned={filesOpen}
       onFilesOpenChange={handleFilesOpenChange}
       onOpenInFiles={vi.fn()}
+      openFilesRequest={openFilesRequest}
     />
   )
 }
@@ -174,6 +175,19 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close files' }))
     fireEvent.click(screen.getByRole('button', { name: /Files sidecar/i }))
     expect(screen.getByTestId('files-panel')).toHaveAttribute('data-navigate-path', '')
+  })
+
+  // A path clicked in a terminal is a request from outside the dock: the
+  // sidecar opens for it even when the operator had it closed, and the panel
+  // is handed the path to walk to.
+  it('opens a closed Files sidecar for a path requested from a terminal link', () => {
+    const { rerender } = render(<DockHarness />)
+    expect(screen.queryByTestId('files-panel')).not.toBeInTheDocument()
+
+    rerender(<DockHarness openFilesRequest={{ path: '/tmp/shot.png', nonce: 1 }} />)
+
+    expect(screen.getByRole('button', { name: /Files sidecar/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-navigate-path', '/tmp/shot.png')
   })
 
   it('keeps Sessions and Files open together and closes them independently', () => {

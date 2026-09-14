@@ -79,13 +79,21 @@ async function urlPoint(page: Page, columns: number) {
 }
 
 const PRINTED_PATH = '/tmp/notes.txt'
+const PRINTED_PICTURE = '/tmp/shot.png'
+/** A 3 by 2 PNG, red. */
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEElEQVR4nGM4IScHQQxwFgBBAAYZPEVBlgAAAABJRU5ErkJggg==', 'base64')
 
 /**
  * A terminal that prints one absolute path, and a Files API that lists its
  * parent and serves its bytes (bead: chrote-wgqp.7).
  */
-async function openTerminalWithPath(page: Page) {
+async function openTerminalWithPath(page: Page, printed = PRINTED_PATH) {
   await mockApiRoutes(page)
+  await page.route('**/api/files/raw/**', route => route.fulfill(
+    new URL(route.request().url()).pathname.endsWith('.png')
+      ? { status: 200, contentType: 'image/png', body: PNG }
+      : { status: 200, contentType: 'text/plain', body: 'mock file content' },
+  ))
   // The viewer asks once whether the file sits in a repository.
   await page.route('**/api/files/diff*', route => route.fulfill({
     status: 200,
@@ -98,25 +106,42 @@ async function openTerminalWithPath(page: Page) {
       contentType: 'application/json',
       body: JSON.stringify({
         isDir: true,
-        items: [{ name: 'notes.txt', size: 17, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'text/plain' }],
+        items: [
+          { name: 'notes.txt', size: 17, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'text/plain' },
+          { name: 'shot.png', size: PNG.length, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'image/png' },
+        ],
       }),
     })
   })
   const grid = { columns: 0 }
+  const typed: string[] = []
   await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
     ws.onMessage(message => {
       const text = typeof message === 'string' ? message : message.toString('utf8')
+      if (text.startsWith('0')) {
+        typed.push(text.slice(1))
+        return
+      }
       if (!text.startsWith('{')) return
       grid.columns = (JSON.parse(text) as { columns: number }).columns
-      ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(`see ${PRINTED_PATH} for the run`)]))
+      ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(`see ${printed} for the run`)]))
     })
   })
   await page.addInitScript((state) => {
     localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
   }, seededState())
   await page.goto('/')
-  await expect(page.locator('.terminal-window-body .xterm-rows')).toContainText(PRINTED_PATH)
-  return grid
+  await expect(page.locator('.terminal-window-body .xterm-rows')).toContainText(printed)
+  return { grid, typed }
+}
+
+/** The middle of the printed path, in page coordinates. */
+async function pathPoint(page: Page, columns: number, printed: string) {
+  const row = page.locator('.terminal-window-body .xterm-rows > div').first()
+  const box = (await row.boundingBox())!
+  const cell = box.width / columns
+  // 'see ' is four cells, and the path runs from there.
+  return { x: box.x + cell * (4 + printed.length / 2), y: box.y + box.height / 2 }
 }
 
 test.describe('Terminal links', () => {
@@ -133,12 +158,8 @@ test.describe('Terminal links', () => {
   })
 
   test('a printed absolute path opens the file in the Files panel', async ({ page }) => {
-    const grid = await openTerminalWithPath(page)
-    const row = page.locator('.terminal-window-body .xterm-rows > div').first()
-    const box = (await row.boundingBox())!
-    const cell = box.width / grid.columns
-    // 'see ' is four cells, and the path runs from there.
-    const point = { x: box.x + cell * (4 + PRINTED_PATH.length / 2), y: box.y + box.height / 2 }
+    const { grid } = await openTerminalWithPath(page)
+    const point = await pathPoint(page, grid.columns, PRINTED_PATH)
 
     await page.mouse.move(point.x, point.y)
     await expect(page.locator('.terminal-window-body .xterm-screen.xterm-cursor-pointer')).toBeVisible()
@@ -148,5 +169,31 @@ test.describe('Terminal links', () => {
     await expect(panel).toBeVisible()
     await expect(panel.locator('.files-panel-viewer-path')).toHaveAttribute('title', PRINTED_PATH)
     await expect(panel.locator('[data-ui="files.viewer"]')).toContainText('mock file content')
+  })
+
+  // A picture takes the same way in as any other path now: the panel opens,
+  // walks to the parent, selects the row and pops the picture out beside the
+  // tree. Link hit-testing on real cell geometry is why this is a journey.
+  test('a printed picture opens the Files panel and pops the picture out', async ({ page }) => {
+    const { grid, typed } = await openTerminalWithPath(page, PRINTED_PICTURE)
+    const point = await pathPoint(page, grid.columns, PRINTED_PICTURE)
+
+    await page.mouse.click(point.x, point.y)
+
+    const panel = page.locator('.terminal-files-panel')
+    await expect(panel).toBeVisible()
+    await expect(panel.getByRole('treeitem', { name: /shot\.png/ })).toHaveAttribute('aria-selected', 'true')
+
+    const popout = page.getByRole('dialog', { name: 'File shot.png' })
+    await expect(popout).toBeVisible()
+    await expect(popout.getByRole('img', { name: 'shot.png' })).toBeVisible()
+    await expect(popout.locator('.files-panel-note')).toHaveText('3 × 2')
+
+    // The click left the cursor in the terminal: Escape closes the pop-out,
+    // leaves the tree, and sends nothing to the pane.
+    await page.keyboard.press('Escape')
+    await expect(popout).toHaveCount(0)
+    await expect(panel.getByRole('tree', { name: 'File tree' })).toBeVisible()
+    expect(JSON.stringify(typed)).not.toContain('\\u001b')
   })
 })

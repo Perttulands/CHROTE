@@ -4,19 +4,16 @@ import { mockApiRoutes } from './mock-api'
 /**
  * The image glance (bead: chrote-5grx.45).
  *
- * An agent prints the path of a screenshot; the path is a link, and the link
- * opens the picture in a glance rather than in Files. Escape with the
- * terminal focused closes it and sends nothing to the pane, a press outside
- * closes it, and a non-image path still opens Files. The Files panel's own
- * picture opens the same glance on a click, and a corner dragged there is the
- * size every later glance opens at (bead: chrote-dx3r). Link hit-testing, the
- * image's pixels and a real pointer drag through pointer capture need a real
- * browser, which is why these are here.
+ * The glance is the Files tab's look at a picture: a click on the picture in
+ * the tab's viewer opens it centred over the workspace, Escape and a press
+ * outside close it, a corner dragged there is the size every later glance
+ * opens at (bead: chrote-dx3r), and the zoom level a step sets is the level
+ * the next picture opens at (bead: chrote-4689). In the terminal workspace a
+ * picture is read in the Files panel's pop-out instead, and that journey is
+ * in terminal-links.spec.ts. The image's real pixels and a real pointer drag
+ * through pointer capture need a browser, which is why these are here.
  */
 
-const TTYD_OUTPUT = 0x30
-const IMAGE_PATH = '/tmp/shot.png'
-const OTHER_IMAGE_PATH = '/tmp/other.png'
 const TEXT_PATH = '/tmp/notes.txt'
 /** A 3 by 2 PNG, red. */
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEElEQVR4nGM4IScHQQxwFgBBAAYZPEVBlgAAAABJRU5ErkJggg==', 'base64')
@@ -57,6 +54,7 @@ async function mockFiles(page: Page) {
         isDir: true,
         items: [
           { name: 'shot.png', size: PNG.length, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'image/png' },
+          { name: 'other.png', size: PNG.length, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'image/png' },
         ],
       }),
     })
@@ -76,72 +74,28 @@ async function mockFiles(page: Page) {
   })
 }
 
-/** A terminal that prints the given paths on one line, and records what is typed at it. */
-async function serveTerminal(page: Page, line = `saved ${IMAGE_PATH} and ${TEXT_PATH}`) {
-  const typed: string[] = []
-  const grid = { columns: 0 }
-  await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
-    ws.onMessage(message => {
-      const text = typeof message === 'string' ? message : message.toString('utf8')
-      if (text.startsWith('{')) {
-        grid.columns = (JSON.parse(text) as { columns: number }).columns
-        ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(line)]))
-      } else if (text.startsWith('0')) {
-        typed.push(text.slice(1))
-      }
-    })
-  })
-  return { typed, grid }
-}
-
-/** The middle of a printed word, in page coordinates. */
-async function pointAt(page: Page, columns: number, column: number) {
-  const row = page.locator('.terminal-window-body .xterm-rows > div').first()
-  const box = (await row.boundingBox())!
-  return { x: box.x + (box.width / columns) * column, y: box.y + box.height / 2 }
-}
-
 test.describe('the image glance', () => {
-  test('opens from an image path in a terminal, closes on Escape and on a press outside, and leaves other paths to Files', async ({ page }) => {
+  test('never upscales the picture, and closes on Escape and on a press outside', async ({ page }) => {
     await mockApiRoutes(page)
     await mockFiles(page)
-    const { typed, grid } = await serveTerminal(page)
     await page.addInitScript(state => {
       localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
     }, seededState())
     await page.goto('/')
-    await expect(page.locator('.terminal-window-body .xterm-rows')).toContainText(IMAGE_PATH)
 
-    // 'saved ' is six cells; the image path runs from there, then ' and '.
-    const imagePoint = await pointAt(page, grid.columns, 6 + IMAGE_PATH.length / 2)
-    const textPoint = await pointAt(page, grid.columns, 6 + IMAGE_PATH.length + 5 + TEXT_PATH.length / 2)
-
-    await page.mouse.click(imagePoint.x, imagePoint.y)
-    const glance = page.locator('.image-glance')
-    await expect(glance).toBeVisible()
-    await expect(glance.locator('.image-glance-path')).toHaveAttribute('title', IMAGE_PATH)
+    const glance = await openGlanceFromFilesTab(page)
+    await expect(glance.locator('.image-glance-path')).toHaveAttribute('title', '/shot.png')
     await expect(glance.locator('.image-glance-size')).toHaveText('3 × 2')
     // Never upscaled: three pixels wide is three pixels wide.
     await expect.poll(async () => (await glance.locator('img').boundingBox())?.width).toBe(3)
 
-    // The click left the cursor in the terminal; Escape closes the glance and
-    // sends nothing to the pane.
     await page.keyboard.press('Escape')
     await expect(glance).toHaveCount(0)
 
-    await page.mouse.click(imagePoint.x, imagePoint.y)
+    await page.getByTestId('file-viewer-scroll').getByRole('button', { name: 'shot.png' }).click()
     await expect(glance).toBeVisible()
-    const tile = (await page.locator('.terminal-workspace-dock[data-active="true"] .terminal-window-body').boundingBox())!
-    await page.mouse.click(tile.x + tile.width - 24, tile.y + tile.height - 24)
-    await expect(glance).toHaveCount(0)
-
-    expect(JSON.stringify(typed)).not.toContain('\\u001b')
-
-    // The path beside it is not a picture, so it opens in Files.
-    await page.mouse.click(textPoint.x, textPoint.y)
-    const panel = page.locator('.terminal-files-panel')
-    await expect(panel).toBeVisible()
-    await expect(panel.locator('.files-panel-viewer-path')).toHaveAttribute('title', TEXT_PATH)
+    const view = (await page.getByTestId('file-viewer-scroll').boundingBox())!
+    await page.mouse.click(view.x + 8, view.y + view.height - 8)
     await expect(glance).toHaveCount(0)
   })
 
@@ -150,11 +104,11 @@ test.describe('the image glance', () => {
    * glance: the terminal workspace reads a picture in the panel's pop-out,
    * and the tab has no panel to hang one off.
    */
-  async function openGlanceFromFilesTab(page: Page, alreadyOpen = false) {
+  async function openGlanceFromFilesTab(page: Page, name = 'shot.png', alreadyOpen = false) {
     await page.click('.tab:has-text("Files")')
     // A reload brings the tab back on the file the operator left open.
-    if (!alreadyOpen) await page.click('.fb-row:has-text("shot.png")')
-    await page.getByTestId('file-viewer-scroll').getByRole('button', { name: 'shot.png' }).click()
+    if (!alreadyOpen) await page.click(`.fb-row:has-text("${name}")`)
+    await page.getByTestId('file-viewer-scroll').getByRole('button', { name }).click()
     const glance = page.locator('.image-glance')
     await expect(glance).toBeVisible()
     return glance
@@ -183,7 +137,7 @@ test.describe('the image glance', () => {
     }, seededState())
     await page.goto('/')
 
-    const openGlance = (alreadyOpen = false) => openGlanceFromFilesTab(page, alreadyOpen)
+    const openGlance = (alreadyOpen = false) => openGlanceFromFilesTab(page, 'shot.png', alreadyOpen)
 
     const glance = await openGlance()
     // The picture is three pixels wide, so the glance opens tiny: its own
@@ -214,40 +168,34 @@ test.describe('the image glance', () => {
   })
 
   /**
-   * The level is the operator's, not the picture's (bead: chrote-4689): a step
-   * taken on one picture is the level the next picture opens at. The key has
-   * to reach the model past a focused terminal, which is browser-only.
+   * The level is the operator's, not the picture's (bead: chrote-4689): a
+   * step taken on one picture is the level the next picture opens at. Real
+   * image pixels are what makes that visible, which is why it is here.
    */
   test('carries the stepped zoom level to the next picture', async ({ page }) => {
     await mockApiRoutes(page)
     await mockFiles(page)
-    const { grid } = await serveTerminal(page, `saved ${IMAGE_PATH} and ${OTHER_IMAGE_PATH}`)
     await page.addInitScript(state => {
       localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
     }, seededState())
     await page.goto('/')
-    await expect(page.locator('.terminal-window-body .xterm-rows')).toContainText(IMAGE_PATH)
 
-    const firstPoint = await pointAt(page, grid.columns, 6 + IMAGE_PATH.length / 2)
-    const secondPoint = await pointAt(page, grid.columns, 6 + IMAGE_PATH.length + 5 + OTHER_IMAGE_PATH.length / 2)
-
-    await page.mouse.click(firstPoint.x, firstPoint.y)
-    const glance = page.locator('.image-glance')
-    await expect(glance).toBeVisible()
+    const glance = await openGlanceFromFilesTab(page)
     // Three pixels wide inside a window that fits it: drawn at 1:1.
     await expect(glance.locator('.image-glance-zoom')).toHaveText('100%')
 
-    await page.keyboard.press('Alt+Equal')
+    await glance.getByRole('button', { name: 'Zoom in' }).click()
     await expect(glance.locator('.image-glance-zoom')).toHaveText('125%')
     await expect.poll(async () => (await glance.locator('img').boundingBox())?.width).toBe(4)
 
-    await page.keyboard.press('Escape')
+    await glance.getByRole('button', { name: 'Close' }).click()
     await expect(glance).toHaveCount(0)
 
-    await page.mouse.click(secondPoint.x, secondPoint.y)
-    await expect(glance).toBeVisible()
-    await expect(glance.locator('.image-glance-path')).toHaveAttribute('title', OTHER_IMAGE_PATH)
-    await expect(glance.locator('.image-glance-zoom')).toHaveText('125%')
-    await expect.poll(async () => (await glance.locator('img').boundingBox())?.width).toBe(4)
+    // Close the open file to get the listing back, then the other picture.
+    await page.locator('.fb-editor-tab-close').first().click()
+    const second = await openGlanceFromFilesTab(page, 'other.png')
+    await expect(second.locator('.image-glance-path')).toHaveAttribute('title', '/other.png')
+    await expect(second.locator('.image-glance-zoom')).toHaveText('125%')
+    await expect.poll(async () => (await second.locator('img').boundingBox())?.width).toBe(4)
   })
 })

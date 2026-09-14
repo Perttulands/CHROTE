@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { findPaths, isImagePath, pathLinksOnLine } from './pathLinks'
+import { findPaths, pathLinksOnLine } from './pathLinks'
 import { resetOpenInFilesForTest, useOpenInFilesRequest } from './openInFiles'
 import { resetImageGlanceForTest, useImageGlanceRequest } from '../components/imageGlance'
 
@@ -45,22 +45,14 @@ describe('absolute paths as terminal links', () => {
     expect(result.current?.path).toBe('/var/log/syslog')
   })
 
-  it('hands a picture to the image glance instead', () => {
+  // A picture is a file like any other now: Files reads it in the pop-out
+  // beside the tree, and the centred glance is not on this way in.
+  it('hands a picture to Files too, and opens no glance', () => {
     const files = renderHook(() => useOpenInFilesRequest())
     const glance = renderHook(() => useImageGlanceRequest())
     const [link] = pathLinksOnLine('saved /tmp/shot.PNG', 3)
     act(() => link.activate(new MouseEvent('click'), link.text))
-    expect(glance.result.current?.path).toBe('/tmp/shot.PNG')
-    expect(files.result.current).toBeNull()
-  })
-})
-
-describe('the picture rule', () => {
-  it.each(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'])('shows a .%s', extension => {
-    expect(isImagePath(`/srv/evidence/frame.${extension}`)).toBe(true)
-  })
-
-  it.each(['/tmp/notes.txt', '/srv/chrote/png', '/srv/x/.png', '/srv/x/icon.ico', '/srv/x/photo.png.txt'])('opens %s in Files', path => {
-    expect(isImagePath(path)).toBe(false)
+    expect(files.result.current?.path).toBe('/tmp/shot.PNG')
+    expect(glance.result.current).toBeNull()
   })
 })
