@@ -134,13 +134,13 @@ describe('sendToSession', () => {
       }))
     })
     vi.stubGlobal('fetch', fetchMock)
-    const { result } = renderSession()
-    await waitFor(() => expect(result.current.terminalUsers).toEqual(['alice']))
+    const { result } = renderSessionWithStatus()
+    await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
     fetchMock.mockClear()
 
     let delivered: SendToSessionReport = { outcome: 'failed', message: '' }
     await act(async () => {
-      delivered = await result.current.sendToSession('shell1', {
+      delivered = await result.current.session.sendToSession('shell1', {
         text: 'inspect this',
         files: [],
         submit: true,
@@ -152,6 +152,8 @@ describe('sendToSession', () => {
     })
 
     expect(delivered.outcome).toBe('sent')
+    expect(delivered.message).toContain("Pasted to 'shell1' (%42)")
+    expect(result.current.status.status).toMatchObject({ message: delivered.message, severity: 'info' })
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, init] = fetchMock.mock.calls[0]
     expect(String(url)).toBe('/api/tmux/sessions/shell1/send?unixUser=alice')

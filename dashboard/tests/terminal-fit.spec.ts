@@ -132,21 +132,21 @@ test.describe('Terminal auto-fit', () => {
     await expect.poll(() => sessions.every(session => latestGrid(session))).toBe(true)
     await expectScreensInsideHosts(page)
 
-    const tallRows = sessions.map(session => latestGrid(session)!.rows)
+    const wideColumns = sessions.map(session => latestGrid(session)!.columns)
     await page.keyboard.press('Alt+=')
     await expect(windows).toHaveCount(3)
     // ResizeObserver may coalesce or emit several resizes. Every session must
-    // receive a shorter grid when the layout gains a second row.
+    // receive a narrower grid when the layout gains a third column.
     await expect.poll(() => sessions.every((session, index) => (
-      latestGrid(session)!.rows < tallRows[index]
+      latestGrid(session)!.columns < wideColumns[index]
     ))).toBe(true)
     await expectScreensInsideHosts(page)
 
-    const shortRows = sessions.map(session => latestGrid(session)!.rows)
+    const narrowColumns = sessions.map(session => latestGrid(session)!.columns)
     await page.keyboard.press('Alt+-')
     await expect(windows).toHaveCount(2)
     await expect.poll(() => sessions.every((session, index) => (
-      latestGrid(session)!.rows > shortRows[index]
+      latestGrid(session)!.columns > narrowColumns[index]
     ))).toBe(true)
     await expectScreensInsideHosts(page)
   })

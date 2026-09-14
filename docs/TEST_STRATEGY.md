@@ -34,8 +34,8 @@ matches. Wall time includes runner setup and varies with host load.
 | suite | files | cases | wall |
 | --- | --- | --- | --- |
 | Go, race enabled, earlier measurement | 29 | 198 test functions | 3.9s |
-| Dashboard unit, September 14 | 97 | 896 | 8.22s |
-| Mocked Playwright, September 14 | 25 | 57 | Pending browser verification |
+| Dashboard unit, September 14 | 97 | 896 | 8.54s |
+| Mocked Playwright, September 14 | 25 | 58 | 28.8s at four workers |
 
 Choose the test layer by what the regression needs to expose it. Browser startup
 and rendering cost more than component rendering, but moving a geometry check
