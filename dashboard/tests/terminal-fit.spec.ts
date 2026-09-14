@@ -55,15 +55,9 @@ function seededState(fontSize: number) {
   }
 }
 
-async function openTerminalWithFontSize(page: Page, fontSize: number): Promise<Handshake> {
-  await mockApiRoutes(page)
-  const grids = await recordAnnouncedGrids(page)
-  await page.addInitScript((state) => {
-    localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
-  }, seededState(fontSize))
-
-  await page.goto('/')
+async function openingGrid(page: Page, grids: GridEvent[], fontSize: number): Promise<Handshake> {
   await expect(page.locator('.terminal-window-body .xterm')).toBeVisible()
+  await expect(page.locator('.terminal-window-body .xterm-rows')).toHaveCSS('font-size', `${fontSize}px`)
   await expect.poll(() => grids.filter(event => event.kind === 'handshake').length, { timeout: 5000 }).toBeGreaterThan(0)
   return grids.find(event => event.kind === 'handshake')!
 }
@@ -90,13 +84,27 @@ test.describe('Terminal auto-fit', () => {
   // Both halves on one page: a terminal must reach tmux fitted to its frame,
   // and it must apply the configured font before it measures that fit.
   test('announces a grid fitted to the frame, at the configured font, with no manual Refit', async ({ page }) => {
-    const small = await openTerminalWithFontSize(page, 14)
+    await mockApiRoutes(page)
+    const grids = await recordAnnouncedGrids(page)
+    // Seed once. Two competing init scripts have no guaranteed execution order.
+    await page.addInitScript(state => {
+      if (localStorage.getItem('chrote-dashboard-state') === null) {
+        localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
+      }
+    }, seededState(14))
+    await page.goto('/')
+    const small = await openingGrid(page, grids, 14)
 
     // xterm's untouched default is 80x24; a fitted full-width tile is much wider.
     expect(small.columns).toBeGreaterThan(80)
     expect(small.rows).toBeGreaterThan(24)
 
-    const large = await openTerminalWithFontSize(page, 28)
+    await page.evaluate(state => {
+      localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
+    }, seededState(28))
+    grids.length = 0
+    await page.reload()
+    const large = await openingGrid(page, grids, 28)
 
     // Fitting with stale cell metrics was the clipped-input-row bug: a bigger
     // font must produce a smaller grid in the same frame.
