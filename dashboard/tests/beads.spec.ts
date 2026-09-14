@@ -397,12 +397,16 @@ test.describe('Beads', () => {
     await expect(page.getByRole('complementary', { name: 'Bead test-ep1.1' })).toBeVisible()
   })
 
-  test('says what refused rather than showing a blank tab', async ({ page }) => {
-    allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 503')
-    await mockBeadsApiError(page)
+})
 
-    await openBeadsTab(page)
-
-    await expect(page.locator('.beads-error')).toContainText('bd command not found')
-  })
+// The refusal is a startup scenario. The successful journeys above keep their
+// own setup so eager requests cannot consume success before this override.
+test('Beads says what refused rather than showing a blank tab', async ({ page }) => {
+  allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 503')
+  await mockApiRoutes(page, { overrides: mockBeadsApiError })
+  const workResponse = page.waitForResponse('**/api/beads/work**')
+  await page.goto('/')
+  expect((await workResponse).status()).toBe(503)
+  await openBeadsTab(page)
+  await expect(page.locator('.beads-error')).toContainText('bd command not found')
 })
