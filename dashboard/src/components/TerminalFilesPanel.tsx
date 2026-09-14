@@ -6,7 +6,7 @@ import { useStatus } from '../context/StatusContext'
 import { useResizableWidth } from '../hooks/useResizableWidth'
 import { getSessionKey, type WorkspaceId } from '../types'
 import { copyAndAnnounce } from '../utils/clipboard'
-import FilePanelViewer from './FilePanelViewer'
+import FilePopout from './FilePopout'
 import FileTree from './FileTree'
 import { FileContextMenu } from './FileContextMenu'
 import { normalizeFilePath } from './FileViewer'
@@ -72,9 +72,11 @@ interface NameDialogState {
  * directories above it. An empty field leaves the tree in place for the times
  * he is looking rather than fetching.
  *
- * Opening a file replaces the tree with the viewer instead of floating a window
- * over the terminals: the panel exists to be read next to the work, and a
- * window that covers the work is worse than no panel at all.
+ * Opening a file leaves the tree exactly where it is and hangs the file off
+ * the panel's right edge in the pop-out, so walking a directory is one click
+ * each and the row that is selected is the file being read. The pop-out is
+ * owned by `openPath`: it is open while there is one, the next click retargets
+ * it, and Close and Escape put it away.
  */
 function TerminalFilesPanel({
   workspaceId,
@@ -135,6 +137,17 @@ function TerminalFilesPanel({
       treeScrollTop: 0,
     }))
   }, [updateFilesState])
+
+  const closeOpenPath = useCallback(() => {
+    updateFilesState(previous => ({ ...previous, openPath: null }))
+  }, [updateFilesState])
+
+  // Overlaid, the file and the sidecar are one glance: a press on a terminal
+  // takes both away, as it did before there was a pop-out to take.
+  const dismissOpenPath = useCallback(() => {
+    closeOpenPath()
+    onClose()
+  }, [closeOpenPath, onClose])
 
   const openPath = useCallback((path: string) => {
     const normalized = normalizeFilePath(path)
@@ -373,15 +386,7 @@ function TerminalFilesPanel({
           </>
         )}
       </header>
-      {!collapsed && filesState.openPath && (
-        <FilePanelViewer
-          path={filesState.openPath}
-          onBack={() => updateFilesState(previous => ({ ...previous, openPath: null }))}
-          onOpenPath={openPath}
-          onSend={sendPath}
-        />
-      )}
-      {!collapsed && !filesState.openPath && (
+      {!collapsed && (
         <>
           <input
             ref={uploadInputRef}
@@ -477,6 +482,17 @@ function TerminalFilesPanel({
             </>
           )}
         </>
+      )}
+      {!collapsed && filesState.openPath && (
+        <FilePopout
+          path={filesState.openPath}
+          pinned={pinned}
+          panelRef={panelRef}
+          onClose={closeOpenPath}
+          onDismiss={dismissOpenPath}
+          onOpenPath={openPath}
+          onSend={sendPath}
+        />
       )}
       {!collapsed && (
         <div

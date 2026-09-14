@@ -15,6 +15,11 @@
  * of the measured workspace — which is what lets a content-derived default
  * (a picture's pixels, a session's grid) be overridden by a remembered size
  * without either side knowing about the other.
+ *
+ * A window that is not centred says so. `anchor: 'edge'` is a window pinned
+ * by one edge to something else — the Files pop-out hangs off the panel — so
+ * it grows by the pointer's travel rather than twice it, and `handleIds`
+ * offers only the handles that can move: the ones away from the pinned edge.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -79,6 +84,24 @@ export interface UseFloatingFrameOptions<T extends HTMLElement> {
   contentSize: (bounds: FrameSize) => FrameSize | null
   minimum?: FrameSize
   /**
+   * Which handles the window offers, in the order they are drawn. All eight
+   * by default; a window pinned by an edge offers the rest.
+   */
+  handleIds?: readonly FrameHandleId[]
+  /**
+   * How the window grows under a drag. Centred by default, where the window
+   * grows by twice the travel so the edge lands under the pointer; `edge`
+   * for a window whose opposite side is pinned, where one travel is one
+   * pixel of size and the edge lands under the pointer just the same.
+   */
+  anchor?: 'centre' | 'edge'
+  /**
+   * Where the window is held, when that is not its own parent: the element
+   * whose box the size is clamped to. The Files pop-out is drawn inside the
+   * panel it hangs off but is held by the workspace around it.
+   */
+  boundsElement?: () => HTMLElement | null
+  /**
    * Told the size a drag or a key step settled on, after it is remembered. A
    * caller whose content has its own idea of size — the image glance's zoom
    * level — reads the size the operator asked for from here.
@@ -106,6 +129,9 @@ export function useFloatingFrame<T extends HTMLElement>({
   label,
   contentSize,
   minimum = FLOATING_WINDOW_MINIMUM[kind],
+  handleIds,
+  anchor = 'centre',
+  boundsElement,
   onResize,
 }: UseFloatingFrameOptions<T>): FloatingFrame {
   const [bounds, setBounds] = useState<FrameSize | null>(null)
@@ -115,6 +141,10 @@ export function useFloatingFrame<T extends HTMLElement>({
   const [activeHandle, setActiveHandle] = useState<FrameHandleId | null>(null)
   const cleanupRef = useRef<(() => void) | null>(null)
 
+  // Kept in a ref so a caller may hand a fresh closure on every render.
+  const boundsElementRef = useRef(boundsElement)
+  boundsElementRef.current = boundsElement
+
   // The workspace is measured before the first paint, so the window is never
   // drawn at a size the operator did not ask for and then corrected.
   useLayoutEffect(() => {
@@ -123,7 +153,7 @@ export function useFloatingFrame<T extends HTMLElement>({
       return
     }
     const measure = () => {
-      const workspace = elementRef.current?.parentElement
+      const workspace = boundsElementRef.current?.() ?? elementRef.current?.parentElement
       if (!workspace) return
       setBounds({ width: workspace.clientWidth, height: workspace.clientHeight })
     }
@@ -205,10 +235,12 @@ export function useFloatingFrame<T extends HTMLElement>({
       cleanupRef.current = capturePointerDrag(handle, event.pointerId, {
         move: moveEvent => {
           // Centred: the window grows by twice the travel, so the edge in hand
-          // lands under the pointer.
+          // lands under the pointer. Pinned by an edge: once is enough, for
+          // the same reason.
+          const travel = anchor === 'edge' ? 1 : 2
           const next = clampFrameSize({
-            width: grabbed.width + 2 * direction.x * (moveEvent.clientX - grabbedAt.x),
-            height: grabbed.height + 2 * direction.y * (moveEvent.clientY - grabbedAt.y),
+            width: grabbed.width + travel * direction.x * (moveEvent.clientX - grabbedAt.x),
+            height: grabbed.height + travel * direction.y * (moveEvent.clientY - grabbedAt.y),
           }, minimum, bounds)
           dragSizeRef.current = next
           setDragSize(next)
@@ -230,7 +262,9 @@ export function useFloatingFrame<T extends HTMLElement>({
       event.preventDefault()
       commit({ width: from.width + step.width, height: from.height + step.height })
     },
-  }), [bounds, commit, elementRef, label, minimum, size, stopActiveDrag])
+  }), [anchor, bounds, commit, elementRef, label, minimum, size, stopActiveDrag])
+
+  const offered = handleIds ? HANDLES.filter(direction => handleIds.includes(direction.id)) : HANDLES
 
   return {
     size,
@@ -238,6 +272,6 @@ export function useFloatingFrame<T extends HTMLElement>({
     activeHandle,
     remembered: remembered !== null,
     resetSize,
-    handles: HANDLES.map(direction => ({ id: direction.id, props: handleProps(direction) })),
+    handles: offered.map(direction => ({ id: direction.id, props: handleProps(direction) })),
   }
 }

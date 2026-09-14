@@ -49,7 +49,12 @@ async function toggleDevMode(page: Page) {
   await page.keyboard.press(LEADER)
   const panel = page.locator('.keys-panel')
   await expect(panel).toBeVisible()
+  // The field takes the focus an effect after the panel paints; typing before
+  // that drops the first letters and leaves the wrong row under the cursor.
+  const search = panel.getByRole('textbox', { name: 'Search keybindings' })
+  await expect(search).toBeFocused()
   await page.keyboard.type('dev')
+  await expect(search).toHaveValue('dev')
   await expect(panel.locator('.keys-panel-chord')).toHaveCount(1)
   await page.keyboard.press('Enter')
   await expect(panel).toBeHidden()
@@ -57,6 +62,11 @@ async function toggleDevMode(page: Page) {
 
 test('dev mode names what the pointer is over and hands it to an agent', async ({ page }) => {
   await openWorkspace(page)
+
+  // The Agents tab announces the folder's stack once, two fetches after the
+  // dashboard mounts. Waiting for that line here keeps it from landing on top
+  // of dev mode's own, which is the only reason the order ever varied.
+  await expect(page.locator('.status-line')).toContainText('under Claude Code')
 
   await toggleDevMode(page)
   await expect(page.locator('.status-line')).toContainText('Dev mode on')

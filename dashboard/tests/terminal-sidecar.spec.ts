@@ -217,12 +217,13 @@ test.describe('terminal workspace sidecars', () => {
     await expect(files).toHaveClass(/sidecar-pinned/)
 
     await page.getByRole('treeitem', { name: /File README\.md/ }).click()
-    // The viewer replaces the tree inside the panel: nothing floats over the
-    // terminals, and Back returns to where the operator was.
-    await expect(files.getByRole('heading', { name: 'Read me' })).toBeVisible()
-    await expect(files.getByRole('tree', { name: 'File tree' })).toHaveCount(0)
-    await expect(page.locator('.file-peek')).toHaveCount(0)
-    await files.getByRole('button', { name: 'Back' }).click()
+    // The file hangs off the panel in the pop-out and the tree stays where it
+    // was; Close puts the file away and leaves the tree standing.
+    const popout = page.getByRole('dialog', { name: 'File README.md' })
+    await expect(popout.getByRole('heading', { name: 'Read me' })).toBeVisible()
+    await expect(files.getByRole('tree', { name: 'File tree' })).toBeVisible()
+    await popout.getByRole('button', { name: 'Close' }).click()
+    await expect(popout).toHaveCount(0)
     await expect(files.getByRole('tree', { name: 'File tree' })).toBeVisible()
 
     await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
@@ -231,5 +232,68 @@ test.describe('terminal workspace sidecars', () => {
     await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
     await expect(page.locator('.session-panel')).toHaveCount(0)
     await expect(terminal).toHaveAttribute('data-dock-identity', 'preserved')
+  })
+  // The pop-out's geometry is the point of it: it hangs off the panel's right
+  // edge and stays there while the panel is dragged, which needs a real
+  // layout engine and a real pointer drag.
+  test('hangs the file off the panel edge, follows a drag of the panel, retargets and closes', async ({ page }) => {
+    await mockApiRoutes(page)
+    await page.route(/.*\/api\/files\/resources(?:\/.*)?$/, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        isDir: true,
+        items: [
+          { name: 'README.md', path: '/README.md', isDir: false, size: 12, modified: '2026-07-13T00:00:00Z', type: 'text/markdown' },
+          { name: 'NOTES.md', path: '/NOTES.md', isDir: false, size: 12, modified: '2026-07-13T00:00:00Z', type: 'text/markdown' },
+        ],
+      }),
+    }))
+    await page.route('**/api/files/raw/**', route => route.fulfill({
+      status: 200,
+      contentType: 'text/plain',
+      body: '# Read me\n',
+    }))
+    await page.route('**/api/files/diff*', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ path: '/README.md', repository: '', diff: '', truncated: false }),
+    }))
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
+
+    const files = page.locator('.terminal-files-panel')
+    await expect(files).toBeVisible()
+    await page.getByRole('treeitem', { name: /File README\.md/ }).click()
+    const popout = page.getByRole('dialog', { name: 'File README.md' })
+    await expect(popout).toBeVisible()
+
+    const edges = async () => {
+      const panel = await box(files)
+      const window = await box(popout)
+      return { panelRight: panel.x + panel.width, popoutLeft: window.x }
+    }
+    const before = await edges()
+    expect(Math.abs(before.popoutLeft - before.panelRight)).toBeLessThanOrEqual(2)
+
+    const grip = await box(files.getByRole('separator', { name: 'Resize Files panel' }))
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(grip.x + grip.width / 2 + 120, grip.y + grip.height / 2, { steps: 8 })
+    await page.mouse.up()
+
+    const after = await edges()
+    expect(after.popoutLeft).toBeGreaterThan(before.popoutLeft + 100)
+    expect(Math.abs(after.popoutLeft - after.panelRight)).toBeLessThanOrEqual(2)
+
+    await page.getByRole('treeitem', { name: /File NOTES\.md/ }).click()
+    await expect(page.getByRole('dialog', { name: 'File NOTES.md' })).toBeVisible()
+    await expect(popout).toHaveCount(0)
+
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog', { name: 'File NOTES.md' })).toHaveCount(0)
+    await expect(files.getByRole('tree', { name: 'File tree' })).toBeVisible()
   })
 })

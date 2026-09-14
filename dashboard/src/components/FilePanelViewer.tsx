@@ -1,11 +1,13 @@
 /**
- * Reading one file inside the Files panel.
+ * Reading one file: the contents and the words for acting on them.
  *
- * Opening a file replaces the tree rather than floating a window over the
- * work: the operator is reading beside a terminal, and a window that covers
- * the terminal defeats the reason the panel is there. Back returns to the
- * tree, and the header carries the whole of what can be done with the file —
- * Edit, Diff, Send — as words.
+ * The file is read beside the tree, not instead of it. In the terminal
+ * workspace this is what the Files pop-out carries — a window hung off the
+ * panel's right edge, so walking a directory is one click each and the tree
+ * never leaves; on the table it is the column's own contents. Either way the
+ * header carries the whole of what can be done with the file — Edit, Diff,
+ * Send, Copy path — and Close puts the file away and leaves everything else
+ * where it was.
  *
  * The viewer suits itself to the file. Markdown is rendered in the theme, an
  * image is shown, JSON is pretty-printed, and everything else is monospace
@@ -18,6 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStatus } from '../context/StatusContext'
+import { copyAndAnnounce } from '../utils/clipboard'
 import { useConfirmInPlace } from './confirmInPlace'
 import Editor from './Editor'
 import Markdown from './Markdown'
@@ -49,11 +52,18 @@ type ViewerMode = 'view' | 'diff' | 'edit'
 
 export interface FilePanelViewerProps {
   path: string
-  onBack: () => void
+  onClose: () => void
   /** Following a Markdown link to another file, without leaving the panel. */
   onOpenPath: (path: string) => void
   /** Null when no terminal has the focus and there is nobody to send to. */
   onSend: ((path: string) => void) | null
+  /**
+   * A picture is a way to the centred glance where there is nowhere better to
+   * look at it. The pop-out is already the look, so it turns this off.
+   */
+  pictureOpensGlance?: boolean
+  /** Offered by a window with a remembered size, next to Close. */
+  onResetSize?: (() => void) | null
 }
 
 export type DiffLineKind = 'add' | 'del' | 'hunk' | 'context'
@@ -140,7 +150,14 @@ function TextLines({ content, label }: { content: string; label: string }) {
   )
 }
 
-function FilePanelViewer({ path, onBack, onOpenPath, onSend }: FilePanelViewerProps) {
+function FilePanelViewer({
+  path,
+  onClose,
+  onOpenPath,
+  onSend,
+  pictureOpensGlance = true,
+  onResetSize = null,
+}: FilePanelViewerProps) {
   const { announce } = useStatus()
   const [mode, setMode] = useState<ViewerMode>('view')
   const [content, setContent] = useState<string | null>(null)
@@ -228,7 +245,6 @@ function FilePanelViewer({ path, onBack, onOpenPath, onSend }: FilePanelViewerPr
   return (
     <>
       <div className="files-panel-viewer-head" data-ui="files.header">
-        <button type="button" className="files-panel-action" onClick={onBack}>Back</button>
         <PanelPath path={path} className="files-panel-viewer-path" />
         <div className="files-panel-actions">
           {mode === 'edit' ? (
@@ -258,6 +274,17 @@ function FilePanelViewer({ path, onBack, onOpenPath, onSend }: FilePanelViewerPr
               >
                 Send
               </button>
+              <button
+                type="button"
+                className="files-panel-action"
+                onClick={() => void copyAndAnnounce(path, path, announce)}
+              >
+                Copy path
+              </button>
+              {onResetSize && (
+                <button type="button" className="files-panel-action" onClick={onResetSize}>Reset size</button>
+              )}
+              <button type="button" className="files-panel-action" onClick={onClose}>Close</button>
             </>
           )}
         </div>
@@ -279,18 +306,29 @@ function FilePanelViewer({ path, onBack, onOpenPath, onSend }: FilePanelViewerPr
         ) : error ? (
           <p className="files-panel-note">{error}</p>
         ) : kind === 'image' ? (
-          // The picture at the zoom level — the panel's width while that is
-          // fit — its pixels beneath it, and the glance a click away for a
-          // look at it full size.
+          // The picture at the zoom level — the width it has here while that
+          // is fit — with its pixels beneath it. Where the picture is not
+          // already the look, a press on it opens the centred glance.
           <>
-            <button type="button" className={zoomed ? 'files-panel-image is-zoomed' : 'files-panel-image'} onClick={() => openImageGlance(path)}>
-              <img
-                src={getDownloadUrl(path)}
-                alt={name}
-                style={zoomed ? { width: zoomed.width, height: zoomed.height } : undefined}
-                onLoad={event => setPixels({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
-              />
-            </button>
+            {pictureOpensGlance ? (
+              <button type="button" className={zoomed ? 'files-panel-image is-zoomed' : 'files-panel-image'} onClick={() => openImageGlance(path)}>
+                <img
+                  src={getDownloadUrl(path)}
+                  alt={name}
+                  style={zoomed ? { width: zoomed.width, height: zoomed.height } : undefined}
+                  onLoad={event => setPixels({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+                />
+              </button>
+            ) : (
+              <div className={zoomed ? 'files-panel-image is-zoomed is-still' : 'files-panel-image is-still'}>
+                <img
+                  src={getDownloadUrl(path)}
+                  alt={name}
+                  style={zoomed ? { width: zoomed.width, height: zoomed.height } : undefined}
+                  onLoad={event => setPixels({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+                />
+              </div>
+            )}
             <p className="files-panel-note">{pixels ? `${pixels.width} × ${pixels.height}` : ''}</p>
           </>
         ) : content === null ? (

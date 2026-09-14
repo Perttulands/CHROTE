@@ -14,6 +14,7 @@ import {
   writeTextFile,
 } from './FilesView/fileService'
 import TerminalFilesPanel from './TerminalFilesPanel'
+import { resetSurfacesForTest } from '../keys/dismiss'
 import {
   DEFAULT_WORKSPACE_FILES_STATE,
   readWorkspaceFilesState,
@@ -125,6 +126,7 @@ function seedPanelAt(currentPath: string) {
 describe('TerminalFilesPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetSurfacesForTest()
     window.localStorage.clear()
     mockedFetchDirectory.mockImplementation(async path => {
       if (path === '/') return [{ ...readme, path: '/README.md' }]
@@ -165,7 +167,6 @@ describe('TerminalFilesPanel', () => {
     fireEvent.keyDown(field, { key: 'Enter' })
 
     expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument()
-    expect(screen.queryByRole('tree', { name: 'File tree' })).not.toBeInTheDocument()
     expect(readWorkspaceFilesState('terminal1').openPath).toBe('/srv/chrote/docs/journeys.md')
   })
 
@@ -184,14 +185,15 @@ describe('TerminalFilesPanel', () => {
     expect(await screen.findByRole('tree', { name: 'File tree' })).toBeInTheDocument()
   })
 
-  it('replaces the tree with the viewer, renders Markdown, sends the path and comes back', async () => {
+  it('pops the file out beside the tree, renders Markdown, sends the path and closes', async () => {
     seedPanelAt('/srv/chrote')
     renderPanel()
 
     fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))
 
-    expect(await screen.findByRole('heading', { name: 'CHROTE' })).toBeInTheDocument()
-    expect(screen.queryByRole('tree', { name: 'File tree' })).not.toBeInTheDocument()
+    const popout = await screen.findByRole('dialog', { name: 'File README.md' })
+    expect(within(popout).getByRole('heading', { name: 'CHROTE' })).toBeInTheDocument()
+    expect(screen.getByRole('tree', { name: 'File tree' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     expect(sessionMocks.openSendToSession).toHaveBeenCalledWith({
@@ -199,8 +201,33 @@ describe('TerminalFilesPanel', () => {
       reference: 'path /srv/chrote/README.md',
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-    expect(await screen.findByRole('tree', { name: 'File tree' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'File README.md' })).not.toBeInTheDocument())
+    expect(screen.getByRole('tree', { name: 'File tree' })).toBeInTheDocument()
+    expect(readWorkspaceFilesState('terminal1').openPath).toBeNull()
+  })
+
+  // The pop-out is owned by the panel's open path: one window, retargeted by
+  // the next row, and Escape puts the file away and leaves the tree standing.
+  it('retargets the one pop-out from the tree and closes it on Escape', async () => {
+    const notes = { ...readme, path: '/srv/chrote/NOTES.md', name: 'NOTES.md' }
+    mockedFetchDirectory.mockImplementation(async path => (
+      path === '/srv/chrote' ? [docs, readme, notes] : []
+    ))
+    seedPanelAt('/srv/chrote')
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))
+    await screen.findByRole('dialog', { name: 'File README.md' })
+
+    fireEvent.click(screen.getByRole('treeitem', { name: /NOTES\.md/ }))
+    expect(await screen.findByRole('dialog', { name: 'File NOTES.md' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'File README.md' })).not.toBeInTheDocument()
+    expect(readWorkspaceFilesState('terminal1').openPath).toBe('/srv/chrote/NOTES.md')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'File NOTES.md' })).not.toBeInTheDocument())
+    expect(screen.getByRole('treeitem', { name: /NOTES\.md/ })).toBeInTheDocument()
     expect(readWorkspaceFilesState('terminal1').openPath).toBeNull()
   })
 
@@ -212,7 +239,7 @@ describe('TerminalFilesPanel', () => {
     await screen.findByRole('button', { name: 'Edit' })
     expect(screen.queryByRole('button', { name: 'Diff' })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     mockedFetchFileDiff.mockResolvedValue({
       path: readme.path,
       repository: '/srv/chrote',
@@ -298,7 +325,7 @@ describe('TerminalFilesPanel', () => {
     )
 
     fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Back' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Close' }))
     expect(await screen.findByRole('treeitem', { name: /README\.md/ })).toHaveAttribute('aria-selected', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: 'Pin Files sidecar' }))
@@ -339,10 +366,10 @@ describe('TerminalFilesPanel', () => {
   })
 
   // A path from a terminal link is a file more often than a folder: the
-  // panel opens it in the viewer with the tree at its parent, and a path the
-  // parent does not list goes to the viewer too, which is where the failure to
-  // read it is reported in plain words.
-  it('opens a requested file in the viewer, and reports a requested path that is not there', async () => {
+  // panel pops it out with the tree at its parent, and a path the parent does
+  // not list goes to the pop-out too, which is where the failure to read it is
+  // reported in plain words.
+  it('pops a requested file out, and reports a requested path that is not there', async () => {
     const props = {
       workspaceId: 'terminal1' as const,
       collapsed: false,
@@ -364,14 +391,16 @@ describe('TerminalFilesPanel', () => {
     await waitFor(() => expect(props.onNavigateRequestHandled).toHaveBeenCalledWith(1))
     rerender(<TerminalFilesPanel {...props} navigateRequest={null} />)
 
-    expect(await screen.findByTitle('/srv/chrote/README.md')).toBeInTheDocument()
+    const popout = await screen.findByRole('dialog', { name: 'File README.md' })
+    expect(within(popout).getByTitle('/srv/chrote/README.md')).toBeInTheDocument()
     expect(readWorkspaceFilesState('terminal1').currentPath).toBe('/srv/chrote')
     expect(readWorkspaceFilesState('terminal1').openPath).toBe('/srv/chrote/README.md')
 
     mockedReadTextFile.mockRejectedValueOnce(new Error('Not found'))
     rerender(<TerminalFilesPanel {...props} navigateRequest={{ path: '/srv/chrote/missing.txt', requestId: 2 }} />)
 
-    expect(await screen.findByTitle('/srv/chrote/missing.txt')).toBeInTheDocument()
+    const retargeted = await screen.findByRole('dialog', { name: 'File missing.txt' })
+    expect(within(retargeted).getByTitle('/srv/chrote/missing.txt')).toBeInTheDocument()
     expect(await screen.findByText(/Not found/)).toBeInTheDocument()
   })
 
@@ -395,7 +424,7 @@ describe('TerminalFilesPanel', () => {
     expect(readWorkspaceFilesState('terminal1').currentPath).toBe('/')
 
     fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Back' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Close' }))
     fireEvent.contextMenu(await screen.findByRole('treeitem', { name: /README\.md/ }))
     const menu = document.querySelector('.menu-sheet') as HTMLElement
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Open parent folder' }))
@@ -423,7 +452,7 @@ describe('TerminalFilesPanel', () => {
 
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Open' }))
     expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
 
     readmeRow = await screen.findByRole('treeitem', { name: /README\.md/ })
     fireEvent.contextMenu(readmeRow)
@@ -458,7 +487,7 @@ describe('TerminalFilesPanel', () => {
     })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Back' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Close' }))
     fireEvent.contextMenu(await screen.findByRole('treeitem', { name: /README\.md/ }))
     let menu = document.querySelector('.menu-sheet') as HTMLElement
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Rename' }))

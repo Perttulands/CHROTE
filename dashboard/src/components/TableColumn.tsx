@@ -96,7 +96,7 @@ export default function TableColumn() {
       {object.kind === 'file' && (
         <FilePanelViewer
           path={object.path}
-          onBack={clearTable}
+          onClose={clearTable}
           onOpenPath={path => putOnTable({ kind: 'file', path })}
           onSend={path => openSendToSession({ reference: `path ${path}` })}
         />

@@ -34,6 +34,7 @@
   "FileGridItem": "dashboard/src/components/FilesView/components/FileGridItem.tsx",
   "FileIcon": "dashboard/src/components/FilesView/components/FileIcon.tsx",
   "FilePanelViewer": "dashboard/src/components/FilePanelViewer.tsx",
+  "FilePopout": "dashboard/src/components/FilePopout.tsx",
   "FileRow": "dashboard/src/components/FilesView/components/FileRow.tsx",
   "FileTree": "dashboard/src/components/FileTree.tsx",
   "FileViewer": "dashboard/src/components/FileViewer.tsx",

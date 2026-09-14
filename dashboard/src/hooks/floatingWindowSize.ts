@@ -14,7 +14,7 @@
  * the minimum so the window cannot be dragged away to nothing.
  */
 
-export type FloatingWindowKind = 'image' | 'peek'
+export type FloatingWindowKind = 'image' | 'peek' | 'file'
 
 export interface FrameSize {
   width: number
@@ -28,6 +28,8 @@ const STORAGE_VERSION = 1
 export const FLOATING_WINDOW_MINIMUM: Record<FloatingWindowKind, FrameSize> = {
   image: { width: 240, height: 120 },
   peek: { width: 240, height: 120 },
+  // A file is read in lines, so its window is kept wide enough for one.
+  file: { width: 320, height: 120 },
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

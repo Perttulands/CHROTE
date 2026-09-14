@@ -350,7 +350,27 @@
   cursor: not-allowed;
 }
 
-/* ---- the viewer that replaces the tree ---- */
+/* ---- the pop-out: the open file, hung off the panel's right edge ---- */
+
+/* The left edge is the panel's width, the one variable that draws the panel
+   itself, so a drag of the panel moves the window with it and nothing has to
+   measure anything. The top is the panel's top, pinned or overlaid, because
+   the window is drawn inside the panel it hangs off. */
+.terminal-file-popout {
+  position: absolute;
+  top: 0;
+  left: var(--terminal-files-width, 320px);
+  z-index: 4;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-primary);
+  border: 1px solid var(--divider);
+  box-shadow: 14px 0 36px rgb(0 0 0 / 35%);
+}
+
+/* ---- the file itself ---- */
 
 .files-panel-viewer-head {
   flex: none;
@@ -416,7 +436,8 @@
   padding: 12px 10px;
 }
 
-/* The picture is a control: a press on it opens the image glance. */
+/* The picture is a control where a press on it opens the image glance, and
+   plain where the window it is in is already the look. */
 .files-panel-image {
   display: block;
   width: 100%;
@@ -434,6 +455,10 @@
 
 /* At a zoom level the picture is drawn at the pixels the operator asked for,
    and the panel scrolls to it rather than shrinking it. */
+.files-panel-image.is-still {
+  cursor: default;
+}
+
 .files-panel-image.is-zoomed {
   width: max-content;
 }

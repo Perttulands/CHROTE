@@ -49,6 +49,18 @@ async function mockFiles(page: Page) {
     contentType: 'application/json',
     body: JSON.stringify({ path: TEXT_PATH, repository: '', diff: '', truncated: false }),
   }))
+  await page.route(/\/api\/files\/resources\/?$/, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        isDir: true,
+        items: [
+          { name: 'shot.png', size: PNG.length, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'image/png' },
+        ],
+      }),
+    })
+  })
   await page.route(/\/api\/files\/resources\/tmp\/?$/, async route => {
     await route.fulfill({
       status: 200,
@@ -133,42 +145,30 @@ test.describe('the image glance', () => {
     await expect(glance).toHaveCount(0)
   })
 
-  /** The Files panel left open on the picture, as the operator left it. */
-  async function seedPanelOnPicture(page: Page) {
-    await page.addInitScript(state => {
-      localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
-      localStorage.setItem('chrote.workspaceFiles.v1', JSON.stringify({
-        version: 1,
-        workspaces: {
-          terminal1: {
-            currentPath: '/tmp',
-            expandedPaths: ['/', '/tmp'],
-            selectedPath: '/tmp/shot.png',
-            openPath: '/tmp/shot.png',
-            treeScrollTop: 0,
-            viewStates: {},
-          },
-        },
-      }))
-    }, seededState())
-  }
-
-  test('opens from the picture in the Files panel', async ({ page }) => {
-    await mockApiRoutes(page)
-    await mockFiles(page)
-    await seedPanelOnPicture(page)
-    await page.goto('/')
-    await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
-
-    const panel = page.locator('.terminal-files-panel')
-    const picture = panel.getByRole('button', { name: 'shot.png' })
-    await expect(picture).toBeVisible()
-    // The panel says the picture's pixels beneath it.
-    await expect(panel.locator('.files-panel-note')).toHaveText('3 × 2')
-
-    await picture.click()
+  /**
+   * The Files tab's own viewer is where a picture still opens the centred
+   * glance: the terminal workspace reads a picture in the panel's pop-out,
+   * and the tab has no panel to hang one off.
+   */
+  async function openGlanceFromFilesTab(page: Page, alreadyOpen = false) {
+    await page.click('.tab:has-text("Files")')
+    // A reload brings the tab back on the file the operator left open.
+    if (!alreadyOpen) await page.click('.fb-row:has-text("shot.png")')
+    await page.getByTestId('file-viewer-scroll').getByRole('button', { name: 'shot.png' }).click()
     const glance = page.locator('.image-glance')
     await expect(glance).toBeVisible()
+    return glance
+  }
+
+  test('opens from the picture in the Files tab', async ({ page }) => {
+    await mockApiRoutes(page)
+    await mockFiles(page)
+    await page.addInitScript(state => {
+      localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
+    }, seededState())
+    await page.goto('/')
+
+    const glance = await openGlanceFromFilesTab(page)
     await expect(glance.locator('.image-glance-size')).toHaveText('3 × 2')
 
     await glance.getByRole('button', { name: 'Close' }).click()
@@ -178,21 +178,12 @@ test.describe('the image glance', () => {
   test('opens at the size a corner was dragged to, and again after a reload', async ({ page }) => {
     await mockApiRoutes(page)
     await mockFiles(page)
-    await seedPanelOnPicture(page)
+    await page.addInitScript(state => {
+      localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
+    }, seededState())
     await page.goto('/')
 
-    const openGlance = async () => {
-      const panel = page.locator('.terminal-files-panel')
-      if (!(await panel.isVisible())) {
-        await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
-      }
-      const picture = panel.getByRole('button', { name: 'shot.png' })
-      await expect(picture).toBeVisible()
-      await picture.click()
-      const glance = page.locator('.image-glance')
-      await expect(glance).toBeVisible()
-      return glance
-    }
+    const openGlance = (alreadyOpen = false) => openGlanceFromFilesTab(page, alreadyOpen)
 
     const glance = await openGlance()
     // The picture is three pixels wide, so the glance opens tiny: its own
@@ -212,7 +203,7 @@ test.describe('the image glance', () => {
     expect(dragged.height).toBeGreaterThan(opened.height + 200)
 
     await page.reload()
-    const reopened = await openGlance()
+    const reopened = await openGlance(true)
     const after = (await reopened.boundingBox())!
     expect(Math.round(after.width)).toBe(Math.round(dragged.width))
     expect(Math.round(after.height)).toBe(Math.round(dragged.height))
