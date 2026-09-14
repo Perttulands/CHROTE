@@ -73,9 +73,7 @@ The build script compiles the dashboard and embeds its output into the Go server
 ## Core and components
 
 Terminal workspaces, sessions, files, server status, and settings form the core.
-Beads, Scheduled and the Library are separate first-party modules. Archon runs
-as a standalone product with its own CLI, daemon and UI; any future integration
-belongs outside CHROTE's terminal core.
+Beads, Scheduled and the Library are separate first-party modules.
 
 This separation is static code organization, not a marketplace or dynamic plugin loader. Components can add routes, views, and configuration. Their failure must remain contained so the terminal core still loads and works.
 

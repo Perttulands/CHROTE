@@ -16,7 +16,7 @@ CHROTE is neutral about what runs in a terminal. Codex, Claude Code, another CLI
 
 ## Product shape
 
-The core is the terminal workspace, session access, files, server status, and settings. Beads, scheduled prompts, service integrations, and agent formations are first-party components that can extend that core.
+The core is the terminal workspace, session access, files, server status, and settings. Beads, scheduled prompts, and the Library are first-party components that extend that core.
 
 This modular shape is for keeping responsibilities clear. CHROTE is not a plugin marketplace, and components do not get to redefine session ownership or make the terminal core depend on them.
 

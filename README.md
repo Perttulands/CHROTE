@@ -83,11 +83,6 @@ A scheduled task sends its prompt into tmux verbatim. The receipt says CHROTE
 delivered the keystrokes. It does not claim the program on the other end read
 them.
 
-[Archon](https://github.com/Perttulands/Archon-agentgraphs) builds and runs
-agent work graphs with review gates and terminal observation. It has its own
-CLI, daemon and UI, installed separately from CHROTE. See the Archon README for
-installation and runtime requirements.
-
 ## Where state lives
 
 CHROTE reads and controls the real thing instead of keeping its own copy.

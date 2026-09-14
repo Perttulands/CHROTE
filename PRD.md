@@ -57,9 +57,8 @@ Beads, Library and Agents each host a resident agent, the Clerk, the Librarian a
 
 Components remain separated in the codebase and fail independently. A missing Beads workspace or unconfigured context corpus must not prevent terminal work.
 
-Archon is the standalone agent workbench. Its board editor, `archon` CLI and
-`archond` daemon own mission graphs and gates outside CHROTE. Any CHROTE
-integration remains a separate component decision.
+CHROTE exposes terminal sessions and delivers operator input. The programs
+running in those sessions own their work, coordination and completion rules.
 
 ## State ownership
 
