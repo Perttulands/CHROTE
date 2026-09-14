@@ -83,10 +83,10 @@ A scheduled task sends its prompt into tmux verbatim. The receipt says CHROTE
 delivered the keystrokes. It does not claim the program on the other end read
 them.
 
-Formations should eventually compose agents and gates into a mission. None of it
-ships in this build. That work lives in
-[chrote-agent-formations](https://github.com/Perttulands/chrote-agent-formations).
-Treat it as an intention, not something you can install today.
+[Archon](https://github.com/Perttulands/chrote-agent-formations) builds and runs
+agent work graphs with review gates and terminal observation. It has its own
+CLI, daemon and UI, installed separately from CHROTE. See the Archon README for
+installation and runtime requirements.
 
 ## Where state lives
 

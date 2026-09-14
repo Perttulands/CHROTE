@@ -4,6 +4,11 @@
 - **Date:** 2026-08-30
 - **Owners:** CHROTE maintainers
 
+This records the August 2026 repository split. The independent product is now
+[Archon](https://github.com/Perttulands/chrote-agent-formations), with its own
+CLI, daemon, UI and release. The historical names and experimental status below
+describe the decision at that time; CHROTE's ownership boundary still applies.
+
 ## Context
 
 CHROTE is a private browser cockpit for host-owned work. Experimental agent

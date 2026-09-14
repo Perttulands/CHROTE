@@ -31,6 +31,6 @@ anything. Revival requires a scoped Bead and a current product decision.
   writer experiment.
 
 Those annotated tags are archaeology for a future product decision, not seams
-that CHROTE promises to retain. Experimental Formations and Archon work now
-lives in
-[chrote-agent-formations](https://github.com/Perttulands/chrote-agent-formations).
+that CHROTE promises to retain. The standalone agent workbench is
+[Archon](https://github.com/Perttulands/chrote-agent-formations); its README and
+runtime contract describe the current product.
