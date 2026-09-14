@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,11 +18,40 @@ env:
 # dependencies instead: only the jobs that compile the server need the embedded
 # bundle, only the browser jobs need Chromium, and nothing else needs to wait.
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.classify.outputs.full }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select documentation or full product checks
+        id: classify
+        run: |
+          full="$(python3 scripts/ci-product-required.py)" || full=true
+          if [ "$full" != false ]; then full=true; fi
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "Full product checks: $full" >> "$GITHUB_STEP_SUMMARY"
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Documentation and host neutrality
+        run: |
+          python3 scripts/doc-lint.py
+          python3 scripts/host-neutrality.py
+
   # The dashboard bundle is embedded into the Go binary by a compile-time
   # directive and is not tracked, so every job that compiles the server needs
   # this one to have run. It publishes the bundle and the binary so no other job
   # rebuilds them.
   build:
+    needs: changes
+    if: ${{ always() && !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -95,6 +127,8 @@ jobs:
 
   # No browser, so no Chromium download: this job is Node and nothing else.
   unit:
+    needs: changes
+    if: ${{ always() && !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -116,6 +150,8 @@ jobs:
           npm run lint
 
   browser:
+    needs: changes
+    if: ${{ always() && !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -181,11 +217,8 @@ jobs:
           cd dashboard
           npx playwright install --with-deps chromium
 
-      - name: Source contracts
-        run: |
-          python3 scripts/doc-lint.py
-          python3 scripts/host-neutrality.py
-          python3 scripts/check-embedded-dashboard.py
+      - name: Embedded dashboard contract
+        run: python3 scripts/check-embedded-dashboard.py
 
       - name: Built server browser and API contract
         env:
@@ -195,11 +228,7 @@ jobs:
           chmod +x chrote-server-ci
           ./scripts/test-built-server-contract.sh
 
-      # Runs on every push, not only on installer changes. What this smoke
-      # covers is the installed product -- its routes, its environment contract
-      # and its unit -- so a server change that touches no installer file can
-      # break it, and one did: 932b7831 left it red for two commits and nothing
-      # said so. It reuses the binary the build job produced, so it costs seconds.
+      # Every full run verifies the installed product using the build artifact.
       # The health receipt must name the commit this workflow checked out.
       - name: Public installer smoke on the built binary
         env:
@@ -224,3 +253,30 @@ jobs:
             ${{ runner.temp }}/chrote-contract/server.log
           include-hidden-files: true
           if-no-files-found: warn
+
+  result:
+    name: CI result
+    needs: [changes, docs, build, go, unit, browser, contracts]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected check
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          results = json.loads(os.environ["RESULTS"])
+          full = results["changes"]["outputs"].get("full") != "false"
+          expected = {"changes": "success", "docs": "success"}
+          expected.update(dict.fromkeys(
+              ["build", "go", "unit", "browser", "contracts"],
+              "success" if full else "skipped",
+          ))
+          bad = [name for name, state in expected.items() if results[name]["result"] != state]
+          if bad:
+              raise SystemExit("Required CI results were not met: " + ", ".join(bad))
+          print("Full product checks passed" if full else "Documentation checks passed; product checks were not required")
+          PY
