@@ -189,7 +189,7 @@
   margin: 0;
 }
 
-/* tmux Appearance Color Inputs */
+/* Launch-user and workspace colour inputs */
 .settings-color-row {
   display: flex;
   gap: 16px;
