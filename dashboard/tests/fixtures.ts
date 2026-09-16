@@ -77,6 +77,18 @@ function systemHistoryMockBody() {
   })
 }
 
+// page.reload() aborts whatever the dashboard has in flight, and the sessions
+// poll logs its rejected fetch on the way out (src/context/useSessionsPoll.ts).
+// Eleven specs across ten files reload a polling page, so the choice was one
+// rule here or eleven annotations that drift; this is the one rule.
+//
+// It stays narrow on purpose. Only the aborted shape is allowed: a torn-down
+// fetch rejects with TypeError: Failed to fetch. A poll that reaches the server
+// and is refused takes the failPoll path and logs nothing here, and a malformed
+// body rejects with SyntaxError, so neither is covered by this. Everything else
+// a spec sees on the console is still a failure.
+const ABORTED_SESSIONS_POLL = /^error: Failed to fetch sessions: TypeError: Failed to fetch$/
+
 export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
   allowedConsoleMessages: [[], { option: true }],
   page: async ({ page, allowedConsoleMessages }, use, testInfo) => {
@@ -154,7 +166,7 @@ export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
       .filter((annotation) => annotation.type === 'allowed-browser-console')
       .map((annotation) => annotation.description)
       .filter((description): description is string => Boolean(description))
-    const allAllowedMessages = [...allowedConsoleMessages, ...annotatedAllowedMessages]
+    const allAllowedMessages = [ABORTED_SESSIONS_POLL, ...allowedConsoleMessages, ...annotatedAllowedMessages]
     const unexpectedMessages = consoleMessages.filter((message) => !matchesAllowedMessage(message, allAllowedMessages))
 
     if (unexpectedBackendRequests.length > 0) {

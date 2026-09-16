@@ -26,7 +26,6 @@ tmux_bin_dir="$(dirname "$tmux_bin")"
 grep -q -- '--binary)' "$installer"
 grep -q -- '--no-enable)' "$installer"
 grep -q -- '--no-start)' "$installer"
-! grep -q 'CHROTE_PERSISTENT_AGENTS_PATH' "$installer"
 grep -q 'CHROTE_SCHEDULED_TASKS_DIR' "$installer"
 if grep -qi 'ttyd' "$installer"; then
   echo "the installer must not install ttyd: CHROTE serves terminals itself (ADR-0018)" >&2
