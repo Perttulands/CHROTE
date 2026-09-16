@@ -4,6 +4,7 @@ import LibraryView from './LibraryView'
 import { resetChordsForTest } from '../keys/chords'
 import { resetSurfacesForTest } from '../keys/dismiss'
 import { mountResident, resetResidentForTest } from '../residents/residentPresence'
+import type { Resident } from '../residents/residentsApi'
 import { DEFAULT_SETTINGS } from '../types'
 import type {
   LibraryChange,
@@ -20,6 +21,7 @@ const mockState = vi.hoisted(() => ({
   copy: vi.fn(),
   paste: vi.fn(),
   sessions: [] as { name: string; unixUser?: string }[],
+  residents: [] as Resident[],
   shelves: null as LibraryShelves | null,
   shelvesError: null as Error | null,
   changes: [] as LibraryChange[],
@@ -47,6 +49,15 @@ vi.mock('../utils/clipboard', () => ({
 vi.mock('../context/StatusContext', () => ({
   useStatus: () => ({ announce: mockState.announce }),
 }))
+
+vi.mock('../residents/residentsApi', async () => {
+  const actual = await vi.importActual<typeof import('../residents/residentsApi')>('../residents/residentsApi')
+  return {
+    ...actual,
+    readCachedResidents: () => null,
+    fetchResidents: () => Promise.resolve(mockState.residents),
+  }
+})
 
 vi.mock('./ResidentColumn', () => ({
   default: ({ tab, reference }: { tab: string; reference: string | null }) => (
@@ -87,13 +98,13 @@ beforeEach(() => {
   mockState.announce.mockReset()
   mockState.copy.mockReset()
   mockState.sessions = []
+  mockState.residents = []
   mockState.shelvesError = null
   mockState.saveError = null
   mockState.gitError = ''
   mockState.saved = []
   mockState.shelves = {
     root: '/corpus',
-    librarianSession: 'librarian',
     shelves: [
       { name: 'knowledge', path: 'knowledge', pages: 13 },
       { name: 'preferences', path: 'preferences', pages: 7 },
@@ -207,7 +218,7 @@ function pressEscape() {
 
 describe('LibraryView', () => {
   it('says so when no corpus is configured', async () => {
-    mockState.shelves = { root: '', shelves: [], librarianSession: '' }
+    mockState.shelves = { root: '', shelves: [] }
     render(<LibraryView />)
 
     expect(await screen.findByText('No library is configured')).toBeInTheDocument()
@@ -503,6 +514,9 @@ describe('LibraryView', () => {
 
   it('hands a page to the Librarian where he is running', async () => {
     mockState.sessions = [{ name: 'librarian', unixUser: 'alice' }]
+    mockState.residents = [
+      { tab: 'library', label: 'Librarian', session: 'librarian', folder: '/corpus', beads: '/corpus' },
+    ]
     await openLibrary()
     openShelf('preferences')
 

@@ -30,6 +30,7 @@ import { useStatus } from '../../context/StatusContext'
 import { useSurface } from '../../keys/dismiss'
 import { getSessionKey } from '../../types'
 import { pasteToResident } from '../../residents/residentPresence'
+import { fetchResidents, readCachedResidents } from '../../residents/residentsApi'
 import { copyAndAnnounce } from '../../utils/clipboard'
 import type { MenuGroup } from '../Menu'
 import MenuTarget from '../MenuTarget'
@@ -270,12 +271,16 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   const sendToLibrarian = useCallback(async (path: string) => {
     const reference = libraryReference(path)
     if (await pasteToResident(reference)) return
-    const name = shelves?.librarianSession ?? ''
+    // Who the Librarian is comes from /api/residents; the shelves route does
+    // not name him. The column in this same tab has read it by the time a row
+    // menu is open, and asking again costs nothing when it has not.
+    const residents = readCachedResidents() ?? await fetchResidents().catch(() => [])
+    const name = residents.find(entry => entry.tab === 'library')?.session ?? ''
     const live = name ? sessions.find(candidate => candidate.name === name) : undefined
     openSendToSession(live
       ? { targetSessionKey: getSessionKey(live.name, live.unixUser), reference }
       : { reference, launch: { label: 'Launch the Librarian', folder: root } })
-  }, [openSendToSession, root, sessions, shelves?.librarianSession])
+  }, [openSendToSession, root, sessions])
 
   // The shelves the operator has left off the map, remembered per device: a
   // library he is not working in today stays out of the picture until he asks
