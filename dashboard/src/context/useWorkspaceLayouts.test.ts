@@ -25,7 +25,6 @@ describe('dashboard persisted storage contract', () => {
 
     expect(store).toHaveProperty('chrote-dashboard-state')
     expect(store).toHaveProperty('chrote-dashboard-presets')
-    expect(featureFlagKey('uiV2')).toBe('chrote-ui-v2')
     expect(featureFlagKey('serverStatusTab')).toBe('chrote-server-status-tab')
     expect(DEFAULT_SETTINGS.mouseScroll).toBe(true)
 

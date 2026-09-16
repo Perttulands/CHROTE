@@ -37,7 +37,8 @@ type LibraryConfig struct {
 	// Author is the git identity the operator's edits are committed as, in
 	// "Name <email>" form. Empty refuses edits.
 	Author string
-	// LibrarianSession is the tmux session the Front desk talks to.
+	// LibrarianSession is the tmux session the Librarian lives in. The
+	// dashboard learns it from GET /api/residents, not from the shelves.
 	LibrarianSession string
 	// BeadsProject is the Librarian's own Beads store, named to the resident
 	// column by /api/residents. The Library tab itself reads no Beads.
@@ -94,14 +95,12 @@ type LibraryShelf struct {
 	Pages int    `json:"pages"`
 }
 
-// LibraryShelvesResponse is the body of GET /api/library/shelves. It carries
-// the configuration the tab needs to draw itself as well as the shelves: the
-// root says whether there is a library at all, and the session says whether
-// the Librarian has anything behind him.
+// LibraryShelvesResponse is the body of GET /api/library/shelves. The root
+// says whether there is a library at all; the Librarian himself is named by
+// GET /api/residents.
 type LibraryShelvesResponse struct {
-	Root             string         `json:"root"`
-	Shelves          []LibraryShelf `json:"shelves"`
-	LibrarianSession string         `json:"librarianSession"`
+	Root    string         `json:"root"`
+	Shelves []LibraryShelf `json:"shelves"`
 }
 
 // LibraryPage is one page as a shelf lists it.
@@ -442,9 +441,8 @@ func readLibraryFile(absolute string) (string, error) {
 // Shelves handles GET /api/library/shelves.
 func (h *LibraryHandler) Shelves(w http.ResponseWriter, r *http.Request) {
 	response := LibraryShelvesResponse{
-		Root:             h.config.Root,
-		Shelves:          make([]LibraryShelf, 0),
-		LibrarianSession: h.config.LibrarianSession,
+		Root:    h.config.Root,
+		Shelves: make([]LibraryShelf, 0),
 	}
 	if h.config.Root == "" {
 		core.WriteJSON(w, http.StatusOK, response)

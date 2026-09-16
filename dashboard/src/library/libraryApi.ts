@@ -17,7 +17,6 @@ export interface LibraryShelf {
 export interface LibraryShelves {
   root: string
   shelves: LibraryShelf[]
-  librarianSession: string
 }
 
 export interface LibraryPage {

@@ -145,16 +145,22 @@ export async function fetchBeadProjectList(): Promise<BeadProject[]> {
 export async function fetchBeadProjects(manualPaths: readonly string[] = []): Promise<BeadProject[]> {
   const [workspaces, manual] = await Promise.all([
     fetchWorkspaces({ beads: true, waitForBeads: true }),
-    manualPaths.length > 0
-      ? get<{ projects: BeadProject[] }>('/projects', { path: [...manualPaths] }).then(data => data.projects ?? [])
-      : Promise.resolve([] as BeadProject[]),
+    fetchManualBeadProjects(manualPaths),
   ])
-  const projects = workspaceProjects(workspaces)
+  return withManualProjects(workspaceProjects(workspaces), manual)
+}
+
+/** Only the stores the operator saved in Settings, without the workspace list. */
+export async function fetchManualBeadProjects(manualPaths: readonly string[]): Promise<BeadProject[]> {
+  if (manualPaths.length === 0) return []
+  const data = await get<{ projects: BeadProject[] }>('/projects', { path: [...manualPaths] })
+  return data.projects ?? []
+}
+
+/** The listed stores plus the manual ones they do not already cover. */
+export function withManualProjects(projects: BeadProject[], manual: BeadProject[]): BeadProject[] {
   const known = new Set(projects.map(project => project.path))
-  for (const project of manual) {
-    if (!known.has(project.path)) projects.push(project)
-  }
-  return projects
+  return [...projects, ...manual.filter(project => !known.has(project.path))]
 }
 
 /** The open work of one project, with the finished children of its open epics. */

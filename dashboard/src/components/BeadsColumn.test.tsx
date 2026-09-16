@@ -8,11 +8,17 @@ import BeadsColumn, { arrangeBeadsColumnGroups } from './BeadsColumn'
 const mockState = vi.hoisted(() => ({
   updateSettings: vi.fn(),
   projects: [] as BeadProject[],
+  manualProjects: [] as BeadProject[],
+  beadsProjectPaths: [] as string[],
+  workRequests: [] as string[],
   work: new Map<string, BeadWork | Error>(),
 }))
 
 vi.mock('../context/SessionContext', () => ({
-  useSession: () => ({ settings: DEFAULT_SETTINGS, updateSettings: mockState.updateSettings }),
+  useSession: () => ({
+    settings: { ...DEFAULT_SETTINGS, beadsProjectPaths: mockState.beadsProjectPaths },
+    updateSettings: mockState.updateSettings,
+  }),
 }))
 
 vi.mock('../beads/beadsApi', async () => {
@@ -20,8 +26,9 @@ vi.mock('../beads/beadsApi', async () => {
   return {
     ...actual,
     fetchBeadProjectList: () => Promise.resolve(mockState.projects),
-    fetchBeadProjects: () => Promise.resolve(mockState.projects),
+    fetchManualBeadProjects: () => Promise.resolve(mockState.manualProjects),
     fetchBeadWork: (path: string) => {
+      mockState.workRequests.push(path)
       const result = mockState.work.get(path)
       return result instanceof Error ? Promise.reject(result) : Promise.resolve(result)
     },
@@ -39,6 +46,9 @@ function CardProbe() {
 
 beforeEach(() => {
   mockState.updateSettings.mockReset()
+  mockState.manualProjects = []
+  mockState.beadsProjectPaths = []
+  mockState.workRequests = []
   mockState.projects = [
     { name: 'zeta', path: '/zeta', beadsPath: '/zeta/.beads', prefix: 'z', openBeads: 3 },
     { name: 'alpha', path: '/alpha', beadsPath: '/alpha/.beads', prefix: 'a', openBeads: 2 },
@@ -88,6 +98,23 @@ describe('the Beads column', () => {
 
     fireEvent.click(within(alpha.parentElement as HTMLElement).getByRole('button', { name: /a-ready/ }))
     await waitFor(() => expect(screen.getByTestId('card-request')).toHaveTextContent('a-ready'))
+  })
+
+  it('reads each store once when a manual path repeats a listed store', async () => {
+    mockState.beadsProjectPaths = ['/zeta', '/manual']
+    mockState.manualProjects = [
+      { name: 'zeta', path: '/zeta', beadsPath: '/zeta/.beads', prefix: 'z', openBeads: 3 },
+      { name: 'manual', path: '/manual', beadsPath: '/manual/.beads', prefix: 'm', openBeads: 1 },
+    ]
+    mockState.work.set('/manual', { prefix: 'm', projectPath: '/manual', beads: [
+      row('m-ready', 'open', '2026-09-04T00:00:00Z'),
+    ] })
+
+    render(<BeadsColumn open onClose={vi.fn()} />)
+
+    expect(await screen.findByText('m-ready')).toBeInTheDocument()
+    expect(mockState.workRequests.filter(path => path === '/zeta')).toHaveLength(1)
+    expect([...mockState.workRequests].sort()).toEqual(['/alpha', '/manual', '/zeta'])
   })
 
   it('lists a failed store without hiding readable work', async () => {

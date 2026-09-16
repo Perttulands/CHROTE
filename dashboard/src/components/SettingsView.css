@@ -41,58 +41,6 @@
   line-height: 1.5;
 }
 
-/* Radio Group */
-.settings-radio-group {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.settings-radio {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px 16px;
-  background-color: var(--surface-primary);
-  border: 1px solid var(--divider);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.settings-radio:hover {
-  border-color: var(--text-dim);
-}
-
-.settings-radio.selected {
-  border-color: var(--accent);
-  background-color: var(--accent-light);
-}
-
-.settings-radio input[type="radio"] {
-  margin-top: 2px;
-  accent-color: var(--accent);
-  width: 16px;
-  height: 16px;
-}
-
-.radio-label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.radio-label strong {
-  color: var(--text-primary);
-  font-size: 14px;
-}
-
-.radio-description {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
 /* Settings Fields */
 .settings-field {
   margin-bottom: 20px;
@@ -261,52 +209,6 @@
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-}
-
-.color-input-controls {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.color-picker {
-  width: 40px;
-  height: 32px;
-  padding: 0;
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  cursor: pointer;
-  background: transparent;
-}
-
-.color-picker::-webkit-color-swatch-wrapper {
-  padding: 2px;
-}
-
-.color-picker::-webkit-color-swatch {
-  border-radius: 2px;
-  border: none;
-}
-
-.color-text-input {
-  flex: 1;
-  padding: 6px 10px;
-  background-color: var(--surface-primary);
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  color: var(--text-primary);
-  font-family: monospace;
-  font-size: 12px;
-  outline: none;
-  transition: border-color 0.15s ease;
-}
-
-.color-text-input:hover {
-  border-color: var(--text-dim);
-}
-
-.color-text-input:focus {
-  border-color: var(--accent);
 }
 
 /* Beads Projects Section */

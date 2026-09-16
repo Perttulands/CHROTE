@@ -38,11 +38,6 @@ export default defineConfig({
         target: 'http://localhost:8090',
         ws: true,
       },
-      '/bv-terminal': {
-        target: 'http://localhost:8090',
-        changeOrigin: true,
-        ws: true,
-      },
       '/api': {
         target: 'http://localhost:8090',
         changeOrigin: true,
