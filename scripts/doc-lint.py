@@ -24,6 +24,7 @@ SHIPPED_VIEWS = [
     "Files",
     "Beads",
     "Library",
+    "Agents",
     "Scheduled",
     "Server",
     "Settings",

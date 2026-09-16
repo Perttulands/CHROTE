@@ -19,7 +19,7 @@ The host runs tmux, the CHROTE server, and the resources exposed through CHROTE.
 - Any command-line program can run in a CHROTE terminal. Core terminal behavior does not depend on a particular agent harness.
 - Painting a selection in a terminal copies it to the system clipboard. Under tmux mouse mode that is the browser's own selection gesture; tmux's copy-mode selection from a plain drag is separate and never reaches the system clipboard.
 - A leader chord reaches CHROTE's own actions from anywhere, including a focused terminal, shows what it offers while it waits, and is disabled entirely by a device-local toggle.
-- Send to Session is the one path for handing work to an agent: it opens beside the session it targets rather than over it, and carries a one-line reference to the object being handed over.
+- Send to Session is the one path for handing work to an agent: it draws in as a layer over the right edge of the view it was opened from, and carries a one-line reference to the object being handed over.
 - Send to Session reports delivery to tmux. It does not claim that the process consumed or understood the message.
 
 ## Files
@@ -52,6 +52,7 @@ The core product is terminal workspaces, sessions, files, server status, and set
 | Beads | Inspect and update configured project work stores |
 | Scheduled | Send prompts to named tmux sessions on a schedule |
 | Library | Read, search, and correct the configured context corpus |
+| Agents | Read the context a harness would get for any folder on the host |
 
 Beads, Library and Agents each host a resident agent, the Clerk, the Librarian and the tender, as a tmux session in a column at the right of the view; the one selected object, the table, is carried from view to view.
 
