@@ -13,7 +13,8 @@ import type { CSSProperties } from 'react'
 import { openBeadCard } from '../beads/beadCard'
 import {
   fetchBeadProjectList,
-  fetchBeadProjects,
+  fetchManualBeadProjects,
+  withManualProjects,
   fetchBeadWork,
   type BeadProject,
   type BeadWork,
@@ -101,7 +102,7 @@ export default function BeadsColumn({ open, onClose }: BeadsColumnProps) {
     if (!open) return
     let current = true
 
-    const readProjects = async (projects: BeadProject[]) => {
+    const readProjects = async (projects: BeadProject[], listError: string | null) => {
       const knownFailures = projects.flatMap(project => project.error
         ? [{ label: project.prefix || project.name, message: project.error }]
         : [])
@@ -122,20 +123,24 @@ export default function BeadsColumn({ open, onClose }: BeadsColumnProps) {
       setGroups(arrangeBeadsColumnGroups(loaded))
       setFailures([...knownFailures, ...requestFailures].sort((a, b) => a.label.localeCompare(b.label)))
       setLoading(false)
-      setError(null)
+      setError(listError)
     }
 
     setLoading(true)
     setError(null)
     fetchBeadProjectList()
       .then(async projects => {
-        await readProjects(projects)
-        if (!current || manualPaths.length === 0) return
+        // One work request per store: the manual paths join the listed stores
+        // before anything is read, so a store named twice is still read once.
+        let manual: BeadProject[] = []
+        let listError: string | null = null
         try {
-          await readProjects(await fetchBeadProjects(manualPaths))
+          manual = await fetchManualBeadProjects(manualPaths)
         } catch (cause) {
-          if (current) setError(cause instanceof Error ? cause.message : 'Could not list manual Beads stores')
+          listError = cause instanceof Error ? cause.message : 'Could not list manual Beads stores'
         }
+        if (!current) return
+        await readProjects(withManualProjects(projects, manual), listError)
       })
       .catch((cause: unknown) => {
         if (!current) return
