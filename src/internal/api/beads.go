@@ -291,10 +291,17 @@ func requiredIssueID(r *http.Request) (string, string, string) {
 	return id, "", ""
 }
 
+// requiredQueryValue reads a value that becomes a positional argument to bd.
+// A leading dash is refused here rather than handed over: exec.Command runs no
+// shell, but bd's own flag parser would read "--file=/tmp/x" as an option
+// instead of as the name or id it was asked for.
 func requiredQueryValue(r *http.Request, key string) (string, string, string) {
 	value := strings.TrimSpace(r.URL.Query().Get(key))
 	if value == "" {
 		return "", "BAD_REQUEST", "Missing required parameter: " + key
+	}
+	if strings.HasPrefix(value, "-") {
+		return "", "BAD_REQUEST", key + " must not start with a dash: " + value
 	}
 	return value, "", ""
 }

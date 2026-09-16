@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -627,6 +628,51 @@ func TestBeadsHandler_FormulaAndMoleculeRoutesPreserveCLIDataAndExactCommands(t 
 	shownMolecule := data[3]["molecule"].(map[string]interface{})
 	if shownMolecule["variables"].(map[string]interface{})["target"] != "prod" || len(shownMolecule["dependencies"].([]interface{})) != 1 {
 		t.Errorf("molecule detail lost state or dependencies: %#v", shownMolecule)
+	}
+}
+
+// The formula and molecule routes are the only ones that hand a query value to
+// bd as a positional argument. exec.Command runs no shell, but bd's own flag
+// parser would read a leading dash as an option, so such a value is refused
+// before bd is reached at all.
+func TestBeadsHandler_RefusesOptionLikeNamesAndIDsWithoutRunningBd(t *testing.T) {
+	rootDir := t.TempDir()
+	projectPath := filepath.Join(rootDir, "project")
+	makeValidBeadsWorkspace(t, projectPath)
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	_, argsPath := makeSequencedBdCommand(t, "{}")
+	handler := NewBeadsHandler()
+
+	cases := []struct {
+		name string
+		path string
+		call func(http.ResponseWriter, *http.Request)
+	}{
+		{
+			name: "formula name",
+			path: "/api/beads/formula?path=" + projectPath + "&name=" + url.QueryEscape("--file=/tmp/secret"),
+			call: handler.FormulaDetail,
+		},
+		{
+			name: "molecule id",
+			path: "/api/beads/molecule?path=" + projectPath + "&id=" + url.QueryEscape("-o/tmp/secret"),
+			call: handler.MoleculeDetail,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			testCase.call(rec, httptest.NewRequest(http.MethodGet, testCase.path, nil))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+		})
+	}
+	// The fake bd writes its argv the first time it runs, so an args file at
+	// all means one of those values reached the CLI.
+	if _, err := os.Stat(argsPath); !os.IsNotExist(err) {
+		t.Fatalf("bd ran %#v, want no invocation", readSequencedBdCalls(t, argsPath))
 	}
 }
 
