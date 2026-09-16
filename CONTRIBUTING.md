@@ -103,6 +103,11 @@ CI verifies the repository and installed product; host deployment is separate.
 Run `govulncheck` and `npm audit --audit-level=moderate` when dependencies change.
 CI has no scheduled dependency-scan job.
 
+Change dashboard dependencies with npm 11, as `npx npm@11 install <pkg>` or
+`npx npm@11 audit fix`. npm 10.9.7 fails to re-resolve this lockfile and exits
+with `Cannot read properties of null (reading edgesOut)`. Installing the
+lockfile unchanged with `npm ci` works on either line.
+
 ## Documentation rules
 
 - `VISION.md` owns product intent, `PRD.md` owns durable requirements, and
