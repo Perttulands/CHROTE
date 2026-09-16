@@ -100,6 +100,25 @@ func (s *agentEventStore) markSeen(unixUser, session string) (core.AgentEvent, b
 	return event, true
 }
 
+// rename carries a session's mark to the name it now has. The server performs
+// the rename, so it knows both names; without this the next listing sees no
+// session under the old name, prunes the entry as gone, and the operator loses
+// an unseen event from a session that still wants attention.
+func (s *agentEventStore) rename(unixUser, oldName, newName string) {
+	if oldName == newName {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	oldKey := agentEventKey{unixUser: unixUser, session: oldName}
+	event, ok := s.events[oldKey]
+	if !ok {
+		return
+	}
+	delete(s.events, oldKey)
+	s.events[agentEventKey{unixUser: unixUser, session: newName}] = event
+}
+
 // attach puts each listed session's last event on it and forgets the events
 // of this user's sessions that the listing no longer shows. The listing is
 // the one place the live set is known, so this is where the store's bound

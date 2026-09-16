@@ -999,6 +999,9 @@ func (h *TmuxHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return
 	}
+	// The session is the same session; only its name changed. Its unseen agent
+	// event moves with it, or the next listing would prune it as gone.
+	h.events.rename(target.unixUser, oldName, req.NewName)
 
 	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"success":   true,

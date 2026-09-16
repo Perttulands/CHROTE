@@ -409,3 +409,62 @@ func TestCreateSessionWithoutHooksTypesTheCommandAlone(t *testing.T) {
 		t.Fatalf("response notify = %v, want false: %#v", response["notify"], response)
 	}
 }
+
+// A rename does not make a session a different session. Its unseen event is
+// still the reason the operator has not looked at it yet, so it moves with the
+// name; a refused rename changes nothing.
+func TestAgentEventFollowsARenamedSession(t *testing.T) {
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
+	inventory := filepath.Join(t.TempDir(), "inventory")
+	const alphaRow = "$1\talpha\t1\t0\t/srv/work\tclaude\t1\t200\t50\tlatest\t1\t\t1725400000\n"
+	if err := os.WriteFile(inventory, []byte(alphaRow), 0o600); err != nil {
+		t.Fatalf("write inventory: %v", err)
+	}
+	t.Setenv("TMUX_INVENTORY_FILE", inventory)
+	installScriptedTmux(t, `
+case "$*" in
+  *"has-session -t =alpha"*) exit 0 ;;
+  *"rename-session -t alpha taken"*) printf 'duplicate session: taken\n' >&2; exit 1 ;;
+  *"rename-session -t alpha gamma"*)
+    printf '$1\tgamma\t1\t0\t/srv/work\tclaude\t1\t200\t50\tlatest\t1\t\t1725400000\n' > "$TMUX_INVENTORY_FILE"
+    exit 0
+    ;;
+  *"list-sessions -F "*) cat "$TMUX_INVENTORY_FILE"; exit 0 ;;
+esac
+`)
+	tmux := NewTmuxHandler()
+	mux := http.NewServeMux()
+	tmux.RegisterRoutes(mux)
+	NewAgentEventHandler(tmux).RegisterRoutes(mux)
+
+	if recorder := postJSON(t, mux, "/api/agent/event", `{"session":"alpha","event":"needs-input","summary":"waiting on you"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("event status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	rename := func(newName string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, "/api/tmux/sessions/alpha", bytes.NewBufferString(`{"newName":"`+newName+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	if recorder := rename("taken"); recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("refused rename status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if event := listedSessions(t, mux)["alpha"].LastEvent; event == nil || event.Seen {
+		t.Fatalf("after a refused rename, alpha lastEvent = %+v, want the unseen event kept", event)
+	}
+
+	if recorder := rename("gamma"); recorder.Code != http.StatusOK {
+		t.Fatalf("rename status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+	gamma := listedSessions(t, mux)["gamma"].LastEvent
+	if gamma == nil || gamma.Seen || gamma.Event != "needs-input" || gamma.Summary != "waiting on you" {
+		t.Fatalf("gamma lastEvent = %+v, want the unseen needs-input carried over", gamma)
+	}
+	if _, stale := tmux.events.markSeen("alice", "alpha"); stale {
+		t.Fatal("the old name kept a mark of its own")
+	}
+}
