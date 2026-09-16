@@ -16,20 +16,10 @@ export type Tab = WorkspaceId | 'files' | 'beads' | 'library' | 'agents' | 'sche
 /** The counts a workspace can show, as the grid classes and the clamp allow. */
 const WINDOW_COUNTS = [1, 2, 3, 4] as const
 
-interface InternalTab {
+interface TabConfig {
   id: Tab
   label: string
-  external?: false
 }
-
-interface ExternalTab {
-  id: string
-  label: string
-  external: true
-  url: string
-}
-
-type TabConfig = InternalTab | ExternalTab
 
 interface TabBarProps {
   activeTab: Tab
@@ -79,7 +69,7 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
   }, [renaming?.workspaceId])
 
   const tabs: TabConfig[] = [
-    ...workspaceIds.map((id): InternalTab => ({ id, label: settings.terminalLabels[id]?.trim() || getTerminalLabel(id) })),
+    ...workspaceIds.map((id): TabConfig => ({ id, label: settings.terminalLabels[id]?.trim() || getTerminalLabel(id) })),
     { id: 'files', label: 'Files' },
     { id: 'beads', label: 'Beads' },
     { id: 'library', label: 'Library' },
@@ -90,12 +80,8 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
   ]
 
   const handleClick = (tab: TabConfig) => {
-    if (tab.external) {
-      window.open(tab.url, '_blank', 'noopener,noreferrer')
-    } else {
-      onTabChange(tab.id)
-      setMobileMenuOpen(false)
-    }
+    onTabChange(tab.id)
+    setMobileMenuOpen(false)
   }
 
   const activeTabLabel = tabs.find(t => t.id === activeTab)?.label || 'Menu'
@@ -281,7 +267,7 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
   ]
 
   const renderTab = (tab: TabConfig) => {
-    if (!tab.external && renaming?.workspaceId === tab.id) {
+    if (renaming?.workspaceId === tab.id) {
       return (
         <input
           key={tab.id}
@@ -301,12 +287,12 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
     }
     // The active terminal tab is its own menu trigger: a caret appears on hover
     // and the secondary button opens the same menu anywhere on the tab.
-    const carries = !tab.external && tab.id === activeTab && activeTerminalWorkspace !== null
+    const carries = tab.id === activeTab && activeTerminalWorkspace !== null
     return (
       <button
         key={tab.id}
         data-ui="tabbar.tab"
-        className={`tab ${!tab.external && activeTab === tab.id ? 'active' : ''} ${tab.external ? 'external' : ''} ${carries ? 'tab-with-menu' : ''} ${carries && tabMenu ? 'dismissible-trigger-active' : ''}`}
+        className={`tab ${activeTab === tab.id ? 'active' : ''} ${carries ? 'tab-with-menu' : ''} ${carries && tabMenu ? 'dismissible-trigger-active' : ''}`}
         aria-haspopup={carries ? 'menu' : undefined}
         aria-expanded={carries ? tabMenu !== null : undefined}
         onClick={event => {
@@ -327,10 +313,9 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
           event.preventDefault()
           openActiveTabMenu(event.currentTarget)
         }}
-        title={tab.external ? `Open ${tab.label.replace(' ↗', '')} in new tab` : undefined}
       >
         {tab.label}
-        {!tab.external && isTerminalWorkspaceId(tab.id, workspaceIds) && (
+        {isTerminalWorkspaceId(tab.id, workspaceIds) && (
           <span className={`tab-event-mark ${tabCarriesMark(tab.id) ? 'on' : ''}`} aria-hidden="true" />
         )}
         {carries && <span className="tab-menu-caret" aria-hidden="true">▾</span>}
@@ -359,11 +344,11 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
-                  className={`mobile-nav-item ${!tab.external && activeTab === tab.id ? 'active' : ''}`}
+                  className={`mobile-nav-item ${activeTab === tab.id ? 'active' : ''}`}
                   onClick={() => handleClick(tab)}
                 >
                   {tab.label}
-                  {!tab.external && isTerminalWorkspaceId(tab.id, workspaceIds) && (
+                  {isTerminalWorkspaceId(tab.id, workspaceIds) && (
                     <span className={`tab-event-mark ${tabCarriesMark(tab.id) ? 'on' : ''}`} aria-hidden="true" />
                   )}
                 </button>

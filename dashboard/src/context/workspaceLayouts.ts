@@ -96,11 +96,12 @@ function mergeTerminalSessionPrefixes(raw: unknown, legacyPrefix: unknown, rawLa
 }
 
 // Settings the dashboard no longer has. The host owns the theme now, and the
-// tmux palette, the per-user badge colours and the music went with it, so a
-// browser holding an older state file must keep loading — these keys are read
-// past, not carried forward.
+// tmux palette, the per-user badge colours and the music went with it; tmux is
+// the only terminal mode there has ever been. A browser holding an older state
+// file must keep loading — these keys are read past, not carried forward.
 const RETIRED_SETTING_KEYS = [
   'theme', 'tmuxAppearance', 'terminalUserColors', 'musicVolume', 'musicEnabled',
+  'terminalMode',
 ]
 
 function mergeSettings(rawSettings: unknown): UserSettings {

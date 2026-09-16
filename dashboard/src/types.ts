@@ -113,7 +113,6 @@ export function getTerminalUserInitial(user: LaunchUser): string {
 export type BeadsViewSetting = 'map' | 'ready' | 'flow' | 'stale' | 'closed'
 
 export interface UserSettings {
-  terminalMode: 'tmux'              // Terminal mode (tmux only)
   terminalTabCount: number           // Visible terminal tabs (1-6); shrinking hides, never deletes
   fontSize: number                   // Terminal font size (12-20)
   autoRefreshInterval: number        // Session refresh interval in ms (1000-30000)
@@ -144,7 +143,6 @@ export interface UserSettings {
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
-  terminalMode: 'tmux',
   terminalTabCount: DEFAULT_TERMINAL_TAB_COUNT,
   fontSize: 14,
   autoRefreshInterval: 5000,
