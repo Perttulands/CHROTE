@@ -91,7 +91,7 @@ def check_links(errors: list[str]) -> None:
         if not path.is_file():
             continue
         parts = path.relative_to(ROOT).parts
-        if "archive" in parts or "plans" in parts or parts[:2] == ("docs", "adr"):
+        if parts[:2] == ("docs", "adr"):
             continue
         for match in LINK_PATTERN.finditer(path.read_text(encoding="utf-8", errors="replace")):
             raw = match.group(1).strip()

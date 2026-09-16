@@ -7,7 +7,6 @@ import re
 import subprocess
 import sys
 
-EXEMPT_PREFIXES = ("docs/archive/", "docs/plans/")
 EXEMPT_FILES = {"scripts/host-neutrality.py"}
 ALLOW_LINE = re.compile(r"perttus_vision_for_agent_teams_and_orchestration", re.IGNORECASE)
 
@@ -45,7 +44,7 @@ def tracked() -> list[str]:
 def scan(paths: list[str], rules) -> list[tuple[str, int, str, str]]:
     hits = []
     for path in paths:
-        if path in EXEMPT_FILES or path.startswith(EXEMPT_PREFIXES):
+        if path in EXEMPT_FILES:
             continue
         try:
             lines = open(path, encoding="utf-8", errors="strict").readlines()
