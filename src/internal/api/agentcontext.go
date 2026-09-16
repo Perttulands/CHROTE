@@ -204,7 +204,7 @@ func (h *AgentContextHandler) Context(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	core.WriteJSON(w, http.StatusOK, h.resolve(folder, harness, unixUser, home))
+	core.WriteSuccess(w, h.resolve(folder, harness, unixUser, home))
 }
 
 // File handles GET /api/agent/file. The path has to be one the context route
@@ -251,7 +251,7 @@ func (h *AgentContextHandler) File(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Cannot read "+requested+": "+err.Error())
 		return
 	}
-	core.WriteJSON(w, http.StatusOK, AgentFileResponse{Path: filepath.Clean(requested), Content: string(content)})
+	core.WriteSuccess(w, AgentFileResponse{Path: filepath.Clean(requested), Content: string(content)})
 }
 
 // validateFolder answers with the folder to resolve, or with the code and

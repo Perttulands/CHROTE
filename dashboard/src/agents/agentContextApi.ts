@@ -58,10 +58,23 @@ export interface AgentContext {
 
 const REQUEST_TIMEOUT_MS = 20000
 
+/**
+ * Both agent routes answer in the server's one envelope — {success, data,
+ * timestamp} — whether they succeeded or refused, so the answer is read the
+ * same way either way and the error message comes from the same body.
+ */
 async function getJson<T>(url: string, failure: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
-  if (!response.ok) throw new Error(apiErrorMessage(await response.text(), failure))
-  return await response.json() as T
+  const text = await response.text()
+  if (!response.ok) throw new Error(apiErrorMessage(text, failure))
+  let envelope: { success?: boolean; data?: T }
+  try {
+    envelope = JSON.parse(text) as { success?: boolean; data?: T }
+  } catch {
+    throw new Error(failure)
+  }
+  if (!envelope.success || envelope.data === undefined) throw new Error(apiErrorMessage(text, failure))
+  return envelope.data
 }
 
 function contextQuery(folder: string, harness: AgentHarness, user: string): string {

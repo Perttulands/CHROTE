@@ -647,6 +647,11 @@ export async function mockBeadsProjectsRoute(page: Page, projectsResponse?: obje
   })
 }
 
+/** The success envelope the server answers every route in. */
+function envelope(data: unknown) {
+  return { success: true, data, timestamp: '2026-09-16T00:00:00Z' }
+}
+
 export async function mockAgentContextApiRoutes(page: Page) {
   await page.route('**/api/agent/context**', async route => {
     const url = new URL(route.request().url())
@@ -656,7 +661,7 @@ export async function mockAgentContextApiRoutes(page: Page) {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({
+      body: JSON.stringify(envelope({
         folder,
         harness,
         user,
@@ -669,7 +674,7 @@ export async function mockAgentContextApiRoutes(page: Page) {
         }],
         skills: [],
         memories: [],
-      }),
+      })),
     })
   })
 }

@@ -527,11 +527,29 @@ func TestAgentContextRoute_ReportsTheFolderHarnessAndUserItAnswered(t *testing.T
 
 	recorder := host.get(t, "/api/agent/context?folder="+folder+"&harness=claude-code&user=operator")
 	var response AgentContextResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode: %v: %s", err, recorder.Body.String())
-	}
+	decodeAgentEnvelope(t, recorder, &response)
 	if response.Folder != folder || response.Harness != harnessClaudeCode || response.User != "operator" {
 		t.Fatalf("response = %+v, want the request's folder, harness and user", response)
+	}
+}
+
+// decodeAgentEnvelope reads a success body through the shared {success, data,
+// timestamp} envelope every route answers in, so a route that went back to a
+// bare body fails here rather than in the browser.
+func decodeAgentEnvelope(t *testing.T, recorder *httptest.ResponseRecorder, into interface{}) {
+	t.Helper()
+	var envelope struct {
+		Success bool            `json:"success"`
+		Data    json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode envelope: %v: %s", err, recorder.Body.String())
+	}
+	if !envelope.Success {
+		t.Fatalf("success = false, want true: %s", recorder.Body.String())
+	}
+	if err := json.Unmarshal(envelope.Data, into); err != nil {
+		t.Fatalf("decode data: %v: %s", err, recorder.Body.String())
 	}
 }
 
@@ -551,9 +569,7 @@ func TestAgentFileRoute_ServesOnlyWhatTheStackLists(t *testing.T) {
 			t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
 		}
 		var response AgentFileResponse
-		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		decodeAgentEnvelope(t, recorder, &response)
 		if response.Content != "# project\n" {
 			t.Fatalf("content = %q, want the file's", response.Content)
 		}
@@ -565,9 +581,7 @@ func TestAgentFileRoute_ServesOnlyWhatTheStackLists(t *testing.T) {
 			t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
 		}
 		var response AgentFileResponse
-		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		decodeAgentEnvelope(t, recorder, &response)
 		if response.Content != "# Review\n" {
 			t.Fatalf("content = %q, want the skill manifest's", response.Content)
 		}

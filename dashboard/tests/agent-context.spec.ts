@@ -31,7 +31,7 @@ async function mockAgentContextRoutes(page: Page) {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({
+      body: JSON.stringify({ success: true, timestamp: '2026-09-16T00:00:00Z', data: {
         folder: '/srv/chrote',
         harness: 'claude-code',
         user: '',
@@ -56,7 +56,7 @@ async function mockAgentContextRoutes(page: Page) {
             readable: true,
           },
         ],
-      }),
+      } }),
     })
   })
 }
