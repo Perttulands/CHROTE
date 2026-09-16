@@ -76,12 +76,6 @@ func (h *BeadsHandler) getBdVersion() (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-// checkBdInstalled checks if bd is available.
-func (h *BeadsHandler) checkBdInstalled() bool {
-	_, err := h.getBdVersion()
-	return err == nil
-}
-
 // checkBeadsDirectory verifies the project carries a readable modern bd workspace
 func (h *BeadsHandler) checkBeadsDirectory(projectPath string) (string, error) {
 	beadsPath := filepath.Join(projectPath, ".beads")
@@ -134,11 +128,6 @@ func effectiveUsername() string {
 		return current.Username
 	}
 	return fmt.Sprintf("uid %d", os.Geteuid())
-}
-
-func isDirectory(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }
 
 func configuredBeadsWorkspaces() []string {

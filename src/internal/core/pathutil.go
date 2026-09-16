@@ -74,12 +74,6 @@ func IsPathUnderRoot(path, root string) bool {
 	return absPath == absRoot || strings.HasPrefix(absPath, absRoot+string(os.PathSeparator))
 }
 
-// FileExists checks if a file exists
-func FileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
 // GetWorkDir returns the default working directory for new sessions
 // Reads from CHROTE_WORKDIR env var, defaults to first allowed root
 func GetWorkDir() string {
