@@ -10,9 +10,6 @@ on:
 permissions:
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 # One serial job measured 5m46s, and 69% of it was the dashboard step waiting on
 # a browser suite pinned to a single worker. The work splits along its real
 # dependencies instead: only the jobs that compile the server need the embedded
@@ -24,7 +21,7 @@ jobs:
     outputs:
       full: ${{ steps.classify.outputs.full }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Select documentation or full product checks
@@ -39,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Documentation and host neutrality
         run: |
           python3 scripts/doc-lint.py
@@ -55,14 +52,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
           cache-dependency-path: src/go.sum
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
@@ -79,7 +76,7 @@ jobs:
       # The stamp travels with the bundle: check-embedded-dashboard.py needs both
       # and reports "bundle or stamp missing" if it gets only one.
       - name: Publish the embedded bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: embedded-dashboard
           path: |
@@ -89,7 +86,7 @@ jobs:
           retention-days: 1
 
       - name: Publish the server binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chrote-server
           path: chrote-server-ci
@@ -100,9 +97,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
           cache-dependency-path: src/go.sum
@@ -110,7 +107,7 @@ jobs:
       # The embed directive fails to compile without a bundle on disk, so the
       # Go job takes the one build already produced rather than installing Node.
       - name: Take the embedded bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: embedded-dashboard
           path: src/internal/dashboard
@@ -132,9 +129,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
@@ -155,9 +152,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
@@ -176,7 +173,7 @@ jobs:
 
       - name: Upload browser failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: browser-failure
           path: |
@@ -192,22 +189,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
       - name: Take the embedded bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: embedded-dashboard
           path: src/internal/dashboard
 
       - name: Take the server binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: chrote-server
 
@@ -244,7 +241,7 @@ jobs:
 
       - name: Upload contract failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: contract-failure
           path: |
