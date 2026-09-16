@@ -42,7 +42,6 @@ dashboard/.vite/
 dashboard/dist/
 dashboard/coverage/
 dashboard/playwright-report/
-dashboard/public/music/*.mp3
 
 README.md.backup
 
