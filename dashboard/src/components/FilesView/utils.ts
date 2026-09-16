@@ -1,5 +1,3 @@
-import { FileItem } from './types'
-
 export function formatSize(bytes: number): string {
   if (bytes === 0) return '-'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -26,37 +24,4 @@ export function formatDate(dateStr: string): string {
   if (diffDays < 7) return `${diffDays} days ago`
 
   return date.toLocaleDateString()
-}
-
-export function getFileIcon(item: FileItem): string {
-  if (item.isDir) return '📁'
-
-  const ext = item.name.split('.').pop()?.toLowerCase() || ''
-  const iconMap: Record<string, string> = {
-    // Code
-    js: '📜', ts: '📜', jsx: '📜', tsx: '📜',
-    py: '🐍', rb: '💎', go: '🔵', rs: '🦀',
-    java: '☕', c: '⚙️', cpp: '⚙️', h: '⚙️',
-    cs: '🔷', php: '🐘', swift: '🍎',
-    // Web
-    html: '🌐', css: '🎨', scss: '🎨', less: '🎨',
-    // Data
-    json: '📋', yaml: '📋', yml: '📋', xml: '📋',
-    csv: '📊', sql: '🗄️',
-    // Documents
-    md: '📝', txt: '📄', pdf: '📕', doc: '📘', docx: '📘',
-    xls: '📗', xlsx: '📗', ppt: '📙', pptx: '📙',
-    // Media
-    png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', svg: '🖼️', webp: '🖼️',
-    mp3: '🎵', wav: '🎵', flac: '🎵', ogg: '🎵',
-    mp4: '🎬', mkv: '🎬', avi: '🎬', mov: '🎬', webm: '🎬',
-    // Archives
-    zip: '📦', tar: '📦', gz: '📦', rar: '📦', '7z': '📦',
-    // Config
-    env: '🔐', gitignore: '🚫', dockerfile: '🐳',
-    // Shell
-    sh: '💻', bash: '💻', zsh: '💻', fish: '💻',
-  }
-
-  return iconMap[ext] || '📄'
 }

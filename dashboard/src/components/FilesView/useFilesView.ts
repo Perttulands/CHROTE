@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent, MouseEvent as ReactMouseEvent } from 'react'
-import { toDisplayPath } from './types'
 import type {
   ContextMenuState,
   CreateIntent,
@@ -609,7 +608,7 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
   }
 
   const copyPath = (path: string) => {
-    void copyAndAnnounce(toDisplayPath(path), toDisplayPath(path), announce)
+    void copyAndAnnounce(path, path, announce)
     setContextMenu(null)
   }
 
@@ -619,7 +618,7 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
 
   const copySelectedPaths = (targets: FileItem[]) => {
     if (targets.length === 0) return
-    const shown = targets.map(target => toDisplayPath(target.path))
+    const shown = targets.map(target => target.path)
     void copyAndAnnounce(shown.join('\n'), shown.length === 1 ? shown[0] : `${shown.length} paths`, announce)
     setContextMenu(null)
   }

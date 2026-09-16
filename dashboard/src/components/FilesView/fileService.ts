@@ -515,78 +515,8 @@ export async function uploadFiles(path: string, files: FileList | File[]): Promi
 }
 
 /**
- * Check if a path exists (used by InboxPanel)
- * Returns true/false, does not throw on 404
- */
-export async function pathExists(path: string): Promise<boolean> {
-  try {
-    const response = await fetch(`${API_BASE}/resources${path}`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
-      signal: AbortSignal.timeout(10000),
-    })
-    return response.ok
-  } catch {
-    return false
-  }
-}
-
-/**
  * Get download URL for a file
  */
 export function getDownloadUrl(path: string): string {
   return `${API_BASE}/raw${path}?inline=false`
-}
-
-/**
- * Represents a file with its relative path within a folder
- */
-export interface FileWithPath {
-  file: File
-  relativePath: string
-}
-
-/**
- * Upload files preserving directory structure
- * Used for folder uploads where files have relative paths
- * SECURITY: Sanitizes each path component to prevent path traversal
- */
-export async function uploadFilesWithPaths(basePath: string, filesWithPaths: FileWithPath[]): Promise<void> {
-  for (const { file, relativePath } of filesWithPaths) {
-    // SECURITY: Sanitize each path component
-    const pathParts = relativePath.split('/').filter(p => p.length > 0)
-    const sanitizedParts = pathParts.map(part => sanitizeFilename(part))
-    const safePath = sanitizedParts.join('/')
-
-    const fullPath = basePath === '/' ? `/${safePath}` : `${basePath}/${safePath}`
-
-    let response: Response
-    try {
-      response = await fetch(`${API_BASE}/resources${fullPath}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': file.type || 'application/octet-stream',
-        },
-        body: file,
-        signal: AbortSignal.timeout(30000),
-      })
-    } catch (error) {
-      throw new FileOperationError(
-        error instanceof Error ? error.message : 'Network error',
-        'NETWORK'
-      )
-    }
-
-    if (response.status === 413) {
-      throw new FileOperationError('File too large', 'STORAGE', 413)
-    }
-
-    if (response.status === 507) {
-      throw new FileOperationError('Insufficient storage', 'STORAGE', 507)
-    }
-
-    throwForStatus(response, `Failed to upload ${safePath}`)
-  }
 }

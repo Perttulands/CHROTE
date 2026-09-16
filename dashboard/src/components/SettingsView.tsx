@@ -6,7 +6,6 @@ import type { WorkspaceId, LaunchUser } from '../types'
 import { MAX_TERMINAL_TAB_COUNT, MIN_TERMINAL_TAB_COUNT, defaultSessionPrefixForUser, getSessionPrefixForUser, getTerminalLabel, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import FolderField from './FolderField'
 import { useConfirmInPlace } from './confirmInPlace'
-import { toDisplayPath } from './FilesView/types'
 import { askNotificationPermission, notificationPermissionWord } from '../agents/browserNotifications'
 import { audioContext, playTone } from '../agents/tones'
 import type { AgentEventKind } from '../types'
@@ -449,7 +448,7 @@ function SettingsView() {
           {settings.beadsProjectPaths && settings.beadsProjectPaths.length > 0 ? (
             settings.beadsProjectPaths.map(path => (
               <div key={path} className="beads-project-item">
-                <span className="beads-project-path">{toDisplayPath(path)}</span>
+                <span className="beads-project-path">{path}</span>
                 <button
                   type="button"
                   className="beads-project-remove"
