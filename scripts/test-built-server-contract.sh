@@ -22,6 +22,18 @@ if [ -n "${CHROTE_CONTRACT_ARTIFACT_DIR:-}" ]; then
     echo "Contract artifact directory already exists: $artifact_root" >&2
     exit 1
   fi
+  # A Unix socket path lives in sockaddr_un.sun_path, 108 bytes including the
+  # terminator. The tmux server this run starts binds "$artifact_root/tmux/
+  # default", so a root long enough to push that past the limit only shows up
+  # as "File name too long" from a tmux that has already been started. Refuse
+  # the root here, before anything exists to clean up. Agent scratchpad paths
+  # are long enough to hit this.
+  sun_path_limit=108
+  probe_socket="$artifact_root/tmux/default"
+  if [ "${#probe_socket}" -ge "$sun_path_limit" ]; then
+    echo "CHROTE_CONTRACT_ARTIFACT_DIR is too long: its tmux socket path would be ${#probe_socket} bytes, and a Unix socket path must be under $sun_path_limit bytes (sockaddr_un.sun_path). Name a shorter directory." >&2
+    exit 1
+  fi
   mkdir -p "$artifact_root"
 else
   artifact_root="$(mktemp -d "${TMPDIR:-/tmp}/chrote-tmux.XXXXXX")"
