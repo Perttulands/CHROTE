@@ -848,7 +848,6 @@ const libraryArrivedAt = new Date(Date.now() - 2 * 86_400_000).toISOString()
 
 export const mockLibraryShelves = {
   root: '/corpus',
-  librarianSession: 'hq-deacon',
   shelves: [
     { name: 'knowledge', path: 'knowledge', pages: 2 },
     { name: 'preferences', path: 'preferences', pages: 2 },
