@@ -332,9 +332,11 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
 
   // The Folder field's Enter launches with what it just chose, which the
   // state has not caught up with yet; everything else launches where it is.
+  // The name follows the folder actually launched, not the fragment typed
+  // to find it, unless the operator wrote a name of his own.
   const launch = useCallback(async (inFolder: string = folder) => {
-    const sessionName = name.trim()
     const cwd = inFolder.trim()
+    const sessionName = (typedName ?? initialName ?? derivedSessionName(harness.id, cwd, sessions, user)).trim()
     if (!sessionName || !cwd || launching) return
     setLaunching(true)
     try {
@@ -351,7 +353,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
     } finally {
       setLaunching(false)
     }
-  }, [attachTo, createSession, flagLine, flagsOffered, folder, harness.id, launching, name, notify, onLaunched, user, workspaceId])
+  }, [attachTo, createSession, flagLine, flagsOffered, folder, harness.id, initialName, launching, notify, onLaunched, sessions, typedName, user, workspaceId])
 
   const setNotifyPreference = useCallback((enabled: boolean) => {
     setNotify(enabled)

@@ -23,7 +23,12 @@ vi.mock('../context/SessionContext', () => ({
 
 vi.mock('../workspaces/workspacesApi', async () => {
   const actual = await vi.importActual<typeof import('../workspaces/workspacesApi')>('../workspaces/workspacesApi')
-  return { ...actual, fetchWorkspaces: () => Promise.resolve([]) }
+  return {
+    ...actual,
+    fetchWorkspaces: () => Promise.resolve([
+      { path: '/srv/chrote-agent-formations', sources: ['git'], sessions: [], instructions: 1 },
+    ]),
+  }
 })
 
 vi.mock('./FilesView/fileService', async () => {
@@ -231,6 +236,21 @@ describe('Launcher', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
       name: 'claude-picked',
       cwd: '/srv/picked',
+    })))
+  })
+
+  it('names the session after the folder the Folder field chose, not the fragment typed to find it', async () => {
+    render(<Launcher workspaceId="terminal3" />)
+
+    const field = await screen.findByLabelText('Folder')
+    fireEvent.change(field, { target: { value: 'forma' } })
+    await waitFor(() => expect(folderOptions()).toEqual(['/srv/chrote-agent-formations']))
+
+    fireEvent.keyDown(field, { key: 'Enter' })
+
+    await waitFor(() => expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'claude-chrote-agent-formations',
+      cwd: '/srv/chrote-agent-formations',
     })))
   })
 
