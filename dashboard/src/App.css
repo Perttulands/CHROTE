@@ -99,16 +99,6 @@
   visibility: visible;
 }
 
-.tab.external {
-  color: var(--text-dim);
-  opacity: 0.8;
-}
-
-.tab.external:hover {
-  color: var(--accent);
-  opacity: 1;
-}
-
 /* Keys toggle dropdown menu */
 .keys-menu-container {
   position: relative;

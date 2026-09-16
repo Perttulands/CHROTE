@@ -15,7 +15,6 @@ export default tseslint.config(
       'dist/**',
       'node_modules/**',
       'playwright-report/**',
-      'run-test-with-console.cjs',
       'test-results/**',
     ],
   },
