@@ -96,6 +96,19 @@ describe('AgentStack', () => {
     expect(screen.getByText('links to AGENTS.md')).toBeInTheDocument()
   })
 
+  // A rule limited by its paths frontmatter is still a rule of the rung it was
+  // found on, so the row says both rather than trading one for the other.
+  it('keeps a conditional rule on its rung and says what limits it', () => {
+    render(<AgentStack context={context({
+      instructions: [
+        { path: '/srv/chrote/.claude/rules/go.md', scope: 'project', kind: 'rule', readable: true, size: 240, paths: ['src/**/*.go'] },
+      ],
+    })} />)
+
+    expect(screen.getByText('project')).toBeInTheDocument()
+    expect(screen.getByText('only for src/**/*.go')).toBeInTheDocument()
+  })
+
   it('reads a file only when its row is opened', async () => {
     render(<AgentStack context={context()} />)
     expect(mockState.fetchAgentFile).not.toHaveBeenCalled()

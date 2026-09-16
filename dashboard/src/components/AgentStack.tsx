@@ -187,6 +187,9 @@ export default function AgentStack({ context, query = '' }: AgentStackProps) {
                 >
                   <span className="agent-scope">{instruction.scope}</span>
                   <span className="agent-path">{instruction.path}</span>
+                  {instruction.paths && instruction.paths.length > 0 && (
+                    <span className="agent-note-inline">only for {instruction.paths.join(', ')}</span>
+                  )}
                   {instruction.link && <span className="agent-note-inline">links to {instruction.link}</span>}
                   {instruction.readable
                     ? <span className="agent-size">{formatSize(instruction.size)}</span>

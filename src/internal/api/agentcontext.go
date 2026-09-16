@@ -37,11 +37,10 @@ const (
 
 // Where a row sits in the stack, in the harness's own loading order.
 const (
-	scopeManaged     = "managed"
-	scopeUser        = "user"
-	scopeAncestor    = "ancestor"
-	scopeProject     = "project"
-	scopeConditional = "conditional"
+	scopeManaged  = "managed"
+	scopeUser     = "user"
+	scopeAncestor = "ancestor"
+	scopeProject  = "project"
 )
 
 // What a row is: an instruction file the harness reads, or its configuration.
@@ -93,6 +92,10 @@ type AgentInstruction struct {
 	Path  string `json:"path"`
 	Scope string `json:"scope"`
 	Kind  string `json:"kind"`
+	// The globs a rule's paths frontmatter limits it to. Conditionality
+	// qualifies the rung above rather than replacing it: a project rule that
+	// only loads for Go files is still a project rule.
+	Paths []string `json:"paths,omitempty"`
 	// False when the file exists but this server's account cannot open it.
 	Readable bool  `json:"readable"`
 	Size     int64 `json:"size"`
@@ -382,13 +385,14 @@ func (s *instructionStack) add(path, scope, kind string) bool {
 // addClaudeInstruction appends one file Claude Code loads and then the files
 // it imports. Imports stop after this one level, matching the route contract:
 // they are listed as context, not recursively reimplemented as a loader.
-func (s *instructionStack) addClaudeInstruction(path, scope, kind, home string) {
+func (s *instructionStack) addClaudeInstruction(path, scope, kind, home string) bool {
 	if !s.add(path, scope, kind) {
-		return
+		return false
 	}
 	for _, imported := range claudeImports(path, home) {
 		s.add(imported, scope, claudeImportKind(imported))
 	}
+	return true
 }
 
 // addClaudeFiles lists the files Claude Code itself reads at one directory
@@ -480,13 +484,18 @@ func collectClaudeRuleFiles(dir string, seenDirs map[string]bool, files *[]strin
 	}
 }
 
+// addClaudeRules keeps a rule's rung and its conditionality as two facts: the
+// scope stays the rung the rule was found on, and a paths frontmatter is
+// carried as the globs it names.
 func (s *instructionStack) addClaudeRules(dir, scope, home string) {
 	for _, path := range claudeRuleFiles(dir) {
-		ruleScope := scope
-		if _, conditional := readFrontmatter(path)["paths"]; conditional {
-			ruleScope = scopeConditional
+		index := len(s.rows)
+		if !s.addClaudeInstruction(path, scope, kindRule, home) {
+			continue
 		}
-		s.addClaudeInstruction(path, ruleScope, kindRule, home)
+		if paths, conditional := frontmatterFields(path)["paths"]; conditional {
+			s.rows[index].Paths = paths
+		}
 	}
 }
 
@@ -636,11 +645,26 @@ func skillFrontmatter(path string) (string, string) {
 	return fields["name"], fields["description"]
 }
 
-// readFrontmatter parses the leading YAML block's top-level scalars. It is
-// deliberately not a YAML parser: these files declare a name and a description
-// on one line each, and anything nested belongs to the harness, not here.
+// readFrontmatter answers each top-level key with its scalar value, or with the
+// empty string when the key carries a list instead.
 func readFrontmatter(path string) map[string]string {
-	fields := map[string]string{}
+	scalars := map[string]string{}
+	for key, values := range frontmatterFields(path) {
+		if len(values) == 1 {
+			scalars[key] = values[0]
+		} else {
+			scalars[key] = ""
+		}
+	}
+	return scalars
+}
+
+// frontmatterFields parses the leading YAML block's top-level keys, each with
+// the values it names: none, one scalar, or the items of a block list. It is
+// deliberately not a YAML parser — these files declare a name, a description or
+// a path list, and anything deeper belongs to the harness, not here.
+func frontmatterFields(path string) map[string][]string {
+	fields := map[string][]string{}
 	file, err := os.Open(path)
 	if err != nil {
 		return fields
@@ -652,19 +676,32 @@ func readFrontmatter(path string) map[string]string {
 	if !scanner.Scan() || strings.TrimSpace(scanner.Text()) != "---" {
 		return fields
 	}
+	key := ""
 	for line := 0; line < frontmatterMaxLines && scanner.Scan(); line++ {
 		text := scanner.Text()
 		if strings.TrimSpace(text) == "---" {
 			break
 		}
-		if text == "" || text[0] == ' ' || text[0] == '\t' || text[0] == '#' {
+		if text == "" || text[0] == '#' {
 			continue
 		}
-		key, value, found := strings.Cut(text, ":")
+		if text[0] == ' ' || text[0] == '\t' {
+			item, isItem := strings.CutPrefix(strings.TrimSpace(text), "- ")
+			if isItem && key != "" {
+				fields[key] = append(fields[key], unquote(strings.TrimSpace(item)))
+			}
+			continue
+		}
+		name, value, found := strings.Cut(text, ":")
 		if !found {
+			key = ""
 			continue
 		}
-		fields[strings.TrimSpace(key)] = unquote(strings.TrimSpace(value))
+		key = strings.TrimSpace(name)
+		fields[key] = nil
+		if value = unquote(strings.TrimSpace(value)); value != "" {
+			fields[key] = []string{value}
+		}
 	}
 	return fields
 }

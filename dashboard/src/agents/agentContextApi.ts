@@ -19,10 +19,12 @@ export const AGENT_HARNESSES: { id: AgentHarness; label: string }[] = [
 
 export interface AgentInstruction {
   path: string
-  /** managed, user, ancestor or project: which rung of the stack this is; conditional for a rule whose paths frontmatter limits it. */
+  /** managed, user, ancestor or project: which rung of the stack this is. */
   scope: string
   /** CLAUDE.md, AGENTS.md or settings. */
   kind: string
+  /** The globs a rule's paths frontmatter limits it to; absent when it always loads. */
+  paths?: string[]
   /** False when the file is there but the server's account cannot open it. */
   readable: boolean
   size: number

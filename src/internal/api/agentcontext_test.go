@@ -260,13 +260,16 @@ func TestAgentContext_ListsManagedPolicyRulesAndImportsInLoadingOrder(t *testing
 	if got := resolved.Instructions[0].Scope; got != scopeManaged {
 		t.Fatalf("managed policy scope = %q, want %q", got, scopeManaged)
 	}
-	for _, index := range []int{1, 2, 3} {
+	for _, index := range []int{1, 2, 3, 4} {
 		if got := resolved.Instructions[index].Scope; got != scopeProject {
 			t.Fatalf("instruction %s scope = %q, want %q", resolved.Instructions[index].Path, got, scopeProject)
 		}
 	}
-	if got := resolved.Instructions[4].Scope; got != scopeConditional {
-		t.Fatalf("conditional rule scope = %q, want %q", got, scopeConditional)
+	// A rule that only loads for some files is still a project rule, so its
+	// rung and the globs limiting it are two separate facts.
+	assertSequence(t, resolved.Instructions[4].Paths, []string{"src/**/*.go"}, "conditional rule paths")
+	if got := resolved.Instructions[3].Paths; len(got) != 0 {
+		t.Fatalf("unconditional rule paths = %v, want none", got)
 	}
 }
 
