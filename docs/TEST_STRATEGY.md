@@ -51,7 +51,7 @@ to jsdom would lose the behavior it protects.
 | Built-server contract | Embedded assets, served fonts, terminal and Files API/browser seam | `./scripts/test-built-server-contract.sh` |
 | Live Playwright | Operator-approved real-backend/tmux smokes | `cd dashboard && npm run test:live` |
 | Source contracts | Docs, host neutrality, embedded parity | `scripts/doc-lint.py`, `scripts/host-neutrality.py`, `scripts/check-embedded-dashboard.py` |
-| Installed product | Installer routes, environment contract, unit, health build-stamp proof by default in source mode or with `CHROTE_EXPECTED_BUILD_COMMIT` in binary mode | `./scripts/test-public-install.sh <binary>` |
+| Installed product | Installer routes, environment contract, unit, repeat-safe tmux grant, health build-stamp proof by default in source mode or with `CHROTE_EXPECTED_BUILD_COMMIT` in binary mode | `./scripts/test-public-install.sh <binary>` |
 | Service restart | A restart of the running service preserves live tmux sessions | `./scripts/test-systemd-restart-preserves-tmux.sh <binary>` (operator-run) |
 
 The mocked suite owns stable browser journeys. Live tests are opt-in because they
