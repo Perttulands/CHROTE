@@ -178,52 +178,6 @@ body {
   100% { background-position: -200% 0; }
 }
 
-.skeleton-card-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.skeleton-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 16px;
-  background: var(--surface-primary);
-  border: 1px solid var(--divider);
-  border-radius: 8px;
-}
-
-.skeleton-card-row {
-  display: flex;
-  gap: 12px;
-  margin-top: 4px;
-}
-
-.skeleton-text-block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.skeleton-table {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.skeleton-table-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
-  gap: 12px;
-  padding: 8px 12px;
-  align-items: center;
-}
-
-.skeleton-table-header .skeleton {
-  opacity: 0.6;
-}
-
 /* ==================== FOCUS STATES ==================== */
 
 button:focus-visible,
