@@ -157,6 +157,29 @@ func ensureSessionDropRoot(dropRoot string) error {
 	return nil
 }
 
+// sessionDropPayload is what the pane receives: the operator's own text, plus
+// the stored path of every attached file, because a pane cannot read an
+// attachment it was never told about. Nothing else. A receipt naming the drop
+// directory once rode along here too, and a plain shell ran it as commands:
+// the pane is not a place to file paperwork. Drop provenance lives in the send
+// response (dropId, dropPath, payload, files) and in the drop's own
+// manifest.json.
+func sessionDropPayload(text string, files []sessionDropFile) string {
+	sections := []string{}
+	if trimmedText := strings.TrimRight(text, "\n"); trimmedText != "" {
+		sections = append(sections, trimmedText)
+	}
+	if len(files) > 0 {
+		lines := make([]string, 0, len(files)+1)
+		lines = append(lines, "Files:")
+		for _, file := range files {
+			lines = append(lines, "- "+file.Path)
+		}
+		sections = append(sections, strings.Join(lines, "\n"))
+	}
+	return strings.Join(sections, "\n\n")
+}
+
 func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget, pane sendPaneTarget) (manifest sessionDropManifest, err error) {
 	if r == nil {
 		return sessionDropManifest{}, fmt.Errorf("request is missing")
@@ -247,19 +270,7 @@ func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget, pa
 		})
 	}
 
-	sections := []string{}
-	if trimmedText := strings.TrimRight(text, "\n"); trimmedText != "" {
-		sections = append(sections, trimmedText)
-	}
-	sections = append(sections, "CHROTE stored this send at:\n- "+dropPath)
-	if len(manifest.Files) > 0 {
-		fileSection := "Files:\n"
-		for _, file := range manifest.Files {
-			fileSection += "- " + file.Path + "\n"
-		}
-		sections = append(sections, strings.TrimRight(fileSection, "\n"))
-	}
-	payload := strings.Join(sections, "\n\n")
+	payload := sessionDropPayload(text, manifest.Files)
 	if err := os.WriteFile(manifest.Payload, []byte(payload), 0o600); err != nil {
 		return sessionDropManifest{}, fmt.Errorf("write drop payload: %w", err)
 	}

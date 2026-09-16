@@ -384,3 +384,116 @@ func TestSendToSessionRealCodexLongPrompt(t *testing.T) {
 		t.Fatalf("send buffer leaked after long-prompt smoke: %q", buffers)
 	}
 }
+
+// A plain shell executes what lands on its command line. This proves the send
+// path puts nothing there but the operator's own command, on a throwaway tmux
+// server of its own.
+func TestSendToSessionRealShellRunsOnlyTheIntendedCommand(t *testing.T) {
+	if os.Getenv("CHROTE_REAL_TMUX_TEST") != "1" {
+		t.Fatal("live tmux test requires CHROTE_REAL_TMUX_TEST=1 and explicit approval for a disposable tmux server")
+	}
+	if os.Getenv("CHROTE_REAL_TMUX_OWNER_APPROVED") != "1" {
+		t.Fatal("live tmux test requires CHROTE_REAL_TMUX_OWNER_APPROVED=1 after owner authorization is configured")
+	}
+	tmuxBin, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatalf("live tmux test requires tmux: %v", err)
+	}
+	if _, err := exec.LookPath("setfacl"); err != nil {
+		t.Fatalf("live tmux test requires setfacl: %v", err)
+	}
+	current, err := osuser.Current()
+	if err != nil || current.Username == "" {
+		t.Fatalf("live tmux test requires the current Unix user: %v", err)
+	}
+
+	root, err := os.MkdirTemp("", "TestSendToSessionRealShellRunsOnlyTheIntendedCommand-*")
+	if err != nil {
+		t.Fatalf("create private tmux root: %v", err)
+	}
+	socket := filepath.Join(root, "tmux.sock")
+	drops := filepath.Join(root, "drops")
+	const session = "chrote-455-shell"
+	runTmux := func(args ...string) (string, error) {
+		output, commandErr := exec.Command(tmuxBin, append([]string{"-S", socket}, args...)...).CombinedOutput()
+		return string(output), commandErr
+	}
+	t.Cleanup(func() {
+		if cleanupErr := cleanupPrivateTmuxSessions(tmuxBin, socket, root, session); cleanupErr != nil {
+			t.Errorf("cleanup private tmux fixture: %v", cleanupErr)
+		}
+	})
+	if output, err := runTmux("new-session", "-d", "-s", session, "-x", "120", "-y", "24", "bash", "--noprofile", "--norc"); err != nil {
+		t.Fatalf("create shell fixture: %v: %s", err, output)
+	}
+	paneOutput, err := runTmux("list-panes", "-t", session, "-F", "#{session_id}\t#{pane_id}\t#{pane_pid}\t#{pid}")
+	if err != nil {
+		t.Fatalf("list fixture pane: %v: %s", err, paneOutput)
+	}
+	parts := strings.Split(strings.TrimSpace(paneOutput), "\t")
+	if len(parts) != 4 {
+		t.Fatalf("unexpected fixture pane identity %q", paneOutput)
+	}
+	pane := sendPaneTarget{SessionID: parts[0], Session: session, PaneID: parts[1], PanePID: parts[2], ServerPID: parts[3]}
+
+	t.Setenv("CHROTE_SESSION_DROPS_DIR", drops)
+	t.Setenv("CHROTE_TMUX_SOCKET", current.Username+"="+socket)
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", current.Username+"="+root)
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	fields := map[string]string{
+		"text":      `printf 'CHROTE455-%s\n' RAN`,
+		"pane":      pane.PaneID,
+		"sessionId": pane.SessionID,
+		"panePid":   pane.PanePID,
+		"serverPid": pane.ServerPID,
+		"submit":    "true",
+		"unixUser":  current.Username,
+	}
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatalf("write %s: %v", key, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close form: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/"+session+"/send", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("send status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	dropPath, _ := response["dropPath"].(string)
+	if dropPath == "" || response["submitKeyDispatched"] != true {
+		t.Fatalf("send response = %#v", response)
+	}
+
+	capture := ""
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		capture, err = runTmux("capture-pane", "-p", "-t", pane.PaneID, "-S", "-50")
+		if err != nil {
+			t.Fatalf("capture %s: %v: %s", pane.PaneID, err, capture)
+		}
+		if strings.Contains(capture, "CHROTE455-RAN") {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if got := strings.Count(capture, "CHROTE455-RAN"); got != 1 {
+		t.Fatalf("intended command ran %d times, want exactly 1; pane:\n%s", got, capture)
+	}
+	if strings.Contains(capture, "not found") || strings.Contains(capture, dropPath) || strings.Contains(capture, "CHROTE stored this send") {
+		t.Fatalf("shell was handed something other than the intended command; pane:\n%s", capture)
+	}
+}

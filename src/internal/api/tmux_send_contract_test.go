@@ -553,8 +553,9 @@ func TestSendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 	}
 	filePath := filepath.Join(dropPath, "files", "clipboard-image.png")
 	payloadText := string(payload)
-	if !strings.Contains(payloadText, "Please inspect this screenshot.") || !strings.Contains(payloadText, "CHROTE stored this send at:") || !strings.Contains(payloadText, dropPath) || !strings.Contains(payloadText, "Files:") || !strings.Contains(payloadText, filePath) {
-		t.Fatalf("payload = %q, want text, drop path %q, and stored file path %q", payloadText, dropPath, filePath)
+	wantPayload := "Please inspect this screenshot.\n\nFiles:\n- " + filePath
+	if payloadText != wantPayload {
+		t.Fatalf("payload = %q, want exactly %q", payloadText, wantPayload)
 	}
 	if strings.HasSuffix(payloadText, "\n") {
 		t.Fatalf("payload has trailing newline; submit=false must not press Enter implicitly: %q", payloadText)
@@ -595,5 +596,21 @@ func TestSendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 		if strings.Contains(call, "Please inspect this screenshot") {
 			t.Fatalf("bulk text leaked into tmux argv instead of buffer file: %#v", calls)
 		}
+	}
+}
+
+// A pane runs what it is pasted. A text-only send must therefore be exactly the
+// operator's text: a plain shell that receives one command runs one command.
+func TestSessionDropPayloadCarriesOnlyTheSendItself(t *testing.T) {
+	if got := sessionDropPayload("printf 'ran\\n'\n", nil); got != "printf 'ran\\n'" {
+		t.Fatalf("text-only payload = %q, want the text alone", got)
+	}
+	withFiles := sessionDropPayload("look at these", []sessionDropFile{
+		{Path: "/drops/x/files/one.png"},
+		{Path: "/drops/x/files/two.png"},
+	})
+	want := "look at these\n\nFiles:\n- /drops/x/files/one.png\n- /drops/x/files/two.png"
+	if withFiles != want {
+		t.Fatalf("payload with files = %q, want %q", withFiles, want)
 	}
 }
