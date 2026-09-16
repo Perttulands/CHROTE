@@ -9,6 +9,17 @@ Group=chrote
 EnvironmentFile=/etc/chrote/chrote-srv.env
 RuntimeDirectory=chrote
 RuntimeDirectoryMode=0750
+StateDirectory=chrote
+StateDirectoryMode=0750
+# The service account's passwd home is the source checkout it serves from, so
+# every XDG-aware tool the server invokes -- bd above all -- deposits
+# service-owned config and cache inside that checkout, mode 0600 and unreadable
+# to the repository owner. These come after the EnvironmentFile on purpose: the
+# home the service writes into is the unit's decision, not a host override.
+Environment=HOME=/var/lib/chrote
+Environment=XDG_CONFIG_HOME=/var/lib/chrote/config
+Environment=XDG_CACHE_HOME=/var/lib/chrote/cache
+Environment=XDG_STATE_HOME=/var/lib/chrote/state
 UMask=0002
 ExecStartPre=+/bin/sh -lc 'install -d -o "${CHROTE_SERVICE_USER:-chrote}" -g "${CHROTE_SERVICE_GROUP:-chrote}" -m "${CHROTE_RUNTIME_MODE:-0750}" "${CHROTE_RUNTIME_ROOT:-/run/chrote}/tmux"'
 ExecStart=/bin/sh -lc 'cd "$CHROTE_SERVICE_ROOT" && exec "$CHROTE_SERVICE_ROOT/chrote-server" --host "${HOST:-127.0.0.1}" --port "${PORT:-8095}"'
