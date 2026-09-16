@@ -4,6 +4,9 @@ set -euo pipefail
 readonly REPO="Perttulands/CHROTE"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# shellcheck source=scripts/lib/tmux-server-access.sh
+. "$SCRIPT_DIR/scripts/lib/tmux-server-access.sh"
+
 PREFIX="${CHROTE_INSTALL_PREFIX:-$HOME/.local}"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
@@ -216,16 +219,6 @@ WantedBy=default.target
 EOF
 }
 
-run_as_tmux_owner() {
-  local owner="$1"
-  shift
-  if command -v runuser >/dev/null 2>&1; then
-    runuser -u "$owner" -- "$@"
-  else
-    sudo -n -u "$owner" "$@"
-  fi
-}
-
 grant_tmux_access() {
   local mappings="${CHROTE_TMUX_SOCKET:-}"
   [ -n "$mappings" ] || return 0
@@ -290,7 +283,8 @@ grant_tmux_access() {
     if [ -e "$socket" ]; then
       [ -S "$socket" ] || die "configured tmux path is not a socket: $socket"
       setfacl -m "u:${service_user}:rw" "$socket"
-      run_as_tmux_owner "$owner" env TERM="${TERM:-xterm-256color}" "$tmux_bin" -S "$socket" server-access -a "$service_user"
+      chrote_ensure_tmux_server_access "$owner" "$socket" "$service_user" "$tmux_bin" \
+        || die "could not grant $service_user access to $owner's tmux socket: $socket"
       log "Granted $service_user access to $owner's tmux socket"
     else
       warn "Configured tmux socket is not running yet; rerun install after it starts: $socket"

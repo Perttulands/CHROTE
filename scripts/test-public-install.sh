@@ -45,6 +45,8 @@ fi
 
 # shellcheck source=scripts/lib/server-teardown.sh
 . "$repo_root/scripts/lib/server-teardown.sh"
+# shellcheck source=scripts/lib/tmux-server-access.sh
+. "$repo_root/scripts/lib/tmux-server-access.sh"
 
 tmp="$(mktemp -d)"
 server_pid=""
@@ -323,6 +325,38 @@ export CHROTE_TMUX_BIN="$tmux_bin"
 export PATH="$prefix/bin:$tmux_bin_dir:/usr/local/bin:/usr/bin:/bin"
 
 tmux_cmd new-session -d -s public-smoke -c "$workspace"
+
+# The installer's one-shot tmux grant runs against servers that may already have
+# been granted: tmux exits non-zero on a repeated `server-access -a`, which once
+# aborted a deployment whose access state was already correct. Apply the grant
+# twice on this disposable server and require write access both times. The root
+# install's privilege change is not reachable here; the grant itself is.
+grant_user="${CHROTE_TEST_GRANT_USER:-nobody}"
+id "$grant_user" >/dev/null 2>&1 || {
+  echo "grant test account does not exist: $grant_user" >&2
+  exit 1
+}
+for attempt in 1 2; do
+  if ! chrote_ensure_tmux_server_access "$(id -un)" "$tmux_socket" "$grant_user" "$tmux_bin"; then
+    echo "tmux grant attempt $attempt failed for $grant_user" >&2
+    exit 1
+  fi
+  access_listing="$(tmux_cmd server-access -l)"
+  case "$access_listing" in
+    *"$grant_user (W)"*) ;;
+    *)
+      echo "tmux grant attempt $attempt left no write access: $access_listing" >&2
+      exit 1
+      ;;
+  esac
+done
+# A server that cannot be reached is still a failure, not a silent success.
+if chrote_ensure_tmux_server_access "$(id -un)" "$runtime_dir/absent-socket" \
+  "$grant_user" "$tmux_bin" 2>/dev/null; then
+  echo 'the tmux grant reported success against a socket with no server' >&2
+  exit 1
+fi
+
 release_port_reserver
 "$installed_binary" >"$tmp/server.log" 2>&1 &
 server_pid=$!
