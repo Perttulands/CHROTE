@@ -1,20 +1,89 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-BD_REAL="${BD_REAL:-/srv/chrote/vendor/@beads/bd/bin/bd.js}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+BD_REAL="${BD_REAL:-$SCRIPT_DIR/../vendor/@beads/bd/bin/bd.js}"
 BEADS_NORMALIZER="${BEADS_NORMALIZER:-/usr/local/bin/beads-normalize}"
 
+# Ask the real CLI to resolve redirects, worktrees, BEADS_DIR, and explicit
+# selection flags. Never invoke the wrapper recursively or use the normalizer's
+# host-wide defaults when no store resolves.
+resolve_beads_store() {
+  node - "$BD_REAL" "$@" 2>/dev/null <<'JS'
+const fs = require("fs");
+const {spawnSync} = require("child_process");
+const [real, ...args] = process.argv.slice(2);
+const run = argv => spawnSync(process.execPath, [real, ...argv], {encoding: "utf8"});
+try {
+  // Ask only the help command for flag arities. Appending --help to the real
+  // command could execute it when --help is consumed as an option value.
+  const helpArgs = [];
+  const globalValues = new Set(["-C", "--directory", "--db", "--actor", "--dolt-auto-commit"]);
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--") break;
+    if (globalValues.has(args[i])) i++;
+    else if (!args[i].startsWith("-")) helpArgs.push(args[i]);
+  }
+  const help = run(["help", "--", ...helpArgs]);
+  if (help.status !== 0) process.exit(0);
+  const flags = new Map();
+  for (const line of help.stdout.split("\n")) {
+    const match = line.match(/^\s+(?:-(\w),\s+)?--([\w-]+)(?: (\S+))?\s{2,}/);
+    if (!match) continue;
+    flags.set("--" + match[2], Boolean(match[3]));
+    if (match[1]) flags.set("-" + match[1], Boolean(match[3]));
+  }
+  const context = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--") break;
+    if (!arg.startsWith("-") || arg === "-") continue;
+    const long = arg.startsWith("--");
+    const names = long ? [arg.split("=", 1)[0]] : [...arg.slice(1)].map(c => "-" + c);
+    for (let j = 0; j < names.length; j++) {
+      const name = names[j];
+      if (!flags.has(name)) process.exit(0); // Unknown syntax must not repair another store.
+      let value;
+      if (flags.get(name)) {
+        value = long ? (arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : args[++i]) :
+          (arg.length > j + 2 ? arg.slice(j + 2).replace(/^=/, "") : args[++i]);
+        if (value === undefined) process.exit(0);
+      }
+      if (["-C", "--directory", "--db"].includes(name)) context.push(name, value);
+      if (name === "--global") context.push(arg);
+      if (flags.get(name)) break;
+      // Cobra accepts explicit boolean values, including in short clusters.
+      // The remainder of -q=false is a value, not more short options.
+      if (!long && arg[j + 2] === "=") break;
+    }
+  }
+  const result = run([...context, "where", "--json"]);
+  if (result.status !== 0) process.exit(0);
+  const store = JSON.parse(result.stdout).path;
+  if (typeof store === "string" && store.startsWith("/") && fs.statSync(store).isDirectory()) {
+    process.stdout.write(store);
+  }
+} catch (_) {}
+JS
+}
+
 normalize_beads_permissions() {
-  "$BEADS_NORMALIZER" >/dev/null 2>&1 || true
+  local store
+  store=$(resolve_beads_store "$@")
+  [ -n "$store" ] || return 0
+  "$BEADS_NORMALIZER" "$store" >/dev/null 2>&1 || true
 }
 
 filter_beads_stderr() {
   sed -u -E '\|^Warning: .*/\.beads has permissions 0770 \(recommended: 0700\)\. Run: chmod 700 .*/\.beads$|d'
 }
 
-normalize_beads_permissions
+# Dolt may rewrite its manifest as writer-only. Normalize before opening so a
+# different permitted service user can read it, then normalize again after the
+# command for the next user.
+normalize_beads_permissions "$@"
 node "$BD_REAL" "$@" 2> >(filter_beads_stderr >&2)
-rc=$?
+status=$?
 wait
-normalize_beads_permissions
-exit "$rc"
+normalize_beads_permissions "$@"
+exit "$status"

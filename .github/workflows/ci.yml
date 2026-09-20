@@ -140,6 +140,9 @@ jobs:
       - name: Install dashboard
         run: npm ci --prefix dashboard
 
+      - name: Beads launcher behavior
+        run: python3 scripts/test-bd-wrapper.py
+
       - name: Dashboard unit tests and lint
         run: |
           cd dashboard
