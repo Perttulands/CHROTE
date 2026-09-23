@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeSocket } from '../test/fakeWebSocket'
-import { createTerminalSession, type TerminalConnectionState } from './terminalSession'
+import { createTerminalSession, fitFontSize, type TerminalConnectionState } from './terminalSession'
 import { resetChordsForTest, setKeysEnabled } from '../keys/chords'
 import { DEFAULT_THEME, TERMINAL_FONT_FAMILY } from '../theme/theme'
 
@@ -389,5 +389,17 @@ describe('terminal session', () => {
 
     expect(socket.readyState).toBe(FakeSocket.CLOSED)
     expect(host.childElementCount).toBe(0)
+  })
+})
+
+describe('the font fit', () => {
+  // A 94 by 67 window at a cell of 0.6 by 1.2 times the font, in a box 700px
+  // wide and 900px tall: the width allows 12.4px, the height 11.19px.
+  const fits = (fontSize: number) => 94 * fontSize * 0.6 <= 700 && 67 * fontSize * 1.2 <= 900
+
+  it('takes the largest half-pixel font at which the whole grid fits, and never more than the operator\'s', () => {
+    expect(fitFontSize(14, fits)).toBe(11)
+    // A box with room to spare keeps the operator's own size.
+    expect(fitFontSize(10, fits)).toBe(10)
   })
 })

@@ -40,12 +40,6 @@ vi.mock('../context/StatusContext', () => ({
   useStatus: () => ({ status: null, announce: () => {} }),
 }))
 
-// One pool for every render, as the real provider keeps one between reconciles.
-const emptyPool = vi.hoisted(() => ({ terminals: new Map(), connectionStates: new Map() }))
-vi.mock('./TerminalPool', () => ({
-  useTerminalPool: () => emptyPool,
-}))
-
 describe('the size rule', () => {
   const workspace = { width: 1280, height: 800 }
   const cell = { cellWidth: 8.4, cellHeight: 17 }
@@ -59,16 +53,12 @@ describe('the size rule', () => {
     })
   })
 
-  it('rounds a fractional grid up, never down to one column fewer', () => {
-    expect(peekSize({ cols: 57, rows: 1, cellWidth: 8.4286, cellHeight: 17 }, workspace).width).toBe(481 + 24)
+  it('caps at 90% of the workspace in each direction', () => {
+    expect(peekSize({ cols: 200, rows: 60, ...cell }, workspace)).toEqual({ width: 1152, height: 720 })
   })
 
-  it('caps at 70% of the width and 80% of the height', () => {
-    expect(peekSize({ cols: 200, rows: 60, ...cell }, workspace)).toEqual({ width: 896, height: 640 })
-  })
-
-  it('takes the height cap alone when no tile shows the session', () => {
-    expect(peekSize({ cols: PEEK_FALLBACK_COLS, rows: null, ...cell }, workspace)).toEqual({ width: 840 + 24, height: 640 })
+  it('takes the height cap alone when the inventory has no size for the session', () => {
+    expect(peekSize({ cols: PEEK_FALLBACK_COLS, rows: null, ...cell }, workspace)).toEqual({ width: 840 + 24, height: 720 })
   })
 })
 
@@ -114,8 +104,8 @@ describe('Peek', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Reset size' }))
 
-    // The session decides again: no tile shows it, so it is the fallback 100
-    // columns at the measured cell, and the workspace's height cap.
+    // The session decides again: the inventory has no size for it, so it is
+    // the fallback 100 columns at the measured cell, and the height cap.
     const { width, height } = peekSize(
       { cols: PEEK_FALLBACK_COLS, rows: null, cellWidth: 14 * 0.6, cellHeight: Math.ceil(14 * 1.2) },
       { width: 1280, height: 800 },

@@ -6,7 +6,7 @@ Accepted 2026-09-01; amended 2026-09-02 by decision 8 and the `Lost` tile state
 in decision 5, after a deploy showed twenty tiles claiming a takeover that had
 not happened; amended again 2026-09-02 by decision 1, which now holds one
 *sizing* client rather than one client, and by the parts of decisions 2, 5, 6
-and 8 that only existed to work around `-d`.
+and 8 that only existed to work around `-d`; amended 2026-09-23 in decision 6.
 
 Scope note: this settles who owns the size of a tmux window, what a window
 binding means, and how a quick look differs from a viewing session. The
@@ -172,7 +172,9 @@ Probed on scratch sockets, created and destroyed for the probe:
    another client, never resizes a session that has a viewer, and cannot claim
    the sizing seat. Input is not suppressed. Since decision 1 a tile no longer
    displaces anyone either, so the two modes now differ in one thing only:
-   whether they take a free sizing seat.
+   whether they take a free sizing seat. Amended 2026-09-23: Peek adopts the
+   window's own grid, as the session inventory reports it, and scales its font
+   to fit, so it never resizes a session, even as its only client.
 
 7. **A badge means this session is not what you would assume from looking at
    it.** Pinned size, a foreign client attached, more than one tmux window or

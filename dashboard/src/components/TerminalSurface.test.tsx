@@ -27,7 +27,7 @@ function stubSession() {
     claim: vi.fn(),
     redialIfDropped: vi.fn(),
     applyAppearance: vi.fn(),
-    grid: () => null,
+    setFixedGrid: vi.fn(),
     dispose: vi.fn(),
   }
   return { session, element, calls }

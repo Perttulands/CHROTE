@@ -7,17 +7,21 @@
  * press outside it closes it, and that press is consumed rather than passed
  * through to whatever it landed on. A work surface stays until it is closed:
  * a press outside it is an ordinary press. Escape closes the topmost surface
- * of either class, and reaches the pty only when nothing is open.
+ * of either class, and reaches a pty only when nothing is open or when it is
+ * typed into a terminal inside the topmost surface — Peek's own, where the
+ * operator is driving the session and Escape is how he cancels a menu or
+ * interrupts an agent.
  *
- * Escape is decided in two places that agree by construction. The terminal's
- * own key handler refuses it while the stack is not empty, so xterm neither
- * writes it nor sends it; and a document listener at the bubble phase then
- * closes the topmost surface, unless a control inside the surface already
- * handled the key for its own purpose — a find field clearing its query, an
- * editor asking whether to discard — which is what `defaultPrevented` and a
- * stopped propagation say. The press outside is taken at the capture phase,
- * because it has to be gone before the app, the terminal and the drag sensor
- * see it.
+ * Escape is decided in two places that agree by construction. A terminal's
+ * own key handler refuses it while the stack is not empty and the terminal is
+ * not inside the topmost surface, so xterm neither writes it nor sends it; and
+ * a document listener at the bubble phase then closes the topmost surface,
+ * unless a control inside the surface already handled the key for its own
+ * purpose — a find field clearing its query, an editor asking whether to
+ * discard, the terminal inside it sending ESC — which is what
+ * `defaultPrevented` and a stopped propagation say. The press outside is taken
+ * at the capture phase, because it has to be gone before the app, the terminal
+ * and the drag sensor see it.
  *
  * The state lives at module level, like the chord registry, because the
  * terminal is built outside React and asks from there.
@@ -54,10 +58,14 @@ export function topSurface(): Surface | null {
 /**
  * xterm's `attachCustomKeyEventHandler` asks this: true means the key belongs
  * to a surface and must not reach the pty. Every event type is refused, so a
- * keyup cannot make the terminal act on a keydown it never saw.
+ * keyup cannot make the terminal act on a keydown it never saw. A terminal
+ * inside the topmost surface keeps its Escape.
  */
 export function ownsKey(event: KeyboardEvent): boolean {
-  return event.key === 'Escape' && stack.length > 0
+  if (event.key !== 'Escape') return false
+  const top = topSurface()
+  if (!top) return false
+  return !(event.target instanceof Node && top.contains(event.target))
 }
 
 /**

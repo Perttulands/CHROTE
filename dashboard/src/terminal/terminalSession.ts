@@ -38,12 +38,23 @@ export interface TerminalSession {
   attach(container: HTMLElement, options?: { connect?: boolean }): void
   /** Detach from the document, keeping the connection and the rendered frame. */
   detach(): void
-  /** Resize the grid to the container. A no-op while detached or hidden. */
+  /**
+   * Fit the terminal to its container: the grid to the box, or with a fixed
+   * grid, the font to the box. A no-op while detached or hidden.
+   */
   fit(): void
+  /** Focus the terminal, or, before it has opened, as soon as it does. */
   focus(): void
   /** Put the viewport at the newest output, where an answer arrives. */
   scrollToBottom(): void
+  /** The operator's font size; with a fixed grid, the most the fit may use. */
   setFontSize(fontSize: number): void
+  /**
+   * Hold the grid at this size and fit the font to the box instead, or, with
+   * null, go back to fitting the grid. Peek holds the tmux window's own grid,
+   * so what it sends down its connection is the size the window already is.
+   */
+  setFixedGrid(grid: FixedGrid | null): void
   setScrollbarHidden(hidden: boolean): void
   /** Drop the connection and open a new one, without reloading anything. */
   reconnect(): void
@@ -69,20 +80,12 @@ export interface TerminalSession {
    * local storage — so every live terminal takes it when it lands.
    */
   applyAppearance(terminalTheme: TerminalTheme, fontFamily: string): void
-  /**
-   * The grid as drawn: its columns and rows, and the CSS size of one cell.
-   * Null while the terminal is not open or not on screen, because a hidden
-   * grid measures nothing. Peek sizes itself by this.
-   */
-  grid(): TerminalGrid | null
   dispose(): void
 }
 
-export interface TerminalGrid {
+export interface FixedGrid {
   cols: number
   rows: number
-  cellWidth: number
-  cellHeight: number
 }
 
 export interface TerminalSessionOptions {
@@ -92,6 +95,8 @@ export interface TerminalSessionOptions {
   /** The theme's terminal object: background, foreground, cursor, selection, 16 ansi. */
   terminalTheme: TerminalTheme
   fontFamily: string
+  /** A grid to hold from the start, so the first handshake already carries it. */
+  fixedGrid?: FixedGrid | null
   onStateChange?: (state: TerminalConnectionState) => void
   /** Where a painted selection reports whether it reached the clipboard. */
   announce: CopyAnnouncer
@@ -119,12 +124,39 @@ function xtermTheme(theme: TerminalTheme) {
 // to the shared tmux window.
 const MIN_VISIBLE_PX = 10
 
+// The font fit moves in half pixels, and stops at a size nobody could read
+// anyway: a grid that does not fit at that is shown clipped rather than as dots.
+const FONT_FIT_STEP = 0.5
+const FONT_FIT_MIN = 4
+
+/**
+ * The largest font, no larger than the operator's, at which a fixed grid fits
+ * its box, as `fits` answers for a candidate size. A grid that fits at one
+ * size fits at every smaller one, so it is searched by halving rather than
+ * tried size by size: every try is a real measurement of the cell.
+ */
+export function fitFontSize(maxFontSize: number, fits: (fontSize: number) => boolean): number {
+  if (maxFontSize <= FONT_FIT_MIN || fits(maxFontSize)) return maxFontSize
+  let low = FONT_FIT_MIN
+  let high = maxFontSize
+  while (high - low > FONT_FIT_STEP) {
+    const middle = Math.round(low + high) / 2
+    if (fits(middle)) low = middle
+    else high = middle
+  }
+  return low
+}
+
 export function createTerminalSession(options: TerminalSessionOptions): TerminalSession {
   const element = document.createElement('div')
   element.className = 'terminal-surface'
 
+  let fontSize = options.fontSize
+  let fixedGrid = options.fixedGrid ?? null
+
   const terminal = new Terminal({
-    fontSize: options.fontSize,
+    fontSize,
+    ...(fixedGrid ? { cols: fixedGrid.cols, rows: fixedGrid.rows } : {}),
     fontFamily: options.fontFamily,
     theme: xtermTheme(options.terminalTheme),
     // xterm files its Unicode version handling as proposed API, so the width
@@ -182,6 +214,8 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   // The operator claimed a terminal that had no connection, so the claim is
   // owed to the connection now on its way up.
   let claimOnOpen = false
+  // Focus was asked for before the terminal had a textarea to take it.
+  let focusOnOpen = false
 
   const setState = (state: TerminalConnectionState) => {
     if (!disposed) options.onStateChange?.(state)
@@ -220,9 +254,22 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
 
   const isMeasurable = () => element.offsetWidth >= MIN_VISIBLE_PX && element.offsetHeight >= MIN_VISIBLE_PX
 
+  // A fixed grid keeps its columns and rows whatever the box, so the font is
+  // what moves: each candidate size is set for real and the fit addon asked
+  // what grid the box would hold at it, because only xterm knows what its cell
+  // costs. The renderer paints once, at the size that is left.
   const fit = () => {
     if (!opened || !isMeasurable()) return
-    fitAddon.fit()
+    const grid = fixedGrid
+    if (!grid) {
+      fitAddon.fit()
+      return
+    }
+    terminal.options.fontSize = fitFontSize(fontSize, candidate => {
+      terminal.options.fontSize = candidate
+      const room = fitAddon.proposeDimensions()
+      return room !== undefined && room.cols >= grid.cols && room.rows >= grid.rows
+    })
   }
 
   // xterm measures its cell when open() runs. A swapped web font arriving
@@ -281,6 +328,10 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
           opened = true
         }
         fit()
+        if (focusOnOpen) {
+          focusOnOpen = false
+          terminal.focus()
+        }
         if (!connection && attachOptions?.connect !== false) connect()
       }
       if (opened) finishAttach()
@@ -292,14 +343,22 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
     },
     fit,
     focus() {
-      terminal.focus()
+      if (opened) terminal.focus()
+      else focusOnOpen = true
     },
     scrollToBottom() {
       terminal.scrollToBottom()
     },
-    setFontSize(fontSize) {
-      if (terminal.options.fontSize === fontSize) return
-      terminal.options.fontSize = fontSize
+    setFontSize(size) {
+      if (fontSize === size) return
+      fontSize = size
+      if (!fixedGrid) terminal.options.fontSize = size
+      fit()
+    },
+    setFixedGrid(grid) {
+      fixedGrid = grid
+      if (grid && (terminal.cols !== grid.cols || terminal.rows !== grid.rows)) terminal.resize(grid.cols, grid.rows)
+      if (!grid) terminal.options.fontSize = fontSize
       fit()
     },
     setScrollbarHidden,
@@ -330,20 +389,6 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
       terminal.options.theme = xtermTheme(terminalTheme)
       terminal.options.fontFamily = fontFamily
       fit()
-    },
-    grid() {
-      // xterm sizes its screen element to exactly cols by rows cells, so the
-      // cell is read from the element rather than from anything private.
-      if (!opened || !isMeasurable() || terminal.cols === 0 || terminal.rows === 0) return null
-      const screen = element.querySelector<HTMLElement>('.xterm-screen')
-      const rect = screen?.getBoundingClientRect()
-      if (!rect || rect.width < MIN_VISIBLE_PX || rect.height < MIN_VISIBLE_PX) return null
-      return {
-        cols: terminal.cols,
-        rows: terminal.rows,
-        cellWidth: rect.width / terminal.cols,
-        cellHeight: rect.height / terminal.rows,
-      }
     },
     dispose() {
       disposed = true

@@ -185,6 +185,8 @@ export interface TmuxSession {
   /** Current window size in cells. */
   width?: number
   height?: number
+  /** Rows the status line takes below the window; absent when there is none. */
+  statusLines?: number
   /** tmux window-size is manual, so CHROTE cannot resize this session. */
   sizePinned?: boolean
   /** tmux mouse mode. Absent when the server did not report it. */
