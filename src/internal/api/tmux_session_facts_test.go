@@ -37,13 +37,16 @@ func TestParseSessionsOutputReportsFactsThatContradictAppearances(t *testing.T) 
 		wantMouse   bool
 		wantForeign string
 		wantViewers int
+		// Peek shows the window plus its status lines; a status line it does
+		// not know about is the bottom row it cannot show.
+		wantStatus int
 		// The workspace list orders folders by this; an inventory that stops
 		// reporting it would silently put every folder in path order.
 		wantActivity string
 	}{
 		{
 			name:         "a pinned window, the mouse off, and a viewer CHROTE did not create",
-			line:         inventoryLine("$1", "pinned", "1", "1", "/home/operator", "bash", "3", "100", "30", "manual", "0", "/dev/pts/9,/dev/pts/12", "1756900000"),
+			line:         inventoryLine("$1", "pinned", "1", "1", "/home/operator", "bash", "3", "100", "30", "manual", "0", "/dev/pts/9,/dev/pts/12", "1756900000", "2"),
 			owned:        map[string]bool{"/dev/pts/9": true},
 			wantPinned:   true,
 			wantWidth:    100,
@@ -52,23 +55,25 @@ func TestParseSessionsOutputReportsFactsThatContradictAppearances(t *testing.T) 
 			wantMouse:    false,
 			wantForeign:  "/dev/pts/12",
 			wantViewers:  2,
+			wantStatus:   2,
 			wantActivity: "2025-09-03T11:46:40Z",
 		},
 		{
 			name:         "an ordinary session raises no claim at all",
-			line:         inventoryLine("$1", "ordinary", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", "/dev/pts/9", "1756900000"),
+			line:         inventoryLine("$1", "ordinary", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", "/dev/pts/9", "1756900000", "on"),
 			owned:        map[string]bool{"/dev/pts/9": true},
 			wantWidth:    120,
 			wantHeight:   40,
 			wantPanes:    1,
 			wantMouse:    true,
 			wantViewers:  1,
+			wantStatus:   1,
 			wantActivity: "2025-09-03T11:46:40Z",
 		},
 		{
 			// A control-mode client has no tty, so nothing can be said about it.
 			name:       "nobody reports a tty, so nobody is watching and nobody is foreign",
-			line:       inventoryLine("$1", "sizing", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", "", ""),
+			line:       inventoryLine("$1", "sizing", "1", "1", "/home/operator", "bash", "1", "120", "40", "latest", "1", "", "", "off"),
 			owned:      map[string]bool{},
 			wantWidth:  120,
 			wantHeight: 40,
@@ -100,6 +105,9 @@ func TestParseSessionsOutputReportsFactsThatContradictAppearances(t *testing.T) 
 			if session.Viewers != testCase.wantViewers {
 				t.Fatalf("Viewers = %d, want %d attached clients counted", session.Viewers, testCase.wantViewers)
 			}
+			if session.StatusLines != testCase.wantStatus {
+				t.Fatalf("StatusLines = %d, want %d", session.StatusLines, testCase.wantStatus)
+			}
 			if session.Activity != testCase.wantActivity {
 				t.Fatalf("Activity = %q, want %q", session.Activity, testCase.wantActivity)
 			}
@@ -112,7 +120,7 @@ func TestListSessionsRunsOneTmuxCommandPerSocket(t *testing.T) {
 	log := filepath.Join(dir, "calls")
 	script := fmt.Sprintf(`#!/bin/sh
 printf '%%s\n' "$*" >> %s
-printf '$1\tone\t1\t0\t/home/operator\tbash\t1\t120\t40\tlatest\t1\t\n'
+printf '$1\tone\t1\t0\t/home/operator\tbash\t1\t120\t40\tlatest\t1\t\t\ton\n'
 `, log)
 	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake tmux: %v", err)

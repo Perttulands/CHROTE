@@ -446,9 +446,10 @@ const sessionInventoryFormat = "#{session_id}\t" +
 	"#{window-size}\t" +
 	"#{mouse}\t" +
 	"#{session_attached_list}\t" +
-	"#{session_activity}"
+	"#{session_activity}\t" +
+	"#{status}"
 
-const sessionInventoryFieldCount = 13
+const sessionInventoryFieldCount = 14
 
 func parseSessionsOutput(output string, unixUser string, ownedPTYs map[string]bool) []core.Session {
 	sessions := []core.Session{}
@@ -497,9 +498,24 @@ func parseSessionsOutput(output string, unixUser string, ownedPTYs map[string]bo
 		if activity, err := strconv.ParseInt(field(12), 10, 64); err == nil && activity > 0 {
 			session.Activity = time.Unix(activity, 0).UTC().Format(time.RFC3339)
 		}
+		session.StatusLines = statusLines(field(13))
 		sessions = append(sessions, session)
 	}
 	return sessions
+}
+
+// statusLines reads the session's status option as tmux expands it: `off`,
+// `on` for one line, or the count itself for two to five. Peek adds these rows
+// to the window's height, because a client is the window plus its status lines.
+func statusLines(status string) int {
+	switch status {
+	case "on":
+		return 1
+	case "off":
+		return 0
+	}
+	lines, _ := strconv.Atoi(status) //nolint:errcheck // an unparsable option claims no status line
+	return lines
 }
 
 func publicTmuxSourceError(err error) string {

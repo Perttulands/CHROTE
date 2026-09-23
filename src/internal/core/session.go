@@ -33,6 +33,9 @@ type Session struct {
 	// Width and Height are the current window's size in cells.
 	Width  int `json:"width,omitempty"`
 	Height int `json:"height,omitempty"`
+	// StatusLines is how many rows the session's status line takes below the
+	// window, so a client showing the whole window is Height plus these.
+	StatusLines int `json:"statusLines,omitempty"`
 	// SizePinned reports tmux window-size manual, which fixes the window at
 	// Width by Height and makes CHROTE unable to resize it.
 	SizePinned bool `json:"sizePinned,omitempty"`
