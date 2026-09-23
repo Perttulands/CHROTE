@@ -11,9 +11,9 @@
   z-index: 1500;
   display: flex;
   flex-direction: column;
-  /* Until the session's grid has been measured, the caps stand in. */
-  width: 70%;
-  height: 80%;
+  /* Until the workspace has been measured, the caps stand in. */
+  width: 90%;
+  height: 90%;
   background-color: var(--surface-primary);
   border: 1px solid var(--divider);
   overflow: hidden;

@@ -5,24 +5,30 @@ import { mockApiRoutes } from './mock-api'
  * One owner of dismissal (bead: chrote-5grx.36).
  *
  * Escape belongs to the topmost open surface and reaches the pty only when
- * nothing is open; a press outside a glance closes it and is consumed; a press
+ * nothing is open, or when it is typed into Peek's own terminal (bead:
+ * chrote-8eyu); a press outside a glance closes it and is consumed; a press
  * outside a work surface is an ordinary press. The pty side is read from the
  * mock socket, because the far end is the only place that can prove what the
  * terminal did or did not send.
  */
 
-/** Everything the client typed at any pty, one entry per ttyd input frame. */
-async function recordPtyInput(page: Page): Promise<string[]> {
+/**
+ * Everything the client typed at any tile's pty, one entry per ttyd input
+ * frame, and what it typed at Peek's apart from that.
+ */
+async function recordPtyInput(page: Page): Promise<{ typed: string[]; peekTyped: string[] }> {
   const typed: string[] = []
+  const peekTyped: string[] = []
   await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
+    const into = new URL(ws.url()).searchParams.get('arg') === 'peek' ? peekTyped : typed
     ws.onMessage(message => {
       const text = typeof message === 'string' ? message : message.toString('utf8')
       // The handshake is bare JSON; '0' is input and '1' is a resize.
       if (text.startsWith('{') || !text.startsWith('0')) return
-      typed.push(text.slice(1))
+      into.push(text.slice(1))
     })
   })
-  return typed
+  return { typed, peekTyped }
 }
 
 function seededState() {
@@ -63,10 +69,10 @@ async function mockPanesRoute(page: Page) {
   })
 }
 
-test('Escape closes the topmost surface and never reaches the pane; a press outside closes a glance and not a work surface', async ({ page }) => {
+test('Escape closes the topmost surface and reaches no pane but Peek\'s own; a press outside closes a glance and not a work surface', async ({ page }) => {
   await mockApiRoutes(page)
   await mockPanesRoute(page)
-  const typed = await recordPtyInput(page)
+  const { typed, peekTyped } = await recordPtyInput(page)
   await page.addInitScript(state => {
     localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
   }, seededState())
@@ -104,10 +110,26 @@ test('Escape closes the topmost surface and never reaches the pane; a press outs
   await expect(second).not.toHaveClass(/focused/)
   await expect(first).toHaveClass(/focused/)
 
-  // Escape inside the peeked terminal closes Peek; the ESC goes to no pty.
+  // Peek opens with its terminal focused, and Escape typed there is the
+  // session's: it reaches the peeked pty and Peek stays open. Alt+P from
+  // inside closes it, even with another tile focused, whose own Alt+P would
+  // have switched Peek to its session.
   await page.keyboard.press('Alt+p')
   await expect(peek).toBeVisible()
+  await expect(peek.locator('.xterm-helper-textarea')).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect.poll(() => peekTyped.join('')).toContain('\u001b')
+  await expect(peek).toBeVisible()
+  await page.keyboard.press('Alt+w')
+  await expect(second).toHaveClass(/focused/)
   await peek.locator('.xterm-screen').click()
+  await page.keyboard.press('Alt+p')
+  await expect(peek).toHaveCount(0)
+
+  // With the focus outside Peek's terminal, Escape closes it.
+  await page.keyboard.press('Alt+p')
+  await expect(peek).toBeVisible()
+  await peek.locator('.peek-name').click()
   await page.keyboard.press('Escape')
   await expect(peek).toHaveCount(0)
 
@@ -122,7 +144,7 @@ test('Escape closes the topmost surface and never reaches the pane; a press outs
   await page.keyboard.press('Escape')
   await expect(drawer).toHaveCount(0)
 
-  // Nothing above was typed at a shell.
+  // Nothing above was typed at a tile's shell.
   expect(typed.join('')).not.toContain('\u001b')
 
   // With nothing open, Escape is the shell's.

@@ -325,14 +325,15 @@ apart by how it closes.
   every menu, the launcher while nothing has been typed into it, and the image
   glance. A click outside closes it, and that click is consumed rather than
   passed through; `Escape` closes it from anywhere, a focused terminal
-  included; the chord that opened it closes it.
+  included, except Peek's own terminal; the chord that opened it closes it.
 - **A work surface stays until you close it.** The Send drawer, an editor, the
   Bead card and What this agent sees. `Escape`, its Close word or its chord
   closes it, and a click outside means what that click meant. A drawer holding
   typed text confirms in place before it discards.
 
 `Escape` belongs to the topmost open surface. It reaches the pty only when
-nothing is open.
+nothing is open, or when it is typed into Peek's own terminal, where the
+operator is driving the session.
 
 A menu is a flat sheet of words attached flush to the edge of the control that
 opened it: the action with its chord at the right, hairlines between groups, no
@@ -340,9 +341,12 @@ icons, no radius and no blur, and the highlighted row taking
 `--surface-secondary` and a 2px `--accent` bar.
 
 Peek is a floating window centred over the workspace and sized by the session
-it shows: its column count at the tile font, capped at 70% of the workspace
-width and 80% of its height. A one-line header carries the mark, the name, Send
-and Close as words. It is not dragged and not resized.
+it shows: the tmux window's own columns and rows, status line included, at the
+tile font, capped at 90% of the workspace in each direction. It always shows
+the whole window: past the cap, or when the operator resizes it from an edge
+or corner, the font shrinks and the grid stays. It opens with its terminal
+focused, so the session can be driven from it. A one-line header carries the
+mark, the name, Send and Close as words. It is not dragged.
 
 The image glance is Peek's manner for a picture: the path, the pixel size, and
 Open in Files, Copy path and Close as words. The image fits 90% of the

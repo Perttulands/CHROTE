@@ -1,15 +1,17 @@
 import { test, expect, type Page } from './fixtures'
-import { mockApiRoutes } from './mock-api'
+import { mockApiRoutes, mockSessions } from './mock-api'
 import { openSessionsSidecar } from './helpers'
 
 /**
  * Peek as a centred floating window sized by the session (bead: chrote-5grx.48).
  *
- * The window opens centred over the workspace at the width of the session's
- * own grid, capped at 70% of the workspace; Alt+P toggles it and, pressed
- * over another tile, switches it. The press outside and Escape from inside
- * the peeked terminal are the dismissal owner's and are proved in
- * dismiss.spec.ts; what is here is what is Peek's own.
+ * The window opens centred over the workspace; Alt+P toggles it and, pressed
+ * over another tile, switches it. It shows the tmux window whole, at the
+ * window's own grid, and fits its font to its box (bead: chrote-8eyu): the
+ * bottom row of a pane taller than the box is on screen, and a drag changes
+ * the font and never the grid. Real font metrics decide that, which is why it
+ * is here. The press outside and Escape are the dismissal owner's and are
+ * proved in dismiss.spec.ts; what is here is what is Peek's own.
  *
  * The size a corner is dragged to is the size every later peek opens at, on
  * whatever session (bead: chrote-mc8d). A real pointer drag through pointer
@@ -61,7 +63,7 @@ function seededState() {
 }
 
 test.describe('Peek', () => {
-  test('opens centred at the session\'s width from Alt+P, toggles on it, and switches from another tile', async ({ page }) => {
+  test('opens centred from Alt+P, toggles on it, and switches from another tile', async ({ page }) => {
     await mockApiRoutes(page)
     const columns = await serveTerminals(page)
     await page.addInitScript(state => {
@@ -81,13 +83,9 @@ test.describe('Peek', () => {
 
     const peekBox = (await peek.boundingBox())!
     const workspaceBox = (await page.locator('.dashboard-content').boundingBox())!
-    // Centred over the workspace, and never more than 70% of it wide.
+    // Centred over the workspace.
     expect(Math.abs((peekBox.x + peekBox.width / 2) - (workspaceBox.x + workspaceBox.width / 2))).toBeLessThanOrEqual(1)
     expect(Math.abs((peekBox.y + peekBox.height / 2) - (workspaceBox.y + workspaceBox.height / 2))).toBeLessThanOrEqual(1)
-    expect(peekBox.width).toBeLessThanOrEqual(workspaceBox.width * 0.7 + 1)
-    expect(peekBox.height).toBeLessThanOrEqual(workspaceBox.height * 0.8 + 1)
-    // At the session's width: the peek's grid asks for the tile's columns.
-    await expect.poll(() => columns['peek:main']).toBe(columns['tile:main'])
 
     // The same chord over the same tile closes it.
     await page.keyboard.press('Alt+p')
@@ -103,6 +101,85 @@ test.describe('Peek', () => {
     await expect(peek.locator('.peek-name')).toHaveText('gt-gastown-jack')
     await page.keyboard.press('Alt+p')
     await expect(peek).toHaveCount(0)
+  })
+
+  test('shows every row of a pane taller than its box, and a drag changes the font but never the grid', async ({ page }) => {
+    // The case the operator hit: another client sized the window 94x66 with a
+    // status line under it, on a 1080p-class screen.
+    await page.setViewportSize({ width: 1920, height: 1080 })
+    const tall = { name: 'main', windows: 1, attached: true, group: 'main', width: 94, height: 66, statusLines: 1 }
+    await mockApiRoutes(page, {
+      sessionsResponse: {
+        ...mockSessions,
+        sessions: mockSessions.sessions.map(session => (session.name === 'main' ? tall : session)),
+      },
+    })
+    // Every size the peek sends, the handshake first; and a pane that fills
+    // all 67 rows, with the status line on the last one.
+    const sizes: { cols: number; rows: number }[] = []
+    const typed: string[] = []
+    const lines = Array.from({ length: 66 }, (_, index) => `pane row ${index + 1}`)
+    await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
+      if (new URL(ws.url()).searchParams.get('arg') !== 'peek') return
+      ws.onMessage(message => {
+        const text = typeof message === 'string' ? message : message.toString('utf8')
+        if (text.startsWith('0')) typed.push(text.slice(1))
+        const body = text.startsWith('{') ? text : text.startsWith('1') ? text.slice(1) : null
+        if (body === null) return
+        const size = JSON.parse(body) as { columns: number; rows: number }
+        sizes.push({ cols: size.columns, rows: size.rows })
+        if (text.startsWith('{')) {
+          ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(`${lines.join('\r\n')}\r\nSTATUS-LINE-BOTTOM`)]))
+        }
+      })
+    })
+    await page.goto('/')
+    await openSessionsSidecar(page)
+    await page.locator('.session-item').filter({ hasText: /^main/ }).first().click()
+
+    const peek = page.getByRole('dialog', { name: 'Peek main' })
+    const body = peek.locator('.peek-body')
+    const statusRow = peek.locator('.xterm-rows > div').last()
+    await expect(statusRow).toContainText('STATUS-LINE-BOTTOM')
+    expect(sizes[0]).toEqual({ cols: 94, rows: 67 })
+
+    // It opened into its own terminal, measuring unseen and all: Escape typed
+    // straight away is the session's, and the window stays.
+    await expect(peek.locator('.xterm-helper-textarea')).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect.poll(() => typed.join('')).toContain('\u001b')
+    await expect(peek).toBeVisible()
+
+    // The whole grid is inside the window: the last row and the right edge.
+    const inside = async () => {
+      const box = (await body.boundingBox())!
+      const screen = (await peek.locator('.xterm-screen').boundingBox())!
+      const row = (await statusRow.boundingBox())!
+      expect(screen.x + screen.width).toBeLessThanOrEqual(box.x + box.width + 0.5)
+      expect(screen.y + screen.height).toBeLessThanOrEqual(box.y + box.height + 0.5)
+      expect(row.y + row.height).toBeLessThanOrEqual(box.y + box.height + 0.5)
+      return screen
+    }
+    // And the window holds that grid with nothing left over: the terminal's
+    // padding (4 down, 8 across) and the scrollbar width the fit reserves.
+    const slack = async () => {
+      const box = (await body.boundingBox())!
+      const screen = (await peek.locator('.xterm-screen').boundingBox())!
+      return Math.max(box.height - screen.height - 4, box.width - screen.width - 8 - 14)
+    }
+    await expect.poll(slack).toBeLessThan(1)
+    const opened = await inside()
+
+    // Dragged smaller, the font shrinks to keep every row; the grid holds.
+    const frame = (await peek.boundingBox())!
+    await page.mouse.move(frame.x + frame.width - 2, frame.y + frame.height - 2)
+    await page.mouse.down()
+    await page.mouse.move(frame.x + frame.width - 202, frame.y + frame.height - 152, { steps: 10 })
+    await page.mouse.up()
+    await expect.poll(async () => (await peek.locator('.xterm-screen').boundingBox())!.height).toBeLessThan(opened.height - 50)
+    await inside()
+    await expect(statusRow).toContainText('STATUS-LINE-BOTTOM')
+    expect(sizes.every(size => size.cols === 94 && size.rows === 67)).toBe(true)
   })
 
   test('opens from a session row, keeps a selection released outside, and closes from its Close word', async ({ page }) => {
