@@ -53,8 +53,11 @@ describe('the size rule', () => {
     })
   })
 
-  it('caps at 90% of the workspace in each direction', () => {
-    expect(peekSize({ cols: 200, rows: 60, ...cell }, workspace)).toEqual({ width: 1152, height: 720 })
+  it('caps at 90% of the workspace, and narrows with the font a capped height shrinks', () => {
+    expect(peekSize({ cols: 200, rows: 20, ...cell }, workspace).width).toBe(1152)
+    // 100 rows of 17px want 1700px; the 684px left under the cap is 0.4 of
+    // that, so the 672px of 80 columns become 271.
+    expect(peekSize({ cols: 80, rows: 100, ...cell }, workspace)).toEqual({ width: 271 + 24, height: 720 })
   })
 
   it('takes the height cap alone when the inventory has no size for the session', () => {

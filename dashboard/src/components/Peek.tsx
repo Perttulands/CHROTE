@@ -21,7 +21,7 @@
  *
  * Its default size is that grid at the operator's font plus the header,
  * capped at 90% of the workspace in each direction, past which the font
- * shrinks. The operator resizes it from any edge or corner through the shared
+ * shrinks and the window with it. The operator resizes it from any edge or corner through the shared
  * floating-window frame, and that size is remembered for every later peek
  * until Reset size gives the session the say again; slack inside a remembered
  * size is terminal background.
@@ -70,33 +70,50 @@ export interface PeekGrid {
   cellHeight: number
 }
 
-/** The window's size for a grid, inside the workspace's caps. */
+/**
+ * The window's size for a grid, inside the workspace's caps. Past a cap the
+ * font shrinks, so the whole grid shrinks with it: a window capped in height
+ * narrows by the same factor, rather than keeping a width only the operator's
+ * font needed and showing the difference as empty background.
+ */
 export function peekSize(grid: PeekGrid, workspace: { width: number; height: number }): { width: number; height: number } {
-  const width = Math.min(
-    Math.ceil(grid.cols * grid.cellWidth) + PEEK_CHROME.width,
-    Math.floor(workspace.width * PEEK_MAX_WIDTH_SHARE),
-  )
-  const wanted = grid.rows === null
-    ? Infinity
-    : Math.ceil(grid.rows * grid.cellHeight) + PEEK_CHROME.height + PEEK_HEADER_PX
-  const height = Math.min(wanted, Math.floor(workspace.height * PEEK_MAX_HEIGHT_SHARE))
-  return { width, height }
+  const cap = {
+    width: Math.floor(workspace.width * PEEK_MAX_WIDTH_SHARE),
+    height: Math.floor(workspace.height * PEEK_MAX_HEIGHT_SHARE),
+  }
+  const gridWidth = grid.cols * grid.cellWidth
+  if (grid.rows === null) {
+    return { width: Math.min(Math.ceil(gridWidth) + PEEK_CHROME.width, cap.width), height: cap.height }
+  }
+  const gridHeight = grid.rows * grid.cellHeight
+  const around = { width: PEEK_CHROME.width, height: PEEK_CHROME.height + PEEK_HEADER_PX }
+  const scale = Math.min(1, (cap.width - around.width) / gridWidth, (cap.height - around.height) / gridHeight)
+  return {
+    width: Math.min(Math.ceil(gridWidth * scale) + around.width, cap.width),
+    height: Math.min(Math.ceil(gridHeight * scale) + around.height, cap.height),
+  }
 }
 
 // The window's default size is asked before its terminal has measured
-// anything, so the cell is the font measured directly; the height is the usual
-// line box of a monospace face. It only has to be close: the terminal fits its
-// font to whatever box results, so an estimate a little off costs a slightly
-// smaller font or a little background, never a row.
+// anything, so the cell is measured the way xterm measures it: a run of the
+// terminal font's widest glyph in a span, its width per character and its line
+// box. It only has to be close: the terminal fits its font to whatever box
+// results, so an estimate a little off costs a slightly smaller font or a
+// little background, never a row.
 function measureCell(fontSize: number): { width: number; height: number } {
-  const height = Math.ceil(fontSize * 1.2)
-  const context = document.createElement('canvas').getContext('2d')
-  if (context) {
-    context.font = `${fontSize}px ${TERMINAL_FONT_FAMILY}`
-    const width = context.measureText('W').width
-    if (width > 0) return { width, height }
-  }
-  return { width: fontSize * 0.6, height }
+  const probe = document.createElement('span')
+  probe.textContent = 'W'.repeat(32)
+  probe.style.position = 'absolute'
+  probe.style.visibility = 'hidden'
+  probe.style.whiteSpace = 'pre'
+  probe.style.fontFamily = TERMINAL_FONT_FAMILY
+  probe.style.fontSize = `${fontSize}px`
+  document.body.appendChild(probe)
+  const width = probe.offsetWidth / 32
+  const height = Math.ceil(probe.offsetHeight)
+  probe.remove()
+  if (width > 0 && height > 0) return { width, height }
+  return { width: fontSize * 0.6, height: Math.ceil(fontSize * 1.2) }
 }
 
 function Peek() {
@@ -150,7 +167,24 @@ function Peek() {
 
   // The session asks for its own size; a size the operator dragged overrides
   // it, for this session and every later one.
-  const cell = useMemo(() => measureCell(settings.fontSize), [settings.fontSize])
+  // The terminal font is loaded when the first terminal opens, which on a page
+  // with no tile on screen is this peek's own, after this measure. A cell
+  // measured in the fallback face is taken again once the browser says the
+  // face has landed; that is one event, and one correction at most.
+  const font = `${settings.fontSize}px ${TERMINAL_FONT_FAMILY}`
+  const [loadedFont, setLoadedFont] = useState<string | null>(() => (!document.fonts || document.fonts.check(font) ? font : null))
+  useEffect(() => {
+    if (loadedFont === font || !document.fonts) return
+    let current = true
+    const landed = () => { if (current) setLoadedFont(font) }
+    void document.fonts.load(font).then(landed, landed)
+    return () => { current = false }
+  }, [font, loadedFont])
+  const cell = useMemo(
+    () => measureCell(settings.fontSize),
+    // Measured again when the face lands, which changes what the span measures.
+    [settings.fontSize, loadedFont],
+  )
   const contentSize = useCallback(
     (workspace: FrameSize) => peekSize({
       cols: windowGrid?.cols ?? PEEK_FALLBACK_COLS,
