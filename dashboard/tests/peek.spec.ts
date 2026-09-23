@@ -117,11 +117,13 @@ test.describe('Peek', () => {
     // Every size the peek sends, the handshake first; and a pane that fills
     // all 67 rows, with the status line on the last one.
     const sizes: { cols: number; rows: number }[] = []
+    const typed: string[] = []
     const lines = Array.from({ length: 66 }, (_, index) => `pane row ${index + 1}`)
     await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
       if (new URL(ws.url()).searchParams.get('arg') !== 'peek') return
       ws.onMessage(message => {
         const text = typeof message === 'string' ? message : message.toString('utf8')
+        if (text.startsWith('0')) typed.push(text.slice(1))
         const body = text.startsWith('{') ? text : text.startsWith('1') ? text.slice(1) : null
         if (body === null) return
         const size = JSON.parse(body) as { columns: number; rows: number }
@@ -140,6 +142,13 @@ test.describe('Peek', () => {
     const statusRow = peek.locator('.xterm-rows > div').last()
     await expect(statusRow).toContainText('STATUS-LINE-BOTTOM')
     expect(sizes[0]).toEqual({ cols: 94, rows: 67 })
+
+    // It opened into its own terminal, measuring unseen and all: Escape typed
+    // straight away is the session's, and the window stays.
+    await expect(peek.locator('.xterm-helper-textarea')).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect.poll(() => typed.join('')).toContain('\u001b')
+    await expect(peek).toBeVisible()
 
     // The whole grid is inside the window: the last row and the right edge.
     const inside = async () => {

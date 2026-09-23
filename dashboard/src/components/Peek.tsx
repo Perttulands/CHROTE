@@ -186,6 +186,12 @@ function Peek() {
     label: 'session',
     contentSize,
   })
+  // Until the terminal has fitted in the caps and said what it needs, the
+  // window is laid out at the caps but not shown, so no peek flashes large and
+  // then shrinks. Transparent rather than hidden: a hidden textarea cannot hold
+  // the focus opening Peek puts in its terminal. A remembered size, or a grid
+  // fitted to the box, is right the moment it is drawn.
+  const measuring = canOpenSession && windowGrid !== null && !frame.remembered && fitted === null
 
   // Whether the focus is inside the window, which is what decides Alt+P below.
   const [holdsFocus, setHoldsFocus] = useState(false)
@@ -229,7 +235,9 @@ function Peek() {
       data-ui="peek"
       role="dialog"
       aria-label={`Peek ${displayName}`}
-      style={frame.size ? { width: frame.size.width, height: frame.size.height } : undefined}
+      style={frame.size
+        ? { width: frame.size.width, height: frame.size.height, opacity: measuring ? 0 : undefined }
+        : undefined}
       onFocus={() => setHoldsFocus(true)}
       onBlur={event => {
         if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setHoldsFocus(false)
