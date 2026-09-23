@@ -98,7 +98,10 @@ vi.mock('./keys/KeysPanel', () => ({
 }))
 vi.mock('./keys/LeaderStrip', () => ({ default: () => null }))
 vi.mock('./components/LayoutPresetsPanel', () => ({ default: () => null }))
-vi.mock('./components/TerminalPool', () => ({ TerminalPoolProvider: ({ children }: { children: React.ReactNode }) => children }))
+vi.mock('./components/TerminalPool', () => ({
+  TerminalPoolProvider: ({ children }: { children: React.ReactNode }) => children,
+  useTerminalPool: () => ({ terminals: new Map(), connectionStates: new Map() }),
+}))
 vi.mock('./hooks/useKeyboardShortcuts', () => ({ useKeyboardShortcuts: vi.fn() }))
 vi.mock('./featureFlags', () => ({
   installFeatureFlagHelpers: vi.fn(),

@@ -7,6 +7,12 @@ const state = vi.hoisted(() => ({
   floatingSession: null as string | null,
   openFloatingModal: vi.fn(),
   closeFloatingModal: vi.fn(),
+  terminals: new Map<string, { claim: () => void }>(),
+  connectionStates: new Map<string, string>(),
+}))
+
+vi.mock('../components/TerminalPool', () => ({
+  useTerminalPool: () => ({ terminals: state.terminals, connectionStates: state.connectionStates }),
 }))
 
 vi.mock('../context/SessionContext', () => ({
@@ -108,5 +114,49 @@ describe('Beads chords', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', bubbles: true, cancelable: true }))
     expect(onTabChange).toHaveBeenCalledWith('beads')
     expect(onToggleBeadsColumn).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Alt+C', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetChordsForTest()
+  })
+  afterEach(() => resetChordsForTest())
+
+  it('claims every pooled terminal with an open connection and dials none of the others', () => {
+    // A claim on a terminal without a connection would dial it at xterm's
+    // default grid and size its session wrong.
+    const open = { claim: vi.fn() }
+    const openOnAnotherTab = { claim: vi.fn() }
+    const neverShown = { claim: vi.fn() }
+    const dropped = { claim: vi.fn() }
+    state.terminals = new Map([
+      ['alice:main', open],
+      ['alice:other-tab', openOnAnotherTab],
+      ['alice:never-shown', neverShown],
+      ['alice:dropped', dropped],
+    ])
+    state.connectionStates = new Map([
+      ['alice:main', 'open'],
+      ['alice:other-tab', 'open'],
+      ['alice:never-shown', 'idle'],
+      ['alice:dropped', 'dropped'],
+    ])
+    renderHook(() => useAppChords({
+      activeTab: 'beads',
+      onTabChange: vi.fn(),
+      onToggleSessionsPanel: vi.fn(),
+      onOpenSessionsPanel: vi.fn(),
+      onToggleBeadsColumn: vi.fn(),
+      onToggleKeysPanel: vi.fn(),
+    }))
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', altKey: true, bubbles: true, cancelable: true }))
+
+    expect(open.claim).toHaveBeenCalledTimes(1)
+    expect(openOnAnotherTab.claim).toHaveBeenCalledTimes(1)
+    expect(neverShown.claim).not.toHaveBeenCalled()
+    expect(dropped.claim).not.toHaveBeenCalled()
   })
 })

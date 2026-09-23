@@ -14,6 +14,7 @@ import { useEffect, useRef } from 'react'
 import { useSession } from '../context/SessionContext'
 import { clearTable } from '../context/TableContext'
 import { focusResident } from '../residents/residentPresence'
+import { useTerminalPool } from '../components/TerminalPool'
 import type { Tab } from '../components/TabBar'
 import { isTerminalWorkspaceId } from '../types'
 import type { WorkspaceId } from '../types'
@@ -38,7 +39,8 @@ function clickInActiveDock(selector: string) {
 
 export function useAppChords(surfaces: AppChordSurfaces): void {
   const session = useSession()
-  const state = { surfaces, session }
+  const pool = useTerminalPool()
+  const state = { surfaces, session, pool }
   const stateRef = useRef(state)
   stateRef.current = state
 
@@ -136,6 +138,17 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
 
     const focusedSession = () => focusedWindow()?.activeSession ?? null
 
+    // Every pooled terminal, whichever tab shows it. Only an open connection is
+    // claimed: claim() on any other dials at the grid the terminal last had,
+    // which for a never-shown one is xterm's 80x24. Peek's terminal is not in
+    // the pool, so it never takes the seat (ADR-0017).
+    const claimAll = () => {
+      const { terminals, connectionStates } = stateRef.current.pool
+      terminals.forEach((terminal, sessionKey) => {
+        if (connectionStates.get(sessionKey) === 'open') terminal.claim()
+      })
+    }
+
     const chords: Chord[] = [
       { id: 'keys.beads', key: 'b', label: 'Beads tab', scope: 'global', run: () => stateRef.current.surfaces.onTabChange('beads') },
       { id: 'keys.beadsColumn', key: 'B', direct: { alt: true, shift: false, key: 'b' }, label: 'Beads column', scope: 'global', run: () => stateRef.current.surfaces.onToggleBeadsColumn() },
@@ -150,6 +163,9 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
       // The resident is the tab's: the chord reaches whichever column is on
       // screen, and does nothing on a tab that has none.
       { id: 'keys.resident', key: 'Enter', direct: { alt: true, shift: false, key: 'Enter' }, label: "Focus the tab's resident", scope: 'global', run: () => { focusResident() } },
+      // Claiming is the device's, not the tab's: every connected tile takes
+      // its session's seat, on this tab and the others.
+      { id: 'keys.claimAll', key: 'c', direct: { alt: true, shift: false, key: 'c' }, label: 'Claim all sessions', scope: 'global', run: claimAll },
       { id: 'keys.panel', key: '?', direct: { alt: true, shift: false, key: 'k' }, label: 'Keybindings', scope: 'global', run: () => stateRef.current.surfaces.onToggleKeysPanel() },
       { id: 'keys.off', key: 'k', label: 'Keys off', scope: 'global', run: () => stateRef.current.session.updateSettings({ keysEnabled: false }) },
 
