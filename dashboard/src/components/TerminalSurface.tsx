@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { createTerminalSession, type FixedGrid, type TerminalConnectionState, type TerminalSession } from '../terminal/terminalSession'
+import { createTerminalSession, type FixedGrid, type FixedGridBox, type TerminalConnectionState, type TerminalSession } from '../terminal/terminalSession'
 import { useStatus } from '../context/StatusContext'
 import { useTheme } from '../theme/ThemeContext'
 import { TERMINAL_FONT_FAMILY } from '../theme/theme'
@@ -59,7 +59,8 @@ function TerminalSurface({ session, hidden = false, connect = true }: TerminalSu
  * A terminal owned by the calling component for as long as `url` holds, then
  * disposed. Peek uses this; tiles take theirs from the pool so a released tile
  * keeps its connection. A fixed grid is held from the terminal's first
- * handshake on, and follows the caller's grid after that.
+ * handshake on, and follows the caller's grid after that; `fixedGridBox` is
+ * the box it needed at its last fit.
  */
 export function useTerminalSession(
   url: string | null,
@@ -69,6 +70,7 @@ export function useTerminalSession(
 ) {
   const [session, setSession] = useState<TerminalSession | null>(null)
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>('idle')
+  const [fixedGridBox, setFixedGridBox] = useState<FixedGridBox | null>(null)
   const theme = useTheme()
   const { announce } = useStatus()
   const initialAppearance = useRef({ fontSize, hideScrollbar, theme, fixedGrid })
@@ -90,12 +92,16 @@ export function useTerminalSession(
       terminalTheme: initialAppearance.current.theme.terminal,
       fontFamily: TERMINAL_FONT_FAMILY,
       fixedGrid: initialAppearance.current.fixedGrid,
+      // Every fit is a fresh answer, so a caller can tell a box reported after
+      // something it did from one reported before it.
+      onFixedGridFit: setFixedGridBox,
       onStateChange: setConnectionState,
       announce: (message, severity) => announceRef.current(message, severity),
     })
     setSession(created)
     return () => {
       setSession(null)
+      setFixedGridBox(null)
       created.dispose()
     }
   }, [url])
@@ -111,7 +117,7 @@ export function useTerminalSession(
     session?.setFixedGrid(gridCols !== undefined && gridRows !== undefined ? { cols: gridCols, rows: gridRows } : null)
   }, [session, gridCols, gridRows])
 
-  return { session, connectionState }
+  return { session, connectionState, fixedGridBox }
 }
 
 export default TerminalSurface

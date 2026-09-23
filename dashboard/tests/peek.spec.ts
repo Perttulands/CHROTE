@@ -151,6 +151,14 @@ test.describe('Peek', () => {
       expect(row.y + row.height).toBeLessThanOrEqual(box.y + box.height + 0.5)
       return screen
     }
+    // And the window holds that grid with nothing left over: the terminal's
+    // padding (4 down, 8 across) and the scrollbar width the fit reserves.
+    const slack = async () => {
+      const box = (await body.boundingBox())!
+      const screen = (await peek.locator('.xterm-screen').boundingBox())!
+      return Math.max(box.height - screen.height - 4, box.width - screen.width - 8 - 14)
+    }
+    await expect.poll(slack).toBeLessThan(1)
     const opened = await inside()
 
     // Dragged smaller, the font shrinks to keep every row; the grid holds.

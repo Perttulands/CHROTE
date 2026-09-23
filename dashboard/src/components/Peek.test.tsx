@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import Peek, { PEEK_FALLBACK_COLS, PEEK_HEADER_PX, peekSize } from './Peek'
+import Peek, { PEEK_HEADER_PX, fallbackTerminalBox, peekSize } from './Peek'
 import { sessionEvidenceFrom } from '../terminal/tileState'
 import { FakeSocket } from '../test/fakeWebSocket'
 import { resetSurfacesForTest } from '../keys/dismiss'
@@ -42,26 +42,14 @@ vi.mock('../context/StatusContext', () => ({
 
 describe('the size rule', () => {
   const workspace = { width: 1280, height: 800 }
-  const cell = { cellWidth: 8.4, cellHeight: 17 }
 
-  it('takes the session\'s columns and rows at the cell size, with the chrome around them', () => {
-    // 80 columns at 8.4px is 672px; the terminal's padding, the scrollbar the
-    // fit addon reserves and the hairline come to 24 across and 6 down.
-    expect(peekSize({ cols: 80, rows: 24, ...cell }, workspace)).toEqual({
-      width: 672 + 24,
-      height: 24 * 17 + 6 + PEEK_HEADER_PX,
-    })
+  it('offers the terminal the caps, 90% of the workspace, until it has fitted', () => {
+    expect(peekSize(null, workspace)).toEqual({ width: 1152, height: 720 })
   })
 
-  it('caps at 90% of the workspace, and narrows with the font a capped height shrinks', () => {
-    expect(peekSize({ cols: 200, rows: 20, ...cell }, workspace).width).toBe(1152)
-    // 100 rows of 17px want 1700px; the 684px left under the cap is 0.4 of
-    // that, so the 672px of 80 columns become 271.
-    expect(peekSize({ cols: 80, rows: 100, ...cell }, workspace)).toEqual({ width: 271 + 24, height: 720 })
-  })
-
-  it('takes the height cap alone when the inventory has no size for the session', () => {
-    expect(peekSize({ cols: PEEK_FALLBACK_COLS, rows: null, ...cell }, workspace)).toEqual({ width: 840 + 24, height: 720 })
+  it('then holds the terminal\'s box with the header and hairline around it, rounded up and capped', () => {
+    expect(peekSize({ width: 490.4, height: 875 }, workspace)).toEqual({ width: 491 + 2, height: 720 })
+    expect(peekSize({ width: 490.4, height: 400 }, workspace)).toEqual({ width: 491 + 2, height: 400 + PEEK_HEADER_PX + 2 })
   })
 })
 
@@ -109,10 +97,7 @@ describe('Peek', () => {
 
     // The session decides again: the inventory has no size for it, so it is
     // the fallback 100 columns at the measured cell, and the height cap.
-    const { width, height } = peekSize(
-      { cols: PEEK_FALLBACK_COLS, rows: null, cellWidth: 14 * 0.6, cellHeight: Math.ceil(14 * 1.2) },
-      { width: 1280, height: 800 },
-    )
+    const { width, height } = peekSize(fallbackTerminalBox(14), { width: 1280, height: 800 })
     expect(peek.style.width).toBe(`${width}px`)
     expect(peek.style.height).toBe(`${height}px`)
     expect(screen.queryByRole('button', { name: 'Reset size' })).toBeNull()

@@ -88,6 +88,17 @@ export interface FixedGrid {
   rows: number
 }
 
+/**
+ * A fixed grid after its font fit: the container size, in CSS pixels, that
+ * holds exactly that grid at the font it was fitted to, and the grid and the
+ * font ceiling it was fitted for.
+ */
+export interface FixedGridBox extends FixedGrid {
+  maxFontSize: number
+  width: number
+  height: number
+}
+
 export interface TerminalSessionOptions {
   url: string
   fontSize: number
@@ -97,6 +108,8 @@ export interface TerminalSessionOptions {
   fontFamily: string
   /** A grid to hold from the start, so the first handshake already carries it. */
   fixedGrid?: FixedGrid | null
+  /** Told the box a fixed grid needs, after every fit of one. */
+  onFixedGridFit?: (box: FixedGridBox) => void
   onStateChange?: (state: TerminalConnectionState) => void
   /** Where a painted selection reports whether it reached the clipboard. */
   announce: CopyAnnouncer
@@ -128,6 +141,9 @@ const MIN_VISIBLE_PX = 10
 // anyway: a grid that does not fit at that is shown clipped rather than as dots.
 const FONT_FIT_STEP = 0.5
 const FONT_FIT_MIN = 4
+// What the fit addon reserves for xterm's scrollbar when no overview ruler
+// says otherwise (its ViewportConstants.DEFAULT_SCROLL_BAR_WIDTH).
+const FIT_ADDON_SCROLLBAR_PX = 14
 
 /**
  * The largest font, no larger than the operator's, at which a fixed grid fits
@@ -269,6 +285,30 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
       terminal.options.fontSize = candidate
       const room = fitAddon.proposeDimensions()
       return room !== undefined && room.cols >= grid.cols && room.rows >= grid.rows
+    })
+    reportFixedGridBox(grid)
+  }
+
+  // The box the grid needs at the font it was fitted to, counted exactly as
+  // the fit addon counts it: the grid as drawn, the terminal element's padding,
+  // and the scrollbar width it reserves whenever there is scrollback. A
+  // container this size holds the same grid at the same font, so a window that
+  // shrinks to it is fitted again to the answer it already has.
+  const reportFixedGridBox = (grid: FixedGrid) => {
+    if (!options.onFixedGridFit || !terminal.element) return
+    const screen = terminal.element.querySelector('.xterm-screen')?.getBoundingClientRect()
+    if (!screen || screen.width < MIN_VISIBLE_PX || screen.height < MIN_VISIBLE_PX) return
+    const style = window.getComputedStyle(terminal.element)
+    const padding = (side: string) => parseInt(style.getPropertyValue(`padding-${side}`)) || 0
+    const scrollbar = terminal.options.scrollback === 0
+      ? 0
+      : (terminal.options.overviewRuler?.width || FIT_ADDON_SCROLLBAR_PX)
+    options.onFixedGridFit({
+      cols: grid.cols,
+      rows: grid.rows,
+      maxFontSize: fontSize,
+      width: screen.width + padding('left') + padding('right') + scrollbar,
+      height: screen.height + padding('top') + padding('bottom'),
     })
   }
 

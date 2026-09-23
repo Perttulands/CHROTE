@@ -19,10 +19,10 @@
  * A session the inventory has no size for is fitted the way a tile is, grid
  * to box, which is the one case where a sole-client peek can still reflow.
  *
- * Its default size is that grid at the operator's font plus the header,
- * capped at 90% of the workspace in each direction, past which the font
- * shrinks and the window with it. The operator resizes it from any edge or corner through the shared
- * floating-window frame, and that size is remembered for every later peek
+ * Its default size is that grid at the fitted font plus the header: the font
+ * is fitted in the caps, 90% of the workspace in each direction, and the
+ * window then shrinks to the grid it drew. The operator resizes it from any
+ * edge or corner through the shared floating-window frame, and that size is remembered for every later peek
  * until Reset size gives the session the say again; slack inside a remembered
  * size is terminal background.
  *
@@ -46,6 +46,7 @@ import { useSurface } from '../keys/dismiss'
 import { registerChords, type Chord } from '../keys/chords'
 import { useFloatingFrame } from '../hooks/useFloatingFrame'
 import type { FrameSize } from '../hooks/floatingWindowSize'
+import type { FixedGridBox } from '../terminal/terminalSession'
 import { TERMINAL_FONT_FAMILY } from '../theme/theme'
 import './Peek.css'
 
@@ -56,51 +57,38 @@ export const PEEK_MAX_HEIGHT_SHARE = 0.9
 export const PEEK_FALLBACK_COLS = 100
 /** The header's fixed height, as Peek.css draws it. */
 export const PEEK_HEADER_PX = 30
+/** The window's hairline, on each side. */
+const PEEK_HAIRLINE_PX = 1
 /**
- * Around the grid: the terminal's own padding (2px 4px), the 14px the fit
- * addon always reserves for a scrollbar, and the window's hairline.
+ * Around a grid fitted to the box rather than the font: the terminal's own
+ * padding (2px 4px) and the 14px the fit addon reserves for a scrollbar.
  */
-const PEEK_CHROME = { width: 8 + 14 + 2, height: 4 + 2 }
-
-export interface PeekGrid {
-  cols: number
-  /** Null when the inventory has no size for the session; only the cap decides. */
-  rows: number | null
-  cellWidth: number
-  cellHeight: number
-}
+const FALLBACK_TERMINAL_CHROME_PX = 8 + 14
 
 /**
- * The window's size for a grid, inside the workspace's caps. Past a cap the
- * font shrinks, so the whole grid shrinks with it: a window capped in height
- * narrows by the same factor, rather than keeping a width only the operator's
- * font needed and showing the difference as empty background.
+ * The window around a terminal box of this size, inside the workspace's caps:
+ * the header above it and the hairline around both. With no box yet, the caps
+ * themselves, which is the most room a font fit can be given.
  */
-export function peekSize(grid: PeekGrid, workspace: { width: number; height: number }): { width: number; height: number } {
+export function peekSize(terminalBox: FrameSize | null, workspace: FrameSize): FrameSize {
   const cap = {
     width: Math.floor(workspace.width * PEEK_MAX_WIDTH_SHARE),
     height: Math.floor(workspace.height * PEEK_MAX_HEIGHT_SHARE),
   }
-  const gridWidth = grid.cols * grid.cellWidth
-  if (grid.rows === null) {
-    return { width: Math.min(Math.ceil(gridWidth) + PEEK_CHROME.width, cap.width), height: cap.height }
-  }
-  const gridHeight = grid.rows * grid.cellHeight
-  const around = { width: PEEK_CHROME.width, height: PEEK_CHROME.height + PEEK_HEADER_PX }
-  const scale = Math.min(1, (cap.width - around.width) / gridWidth, (cap.height - around.height) / gridHeight)
+  if (!terminalBox) return cap
   return {
-    width: Math.min(Math.ceil(gridWidth * scale) + around.width, cap.width),
-    height: Math.min(Math.ceil(gridHeight * scale) + around.height, cap.height),
+    width: Math.min(Math.ceil(terminalBox.width) + 2 * PEEK_HAIRLINE_PX, cap.width),
+    height: Math.min(Math.ceil(terminalBox.height) + PEEK_HEADER_PX + 2 * PEEK_HAIRLINE_PX, cap.height),
   }
 }
 
-// The window's default size is asked before its terminal has measured
-// anything, so the cell is measured the way xterm measures it: a run of the
-// terminal font's widest glyph in a span, its width per character and its line
-// box. It only has to be close: the terminal fits its font to whatever box
-// results, so an estimate a little off costs a slightly smaller font or a
-// little background, never a row.
-function measureCell(fontSize: number): { width: number; height: number } {
+/**
+ * The terminal box for a session the inventory has no size for: it is fitted
+ * grid to box like a tile, so it is offered a width in columns at the
+ * operator's font, a cell measured as xterm measures one, and every row the
+ * height cap allows.
+ */
+export function fallbackTerminalBox(fontSize: number): FrameSize {
   const probe = document.createElement('span')
   probe.textContent = 'W'.repeat(32)
   probe.style.position = 'absolute'
@@ -109,11 +97,9 @@ function measureCell(fontSize: number): { width: number; height: number } {
   probe.style.fontFamily = TERMINAL_FONT_FAMILY
   probe.style.fontSize = `${fontSize}px`
   document.body.appendChild(probe)
-  const width = probe.offsetWidth / 32
-  const height = Math.ceil(probe.offsetHeight)
+  const cellWidth = probe.offsetWidth / 32 || fontSize * 0.6
   probe.remove()
-  if (width > 0 && height > 0) return { width, height }
-  return { width: fontSize * 0.6, height: Math.ceil(fontSize * 1.2) }
+  return { width: PEEK_FALLBACK_COLS * cellWidth + FALLBACK_TERMINAL_CHROME_PX, height: Infinity }
 }
 
 function Peek() {
@@ -156,7 +142,7 @@ function Peek() {
   )
   // The URL is kept even once the session has ended, so the terminal holding
   // the last frame is not disposed; `connect` is what stops it dialling again.
-  const { session: terminal, connectionState } = useTerminalSession(
+  const { session: terminal, connectionState, fixedGridBox } = useTerminalSession(
     socketUrl, settings.fontSize, settings.hideScrollbar, windowGrid,
   )
 
@@ -165,34 +151,33 @@ function Peek() {
 
   useSurface({ open: floatingSession !== null, kind: 'glance', onClose: closeFloatingModal, ref: peekRef })
 
-  // The session asks for its own size; a size the operator dragged overrides
-  // it, for this session and every later one.
-  // The terminal font is loaded when the first terminal opens, which on a page
-  // with no tile on screen is this peek's own, after this measure. A cell
-  // measured in the fallback face is taken again once the browser says the
-  // face has landed; that is one event, and one correction at most.
-  const font = `${settings.fontSize}px ${TERMINAL_FONT_FAMILY}`
-  const [loadedFont, setLoadedFont] = useState<string | null>(() => (!document.fonts || document.fonts.check(font) ? font : null))
-  useEffect(() => {
-    if (loadedFont === font || !document.fonts) return
-    let current = true
-    const landed = () => { if (current) setLoadedFont(font) }
-    void document.fonts.load(font).then(landed, landed)
-    return () => { current = false }
-  }, [font, loadedFont])
-  const cell = useMemo(
-    () => measureCell(settings.fontSize),
-    // Measured again when the face lands, which changes what the span measures.
-    [settings.fontSize, loadedFont],
+  // The session asks for its own size, and a size the operator dragged
+  // overrides it, for this session and every later one. With the grid known,
+  // the session's size is found in two steps that cannot disagree. The window
+  // first offers the terminal the whole of the caps; the terminal fits its
+  // font to that and reports the box its grid needs at the font it chose, and
+  // the window shrinks to exactly that box. The same grid fits the smaller box
+  // at the same font, and no larger font fits a box smaller than one it did
+  // not fit, so the refit lands where it started and nothing is left over. A
+  // box reported for another grid or another font ceiling is not this one's,
+  // and the window offers the caps again; so is one fitted inside a dragged
+  // size that Reset size has just let go of.
+  const [draggedBox, setDraggedBox] = useState<FixedGridBox | null>(null)
+  const fitted = fixedGridBox
+    && fixedGridBox !== draggedBox
+    && windowGrid
+    && fixedGridBox.cols === windowGrid.cols
+    && fixedGridBox.rows === windowGrid.rows
+    && fixedGridBox.maxFontSize === settings.fontSize
+    ? fixedGridBox
+    : null
+  const fallbackBox = useMemo(
+    () => (windowGrid ? null : fallbackTerminalBox(settings.fontSize)),
+    [windowGrid, settings.fontSize],
   )
   const contentSize = useCallback(
-    (workspace: FrameSize) => peekSize({
-      cols: windowGrid?.cols ?? PEEK_FALLBACK_COLS,
-      rows: windowGrid?.rows ?? null,
-      cellWidth: cell.width,
-      cellHeight: cell.height,
-    }, workspace),
-    [windowGrid, cell],
+    (workspace: FrameSize) => peekSize(fitted ?? fallbackBox, workspace),
+    [fitted, fallbackBox],
   )
   const frame = useFloatingFrame({
     kind: 'peek',
@@ -263,7 +248,7 @@ function Peek() {
           Send<span className="peek-chord" aria-hidden="true">Alt+S</span>
         </button>
         {frame.remembered && (
-          <button type="button" className="peek-word" onClick={frame.resetSize}>Reset size</button>
+          <button type="button" className="peek-word" onClick={() => { setDraggedBox(fixedGridBox); frame.resetSize() }}>Reset size</button>
         )}
         <button type="button" className="peek-word" onClick={closeFloatingModal}>Close</button>
       </div>
