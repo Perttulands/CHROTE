@@ -73,12 +73,21 @@
   flex: 1;
   min-height: 0;
   position: relative;
-  overflow: hidden;
-  scrollbar-width: none;
+  /* Clipped, not hidden: a hidden box can still be scrolled by focus, and the
+     terminal's cursor may sit in a row cut off above. */
+  overflow: clip;
+  background: var(--terminal-background);
 }
 
-.peek-body::-webkit-scrollbar {
-  display: none;
+/* The terminal at the size its grid takes, held to the bottom left, so a grid
+   larger than the room loses its oldest rows and never its prompt. Until it
+   has fitted, it fills the body. */
+.peek-terminal {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
 }
 
 /* Peek on an ended session, treated exactly as the tile treats one: the last

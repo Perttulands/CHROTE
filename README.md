@@ -44,9 +44,10 @@ to the terminal.
   session straight into an empty window.
 - Clicking a session row opens a floating preview called Peek. It never
   reassigns your window. Losing a layout to a stray click is worse than one
-  extra click. Peek shows the whole pane at its own size, shrinking the font
-  to fit rather than resizing the session, and takes your keys, Escape
-  included, so you can work in a session without opening it in a window.
+  extra click. Peek shows the pane at its own size, shrinking the font to fit
+  rather than resizing the session. Past a readable floor it keeps the bottom
+  rows in view and cuts off the oldest. It takes your keys, Escape included,
+  so you can work in a session without opening it in a window.
 - A location chip on an attached session jumps to the window already showing it.
 - Showing a session displaces nobody. A second device, or a second person, sees
   it live alongside you. tmux draws a window once, so everyone watching sees the
