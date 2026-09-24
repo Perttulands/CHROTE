@@ -68,6 +68,25 @@ async function expectBackgroundContent(page: Page) {
   await expect(page.locator('.beads-view .bead-row', { hasText: 'Prepare loose work' })).toHaveCount(1)
 }
 
+async function activateBackgroundViews(page: Page) {
+  // Optional views start on first use. Visit each once while its response is
+  // held, then return to the terminal so completion still updates hidden views.
+  for (const [tab, request] of [
+    ['Agents', '**/api/agent/context**'],
+    ['Library', '**/api/library/shelves**'],
+    ['Beads', '**/api/beads/work**'],
+  ]) {
+    const started = page.waitForRequest(request)
+    await page.getByRole('button', { name: tab, exact: true }).click()
+    await started
+  }
+  await page.locator('.tab-bar-tabs .tab').first().click()
+  await expect(page.locator('.terminal-window:visible')).toHaveCount(2)
+  await expect(page.locator('.agents-view')).toBeHidden()
+  await expect(page.locator('.library-view')).toBeHidden()
+  await expect(page.locator('.beads-view')).toBeHidden()
+}
+
 for (const completion of ['before enabling', 'while enabled'] as const) {
   test(`dev mode identifies and hands off with background reads completing ${completion}`, async ({ page }) => {
     let release!: () => void
@@ -81,6 +100,7 @@ for (const completion of ['before enabling', 'while enabled'] as const) {
         })
       }
     })
+    await activateBackgroundViews(page)
 
     if (completion === 'before enabling') {
       release()
