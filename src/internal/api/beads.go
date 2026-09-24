@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/chrote/server/internal/core"
@@ -27,11 +28,11 @@ import (
 type BeadsHandler struct {
 	bdCommand   string
 	execTimeout time.Duration
+	execSlots   chan struct{}
 
 	storeSummaryMu      sync.Mutex
 	storeSummaries      map[string]storeSummaryCacheEntry
 	storeSummaryRefresh map[string]*storeSummaryRefresh
-	storeSummarySlots   chan struct{}
 }
 
 // NewBeadsHandler creates a new BeadsHandler
@@ -44,9 +45,9 @@ func NewBeadsHandler() *BeadsHandler {
 	return &BeadsHandler{
 		bdCommand:           bdCommand,
 		execTimeout:         60 * time.Second,
+		execSlots:           make(chan struct{}, 4),
 		storeSummaries:      make(map[string]storeSummaryCacheEntry),
 		storeSummaryRefresh: make(map[string]*storeSummaryRefresh),
-		storeSummarySlots:   make(chan struct{}, workspaceProbeFanOut),
 	}
 }
 
@@ -64,12 +65,8 @@ func (h *BeadsHandler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // getBdVersion returns the bd version or error.
-func (h *BeadsHandler) getBdVersion() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, h.bdCommand, "version")
-	output, err := cmd.Output()
+func (h *BeadsHandler) getBdVersion(ctx context.Context) (string, error) {
+	output, err := h.runBd(ctx, "", 5*time.Second, "version")
 	if err != nil {
 		return "", err
 	}
@@ -221,19 +218,52 @@ func (h *BeadsHandler) appendProject(projects *[]map[string]interface{}, seen ma
 	return nil
 }
 
-// execBdJSON runs a bd command with --json and returns parsed JSON.
-func (h *BeadsHandler) execBdJSON(projectPath string, args ...string) (interface{}, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), h.execTimeout)
+// runBd owns every Beads subprocess, including the wrapper's descendants.
+// Waiting for a slot consumes the same budget as execution; a busy optional
+// component must not exhaust the server's process allowance.
+func (h *BeadsHandler) runBd(ctx context.Context, projectPath string, timeout time.Duration, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmdArgs := append([]string{"--json"}, args...)
-	cmd := exec.CommandContext(ctx, h.bdCommand, cmdArgs...)
-	cmd.Dir = projectPath
+	select {
+	case h.execSlots <- struct{}{}:
+		defer func() { <-h.execSlots }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
+	cmd := exec.CommandContext(ctx, h.bdCommand, args...)
+	cmd.Dir = projectPath
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	// A wrapper can exit while its descendants still hold the output pipes.
+	cmd.WaitDelay = time.Second
 	output, err := cmd.Output()
+	if err != nil && cmd.Process != nil {
+		_ = cmd.Cancel()
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return output, err
+}
+
+// execBdJSON runs a bd command with --json and returns parsed JSON.
+func (h *BeadsHandler) execBdJSON(ctx context.Context, projectPath string, args ...string) (interface{}, error) {
+	cmdArgs := append([]string{"--json"}, args...)
+	output, err := h.runBd(ctx, projectPath, h.execTimeout, cmdArgs...)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("bd %s timed out after %v", strings.Join(args, " "), h.execTimeout)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("bd %s timed out: %w", strings.Join(args, " "), err)
 		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return nil, fmt.Errorf("bd %s failed: %s", strings.Join(args, " "), string(exitErr.Stderr))
@@ -250,8 +280,8 @@ func (h *BeadsHandler) execBdJSON(projectPath string, args ...string) (interface
 }
 
 // execBdIssues runs a bd command that returns a JSON array of issue objects.
-func (h *BeadsHandler) execBdIssues(projectPath string, args ...string) ([]map[string]interface{}, error) {
-	result, err := h.execBdJSON(projectPath, args...)
+func (h *BeadsHandler) execBdIssues(ctx context.Context, projectPath string, args ...string) ([]map[string]interface{}, error) {
+	result, err := h.execBdJSON(ctx, projectPath, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +353,7 @@ func (h *BeadsHandler) requestProject(w http.ResponseWriter, r *http.Request) (s
 
 // Health handles GET /api/beads/health
 func (h *BeadsHandler) Health(w http.ResponseWriter, r *http.Request) {
-	version, err := h.getBdVersion()
+	version, err := h.getBdVersion(r.Context())
 	if err != nil {
 		core.WriteError(w, http.StatusServiceUnavailable, "BD_NOT_INSTALLED",
 			"bd command not found. Install modern Beads and ensure it is on CHROTE's PATH.")
@@ -370,7 +400,7 @@ func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.addProjectPrefixes(projects)
+	h.addProjectPrefixes(r.Context(), projects)
 
 	result := map[string]interface{}{"projects": projects}
 	if len(warnings) > 0 {
@@ -573,8 +603,8 @@ func beadIsLinked(raw map[string]interface{}) bool {
 
 // projectPrefix asks bd for one Bead of the project and reads its prefix. An
 // empty project has no prefix to report and no ids in anyone's terminal either.
-func (h *BeadsHandler) projectPrefix(projectPath string) string {
-	issues, err := h.execBdIssues(projectPath, "list", "--status", "all", "--limit", "1")
+func (h *BeadsHandler) projectPrefix(ctx context.Context, projectPath string) string {
+	issues, err := h.execBdIssues(ctx, projectPath, "list", "--status", "all", "--limit", "1")
 	if err != nil || len(issues) == 0 {
 		return ""
 	}
@@ -680,7 +710,9 @@ func addBeadType(counts *BeadsTypeCounts, issueType string) {
 // route and the Beads rail. The status counts are exclusive so their sum is the
 // store's total, while the legacy open count can be derived by omitting closed.
 func (h *BeadsHandler) readStoreSummary(projectPath string) (storeSummary, error) {
-	issues, err := h.execBdIssues(projectPath, "list", "--status", "all", "--limit", "0")
+	// A shared refresh outlives any one HTTP request, but runBd still bounds
+	// its queue wait and execution by execTimeout.
+	issues, err := h.execBdIssues(context.Background(), projectPath, "list", "--status", "all", "--limit", "0")
 	if err != nil {
 		return storeSummary{}, err
 	}
@@ -727,13 +759,9 @@ func (h *BeadsHandler) ensureStoreSummaryStateLocked() {
 	if h.storeSummaryRefresh == nil {
 		h.storeSummaryRefresh = make(map[string]*storeSummaryRefresh)
 	}
-	if h.storeSummarySlots == nil {
-		h.storeSummarySlots = make(chan struct{}, workspaceProbeFanOut)
-	}
 }
 
 func (h *BeadsHandler) refreshStoreSummary(projectPath string, refresh *storeSummaryRefresh) {
-	h.storeSummarySlots <- struct{}{}
 	summary, err := h.readStoreSummary(projectPath)
 	// The key is read after bd has run, because bd rewrites the manifest as it
 	// reads. Hashing before would file the entry under bytes that no longer
@@ -742,7 +770,6 @@ func (h *BeadsHandler) refreshStoreSummary(projectPath string, refresh *storeSum
 	if err == nil {
 		hash, err = storeManifestHash(projectPath)
 	}
-	<-h.storeSummarySlots
 
 	h.storeSummaryMu.Lock()
 	refresh.summary = summary
@@ -798,9 +825,8 @@ func (h *BeadsHandler) cachedStoreSummary(projectPath string, wait bool) (storeS
 
 // addProjectPrefixes gives every discovered project the prefix its Bead ids
 // carry, because that is what the terminal's link provider matches on. One bd
-// call per project, all of them at once: the list is short and the operator is
-// waiting for it.
-func (h *BeadsHandler) addProjectPrefixes(projects []map[string]interface{}) {
+// call per project, sharing the adapter's bounded command slots.
+func (h *BeadsHandler) addProjectPrefixes(ctx context.Context, projects []map[string]interface{}) {
 	var wait sync.WaitGroup
 	prefixes := make([]string, len(projects))
 	for index, project := range projects {
@@ -811,7 +837,7 @@ func (h *BeadsHandler) addProjectPrefixes(projects []map[string]interface{}) {
 		wait.Add(1)
 		go func(index int, path string) {
 			defer wait.Done()
-			prefixes[index] = h.projectPrefix(path)
+			prefixes[index] = h.projectPrefix(ctx, path)
 		}(index, path)
 	}
 	wait.Wait()
@@ -840,7 +866,7 @@ func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issues, err := h.execBdIssues(projectPath, "list", "--status", "open,in_progress,blocked,deferred", "--all")
+	issues, err := h.execBdIssues(r.Context(), projectPath, "list", "--status", "open,in_progress,blocked,deferred", "--all")
 	if err != nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
@@ -902,7 +928,7 @@ func (h *BeadsHandler) ClosedWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issues, err := h.execBdIssues(projectPath, "list", "--status", "all", "--all")
+	issues, err := h.execBdIssues(r.Context(), projectPath, "list", "--status", "all", "--all")
 	if err != nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
@@ -955,7 +981,7 @@ func (h *BeadsHandler) Formulas(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.execBdJSON(projectPath, "formula", "list")
+	result, err := h.execBdJSON(r.Context(), projectPath, "formula", "list")
 	if err != nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
@@ -1019,7 +1045,7 @@ func (h *BeadsHandler) FormulaDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	formula, err := h.execBdJSON(projectPath, "formula", "show", name)
+	formula, err := h.execBdJSON(r.Context(), projectPath, "formula", "show", name)
 	if err != nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
@@ -1043,7 +1069,7 @@ func (h *BeadsHandler) Molecules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	molecules, err := h.execBdIssues(projectPath, "list", "--type", "molecule", "--all", "--include-templates")
+	molecules, err := h.execBdIssues(r.Context(), projectPath, "list", "--type", "molecule", "--all", "--include-templates")
 	if err != nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
@@ -1067,7 +1093,7 @@ func (h *BeadsHandler) MoleculeDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	molecule, err := h.execBdJSON(projectPath, "mol", "show", id)
+	molecule, err := h.execBdJSON(r.Context(), projectPath, "mol", "show", id)
 	if err != nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
@@ -1141,7 +1167,7 @@ func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issues, err := h.execBdIssues(projectPath, "list", "--status", "all", "--limit", "0")
+	issues, err := h.execBdIssues(r.Context(), projectPath, "list", "--status", "all", "--limit", "0")
 	if err != nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return

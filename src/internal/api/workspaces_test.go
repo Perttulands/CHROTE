@@ -34,7 +34,9 @@ func newWorkspaceTestTree(t *testing.T) *workspaceTestTree {
 	home := filepath.Join(base, "home", "operator")
 	mkdirAll(t, root)
 	mkdirAll(t, home)
-	beads := &BeadsHandler{bdCommand: filepath.Join(base, "no-such-bd"), execTimeout: 5 * time.Second}
+	beads := NewBeadsHandler()
+	beads.bdCommand = filepath.Join(base, "no-such-bd")
+	beads.execTimeout = 5 * time.Second
 	return &workspaceTestTree{
 		base: base,
 		root: root,
