@@ -81,6 +81,23 @@ This separation is static code organization, not a marketplace or dynamic plugin
 
 Browser-local layout state may disappear without losing host work. The server may restart without redefining sessions. A service adapter or Beads workspace may be unavailable without crashing the dashboard.
 
+The selected object's table has one persistent content owner. Views provide
+placements for that same table, so switching views preserves its drafts, loaded
+content and scroll position. A table failure is contained separately from the
+workspace and its terminals.
+
+Optional dashboard views start loading on first use and retain their state after
+that. Retained state does not require continuous requests: the Server view reads
+only while visible, with independent bounded status and history requests.
+Concurrent metadata reads share in-flight work, while later reads and explicit
+refresh actions reach the host again. A lightweight Bead catalog supplies
+terminal links independently of opening the Beads view. Session discovery and
+completion notifications retain their own background lifetime.
+
+Saved terminal bindings establish their first connection when displayed at real
+layout dimensions. Once started, their pooled connection and frame survive
+hiding or moving the terminal, as specified by ADR-0017.
+
 CHROTE can store bounded history for operator visibility. That history is evidence, not a replacement for the system that produced it.
 
 The golden failure rule is non-interference. Product code, tests, installers, restarts, and cleanup paths must never implicitly or accidentally terminate or disrupt existing tmux sessions. Exact operator-authorized deletion and exact cleanup of resources created by a failed operation or isolated test remain valid.
