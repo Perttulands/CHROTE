@@ -13,7 +13,6 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { connectTtyd, type TtydConnection } from './ttydProtocol'
 import { createBeadLinkProvider } from './beadLinks'
 import { createPathLinkProvider } from './pathLinks'
-import { ensureBeadProjects } from '../beads/beadIds'
 import { terminalKeyEvent } from '../keys/chords'
 import { copyAndAnnounce, type CopyAnnouncer } from '../utils/clipboard'
 import type { TerminalTheme } from '../theme/theme'
@@ -209,11 +208,9 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
 
   // The other thing agents print that the operator wants to open: the Bead id
   // of the work in hand. It is not a URL, so it gets its own provider, and
-  // activation opens the card rather than a tab. The prefixes it matches are
-  // the configured projects', which is why they are asked for as soon as there
-  // is a terminal to print them in.
+  // activation opens the card rather than a tab. The dashboard's shared
+  // catalog learns the prefixes without making every terminal ask for them.
   terminal.registerLinkProvider(createBeadLinkProvider(terminal))
-  void ensureBeadProjects()
 
   // And the path of the file the agent changed, the test that failed, the log
   // it wrote: activation hands it to Files, which reports plainly if it is not

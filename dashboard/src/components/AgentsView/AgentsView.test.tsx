@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AgentsView from './index'
 import { DEFAULT_SETTINGS } from '../../types'
@@ -78,13 +78,24 @@ describe('AgentsView', () => {
     expect(mockState.fetchAgentContext).toHaveBeenCalledWith('/home/operator', 'claude-code', 'operator')
   })
 
+  it('distinguishes pending discovery from an empty workspace list', async () => {
+    let answer!: (found: Workspace[]) => void
+    mockState.fetchWorkspaces.mockReturnValue(new Promise<Workspace[]>(resolve => { answer = resolve }))
+    render(<AgentsView />)
+    expect(screen.getByText('Loading workspaces…')).toBeInTheDocument()
+    expect(screen.queryByText('No workspace found under the roots.')).not.toBeInTheDocument()
+    await act(async () => { answer([]) })
+    expect(screen.queryByText('Loading workspaces…')).not.toBeInTheDocument()
+    expect(screen.getByText('No workspace found under the roots.')).toBeInTheDocument()
+  })
+
   it('lists the folders live sessions run in before the rest', async () => {
     render(<AgentsView />)
     await waitFor(() => expect(screen.getByText('/srv/chrote')).toBeInTheDocument())
 
     const headings = screen.getAllByRole('heading', { level: 3 }).map(heading => heading.textContent)
     expect(headings.slice(headings.indexOf('Running'), headings.indexOf('Running') + 2)).toEqual(['Running', 'Projects'])
-    const rows = [...document.querySelectorAll('.agents-workspaces .agents-rail-row')].map(row => row.textContent)
+    const rows = [...document.querySelectorAll('.agents-workspaces .agents-rail-row[aria-pressed]')].map(row => row.textContent)
     expect(rows).toEqual(['/home/operator3', '/srv/chrote3'])
   })
 
@@ -106,6 +117,24 @@ describe('AgentsView', () => {
 
     await waitFor(() => expect(mockState.fetchAgentContext)
       .toHaveBeenCalledWith('/home/operator', 'codex', 'operator'))
+  })
+
+  it('refreshes workspace discovery without resetting the current stack or filter', async () => {
+    render(<AgentsView />)
+    await screen.findByText('/home/operator/CLAUDE.md')
+    fireEvent.change(screen.getByLabelText('Filter skills and memories'), { target: { value: 'draft filter' } })
+    mockState.fetchWorkspaces.mockResolvedValue([
+      { path: '/srv/new-project', sources: ['git'], sessions: [], instructions: 1 },
+      ...workspaces,
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh workspaces' }))
+
+    await screen.findByText('/srv/new-project')
+    expect(mockState.fetchWorkspaces).toHaveBeenCalledTimes(2)
+    expect(mockState.fetchAgentContext).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText('Filter skills and memories')).toHaveValue('draft filter')
+    expect(screen.getByTestId('resident')).toHaveTextContent('agents /home/operator claude-code')
   })
 
   it('hands the tender the chosen workspace and harness', async () => {

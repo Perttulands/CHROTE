@@ -10,6 +10,7 @@
  */
 
 import { apiErrorMessage } from '../apiErrors'
+import { shareInFlight } from '../inFlight'
 
 /** Why a folder is on the list. One folder can be there for several reasons. */
 export type WorkspaceSource = 'session' | 'beads' | 'git' | 'store'
@@ -67,12 +68,16 @@ export interface FetchWorkspacesOptions {
   signal?: AbortSignal
 }
 
-export async function fetchWorkspaces({ beads = false, waitForBeads = false, signal }: FetchWorkspacesOptions = {}): Promise<Workspace[]> {
+export function fetchWorkspaces({ beads = false, waitForBeads = false, signal }: FetchWorkspacesOptions = {}): Promise<Workspace[]> {
   const url = beads ? `/api/workspaces?beads=${waitForBeads ? 'wait' : '1'}` : '/api/workspaces'
-  const response = await fetch(url, { signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
-  if (!response.ok) throw new Error(apiErrorMessage(await response.text(), 'Could not list the workspaces'))
-  const body = await response.json() as unknown
-  return Array.isArray(body) ? body as Workspace[] : []
+  const read = async () => {
+    const response = await fetch(url, { signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+    if (!response.ok) throw new Error(apiErrorMessage(await response.text(), 'Could not list the workspaces'))
+    const body = await response.json() as unknown
+    return Array.isArray(body) ? body as Workspace[] : []
+  }
+  // A caller's cancellation must never abort another consumer's discovery.
+  return signal ? read() : shareInFlight(url, read)
 }
 
 /** A workspace a live session runs in. */

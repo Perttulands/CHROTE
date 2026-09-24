@@ -51,6 +51,9 @@ export default function AgentsView({ active = true, onOpenInFiles }: AgentsViewP
   const theme = useTheme()
   const [harness, setHarness] = useState<AgentHarness>('claude-code')
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [workspaceRefresh, setWorkspaceRefresh] = useState(0)
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
+  const [workspacesLoading, setWorkspacesLoading] = useState(true)
   const [folder, setFolder] = useState<string>('')
   const [context, setContext] = useState<AgentContext | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -62,18 +65,22 @@ export default function AgentsView({ active = true, onOpenInFiles }: AgentsViewP
   // comes first, and that is the one the tab opens on.
   useEffect(() => {
     let current = true
+    setWorkspacesLoading(true)
     fetchWorkspaces()
       .then(found => {
         if (!current) return
         setWorkspaces(found)
+        setWorkspaceError(null)
+        setWorkspacesLoading(false)
         setFolder(previous => previous || found[0]?.path || '')
       })
       .catch((cause: unknown) => {
         if (!current) return
-        setError(cause instanceof Error ? cause.message : 'Could not list the workspaces')
+        setWorkspaceError(cause instanceof Error ? cause.message : 'Could not list the workspaces')
+        setWorkspacesLoading(false)
       })
     return () => { current = false }
-  }, [])
+  }, [workspaceRefresh])
 
   useEffect(() => {
     if (!folder) return
@@ -188,13 +195,18 @@ export default function AgentsView({ active = true, onOpenInFiles }: AgentsViewP
             ))}
           </RailSection>
           <RailScroll className="agents-workspaces">
+            <button type="button" className="agents-rail-row" disabled={workspacesLoading} onClick={() => setWorkspaceRefresh(value => value + 1)}>
+              Refresh workspaces
+            </button>
+            {workspacesLoading && <p className="agent-note">Loading workspaces…</p>}
+            {workspaceError && <p className="agent-note">{workspaceError}</p>}
             {running.length > 0 && (
               <RailSection className="agents-group" title="Running">
                 {running.map(workspaceRow)}
               </RailSection>
             )}
             <RailSection className="agents-group" title="Projects">
-              {workspaces.length === 0 && <span className="agent-note">No workspace found under the roots.</span>}
+              {!workspacesLoading && !workspaceError && workspaces.length === 0 && <span className="agent-note">No workspace found under the roots.</span>}
               {projects.map(workspaceRow)}
             </RailSection>
           </RailScroll>
@@ -202,7 +214,7 @@ export default function AgentsView({ active = true, onOpenInFiles }: AgentsViewP
 
         <div className="agents-main" data-ui="agents.stack">
           <div className="agents-subject">
-            <span className="agents-folder">{folder || 'no workspace'}</span>
+            <span className="agents-folder">{folder || (workspacesLoading ? 'loading workspaces' : 'no workspace')}</span>
             <HarnessMark id={harness} />
             <span>{harnessLabel}</span>
             {user && (

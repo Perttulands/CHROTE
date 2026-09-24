@@ -196,6 +196,25 @@ describe('TerminalWindow launch user', () => {
     await waitFor(() => expect(launchButton).toBeEnabled())
   })
 
+  it('loads an empty launcher on first display and preserves its draft while hidden', async () => {
+    const props = {
+      workspaceId: 'terminal3' as const,
+      window: { id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
+    }
+    const { rerender } = render(<TerminalWindow {...props} workspaceActive={false} />)
+    expect(fetch).not.toHaveBeenCalled()
+    rerender(<TerminalWindow {...props} style={{ display: 'none' }} />)
+    expect(fetch).not.toHaveBeenCalled()
+    rerender(<TerminalWindow {...props} />)
+    await screen.findByRole('button', { name: 'Launch claude in chrote' })
+    const reads = vi.mocked(fetch).mock.calls.length
+    fireEvent.change(screen.getByLabelText('Session name'), { target: { value: 'unfinished-launch' } })
+    rerender(<TerminalWindow {...props} workspaceActive={false} />)
+    rerender(<TerminalWindow {...props} />)
+    expect(screen.getByLabelText('Session name')).toHaveValue('unfinished-launch')
+    expect(fetch).toHaveBeenCalledTimes(reads)
+  })
+
   // The header is the session it shows, so a right-click anywhere on it opens
   // the active tag's menu. With no session there is nothing to open, and in
   // the body the browser's own right-click still belongs to the operator.

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import BeadsView from './BeadsView'
 import { DEFAULT_SETTINGS } from '../types'
 import { resetBeadCardForTest, useBeadCardRequest } from '../beads/beadCard'
-import { resetBeadProjectsForTest } from '../beads/beadIds'
+import { beadProjectPath, resetBeadProjectsForTest, setBeadProjects } from '../beads/beadIds'
 import type { BeadRow } from '../beads/beadsApi'
 
 const mockState = vi.hoisted(() => ({
@@ -13,6 +13,8 @@ const mockState = vi.hoisted(() => ({
   settings: null as unknown as typeof DEFAULT_SETTINGS,
   projectList: null as unknown[] | null,
   projects: [] as unknown[],
+  fetchBeadProjects: vi.fn(),
+  fetchBeadProjectIdentities: vi.fn(),
   work: new Map<string, unknown>(),
   closed: new Map<string, unknown>(),
   formulas: new Map<string, unknown>(),
@@ -43,7 +45,8 @@ vi.mock('../context/StatusContext', () => ({
 
 vi.mock('../beads/beadsApi', () => ({
   fetchBeadProjectList: () => Promise.resolve(mockState.projectList ?? mockState.projects),
-  fetchBeadProjects: () => Promise.resolve(mockState.projects),
+  fetchBeadProjects: () => mockState.fetchBeadProjects(),
+  fetchBeadProjectIdentities: () => mockState.fetchBeadProjectIdentities(),
   fetchBeadWork: (path: string) => mockState.fetchBeadWork(path),
   fetchClosedBeadWork: (path: string) => mockState.fetchClosedBeadWork(path),
   fetchFormulas: (path: string) => mockState.fetchFormulas(path),
@@ -83,6 +86,8 @@ beforeEach(() => {
     { name: 'quiet', path: '/srv/quiet', beadsPath: '/srv/quiet/.beads', prefix: 'qt', openBeads: 0 },
     { name: 'silent', path: '/srv/silent', beadsPath: '/srv/silent/.beads', prefix: 'sl', openBeads: 0 },
   ]
+  mockState.fetchBeadProjects.mockReset().mockImplementation(() => Promise.resolve(mockState.projects))
+  mockState.fetchBeadProjectIdentities.mockReset().mockImplementation(() => Promise.resolve(mockState.projects))
   mockState.work = new Map<string, unknown>([
     ['/srv/chrote', {
       prefix: 'chrote',
@@ -206,6 +211,36 @@ afterEach(() => {
 })
 
 describe('the Beads tab', () => {
+  it('refreshes discovered projects without changing the selected project or query', async () => {
+    render(<BeadsView />)
+    fireEvent.click(await screen.findByRole('button', { name: 'chrote', exact: true }))
+    const query = screen.getByLabelText('Search Beads')
+    fireEvent.change(query, { target: { value: 'keep this filter' } })
+    mockState.projects = [...mockState.projects, {
+      name: 'new-project', path: '/srv/new-project', beadsPath: '/srv/new-project/.beads', prefix: 'new', openBeads: 1,
+    }]
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh projects' }))
+
+    await screen.findByRole('button', { name: 'new', exact: true })
+    expect(screen.getByRole('button', { name: 'chrote', exact: true })).toHaveClass('active')
+    expect(query).toHaveValue('keep this filter')
+    expect(mockState.fetchBeadProjectIdentities).toHaveBeenCalledTimes(2)
+    expect(beadProjectPath('new-abc')).toBe('/srv/new-project')
+  })
+
+  it('retains known manual links when project counts and identity refresh fail', async () => {
+    setBeadProjects([{ name: 'manual', path: '/work/manual', beadsPath: '/work/manual/.beads', prefix: 'manual' }])
+    mockState.projectList = [{ name: 'discovered', path: '/work/discovered', beadsPath: '/work/discovered/.beads' }]
+    mockState.work.set('/work/discovered', { projectPath: '/work/discovered', prefix: '', beads: [] })
+    mockState.fetchBeadProjects.mockRejectedValue(new Error('counts unavailable'))
+    mockState.fetchBeadProjectIdentities.mockRejectedValue(new Error('identity unavailable'))
+    render(<BeadsView />)
+
+    await waitFor(() => expect(mockState.announce).toHaveBeenCalledWith('Beads counts unavailable · counts unavailable', 'error'))
+    expect(beadProjectPath('manual-abc')).toBe('/work/manual')
+  })
+
   it('draws every configured store as a map of open work', async () => {
     render(<BeadsView />)
 

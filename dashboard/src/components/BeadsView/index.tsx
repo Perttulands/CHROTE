@@ -23,7 +23,7 @@ import Rail, { RailScroll, RailSection } from '../Rail'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { tableReference, useTableObject } from '../../context/TableContext'
-import { setBeadProjects } from '../../beads/beadIds'
+import { refreshBeadProjects } from '../../beads/beadIds'
 import {
   fetchBeadProjectList,
   fetchBeadProjects,
@@ -205,6 +205,8 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
   const { announce } = useStatus()
   const [projects, setProjects] = useState<BeadProject[]>([])
   const [projectsReady, setProjectsReady] = useState(false)
+  const [projectsRefresh, setProjectsRefresh] = useState(0)
+  const [projectsError, setProjectsError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string>(settings.beadsSelectedProject || ALL_PROJECTS)
   const [view, setView] = useState<BeadsTabView>(
     VIEWS.some(item => item.id === settings.beadsView) ? settings.beadsView : 'map',
@@ -233,13 +235,16 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
 
   useEffect(() => {
     let current = true
+    // Identities are independent of the all-issue counts projection. A failed
+    // count read must not erase a known manual store's terminal links.
+    void refreshBeadProjects(manualPaths).catch((cause: unknown) => {
+      if (current) announce(`Bead links unavailable · ${errorMessage(cause, 'Could not discover Bead links')}`, 'error')
+    })
     fetchBeadProjectList()
       .then(found => {
         if (!current) return
         setProjects(found)
-        // The terminal's link provider matches the prefixes of the projects
-        // that actually exist; this is where it learns them.
-        setBeadProjects(found)
+        setProjectsError(null)
         if (found.length === 0) setLoading(false)
 
         void fetchBeadProjects(manualPaths)
@@ -247,7 +252,6 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
             if (!current) return
             setProjects(detailed)
             setProjectsReady(true)
-            setBeadProjects(detailed)
             setSelected(previous => {
               if (previous === ALL_PROJECTS || detailed.some(project => project.path === previous)) return previous
               updateSettings({ beadsSelectedProject: ALL_PROJECTS })
@@ -263,13 +267,12 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
       })
       .catch((cause: unknown) => {
         if (!current) return
-        setProjects([])
         setProjectsReady(true)
-        setError(cause instanceof Error ? cause.message : 'Could not list Beads projects')
+        setProjectsError(cause instanceof Error ? cause.message : 'Could not list Beads projects')
         setLoading(false)
       })
     return () => { current = false }
-  }, [announce, manualPaths, updateSettings])
+  }, [announce, manualPaths, projectsRefresh, updateSettings])
 
   // A quiet store has nothing open: it is folded in the rail, and "All" does
   // not ask it, because the answer is known to be empty.
@@ -524,6 +527,10 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
         onWidthCommit={commitRailWidth}
       >
         <RailSection fill>
+        <button type="button" className="beads-refresh" onClick={() => setProjectsRefresh(value => value + 1)}>
+          Refresh projects
+        </button>
+        {projectsError && <p className="beads-rail-error">{projectsError}</p>}
         <RailScroll>
           <button
             type="button"

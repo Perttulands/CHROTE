@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import { useSession } from '../context/SessionContext'
 import { useTheme } from '../theme/ThemeContext'
+import { shareInFlight } from '../inFlight'
 import { identityColorFor } from '../theme/theme'
 import { HarnessMark, harnessShortName, type HarnessId } from './harnessMarks'
 import FolderField from './FolderField'
@@ -193,9 +194,8 @@ function parseLaunchOptions(value: unknown): LaunchOptions | null {
 }
 
 /**
- * The launcher's choices, read once. They are a file on the host that changes
- * when the operator edits it, so a dashboard that missed an edit is one reload
- * away from having it; there is no poll and no retry.
+ * Each opening reads the host's choices. Simultaneous launchers share that
+ * read; a later opening gets a fresh answer, including after a failed read.
  */
 export function useLaunchOptions(): LaunchOptions {
   const [options, setOptions] = useState<LaunchOptions>(FALLBACK_LAUNCH_OPTIONS)
@@ -204,16 +204,13 @@ export function useLaunchOptions(): LaunchOptions {
     let current = true
     const load = async () => {
       try {
-        const response = await fetch('/api/launch', { signal: AbortSignal.timeout(10000) })
-        if (!response.ok) {
-          console.warn(`Launch options request failed (${response.status}); offering a shell`)
-          return
-        }
-        const parsed = parseLaunchOptions(await response.json())
-        if (!parsed) {
-          console.warn('Launch options did not match the contract; offering a shell')
-          return
-        }
+        const parsed = await shareInFlight('/api/launch', async () => {
+          const response = await fetch('/api/launch', { signal: AbortSignal.timeout(10000) })
+          if (!response.ok) throw new Error(`Launch options request failed (${response.status})`)
+          const found = parseLaunchOptions(await response.json())
+          if (!found) throw new Error('Launch options did not match the contract')
+          return found
+        })
         if (current) setOptions(parsed)
       } catch (error) {
         console.warn('Launch options request failed; offering a shell', error)

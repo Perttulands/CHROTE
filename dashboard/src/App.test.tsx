@@ -1,8 +1,10 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { resetChordsForTest } from './keys/chords'
 import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from './types'
+import type { Tab } from './components/TabBar'
 
 const mocks = vi.hoisted(() => ({
   dndProps: null as Record<string, any> | null,
@@ -16,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   sessions: [{ name: 'alpha', windows: 1, attached: false, unixUser: 'alice', currentCommand: 'claude' }],
   terminal2WindowCount: 2,
   enabledFlags: [] as string[],
+  catalogError: false,
 }))
 
 // The canonical four slots every workspace holds; windowCount decides how many
@@ -63,7 +66,15 @@ vi.mock('./context/SessionContext', () => ({
   }),
 }))
 
-vi.mock('./components/TabBar', () => ({ default: () => <div data-testid="tab-bar" /> }))
+vi.mock('./components/TabBar', () => ({
+  default: ({ onTabChange }: { onTabChange: (tab: Tab) => void }) => (
+    <div data-testid="tab-bar">
+      {(['terminal1', 'files', 'beads', 'agents', 'library', 'server'] as Tab[]).map(tab => (
+        <button key={tab} onClick={() => onTabChange(tab)}>{tab}</button>
+      ))}
+    </div>
+  ),
+}))
 vi.mock('./components/TerminalWorkspaceDock', () => ({
   default: ({ workspaceId, active }: { workspaceId: string; active?: boolean }) => (
     <div data-workspace={workspaceId} data-active={String(active)}>
@@ -80,19 +91,27 @@ vi.mock('./components/TerminalArea', () => ({
     <div data-workspace={workspaceId} data-active={String(active)}><div data-testid={`${workspaceId} frame`} /></div>
   ),
 }))
-vi.mock('./components/FilesView', () => ({ default: () => null }))
+vi.mock('./components/FilesView', () => ({ default: function FilesProbe() {
+  const [draft, setDraft] = useState('')
+  return <input aria-label="Files draft" value={draft} onChange={event => setDraft(event.target.value)} />
+} }))
 vi.mock('./components/SettingsView', () => ({ default: () => null }))
 vi.mock('./components/Peek', () => ({ default: () => null }))
 vi.mock('./components/ImageGlance', () => ({ default: () => null }))
 vi.mock('./components/SendDrawer', () => ({ default: () => null }))
 vi.mock('./components/HelpView', () => ({ default: () => null }))
-vi.mock('./components/BeadsView', () => ({ default: () => null }))
-vi.mock('./components/LibraryView', () => ({ default: () => null }))
+vi.mock('./beads/BeadCatalog', () => ({ default: () => {
+  if (mocks.catalogError) throw new Error('Catalog unavailable')
+  return null
+} }))
+vi.mock('./components/BeadsView', () => ({ default: () => <div data-testid="beads-view" /> }))
+vi.mock('./components/BeadsColumn', () => ({ default: () => <div data-testid="beads-column" /> }))
+vi.mock('./components/AgentsView', () => ({ default: () => <div data-testid="agents-view" /> }))
+vi.mock('./components/LibraryView', () => ({ default: () => <div data-testid="library-view" /> }))
 vi.mock('./components/SystemStatusView', () => ({
   default: ({ active }: { active?: boolean }) => <div data-testid="system-status-view" data-active={String(active)} />,
 }))
 vi.mock('./components/ScheduledTasksView', () => ({ default: () => null }))
-vi.mock('./components/ErrorBoundary', () => ({ default: ({ children }: { children: React.ReactNode }) => children }))
 vi.mock('./keys/KeysPanel', () => ({
   default: ({ isOpen }: { isOpen: boolean }) => (isOpen ? <div data-testid="keys-panel" /> : null),
 }))
@@ -272,10 +291,9 @@ describe('App drag lifecycle', () => {
   })
 })
 
-// The Server tab's history is built from samples the view takes for itself, so
-// it has to go on taking them while the operator is somewhere else. App keeps
-// it mounted out of sight rather than tearing it down and starting over.
-describe('App background sampling', () => {
+// The backend owns Server history. Optional views begin on first use, then
+// remain mounted to preserve the operator's state while another tab is active.
+describe('App optional view activation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.dndProps = null
@@ -286,12 +304,50 @@ describe('App background sampling', () => {
     mocks.enabledFlags = ['serverStatusTab']
   })
 
-  it('keeps the Server status view mounted and out of sight behind another tab', async () => {
+  it('defers unused views and retains a visited Files draft across tab switches', async () => {
     render(<App />)
+    await act(async () => {})
+
+    expect(screen.queryByLabelText('Files draft')).not.toBeInTheDocument()
+    for (const id of ['beads-view', 'agents-view', 'library-view', 'system-status-view', 'beads-column']) {
+      expect(screen.queryByTestId(id)).not.toBeInTheDocument()
+    }
+
+    fireEvent.click(screen.getByRole('button', { name: 'files', exact: true }))
+    const draft = await screen.findByLabelText('Files draft')
+    fireEvent.change(draft, { target: { value: 'unsaved notes' } })
+    fireEvent.click(screen.getByRole('button', { name: 'agents', exact: true }))
+    await screen.findByTestId('agents-view')
+    expect(draft).not.toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'files', exact: true }))
+    expect(screen.getByLabelText('Files draft')).toBe(draft)
+    expect(draft).toHaveValue('unsaved notes')
+  })
+
+  it('keeps the visited Server status view mounted and inactive behind another tab', async () => {
+    render(<App />)
+    expect(screen.queryByTestId('system-status-view')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'server', exact: true }))
 
     const statusView = await screen.findByTestId('system-status-view')
+    expect(statusView).toHaveAttribute('data-active', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'terminal1', exact: true }))
+    expect(screen.getByTestId('system-status-view')).toBe(statusView)
     expect(statusView).toHaveAttribute('data-active', 'false')
     expect(statusView.parentElement).toHaveStyle({ display: 'none' })
+  })
+
+  it('contains a catalog render failure without losing terminal workspaces', () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.catalogError = true
+    try {
+      render(<App />)
+      expect(screen.getByText('Catalog unavailable')).toBeInTheDocument()
+      expect(screen.getByTestId('terminal1 frame')).toBeInTheDocument()
+    } finally {
+      mocks.catalogError = false
+      log.mockRestore()
+    }
   })
 })
 

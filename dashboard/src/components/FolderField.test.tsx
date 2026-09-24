@@ -3,16 +3,17 @@ import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FolderField from './FolderField'
 import { fetchDirectory } from './FilesView/fileService'
+import { fetchWorkspaces } from '../workspaces/workspacesApi'
 
 vi.mock('../workspaces/workspacesApi', async () => {
   const actual = await vi.importActual<typeof import('../workspaces/workspacesApi')>('../workspaces/workspacesApi')
   return {
     ...actual,
-    fetchWorkspaces: () => Promise.resolve([
+    fetchWorkspaces: vi.fn(() => Promise.resolve([
       { path: '/srv/chrote', sources: ['git'], sessions: [], instructions: 2 },
       { path: '/home/operator/repos/VSK-Zone', sources: ['git'], sessions: [], instructions: 0 },
       { path: '/srv/context-citadel', sources: ['git'], sessions: [], instructions: 1 },
-    ]),
+    ])),
   }
 })
 
@@ -122,5 +123,32 @@ describe('FolderField', () => {
     await waitFor(() => expect(screen.getByText('Cannot list this folder')).toBeInTheDocument())
     fireEvent.keyDown(field, { key: 'Enter' })
     expect(onSubmit).toHaveBeenCalledWith('/root/private')
+  })
+
+  it('discovers new workspaces on focus without replacing the typed path', async () => {
+    render(<Harness initial="new" />)
+    await waitFor(() => expect(fetchWorkspaces).toHaveBeenCalledTimes(1))
+    vi.mocked(fetchWorkspaces).mockResolvedValueOnce([
+      { path: '/work/new-project', sources: ['git'], sessions: [], instructions: 0 },
+    ])
+    const field = screen.getByLabelText('Folder')
+    fireEvent.focus(field)
+    fireEvent.change(field, { target: { value: 'new' } })
+    await waitFor(() => expect(options()).toEqual(['/work/new-project']))
+    expect(field).toHaveValue('new')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('rereads child folders when path completion resumes after focus', async () => {
+    render(<Harness />)
+    const field = screen.getByLabelText('Folder')
+    fireEvent.change(field, { target: { value: '/home/operator/repos/' } })
+    await waitFor(() => expect(options()).toContain('/home/operator/repos/VSK-Zone'))
+    fireEvent.blur(field)
+    mockedFetchDirectory.mockResolvedValueOnce([entry('/home/operator/repos/new-project', true)])
+    fireEvent.focus(field)
+    expect(field).toHaveValue('/home/operator/repos/')
+    fireEvent.change(field, { target: { value: '/home/operator/repos/new' } })
+    await waitFor(() => expect(options()).toEqual(['/home/operator/repos/new-project']))
   })
 })

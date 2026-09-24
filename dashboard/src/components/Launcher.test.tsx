@@ -134,6 +134,16 @@ describe('Launcher', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/launch', expect.anything())
   })
 
+  it('shares launch metadata across simultaneous launchers and refreshes a later opening', async () => {
+    const first = render(<><Launcher workspaceId="terminal1" /><Launcher workspaceId="terminal2" /></>)
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Claude Code' })).toHaveLength(2))
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    first.unmount()
+    render(<Launcher workspaceId="terminal3" />)
+    await screen.findByRole('button', { name: 'Claude Code' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('re-derives the name until the operator types one, then keeps his', async () => {
     render(<Launcher workspaceId="terminal3" />)
 

@@ -12,7 +12,8 @@
   font-size: 12px;
 }
 
-.beads-rail-item {
+.beads-rail-item,
+.beads-refresh {
   padding: 4px 12px;
   border: none;
   border-left: 2px solid transparent;
@@ -23,7 +24,8 @@
   cursor: pointer;
 }
 
-.beads-rail-item:hover {
+.beads-rail-item:hover,
+.beads-refresh:hover {
   color: var(--text-primary);
 }
 

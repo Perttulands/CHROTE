@@ -389,6 +389,10 @@ function TerminalWindow({ workspaceId, window: windowConfig, style, onOpenFilesA
   // A window hidden by the mobile carousel or by an inactive workspace tab is
   // not on screen, whatever its bindings say.
   const windowOnScreen = workspaceActive && style?.display !== 'none'
+  const [launcherActivated, setLauncherActivated] = useState(false)
+  useEffect(() => {
+    if (windowOnScreen && windowConfig.boundSessions.length === 0) setLauncherActivated(true)
+  }, [windowOnScreen, windowConfig.boundSessions.length])
   const tileStates = useMemo(() => new Map(windowConfig.boundSessions.map(sessionKey => [
     sessionKey,
     tileStateFor({
@@ -523,7 +527,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, style, onOpenFilesA
         data-tile-state={activeTileState}
         onClick={handleWindowClick}
       >
-        {!hasSessions && (
+        {!hasSessions && (windowOnScreen || launcherActivated) && (
           <EmptyWindow
             workspaceId={workspaceId}
             windowId={windowConfig.id}

@@ -7,6 +7,7 @@
  */
 
 import { fetchWorkspaces, holdsStore, workspaceName, type BeadsCounts, type Workspace } from '../workspaces/workspacesApi'
+import { shareInFlight } from '../inFlight'
 
 export interface BeadProject {
   name: string
@@ -150,11 +151,28 @@ export async function fetchBeadProjects(manualPaths: readonly string[] = []): Pr
   return withManualProjects(workspaceProjects(workspaces), manual)
 }
 
+/** Terminal links need store identities, not the all-issue counts projection. */
+export async function fetchBeadProjectIdentities(manualPaths: readonly string[] = []): Promise<BeadProject[]> {
+  const workspaces = await fetchWorkspaces()
+  const paths = [...new Set([
+    ...workspaces.filter(holdsStore).map(workspace => workspace.path),
+    ...manualPaths.map(path => path.trim()).filter(Boolean),
+  ])].sort()
+  return fetchProjectIdentities(paths)
+}
+
+function fetchProjectIdentities(paths: readonly string[]): Promise<BeadProject[]> {
+  const normalized = [...new Set(paths.map(path => path.trim()).filter(Boolean))].sort()
+  return shareInFlight(`bead-identities:${JSON.stringify(normalized)}`, async () => {
+    const data = await get<{ projects: BeadProject[] }>('/projects', { path: normalized })
+    return data.projects ?? []
+  })
+}
+
 /** Only the stores the operator saved in Settings, without the workspace list. */
 export async function fetchManualBeadProjects(manualPaths: readonly string[]): Promise<BeadProject[]> {
   if (manualPaths.length === 0) return []
-  const data = await get<{ projects: BeadProject[] }>('/projects', { path: [...manualPaths] })
-  return data.projects ?? []
+  return fetchProjectIdentities(manualPaths)
 }
 
 /** The listed stores plus the manual ones they do not already cover. */

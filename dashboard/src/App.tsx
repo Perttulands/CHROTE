@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, useSensor, useSensors, PointerSensor } from '@dnd-kit/core'
 import './App.css'
 import { SessionProvider, useSession } from './context/SessionContext'
@@ -7,6 +8,7 @@ import { StatusProvider } from './context/StatusContext'
 import { AgentEventsProvider } from './agents/AgentEventsProvider'
 import { TableProvider } from './context/TableContext'
 import { TableHost } from './components/TableHost'
+import BeadCatalog from './beads/BeadCatalog'
 import TabBar, { Tab } from './components/TabBar'
 import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
 import Peek from './components/Peek'
@@ -55,6 +57,16 @@ const ScheduledTasksView = lazy(() => import('./components/ScheduledTasksView'))
 
 function ViewFallback() {
   return <div className="view-chunk-loading"><Skeleton height="14px" width="180px" /></div>
+}
+
+/** Start optional work on first use; keep visited state when changing tabs. */
+function RetainedView({ active, children }: { active: boolean; children: ReactNode }) {
+  const [visited, setVisited] = useState(active)
+  useEffect(() => {
+    if (active) setVisited(true)
+  }, [active])
+  if (!active && !visited) return null
+  return <div style={{ display: active ? 'contents' : 'none' }}>{children}</div>
 }
 
 interface ActiveDrag {
@@ -383,6 +395,7 @@ function DashboardContent() {
 
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={resetDrag}>
+      <ErrorBoundary><BeadCatalog /></ErrorBoundary>
       <TableProvider openInBeads={handleOpenInBeads}>
       <TableHost>
       <div className={`dashboard ${activeDrag ? 'is-dragging' : ''}`}>
@@ -409,7 +422,7 @@ function DashboardContent() {
               openFilesRequest={activeTab === workspaceId ? openInFilesRequest : null}
             />
           ))}
-          <div style={{ display: activeTab === 'files' ? 'contents' : 'none' }}>
+          <RetainedView active={activeTab === 'files'}>
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
                 <FilesView
@@ -419,28 +432,28 @@ function DashboardContent() {
                 />
               </Suspense>
             </ErrorBoundary>
-          </div>
-          <div style={{ display: activeTab === 'beads' ? 'contents' : 'none' }}>
+          </RetainedView>
+          <RetainedView active={activeTab === 'beads'}>
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
                 <BeadsView active={activeTab === 'beads'} reveal={beadsRevealRequest} />
               </Suspense>
             </ErrorBoundary>
-          </div>
-          <div style={{ display: activeTab === 'agents' ? 'contents' : 'none' }}>
+          </RetainedView>
+          <RetainedView active={activeTab === 'agents'}>
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
                 <AgentsView active={activeTab === 'agents'} onOpenInFiles={handleOpenProjectInFiles} />
               </Suspense>
             </ErrorBoundary>
-          </div>
-          <div style={{ display: activeTab === 'library' ? 'contents' : 'none' }}>
+          </RetainedView>
+          <RetainedView active={activeTab === 'library'}>
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
                 <LibraryView active={activeTab === 'library'} />
               </Suspense>
             </ErrorBoundary>
-          </div>
+          </RetainedView>
           {activeTab === 'scheduled' && (
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
@@ -454,13 +467,13 @@ function DashboardContent() {
             </ErrorBoundary>
           )}
           {serverStatusTab && (
-            <div style={{ display: activeTab === 'server' ? 'contents' : 'none' }}>
+            <RetainedView active={activeTab === 'server'}>
               <ErrorBoundary>
                 <Suspense fallback={<ViewFallback />}>
                   <SystemStatusView active={activeTab === 'server'} />
                 </Suspense>
               </ErrorBoundary>
-            </div>
+            </RetainedView>
           )}
           {/* Even "static" views need a boundary: their lazy chunks can fail
               after a deploy, and an uncaught throw here unmounts the whole
@@ -479,11 +492,13 @@ function DashboardContent() {
               </Suspense>
             </ErrorBoundary>
           )}
-          <ErrorBoundary>
-            <Suspense fallback={null}>
-              <BeadsColumn open={beadsColumnOpen} onClose={closeBeadsColumn} />
-            </Suspense>
-          </ErrorBoundary>
+          <RetainedView active={beadsColumnOpen}>
+            <ErrorBoundary>
+              <Suspense fallback={null}>
+                <BeadsColumn open={beadsColumnOpen} onClose={closeBeadsColumn} />
+              </Suspense>
+            </ErrorBoundary>
+          </RetainedView>
           {/* Peek and the image glance float and the Send drawer overlays the
               right edge, all inside the workspace, so the status line stays
               whole beneath them. The table's column is each tab's own: a flex

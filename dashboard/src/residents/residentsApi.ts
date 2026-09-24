@@ -9,6 +9,7 @@
  */
 
 import { apiErrorMessage } from '../apiErrors'
+import { shareInFlight } from '../inFlight'
 
 export type ResidentTab = 'library' | 'agents' | 'beads'
 
@@ -39,12 +40,14 @@ export function readCachedResidents(): Resident[] | null {
   return lastAnswer
 }
 
-export async function fetchResidents(): Promise<Resident[]> {
-  const response = await fetch('/api/residents', { signal: AbortSignal.timeout(20000) })
-  if (!response.ok) throw new Error(apiErrorMessage(await response.text(), 'Could not read the residents'))
-  const found = await response.json() as unknown
-  lastAnswer = Array.isArray(found) ? found as Resident[] : []
-  return lastAnswer
+export function fetchResidents(): Promise<Resident[]> {
+  return shareInFlight('/api/residents', async () => {
+    const response = await fetch('/api/residents', { signal: AbortSignal.timeout(20000) })
+    if (!response.ok) throw new Error(apiErrorMessage(await response.text(), 'Could not read the residents'))
+    const found = await response.json() as unknown
+    lastAnswer = Array.isArray(found) ? found as Resident[] : []
+    return lastAnswer
+  })
 }
 
 export function resetResidentsForTest(): void {

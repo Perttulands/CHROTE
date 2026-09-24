@@ -12,13 +12,20 @@
  * assumed: a link that opens the card is worth more than a link that waits.
  */
 
-import { fetchBeadProjects, type BeadProject } from './beadsApi'
+import { fetchBeadProjectIdentities, type BeadProject } from './beadsApi'
 
 export const FALLBACK_BEAD_PREFIXES: readonly string[] = ['chrote', 'ctx']
 
 let projects: BeadProject[] = []
 let prefixes: readonly string[] = FALLBACK_BEAD_PREFIXES
-let loading: Promise<BeadProject[]> | null = null
+let manualPaths: readonly string[] = []
+let catalogKey: string | null = null
+let generation = 0
+let loading: { key: string; request: Promise<BeadProject[]> } | null = null
+
+function pathKey(paths: readonly string[]): string {
+  return JSON.stringify([...new Set(paths.map(path => path.trim()).filter(Boolean))].sort())
+}
 
 function escapeForPattern(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -67,35 +74,47 @@ export function beadProjectPath(id: string): string | null {
 }
 
 export function setBeadProjects(known: readonly BeadProject[]): void {
+  generation += 1
+  catalogKey = pathKey(manualPaths)
   projects = [...known]
   const found = projects.map(project => project.prefix).filter((prefix): prefix is string => !!prefix)
   prefixes = found.length > 0 ? found : FALLBACK_BEAD_PREFIXES
 }
 
 /**
- * Learn the projects once. The card needs them to know which store to ask, and
- * the terminal's links sharpen from the fallback prefixes to the real ones as
- * soon as they land. A refusal leaves the fallback in place rather than
- * retrying: the operator opening a Bead is the retry.
+ * The catalog owner refreshes on startup/configuration changes and Beads first
+ * use/refresh. A card with an unknown store can retry a failed load.
  */
-export function ensureBeadProjects(manualPaths: readonly string[] = []): Promise<BeadProject[]> {
-  if (projects.length > 0) return Promise.resolve(projects)
-  if (!loading) {
-    loading = fetchBeadProjects(manualPaths)
-      .then(found => {
-        setBeadProjects(found)
-        return found
-      })
-      .catch(() => {
-        loading = null
-        return []
-      })
-  }
-  return loading
+export function ensureBeadProjects(paths: readonly string[] = manualPaths): Promise<BeadProject[]> {
+  if (catalogKey === pathKey(paths)) return Promise.resolve(projects)
+  return refreshBeadProjects(paths).catch(() => [])
+}
+
+export function refreshBeadProjects(paths: readonly string[]): Promise<BeadProject[]> {
+  const key = pathKey(paths)
+  manualPaths = JSON.parse(key) as string[]
+  if (loading?.key === key) return loading.request
+  const current = ++generation
+  const request = fetchBeadProjectIdentities(manualPaths).then(found => {
+    // Missing prefixes can mean a failed one-issue read. Keep a known prefix
+    // for a still-listed path; removed stores disappear and new prefixes win.
+    if (generation === current) setBeadProjects(found.map(project => {
+      const knownPrefix = projects.find(known => known.path === project.path)?.prefix
+      return !project.prefix && knownPrefix ? { ...project, prefix: knownPrefix } : project
+    }))
+    return found
+  })
+  loading = { key, request }
+  const settled = () => { if (loading?.request === request) loading = null }
+  void request.then(settled, settled)
+  return request
 }
 
 export function resetBeadProjectsForTest(): void {
   projects = []
   prefixes = FALLBACK_BEAD_PREFIXES
+  manualPaths = []
+  catalogKey = null
+  generation += 1
   loading = null
 }

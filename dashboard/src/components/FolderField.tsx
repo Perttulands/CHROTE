@@ -68,6 +68,8 @@ export default function FolderField({
   // typed; a folder picked, submitted, or left alone is not being typed.
   const [editing, setEditing] = useState(false)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [workspaceRefresh, setWorkspaceRefresh] = useState(0)
+  const [workspaceError, setWorkspaceError] = useState(false)
   const [listing, setListing] = useState<Listing | null>(null)
   // The highlight belongs to the value it was moved on; a new value gets the
   // mode's default, which is the top match for a fragment and nothing for a
@@ -81,10 +83,14 @@ export default function FolderField({
   useEffect(() => {
     let current = true
     fetchWorkspaces()
-      .then(found => { if (current) setWorkspaces(found) })
-      .catch(() => { /* a host that cannot list workspaces still takes a typed path */ })
+      .then(found => {
+        if (!current) return
+        setWorkspaces(found)
+        setWorkspaceError(false)
+      })
+      .catch(() => { if (current) setWorkspaceError(true) })
     return () => { current = false }
-  }, [])
+  }, [workspaceRefresh])
 
   const dir = typed?.dir ?? ''
   useEffect(() => {
@@ -187,9 +193,14 @@ export default function FolderField({
         value={value}
         onChange={event => { onChange(event.target.value); setEditing(true) }}
         onKeyDown={onKeyDown}
+        onFocus={() => {
+          setWorkspaceRefresh(previous => previous + 1)
+          setListing(null)
+        }}
         onBlur={() => setEditing(false)}
       />
       <div className="folder-field-list" style={{ '--folder-field-rows': FOLDER_FIELD_ROWS } as React.CSSProperties}>
+        {workspaceError && <span className="folder-field-note">Cannot refresh workspaces; a typed path still works.</span>}
         <span className="folder-field-label">{mode === 'recent' && recents.length === 0 ? MODE_LABEL.workspaces : MODE_LABEL[mode]}</span>
         <div className="folder-field-rows" role="listbox" aria-label={`${ariaLabel} suggestions`} ref={rowsRef}>
           {suggestions.length === 0 && <span className="folder-field-note">{note}</span>}
