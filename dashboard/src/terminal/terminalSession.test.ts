@@ -393,13 +393,19 @@ describe('terminal session', () => {
 })
 
 describe('the font fit', () => {
-  // A 94 by 67 window at a cell of 0.6 by 1.2 times the font, in a box 700px
-  // wide and 900px tall: the width allows 12.4px, the height 11.19px.
-  const fits = (fontSize: number) => 94 * fontSize * 0.6 <= 700 && 67 * fontSize * 1.2 <= 900
+  // A 94 by 67 window at a cell of 0.6 by 1.2 times the font, in a room 700px
+  // wide: the width allows 12.4px, and the height what the room's height does.
+  const fitsIn = (height: number) => (fontSize: number) => 94 * fontSize * 0.6 <= 700 && 67 * fontSize * 1.2 <= height
 
   it('takes the largest half-pixel font at which the whole grid fits, and never more than the operator\'s', () => {
-    expect(fitFontSize(14, fits)).toBe(11)
-    // A box with room to spare keeps the operator's own size.
-    expect(fitFontSize(10, fits)).toBe(10)
+    expect(fitFontSize(14, fitsIn(1100))).toBe(12)
+    // A room with space to spare keeps the operator's own size.
+    expect(fitFontSize(10, fitsIn(1100))).toBe(10)
+  })
+
+  it('stops at 11px, or the operator\'s own size if that is smaller, however little room there is', () => {
+    // The height allows 7.46px.
+    expect(fitFontSize(14, fitsIn(600))).toBe(11)
+    expect(fitFontSize(9, fitsIn(600))).toBe(9)
   })
 })

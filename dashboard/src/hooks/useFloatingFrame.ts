@@ -112,6 +112,8 @@ export interface UseFloatingFrameOptions<T extends HTMLElement> {
 export interface FloatingFrame {
   /** The size to draw, or null while neither memory nor content has said. */
   size: FrameSize | null
+  /** The workspace the window is held in, or null until it is measured. */
+  bounds: FrameSize | null
   resizing: boolean
   /** The handle in hand, so only that one shows it is being dragged. */
   activeHandle: FrameHandleId | null
@@ -268,6 +270,7 @@ export function useFloatingFrame<T extends HTMLElement>({
 
   return {
     size,
+    bounds,
     resizing: dragSize !== null,
     activeHandle,
     remembered: remembered !== null,

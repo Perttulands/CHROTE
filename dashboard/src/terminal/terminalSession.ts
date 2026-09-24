@@ -39,8 +39,8 @@ export interface TerminalSession {
   /** Detach from the document, keeping the connection and the rendered frame. */
   detach(): void
   /**
-   * Fit the terminal to its container: the grid to the box, or with a fixed
-   * grid, the font to the box. A no-op while detached or hidden.
+   * Fit the terminal: the grid to its container, or with a fixed grid, the
+   * font to the grid's room. A no-op while detached or hidden.
    */
   fit(): void
   /** Focus the terminal, or, before it has opened, as soon as it does. */
@@ -50,7 +50,7 @@ export interface TerminalSession {
   /** The operator's font size; with a fixed grid, the most the fit may use. */
   setFontSize(fontSize: number): void
   /**
-   * Hold the grid at this size and fit the font to the box instead, or, with
+   * Hold the grid at this size and fit the font to its room instead, or, with
    * null, go back to fitting the grid. Peek holds the tmux window's own grid,
    * so what it sends down its connection is the size the window already is.
    */
@@ -86,12 +86,19 @@ export interface TerminalSession {
 export interface FixedGrid {
   cols: number
   rows: number
+  /**
+   * The most the terminal may take, in CSS pixels. The font is fitted to this
+   * and never to the container, so a container shrunk to the answer cannot
+   * change the answer.
+   */
+  room: { width: number; height: number }
 }
 
 /**
- * A fixed grid after its font fit: the container size, in CSS pixels, that
- * holds exactly that grid at the font it was fitted to, and the grid and the
- * font ceiling it was fitted for.
+ * A fixed grid after its font fit: the box, in CSS pixels, that holds exactly
+ * that grid at the font it was fitted to, and the grid, room and font ceiling
+ * it was fitted for. Past the readability floor the box is larger than the
+ * room, and what does not fit is the caller's to clip.
  */
 export interface FixedGridBox extends FixedGrid {
   maxFontSize: number
@@ -137,23 +144,24 @@ function xtermTheme(theme: TerminalTheme) {
 // to the shared tmux window.
 const MIN_VISIBLE_PX = 10
 
-// The font fit moves in half pixels, and stops at a size nobody could read
-// anyway: a grid that does not fit at that is shown clipped rather than as dots.
+// The font fit moves in half pixels, and stops where reading stops: a grid
+// that does not fit at the floor is shown clipped rather than as dots.
 const FONT_FIT_STEP = 0.5
-const FONT_FIT_MIN = 4
+const FONT_FIT_FLOOR = 11
 // What the fit addon reserves for xterm's scrollbar when no overview ruler
 // says otherwise (its ViewportConstants.DEFAULT_SCROLL_BAR_WIDTH).
 const FIT_ADDON_SCROLLBAR_PX = 14
 
 /**
  * The largest font, no larger than the operator's, at which a fixed grid fits
- * its box, as `fits` answers for a candidate size. A grid that fits at one
- * size fits at every smaller one, so it is searched by halving rather than
- * tried size by size: every try is a real measurement of the cell.
+ * its room, as `fits` answers for a candidate size, and never below 11px or
+ * the operator's own size if that is smaller. A grid that fits at one size
+ * fits at every smaller one, so it is searched by halving rather than tried
+ * size by size: every try is a real measurement of the cell.
  */
 export function fitFontSize(maxFontSize: number, fits: (fontSize: number) => boolean): number {
-  if (maxFontSize <= FONT_FIT_MIN || fits(maxFontSize)) return maxFontSize
-  let low = FONT_FIT_MIN
+  if (maxFontSize <= FONT_FIT_FLOOR || fits(maxFontSize)) return maxFontSize
+  let low = FONT_FIT_FLOOR
   let high = maxFontSize
   while (high - low > FONT_FIT_STEP) {
     const middle = Math.round(low + high) / 2
@@ -270,10 +278,11 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
 
   const isMeasurable = () => element.offsetWidth >= MIN_VISIBLE_PX && element.offsetHeight >= MIN_VISIBLE_PX
 
-  // A fixed grid keeps its columns and rows whatever the box, so the font is
-  // what moves: each candidate size is set for real and the fit addon asked
-  // what grid the box would hold at it, because only xterm knows what its cell
-  // costs. The renderer paints once, at the size that is left.
+  // A fixed grid keeps its columns and rows whatever the room, so the font is
+  // what moves: each candidate size is set for real and the grid it draws
+  // measured against the room, because only xterm knows what its cell costs.
+  // The container is never asked, so the answer does not depend on where it
+  // is shown. The renderer paints once, at the size that is left.
   const fit = () => {
     if (!opened || !isMeasurable()) return
     const grid = fixedGrid
@@ -283,33 +292,28 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
     }
     terminal.options.fontSize = fitFontSize(fontSize, candidate => {
       terminal.options.fontSize = candidate
-      const room = fitAddon.proposeDimensions()
-      return room !== undefined && room.cols >= grid.cols && room.rows >= grid.rows
+      const box = fixedGridBox()
+      return box !== null && box.width <= grid.room.width && box.height <= grid.room.height
     })
-    reportFixedGridBox(grid)
+    const box = fixedGridBox()
+    if (box) options.onFixedGridFit?.({ ...grid, maxFontSize: fontSize, ...box })
   }
 
-  // The box the grid needs at the font it was fitted to, counted exactly as
-  // the fit addon counts it: the grid as drawn, the terminal element's padding,
-  // and the scrollbar width it reserves whenever there is scrollback. A
-  // container this size holds the same grid at the same font, so a window that
-  // shrinks to it is fitted again to the answer it already has.
-  const reportFixedGridBox = (grid: FixedGrid) => {
-    if (!options.onFixedGridFit || !terminal.element) return
-    const screen = terminal.element.querySelector('.xterm-screen')?.getBoundingClientRect()
-    if (!screen || screen.width < MIN_VISIBLE_PX || screen.height < MIN_VISIBLE_PX) return
+  // The box the grid takes at the font now set, counted as the fit addon
+  // counts it: the grid as drawn, the terminal element's padding, and the
+  // scrollbar width it reserves whenever there is scrollback.
+  const fixedGridBox = () => {
+    const screen = terminal.element?.querySelector('.xterm-screen')?.getBoundingClientRect()
+    if (!terminal.element || !screen || screen.width < MIN_VISIBLE_PX || screen.height < MIN_VISIBLE_PX) return null
     const style = window.getComputedStyle(terminal.element)
     const padding = (side: string) => parseInt(style.getPropertyValue(`padding-${side}`)) || 0
     const scrollbar = terminal.options.scrollback === 0
       ? 0
       : (terminal.options.overviewRuler?.width || FIT_ADDON_SCROLLBAR_PX)
-    options.onFixedGridFit({
-      cols: grid.cols,
-      rows: grid.rows,
-      maxFontSize: fontSize,
+    return {
       width: screen.width + padding('left') + padding('right') + scrollbar,
       height: screen.height + padding('top') + padding('bottom'),
-    })
+    }
   }
 
   // xterm measures its cell when open() runs. A swapped web font arriving
