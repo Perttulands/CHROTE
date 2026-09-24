@@ -135,38 +135,159 @@ describe('SystemStatusView', () => {
     fetchMock.mockReset()
     mockSystemResponses()
     vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
     Object.assign(navigator, { clipboard: { writeText: vi.fn() } })
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
     vi.useRealTimers()
   })
 
-  // Behind another tab this view is the only thing keeping the history warm, so
-  // it samples on mount and goes on sampling, just slower than the tab in front.
-  it('samples on mount and keeps sampling while the Server tab is not the one on screen', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true })
+  const reads = (resource: string) => fetchMock.mock.calls.filter(([url]) => requestPath(url).endsWith(`/api/system/${resource}`))
+  const tick = (ms = 0) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
 
-    render(<SystemStatusView active={false} />)
+  it('refreshes on visible entry and sleeps while either the tab or document is hidden', async () => {
+    vi.useFakeTimers()
+    const { rerender } = render(<SystemStatusView active={false} />)
+    await tick(10_000)
+    expect(fetchMock).not.toHaveBeenCalled()
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/status'))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/history'))
-    const onMount = fetchMock.mock.calls.length
+    rerender(<SystemStatusView active />)
+    await tick()
+    expect(reads('status')).toHaveLength(1)
+    expect(reads('history')).toHaveLength(1)
+    await tick(6_000)
+    expect(reads('status')).toHaveLength(4)
+    expect(reads('history')).toHaveLength(1)
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000)
-    })
+    rerender(<SystemStatusView active={false} />)
+    await tick(10_000)
+    expect(reads('status')).toHaveLength(4)
+    rerender(<SystemStatusView active />)
+    await tick()
+    expect(reads('status')).toHaveLength(5)
+    expect(reads('history')).toHaveLength(2)
 
-    expect(fetchMock.mock.calls.length).toBeGreaterThan(onMount)
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    fireEvent(document, new Event('visibilitychange'))
+    await tick(10_000)
+    expect(reads('status')).toHaveLength(5)
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    fireEvent(document, new Event('visibilitychange'))
+    await tick()
+    expect(reads('status')).toHaveLength(6)
+    expect(reads('history')).toHaveLength(3)
+  })
+
+  it('lets status progress while history is slow, times it out and ignores its late answer', async () => {
+    vi.useFakeTimers()
+    let finishHistory!: (response: Response) => void
+    fetchMock.mockImplementation((input: RequestInfo | URL) => requestPath(input).endsWith('/history')
+      ? new Promise<Response>(resolve => { finishHistory = resolve })
+      : envelope(statusResponse()))
+    render(<SystemStatusView active />)
+    await tick()
+    expect(screen.getByText('landmass')).toBeInTheDocument()
+    expect(screen.getByText('1 sample')).toBeInTheDocument()
+    await tick(6_000)
+    expect(reads('status')).toHaveLength(4)
+    expect(reads('history')).toHaveLength(1)
+    await tick(4_000)
+    expect(reads('history')[0][1].signal.aborted).toBe(true)
+    expect(screen.getByRole('status')).toHaveTextContent(/timed out/i)
+
+    await act(async () => { finishHistory(await envelope(historyResponse())) })
+    expect(screen.getByText('1 sample · current status fallback')).toBeInTheDocument()
+    mockSystemResponses()
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }))
+    await tick()
+    expect(screen.getByText('3 samples')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('bounds slow status reads, retries after timeout and rejects obsolete results', async () => {
+    vi.useFakeTimers()
+    let finishStatus!: (response: Response) => void
+    fetchMock.mockImplementation((input: RequestInfo | URL) => requestPath(input).endsWith('/status')
+      ? new Promise<Response>(resolve => { finishStatus = resolve })
+      : envelope(historyResponse()))
+    render(<SystemStatusView active />)
+    await tick(9_000)
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }))
+    await tick()
+    expect(reads('status')).toHaveLength(1)
+    const oldFinish = finishStatus
+    const oldSignal = reads('status')[0][1].signal as AbortSignal
+    await tick(1_000)
+    expect(oldSignal.aborted).toBe(true)
+    expect(screen.getByRole('alert')).toHaveTextContent(/timed out/i)
+    mockSystemResponses(statusResponse({ host: { ...statusResponse().host, hostname: 'fresh-host' } }))
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }))
+    // A timeout can coincide with a polling tick; let that bounded request end.
+    await tick(12_000)
+    expect(screen.getByText('fresh-host')).toBeInTheDocument()
+    await act(async () => { oldFinish(await envelope(statusResponse())) })
+    expect(screen.queryByText('landmass')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('aborts requests on hide and unmount and never accepts a canceled answer', async () => {
+    vi.useFakeTimers()
+    const pending: Array<{ finish: (response: Response) => void; signal: AbortSignal }> = []
+    fetchMock.mockImplementation((_input: RequestInfo | URL, init: RequestInit) => new Promise<Response>(finish => {
+      pending.push({ finish, signal: init?.signal as AbortSignal })
+    }))
+    const { rerender, unmount } = render(<SystemStatusView active />)
+    await tick()
+    rerender(<SystemStatusView active={false} />)
+    expect(pending.slice(0, 2).every(request => request.signal.aborted)).toBe(true)
+    mockSystemResponses(statusResponse({ host: { ...statusResponse().host, hostname: 'fresh-host' } }))
+    rerender(<SystemStatusView active />)
+    await tick()
+    await act(async () => { pending[0].finish(await envelope(statusResponse())) })
+    expect(screen.getByText('fresh-host')).toBeInTheDocument()
+    expect(screen.queryByText('landmass')).not.toBeInTheDocument()
+
+    fetchMock.mockImplementation((_input: RequestInfo | URL, init: RequestInit) => new Promise<Response>(finish => {
+      pending.push({ finish, signal: init.signal as AbortSignal })
+    }))
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }))
+    unmount()
+    expect(pending.slice(-2).every(request => request.signal.aborted)).toBe(true)
+  })
+
+  it('refreshes history at its sampling cadence and retains it through errors and pause', async () => {
+    vi.useFakeTimers()
+    render(<SystemStatusView active />)
+    await tick(299_000)
+    expect(reads('history')).toHaveLength(1)
+    await tick(1_000)
+    expect(reads('history')).toHaveLength(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Pause polling' }))
+    const beforePause = fetchMock.mock.calls.length
+    await tick(300_000)
+    expect(fetchMock).toHaveBeenCalledTimes(beforePause)
+
+    mockHistoryFailure()
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }))
+    await tick()
+    expect(screen.getByText('3 samples · retained history')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('HISTORY_DOWN')
+    mockSystemResponses()
+    fireEvent.click(screen.getByRole('button', { name: 'Resume polling' }))
+    await tick()
+    expect(screen.getByText('3 samples')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
   it('renders one instrument row per metric with its reading, detail and window stats', async () => {
     const { container } = render(<SystemStatusView active />)
 
     expect(await screen.findByRole('heading', { name: 'Server cockpit' })).toBeInTheDocument()
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/status'))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/history'))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/status', expect.objectContaining({ signal: expect.any(AbortSignal) })))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/history', expect.objectContaining({ signal: expect.any(AbortSignal) })))
 
     expect(await screen.findByText('3 samples')).toBeInTheDocument()
     expect(container.querySelectorAll('.system-instrument')).toHaveLength(6)
@@ -367,8 +488,8 @@ describe('SystemStatusView', () => {
     const { container } = render(<SystemStatusView active />)
 
     expect(await screen.findByText('landmass')).toBeInTheDocument()
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/status'))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/history'))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/status', expect.objectContaining({ signal: expect.any(AbortSignal) })))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/history', expect.objectContaining({ signal: expect.any(AbortSignal) })))
     expect(screen.getByText('1 sample · current status fallback')).toBeInTheDocument()
     expect(await screen.findByRole('status')).toHaveTextContent('History unavailable: HISTORY_DOWN: history unavailable')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()

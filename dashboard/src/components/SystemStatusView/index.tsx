@@ -1,7 +1,6 @@
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, Copy, Pause, Play, RefreshCw } from 'lucide-react'
 import {
-  SystemApiError,
   getSystemHistory,
   getSystemStatus,
   type SystemDiskStatus,
@@ -10,9 +9,10 @@ import {
   type SystemWarning,
 } from '../../services/systemClient'
 import { copyTextToClipboard } from '../../utils/clipboard'
+import { useSystemRead } from './useSystemRead'
 
 const ACTIVE_POLL_MS = 2000
-const BACKGROUND_POLL_MS = 10000
+const HISTORY_POLL_MS = 5 * 60_000
 const MAX_TIMELINE_SAMPLES = 300
 const SWAP_ACTIVITY_WARN_BPS = 1024 * 1024
 
@@ -207,12 +207,6 @@ function gpuThermalMeta(gpu?: SystemGPUStatus) {
   return [formatTemperature(gpu.temperatureCelsius), formatWatts(gpu.powerWatts), gpuSourceLabel(gpu)]
     .filter(Boolean)
     .join(' · ')
-}
-
-function formatSystemError(err: unknown, fallback: string) {
-  if (err instanceof SystemApiError) return `${err.code}: ${err.message}`
-  if (err instanceof Error) return err.message
-  return fallback
 }
 
 function loadPercent(status?: SystemStatus | null) {
@@ -569,52 +563,25 @@ function WarningPanel({ warnings }: { warnings: SystemWarning[] }) {
 }
 
 function SystemStatusView({ active = true }: { active?: boolean }) {
-  const [status, setStatus] = useState<SystemStatus | null>(null)
-  const [historySamples, setHistorySamples] = useState<SystemStatus[]>([])
-
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [historyError, setHistoryError] = useState('')
+  const [documentVisible, setDocumentVisible] = useState(() => !document.hidden)
   const [paused, setPaused] = useState(false)
   const [copyStatus, setCopyStatus] = useState('')
-
-  const refresh = useCallback(async () => {
-    setError('')
-    setHistoryError('')
-
-    const [statusResult, historyResult] = await Promise.allSettled([
-      getSystemStatus(),
-      getSystemHistory(),
-    ])
-
-    let next: SystemStatus | null = null
-
-    if (statusResult.status === 'fulfilled') {
-      next = statusResult.value
-      setStatus(next)
-    } else {
-      setError(formatSystemError(statusResult.reason, 'System status request failed'))
-    }
-
-    if (historyResult.status === 'fulfilled') {
-      setHistorySamples(combineStatusHistory(historyResult.value.samples || [], next))
-    } else {
-      setHistorySamples(combineStatusHistory([], next))
-      setHistoryError(formatSystemError(historyResult.reason, 'System history request failed'))
-    }
-
-    setLoading(false)
+  useEffect(() => {
+    const onVisibility = () => setDocumentVisible(!document.hidden)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [])
 
-  useEffect(() => {
-    refresh()
-  }, [refresh])
-
-  useEffect(() => {
-    if (paused) return
-    const interval = window.setInterval(refresh, active ? ACTIVE_POLL_MS : BACKGROUND_POLL_MS)
-    return () => window.clearInterval(interval)
-  }, [active, paused, refresh])
+  const visible = active && documentVisible
+  const { data: status, error, loading, refresh: refreshStatus } = useSystemRead(getSystemStatus, visible, paused, ACTIVE_POLL_MS)
+  const { data: history, error: historyError, refresh: refreshHistory } = useSystemRead(getSystemHistory, visible, paused, HISTORY_POLL_MS)
+  const refresh = useCallback(() => {
+    refreshStatus()
+    refreshHistory()
+  }, [refreshStatus, refreshHistory])
+  // The server owns historical sampling. A fresh live tip can be drawn without
+  // downloading that history again or erasing it when a later read fails.
+  const historySamples = useMemo(() => combineStatusHistory(history?.samples || [], status), [history, status])
 
   const host = status?.host
   const cpu = status?.cpu
@@ -703,7 +670,7 @@ function SystemStatusView({ active = true }: { active?: boolean }) {
 
   const sampleCountLabel = `${timelineSamples.length} ${timelineSamples.length === 1 ? 'sample' : 'samples'}`
   const historyLabel = timelineSamples.length
-    ? `${sampleCountLabel}${historyError ? ' · current status fallback' : ''}`
+    ? `${sampleCountLabel}${historyError ? history?.samples?.length ? ' · retained history' : ' · current status fallback' : ''}`
     : 'waiting for history'
 
   const handleCopySnapshot = async () => {

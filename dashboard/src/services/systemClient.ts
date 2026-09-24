@@ -97,13 +97,14 @@ export interface SystemWarning {
   message: string
 }
 
-async function request<T>(path: string): Promise<T> {
-  const response = await fetch(path)
+async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, { signal })
 
   let envelope: ApiEnvelope<T>
   try {
     envelope = await response.json()
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error
     throw new SystemApiError('SYSTEM_INVALID_RESPONSE', 'System status returned invalid JSON', response.status)
   }
 
@@ -116,10 +117,10 @@ async function request<T>(path: string): Promise<T> {
   return envelope.data as T
 }
 
-export function getSystemStatus() {
-  return request<SystemStatus>('/api/system/status')
+export function getSystemStatus(signal?: AbortSignal) {
+  return request<SystemStatus>('/api/system/status', signal)
 }
 
-export function getSystemHistory() {
-  return request<SystemHistory>('/api/system/history')
+export function getSystemHistory(signal?: AbortSignal) {
+  return request<SystemHistory>('/api/system/history', signal)
 }
