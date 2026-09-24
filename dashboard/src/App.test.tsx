@@ -313,13 +313,13 @@ describe('App optional view activation', () => {
       expect(screen.queryByTestId(id)).not.toBeInTheDocument()
     }
 
-    fireEvent.click(screen.getByRole('button', { name: 'files', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'files' }))
     const draft = await screen.findByLabelText('Files draft')
     fireEvent.change(draft, { target: { value: 'unsaved notes' } })
-    fireEvent.click(screen.getByRole('button', { name: 'agents', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'agents' }))
     await screen.findByTestId('agents-view')
     expect(draft).not.toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: 'files', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'files' }))
     expect(screen.getByLabelText('Files draft')).toBe(draft)
     expect(draft).toHaveValue('unsaved notes')
   })
@@ -327,11 +327,11 @@ describe('App optional view activation', () => {
   it('keeps the visited Server status view mounted and inactive behind another tab', async () => {
     render(<App />)
     expect(screen.queryByTestId('system-status-view')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'server', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'server' }))
 
     const statusView = await screen.findByTestId('system-status-view')
     expect(statusView).toHaveAttribute('data-active', 'true')
-    fireEvent.click(screen.getByRole('button', { name: 'terminal1', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'terminal1' }))
     expect(screen.getByTestId('system-status-view')).toBe(statusView)
     expect(statusView).toHaveAttribute('data-active', 'false')
     expect(statusView.parentElement).toHaveStyle({ display: 'none' })

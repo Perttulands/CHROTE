@@ -213,7 +213,7 @@ afterEach(() => {
 describe('the Beads tab', () => {
   it('refreshes discovered projects without changing the selected project or query', async () => {
     render(<BeadsView />)
-    fireEvent.click(await screen.findByRole('button', { name: 'chrote', exact: true }))
+    fireEvent.click(await screen.findByRole('button', { name: 'chrote' }))
     const query = screen.getByLabelText('Search Beads')
     fireEvent.change(query, { target: { value: 'keep this filter' } })
     mockState.projects = [...mockState.projects, {
@@ -222,8 +222,8 @@ describe('the Beads tab', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh projects' }))
 
-    await screen.findByRole('button', { name: 'new', exact: true })
-    expect(screen.getByRole('button', { name: 'chrote', exact: true })).toHaveClass('active')
+    await screen.findByRole('button', { name: 'new' })
+    expect(screen.getByRole('button', { name: 'chrote' })).toHaveClass('active')
     expect(query).toHaveValue('keep this filter')
     expect(mockState.fetchBeadProjectIdentities).toHaveBeenCalledTimes(2)
     expect(beadProjectPath('new-abc')).toBe('/srv/new-project')
