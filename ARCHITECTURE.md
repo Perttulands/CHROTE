@@ -86,8 +86,9 @@ placements for that same table, so switching views preserves its drafts, loaded
 content and scroll position. A table failure is contained separately from the
 workspace and its terminals.
 
-Optional dashboard views start loading on first use and retain their state after
-that. Retained state does not require continuous requests: the Server view reads
+The Files, Beads, Agents, Library and Server views, and the Beads column, start
+loading on first use and retain their state after that. Retained state does not
+require continuous requests: the Server view reads
 only while visible, with independent bounded status and history requests.
 Concurrent metadata reads share in-flight work, while later reads and explicit
 refresh actions reach the host again. A lightweight Bead catalog supplies
