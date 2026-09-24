@@ -30,6 +30,8 @@ import './BeadCard.css'
 interface BeadCardProps {
   /** Show this Bead in the Beads tab, where its project and its map are. */
   onOpenInBeads?: (projectPath: string, id: string) => void
+  /** A parked table preserves its card but leaves shortcuts to the visible view. */
+  active?: boolean
 }
 
 function BeadLinks({ links, onOpen }: { links: BeadLink[]; onOpen: (id: string) => void }) {
@@ -59,7 +61,7 @@ function BeadSection({ label, text, onToken }: { label: string; text?: string; o
   )
 }
 
-export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
+export default function BeadCard({ onOpenInBeads, active = true }: BeadCardProps = {}) {
   const { settings, openSendToSession } = useSession()
   const { announce } = useStatus()
   const request = useBeadCardRequest()
@@ -135,7 +137,7 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
   // chords first — and retired with the card, so the tile's own Send comes
   // back the moment there is no Bead in hand.
   useEffect(() => {
-    if (!bead || residentPresent) return
+    if (!active || !bead || residentPresent) return
     const run = () => openSendToSession({ reference: beadReference(bead) })
     const chords: Chord[] = (['global', 'tile'] as const).map(scope => ({
       id: `beads.card.send.${scope}`,
@@ -146,7 +148,7 @@ export default function BeadCard({ onOpenInBeads }: BeadCardProps = {}) {
       run,
     }))
     return registerChords(chords)
-  }, [bead, openSendToSession, residentPresent])
+  }, [active, bead, openSendToSession, residentPresent])
 
   if (!request) return null
 

@@ -6,6 +6,7 @@ import { useFocusedSession } from './context/useFocusedSession'
 import { StatusProvider } from './context/StatusContext'
 import { AgentEventsProvider } from './agents/AgentEventsProvider'
 import { TableProvider } from './context/TableContext'
+import { TableHost } from './components/TableHost'
 import TabBar, { Tab } from './components/TabBar'
 import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
 import Peek from './components/Peek'
@@ -383,6 +384,7 @@ function DashboardContent() {
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={resetDrag}>
       <TableProvider openInBeads={handleOpenInBeads}>
+      <TableHost>
       <div className={`dashboard ${activeDrag ? 'is-dragging' : ''}`}>
         <TabBar
           activeTab={activeTab}
@@ -502,6 +504,7 @@ function DashboardContent() {
 
         <KeysPanel isOpen={keysPanelOpen} onClose={handleCloseKeys} />
       </div>
+      </TableHost>
       </TableProvider>
 
       <DragOverlay className="drag-overlay-wrapper">

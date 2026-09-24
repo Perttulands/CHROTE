@@ -134,6 +134,11 @@ test.describe('Beads', () => {
   // Bead is in a column beside the tiles on a terminal tab, the column's drag
   // handle sets a width that outlives a reload, and Alt+I puts it all away.
   test('puts a Bead on the table, hands it over, and keeps it across tabs at the width it was given', async ({ page, context }) => {
+    let detailReads = 0
+    page.on('request', request => {
+      const url = new URL(request.url())
+      if (url.pathname === '/api/beads/issue' && url.searchParams.get('id') === 'test-ep1.1') detailReads += 1
+    })
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     await page.evaluate(() => navigator.clipboard.writeText('before-copy'))
     const grid = page.locator('.terminal-grid[data-workspace="terminal1"]')
@@ -146,6 +151,8 @@ test.describe('Beads', () => {
     await expect(table.locator('.bead-card-title')).toHaveText('Fix login bug')
     await expect(table).toContainText('A login survives a reload.')
     await expect(table.locator('.bead-card-fields')).toContainText('test-ep1')
+    // Vite's development StrictMode replays the one reader's mount effect.
+    expect(detailReads).toBe(2)
 
     // Read the clipboard result; announcement emission belongs to the unit tests.
     await table.getByRole('button', { name: 'Copy id' }).click()
@@ -172,6 +179,7 @@ test.describe('Beads', () => {
     await page.keyboard.press('Alt+1')
     const column = page.locator('.terminal-workspace-dock[data-active="true"] .table-column')
     await expect(column.locator('.bead-card-id')).toHaveText('test-ep1.1')
+    expect(detailReads).toBe(2)
     const gridAfter = await box(grid)
     const columnBox = await box(column)
     expect(gridAfter.width).toBeLessThan(gridBefore.width)

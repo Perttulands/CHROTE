@@ -9,7 +9,7 @@ import SessionPanel from './SessionPanel'
 import ScheduleEditor from './ScheduleEditor'
 import { CONFIRM_WINDOW_MS, useConfirmInPlace } from './confirmInPlace'
 import type { SessionsDockState } from './workspaceFilesState'
-import TableColumn from './TableColumn'
+import { TableSlot } from './TableHost'
 import {
   describeSchedule,
   emptyScheduleForm,
@@ -596,6 +596,8 @@ function ScheduledTasksView({
           </section>
         </div>
       </div>
+      {/* The Sessions menu can put an object here before any task is selected. */}
+      <TableSlot />
     </div>
   )
 }
@@ -704,9 +706,6 @@ function TaskDetail({
         )}
       </div>
 
-      {/* The Sessions panel here has the same row menu as anywhere, so what it
-          puts on the table is shown here too. */}
-      <TableColumn />
     </div>
   )
 }

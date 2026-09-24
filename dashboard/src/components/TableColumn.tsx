@@ -34,13 +34,20 @@ import { useSurface } from '../keys/dismiss'
 import { useResizableWidth } from '../hooks/useResizableWidth'
 import './TableColumn.css'
 
-export default function TableColumn() {
+interface TableColumnProps {
+  /** The slot's real layout parent, beyond the portal's display:contents host. */
+  layoutParent?: HTMLElement | null
+  /** Parked content keeps its state, but owns no visible surface or shortcut. */
+  active?: boolean
+}
+
+export default function TableColumn({ layoutParent, active = true }: TableColumnProps) {
   const object = useTableObject()
   const session = useSession()
   const { openInBeads } = useTableActions()
   const columnRef = useRef<HTMLElement>(null)
 
-  const open = object !== null
+  const open = object !== null && active
 
   useSurface({ open, kind: 'work', onClose: dismissTable, ref: columnRef })
 
@@ -49,9 +56,10 @@ export default function TableColumn() {
 
   /** The widest the column may be here: the content keeps its 480px. */
   const widest = useCallback(() => {
-    const room = columnRef.current?.parentElement?.clientWidth || Number.POSITIVE_INFINITY
+    const parent = layoutParent === undefined ? columnRef.current?.parentElement : layoutParent
+    const room = parent?.clientWidth || Number.POSITIVE_INFINITY
     return Math.max(TABLE_WIDTH_MIN, room - TABLE_CONTENT_MIN)
-  }, [])
+  }, [layoutParent])
 
   const commitWidth = useCallback((tableWidth: number) => {
     updateSettings({ tableWidth })
@@ -91,7 +99,7 @@ export default function TableColumn() {
         aria-valuemin={TABLE_WIDTH_MIN}
         tabIndex={0}
       />
-      {object.kind === 'bead' && <BeadCard onOpenInBeads={openInBeads} />}
+      {object.kind === 'bead' && <BeadCard onOpenInBeads={openInBeads} active={active} />}
       {object.kind === 'agent-context' && <AgentContextSheet />}
       {object.kind === 'file' && (
         <FilePanelViewer

@@ -35,7 +35,7 @@ import { copyAndAnnounce } from '../../utils/clipboard'
 import type { MenuGroup } from '../Menu'
 import MenuTarget from '../MenuTarget'
 import ResidentColumn from '../ResidentColumn'
-import TableColumn from '../TableColumn'
+import { TableSlot } from '../TableHost'
 import Rail, { RailScroll, RailSection } from '../Rail'
 import {
   arrivalPages,
@@ -776,7 +776,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
           </aside>
         )}
 
-        <TableColumn />
+        <TableSlot active={active} />
         <ResidentColumn active={active} tab="library" reference={libraryReference(page?.path ?? null)} />
       </div>
     </div>

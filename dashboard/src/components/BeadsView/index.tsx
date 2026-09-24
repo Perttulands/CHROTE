@@ -18,7 +18,7 @@ import StoreState from './StoreState'
 import StaleView from './StaleView'
 import TemplateExplorer from './TemplateExplorer'
 import ResidentColumn from '../ResidentColumn'
-import TableColumn from '../TableColumn'
+import { TableSlot } from '../TableHost'
 import Rail, { RailScroll, RailSection } from '../Rail'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
@@ -740,7 +740,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
         </FlowNavigationProvider>
       </div>
 
-      <TableColumn />
+      <TableSlot active={active} />
       <ResidentColumn active={active} tab="beads" reference={table ? tableReference(table) : null} />
     </div>
   )

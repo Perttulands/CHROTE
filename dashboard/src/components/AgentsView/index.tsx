@@ -14,7 +14,7 @@ import AgentStack from '../AgentStack'
 import MenuTarget from '../MenuTarget'
 import type { MenuGroup } from '../Menu'
 import ResidentColumn from '../ResidentColumn'
-import TableColumn from '../TableColumn'
+import { TableSlot } from '../TableHost'
 import Rail, { RailScroll, RailSection } from '../Rail'
 import { HarnessMark } from '../harnessMarks'
 import { useSession } from '../../context/SessionContext'
@@ -228,7 +228,7 @@ export default function AgentsView({ active = true, onOpenInFiles }: AgentsViewP
           </div>
         </div>
 
-        <TableColumn />
+        <TableSlot active={active} />
         <ResidentColumn active={active} tab="agents" reference={`agents ${folder} ${harness}`} />
       </div>
     </div>
