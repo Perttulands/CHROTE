@@ -66,12 +66,45 @@ describe('TerminalSurface', () => {
 
   it('leaves a hidden terminal connected but never resizes it, because the tmux window is shared', () => {
     const { session, element, calls } = stubSession()
-    const { container } = render(<TerminalSurface session={session} hidden />)
+    const { container, rerender } = render(<TerminalSurface session={session} />)
+    const fitsBeforeHiding = calls.fit
+
+    rerender(<TerminalSurface session={session} hidden />)
 
     expect(element.isConnected).toBe(true)
     expect(container.querySelector<HTMLElement>('.terminal-surface-host')?.style.display).toBe('none')
-    expect(calls.fit).toBe(0)
+    expect(calls.fit).toBe(fitsBeforeHiding)
+    expect(calls.attach).toBe(1)
+    expect(calls.detach).toBe(0)
     expect(observers).toHaveLength(0)
+
+    rerender(<TerminalSurface session={session} />)
+
+    expect(calls.attach).toBe(1)
+    expect(calls.detach).toBe(0)
+    expect(calls.fit).toBeGreaterThan(fitsBeforeHiding)
+  })
+
+  it('waits for first display, including when an unseen surface receives a different session', () => {
+    const first = stubSession()
+    const next = stubSession()
+    const { rerender, unmount } = render(<TerminalSurface session={first.session} hidden />)
+
+    expect(first.calls.attach).toBe(0)
+    expect(first.calls.fit).toBe(0)
+
+    rerender(<TerminalSurface session={first.session} />)
+    expect(first.calls.attach).toBe(1)
+
+    rerender(<TerminalSurface session={next.session} hidden />)
+    expect(first.calls.detach).toBe(1)
+    expect(next.calls.attach).toBe(0)
+
+    rerender(<TerminalSurface session={next.session} />)
+    expect(next.calls.attach).toBe(1)
+
+    unmount()
+    expect(next.calls.detach).toBe(1)
   })
 
   it('renders an empty slot until the pool has a terminal for this session', () => {

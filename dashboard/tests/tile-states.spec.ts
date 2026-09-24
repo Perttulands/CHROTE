@@ -225,7 +225,7 @@ test.describe('Tile states', () => {
     await expect(shownFrame(page)).not.toContainText('survivor')
     await expect(activeTag(page)).toHaveText('doomed')
     await expect(tile(page).locator('.session-tag .tag-name')).toHaveText(['doomed', 'survivor'])
-    expect(harness.dials.get('survivor')).toBe(1)
+    expect(harness.dials.get('survivor') ?? 0).toBe(0)
 
     // Several further polls land, all of them without the session. Still there.
     await pollsLand(page, 3)

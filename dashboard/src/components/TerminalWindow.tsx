@@ -534,7 +534,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, style, onOpenFilesA
           <TerminalSurface
             key={sessionName}
             session={pool.terminals.get(sessionName) ?? null}
-            hidden={sessionName !== activeSession}
+            hidden={!windowOnScreen || sessionName !== activeSession}
             connect={tileStates.get(sessionName) !== 'ended'}
           />
         ))}

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
+import { dragAndDrop } from './helpers'
 
 /**
  * Retention gate (beads: chrote-g1r, chrote-9bf, chrote-jkzk.1).
@@ -15,14 +16,30 @@ const TTYD_OUTPUT = 0x30
 
 /** Count terminal connections and stamp each one into the rendered output. */
 async function trackTerminalConnections(page: Page) {
-  const connections = { count: 0 }
+  const connections = {
+    count: 0,
+    sessions: new Map<string, {
+      grids: { columns: number; rows: number }[]
+      send: (text: string) => void
+    }>(),
+  }
   await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
     connections.count += 1
     const generation = connections.count
+    const sessionName = new URL(ws.url()).searchParams.getAll('arg')[1]!
+    const terminal = {
+      grids: [] as { columns: number; rows: number }[],
+      send: (text: string) => ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(text)])),
+    }
+    connections.sessions.set(sessionName, terminal)
     ws.onMessage(message => {
       const text = typeof message === 'string' ? message : message.toString('utf8')
-      if (!text.startsWith('{')) return
-      ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(`connection-${generation}`)]))
+      if (text.startsWith('{')) {
+        terminal.grids.push(JSON.parse(text))
+        terminal.send(`connection-${generation}`)
+      } else if (text.startsWith('1')) {
+        terminal.grids.push(JSON.parse(text.slice(1)))
+      }
     })
   })
   return connections
@@ -52,6 +69,60 @@ async function open(page: Page, workspaces: Record<string, unknown>) {
 }
 
 test.describe('Terminal retention', () => {
+  test('opens saved bindings at first visible geometry and keeps their connection and output across tags, workspaces and moves', async ({ page }) => {
+    const names = [['main', 'hq-deacon'], ['hq-mayor', 'gt-gastown-jack'], ['gt-gastown-joe', 'gt-gastown-max']]
+    const connections = await open(page, Object.fromEntries(names.map((boundSessions, index) => {
+      const id = `terminal${index + 1}`
+      return [id, {
+        windowCount: 1,
+        windows: [{ id: `${id}-window-0`, boundSessions, activeSession: boundSessions[0], colorIndex: 0 }],
+      }]
+    })))
+    const firstWorkspace = '.terminal-grid[data-workspace="terminal1"]'
+    const visibleRows = () => page.locator('.terminal-surface-host:visible .xterm-rows')
+    await expect(visibleRows()).toContainText('connection-1')
+    // A session poll lands after startup effects, so all restored bindings have
+    // had a chance to attach. Only the displayed binding may have done so.
+    await page.waitForRequest(request => request.url().includes('/api/tmux/sessions'))
+    expect(connections.count).toBe(1)
+    const main = connections.sessions.get('main')!
+    expect(main.grids[0].columns).toBeGreaterThan(80)
+    expect(main.grids[0].rows).toBeGreaterThan(24)
+    await visibleRows().evaluate(element => { element.setAttribute('data-retained-frame', 'main') })
+
+    await page.locator(`${firstWorkspace} .session-tag`).filter({ hasText: 'hq-deacon' }).click()
+    await expect(visibleRows()).toContainText('connection-2')
+    expect(connections.count).toBe(2)
+    const other = connections.sessions.get('hq-deacon')!
+    expect(other.grids[0]).toEqual(main.grids[0])
+    main.send('\r\noutput while its tag was hidden')
+    const mainGridsWhileHidden = main.grids.length
+
+    await page.getByRole('button', { name: 'Terminal 2' }).click()
+    await expect(visibleRows()).toContainText('connection-3')
+    expect(connections.count).toBe(3)
+    expect(connections.sessions.get('hq-mayor')!.grids[0]).toEqual(main.grids[0])
+    main.send('\r\noutput while its workspace was hidden')
+    expect(main.grids).toHaveLength(mainGridsWhileHidden)
+
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click()
+    await expect(visibleRows()).toContainText('connection-2')
+    await page.locator(`${firstWorkspace} .session-tag`).filter({ hasText: 'main' }).click()
+    await expect(visibleRows()).toContainText('output while its tag was hidden')
+    await expect(visibleRows()).toContainText('output while its workspace was hidden')
+    await expect(visibleRows()).toHaveAttribute('data-retained-frame', 'main')
+
+    await page.keyboard.press('Alt+=')
+    await expect(page.locator(`${firstWorkspace} .terminal-window`)).toHaveCount(2)
+    await dragAndDrop(page, `${firstWorkspace} .session-tag:has-text("main")`, `${firstWorkspace} .terminal-window:nth-child(2) .terminal-window-body`)
+    const movedRows = page.locator(`${firstWorkspace} .terminal-window`).nth(1).locator('.xterm-rows')
+    await expect(movedRows).toHaveAttribute('data-retained-frame', 'main')
+    await expect(movedRows).toContainText('output while its workspace was hidden')
+    main.send('\r\nstill on the original connection after moving')
+    await expect(movedRows).toContainText('still on the original connection after moving')
+    expect(connections.count).toBe(3)
+  })
+
   // The counts left the strip, so the layout moves on its chords. A live
   // terminal keeps its one connection across every step, and the chord that
   // shrinks the layout stops at the window holding it.

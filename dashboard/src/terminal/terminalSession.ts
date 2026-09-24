@@ -232,6 +232,7 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   let disposed = false
   let attachment = 0
   let fontReady: Promise<FontFace[]> | null = null
+  let pendingAttach: (() => void) | null = null
   // The last connection was lost rather than ended, so dialling again reaches
   // the same terminal instead of taking a session from whoever holds it.
   let dropped = false
@@ -284,7 +285,16 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   // The container is never asked, so the answer does not depend on where it
   // is shown. The renderer paints once, at the size that is left.
   const fit = () => {
-    if (!opened || !isMeasurable()) return
+    if (!isMeasurable()) return
+    // A font may finish loading after the tile was hidden. Its first visible
+    // fit completes that attachment at real dimensions, without a timer.
+    if (pendingAttach) {
+      const finish = pendingAttach
+      pendingAttach = null
+      finish()
+      return
+    }
+    if (!opened) return
     const grid = fixedGrid
     if (!grid) {
       fitAddon.fit()
@@ -367,6 +377,11 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
       container.appendChild(element)
       const finishAttach = () => {
         if (disposed || thisAttachment !== attachment || !element.parentElement) return
+        if (!isMeasurable()) {
+          pendingAttach = finishAttach
+          return
+        }
+        pendingAttach = null
         if (!opened) {
           terminal.open(element)
           opened = true
@@ -383,6 +398,7 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
     },
     detach() {
       attachment += 1
+      pendingAttach = null
       element.remove()
     },
     fit,
@@ -436,6 +452,7 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
     },
     dispose() {
       disposed = true
+      pendingAttach = null
       element.removeEventListener('mousedown', watchSelectionDrag, true)
       document.removeEventListener('mouseup', copySettledSelection)
       connection?.close()

@@ -7,7 +7,7 @@ import { TERMINAL_FONT_FAMILY } from '../theme/theme'
 interface TerminalSurfaceProps {
   /** The terminal to show here. Pooled for tiles, owned for peek. */
   session: TerminalSession | null
-  /** Kept mounted and connected, but not on screen. */
+  /** Off screen; an already-shown terminal keeps its connection. */
   hidden?: boolean
   /** False for an ended tile: show the last frame without dialling again. */
   connect?: boolean
@@ -21,13 +21,21 @@ const FIT_DEBOUNCE_MS = 100
  */
 function TerminalSurface({ session, hidden = false, connect = true }: TerminalSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const [shownSession, setShownSession] = useState(hidden ? null : session)
+
+  // First display starts the attachment. After that, visibility only controls
+  // fitting: neither hiding nor showing an existing frame should redial it.
+  useEffect(() => {
+    if (!hidden) setShownSession(session)
+  }, [session, hidden])
+  const hasBeenShown = session !== null && (!hidden || shownSession === session)
 
   useEffect(() => {
     const host = hostRef.current
-    if (!host || !session) return
+    if (!host || !session || !hasBeenShown) return
     session.attach(host, { connect })
     return () => session.detach()
-  }, [session, connect])
+  }, [session, connect, hasBeenShown])
 
   useEffect(() => {
     const host = hostRef.current

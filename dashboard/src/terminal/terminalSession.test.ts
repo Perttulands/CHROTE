@@ -125,6 +125,33 @@ describe('terminal session', () => {
     session.dispose()
   })
 
+  it('waits for visible geometry if its font arrives after the tile is hidden', async () => {
+    let finishFont!: (fonts: FontFace[]) => void
+    const originalFonts = Object.getOwnPropertyDescriptor(document, 'fonts')
+    Object.defineProperty(document, 'fonts', {
+      configurable: true,
+      value: { check: () => false, load: () => new Promise<FontFace[]>(resolve => { finishFont = resolve }) },
+    })
+    const { session, host } = start()
+    try {
+      session.attach(host)
+      sizeElements(0, 0)
+      finishFont([])
+      await Promise.resolve()
+      expect(FakeSocket.instances).toHaveLength(0)
+
+      sizeElements(800, 600)
+      session.fit()
+      const socket = FakeSocket.latest()
+      socket.accept()
+      expect(JSON.parse(socket.sentText[0])).toMatchObject({ columns: 100, rows: 30 })
+    } finally {
+      session.dispose()
+      if (originalFonts) Object.defineProperty(document, 'fonts', originalFonts)
+      else Reflect.deleteProperty(document, 'fonts')
+    }
+  })
+
   it('refits after a font size change so the grid matches the new cell metrics', () => {
     const { session, host } = start()
     session.attach(host)

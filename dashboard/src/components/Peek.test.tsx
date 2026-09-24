@@ -152,13 +152,22 @@ describe('Peek', () => {
   })
 
   it('peeks through the same in-page terminal as a tile, on its own observer connection', () => {
-    const { unmount } = render(<Peek />)
+    // jsdom has no layout; an observer also waits for a real visible box before
+    // its first handshake. Browser tests own the actual grid and font metrics.
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(600)
+    try {
+      const { unmount } = render(<Peek />)
 
-    expect(document.querySelector('.terminal-surface-host .terminal-surface')).not.toBeNull()
-    expect(FakeSocket.latest().url).toContain('/terminal/ws?arg=peek&arg=alice-shell&arg=alice')
+      expect(document.querySelector('.terminal-surface-host .terminal-surface')).not.toBeNull()
+      expect(FakeSocket.latest().url).toContain('/terminal/ws?arg=peek&arg=alice-shell&arg=alice')
 
-    unmount()
+      unmount()
 
-    expect(FakeSocket.latest().readyState).toBe(FakeSocket.CLOSED)
+      expect(FakeSocket.latest().readyState).toBe(FakeSocket.CLOSED)
+    } finally {
+      width.mockRestore()
+      height.mockRestore()
+    }
   })
 })
