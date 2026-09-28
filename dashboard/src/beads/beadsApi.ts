@@ -2,8 +2,8 @@
  * What the browser knows about Beads, and how it asks.
  *
  * Every answer comes from `bd` through the server: there is no second store
- * here, nothing is written from the dashboard, and nothing is cached beyond the
- * request that asked for it.
+ * here, and nothing is cached beyond the request that asked for it. The one
+ * write is filing a new bug or feature, which the complaint box does.
  */
 
 import { fetchWorkspaces, holdsStore, workspaceName, type BeadsCounts, type Workspace } from '../workspaces/workspacesApi'
@@ -212,4 +212,34 @@ export async function fetchMolecule(projectPath: string, id: string): Promise<Be
 export async function fetchBead(projectPath: string, id: string): Promise<BeadDetail> {
   const data = await get<{ bead: BeadDetail }>('/issue', { path: projectPath, id })
   return data.bead
+}
+
+export type FiledBeadType = 'bug' | 'feature'
+
+export interface FiledBead {
+  id: string
+  title: string
+}
+
+/**
+ * File a new Bead in a store. A refusal carries the server's own words, which
+ * are bd's words when bd refused, so the operator reads why it did not land.
+ */
+export async function createBead(request: {
+  path: string
+  title: string
+  description: string
+  type: FiledBeadType
+}): Promise<FiledBead> {
+  const response = await fetch(`${API_BASE}/issues`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    signal: AbortSignal.timeout(30000),
+  })
+  const envelope = await response.json().catch(() => null) as ApiEnvelope<FiledBead> | null
+  if (!envelope || envelope.success !== true || !envelope.data?.id) {
+    throw new Error(envelope?.error?.message || `Filing failed (${response.status})`)
+  }
+  return envelope.data
 }

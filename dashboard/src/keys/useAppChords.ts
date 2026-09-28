@@ -31,6 +31,7 @@ export interface AppChordSurfaces {
   onOpenSessionsPanel: () => void
   onToggleBeadsColumn: () => void
   onToggleKeysPanel: () => void
+  onOpenReport: () => void
 }
 
 function clickInActiveDock(selector: string) {
@@ -167,6 +168,9 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
       // its session's seat, on this tab and the others.
       { id: 'keys.claimAll', key: 'c', direct: { alt: true, shift: false, key: 'c' }, label: 'Claim all sessions', scope: 'global', run: claimAll },
       { id: 'keys.panel', key: '?', direct: { alt: true, shift: false, key: 'k' }, label: 'Keybindings', scope: 'global', run: () => stateRef.current.surfaces.onToggleKeysPanel() },
+      // The complaint box is reachable from anywhere, because an annoyance is
+      // wherever the operator happens to be when it bites.
+      { id: 'keys.report', key: 'r', direct: { alt: true, shift: false, key: 'r' }, label: 'Report an issue', scope: 'global', run: () => stateRef.current.surfaces.onOpenReport() },
       { id: 'keys.off', key: 'k', label: 'Keys off', scope: 'global', run: () => stateRef.current.session.updateSettings({ keysEnabled: false }) },
 
       { id: 'keys.nextWindow', key: 'w', direct: { alt: true, shift: false, key: 'w' }, label: 'Next window', scope: 'workspace', run: () => cycleWindow(1) },

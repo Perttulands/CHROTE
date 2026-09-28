@@ -14,6 +14,7 @@ import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
 import Peek from './components/Peek'
 import ImageGlance from './components/ImageGlance'
 import SendDrawer from './components/SendDrawer'
+import ReportBox from './components/ReportBox'
 import type { BeadsRevealRequest } from './components/BeadsView'
 import ErrorBoundary from './components/ErrorBoundary'
 import Skeleton from './components/LoadingSkeleton'
@@ -203,6 +204,7 @@ function DashboardContent() {
   const [openFilesWorkspaceIds, setOpenFilesWorkspaceIds] = useState<Set<WorkspaceId>>(() => new Set())
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null)
   const [keysPanelOpen, setKeysPanelOpen] = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
   const [beadsColumnOpen, setBeadsColumnOpen] = useState(false)
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
   const [beadsRevealRequest, setBeadsRevealRequest] = useState<BeadsRevealRequest | null>(null)
@@ -257,6 +259,8 @@ function DashboardContent() {
   // The panel is a glance, so the chord that opens it closes it as well.
   const toggleKeysPanel = useCallback(() => setKeysPanelOpen(open => !open), [])
   const handleCloseKeys = useCallback(() => setKeysPanelOpen(false), [])
+  const openReport = useCallback(() => setReportOpen(true), [])
+  const closeReport = useCallback(() => setReportOpen(false), [])
   const toggleBeadsColumn = useCallback(() => setBeadsColumnOpen(open => !open), [])
   const closeBeadsColumn = useCallback(() => setBeadsColumnOpen(false), [])
   const toggleSessionsPanel = useCallback(() => {
@@ -321,6 +325,7 @@ function DashboardContent() {
     onOpenSessionsPanel: openSessionsPanel,
     onToggleBeadsColumn: toggleBeadsColumn,
     onToggleKeysPanel: toggleKeysPanel,
+    onOpenReport: openReport,
   })
 
   useEffect(() => {
@@ -517,6 +522,7 @@ function DashboardContent() {
         <DevMode activeTab={activeTab} />
 
         <KeysPanel isOpen={keysPanelOpen} onClose={handleCloseKeys} />
+        <ReportBox open={reportOpen} onClose={closeReport} activeTab={activeTab} />
       </div>
       </TableHost>
       </TableProvider>

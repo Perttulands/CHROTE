@@ -61,6 +61,7 @@ describe('Alt+P', () => {
       onOpenSessionsPanel: vi.fn(),
       onToggleBeadsColumn: vi.fn(),
       onToggleKeysPanel: vi.fn(),
+      onOpenReport: vi.fn(),
     }))
 
     altP()
@@ -100,6 +101,7 @@ describe('Beads chords', () => {
       onOpenSessionsPanel: vi.fn(),
       onToggleBeadsColumn,
       onToggleKeysPanel: vi.fn(),
+      onOpenReport: vi.fn(),
     }))
 
     document.dispatchEvent(new KeyboardEvent('keydown', {
@@ -150,6 +152,7 @@ describe('Alt+C', () => {
       onOpenSessionsPanel: vi.fn(),
       onToggleBeadsColumn: vi.fn(),
       onToggleKeysPanel: vi.fn(),
+      onOpenReport: vi.fn(),
     }))
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', altKey: true, bubbles: true, cancelable: true }))

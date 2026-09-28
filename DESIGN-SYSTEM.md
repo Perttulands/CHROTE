@@ -220,6 +220,7 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | `Alt+I` | Close the table |
 | `Alt+Enter` | Focus the resident's column |
 | `Alt+K` | Keybindings panel |
+| `Alt+R` | Report an issue: file a bug or feature as a Bead, and optionally hand it to an agent |
 
 Leader then `B` opens the Beads tab. It has no direct chord because `Alt+B`
 belongs to the Beads column on every tab.

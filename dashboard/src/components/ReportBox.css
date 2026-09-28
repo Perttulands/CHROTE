@@ -1,0 +1,192 @@
+/* The complaint box: a palette near the top of the viewport, content-sized, no
+   backdrop, in the keys panel's and the Send drawer's monochrome. */
+
+.report-box {
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2600;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(560px, 92vw);
+  padding: 12px 16px;
+  background-color: var(--surface-primary);
+  border: 1px solid var(--divider);
+  font-size: 13px;
+}
+
+/* The field wears the keys panel's search: one accent rule at its left. */
+.report-box-field {
+  width: 100%;
+  padding: 2px 0 2px 10px;
+  background: transparent;
+  border: none;
+  border-left: 2px solid var(--accent);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.report-box-field::placeholder,
+.report-box-store-input::placeholder {
+  color: var(--text-dim);
+}
+
+.report-box-field:focus {
+  outline: none;
+}
+
+.report-box-choices {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.report-box-store {
+  position: relative;
+  flex: none;
+}
+
+.report-box-store-input {
+  width: 14ch;
+  padding: 4px 8px;
+  background-color: var(--background);
+  border: 1px solid var(--divider);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.report-box-store-input:focus,
+.report-box-type-option:focus-visible,
+.report-box-send:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.report-box-stores {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 1;
+  min-width: 100%;
+  max-height: 240px;
+  overflow-y: auto;
+  background-color: var(--surface-primary);
+  border: 1px solid var(--divider);
+}
+
+.report-box-store-option {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 8px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.report-box-store-option.current {
+  background-color: var(--surface-secondary);
+}
+
+.report-box-store-option.current .report-box-store-prefix {
+  color: var(--accent);
+}
+
+.report-box-store-prefix {
+  color: var(--text-primary);
+}
+
+.report-box-store-path,
+.report-box-store-empty {
+  color: var(--text-dim);
+}
+
+.report-box-store-empty {
+  padding: 4px 8px;
+}
+
+/* Bug | Feature: two words in one frame; the chosen one is the one lit. */
+.report-box-type {
+  display: flex;
+  flex: none;
+}
+
+.report-box-type-option {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--divider);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.report-box-type-option + .report-box-type-option {
+  border-left: none;
+}
+
+.report-box-type-option.checked {
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.report-box-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.report-box-context span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-box-context input {
+  accent-color: var(--accent);
+  margin: 0;
+}
+
+.report-box-failure {
+  margin: 0;
+  color: var(--color-error);
+}
+
+.report-box-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.report-box-hint {
+  flex: 1;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.report-box-send {
+  flex: none;
+  padding: 4px 12px;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.report-box-send:disabled {
+  border-color: var(--divider);
+  color: var(--text-dim);
+  cursor: default;
+}

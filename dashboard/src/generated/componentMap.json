@@ -64,6 +64,7 @@
   "RailScroll": "dashboard/src/components/Rail.tsx",
   "RailSection": "dashboard/src/components/Rail.tsx",
   "ReadyView": "dashboard/src/components/BeadsView/ReadyView.tsx",
+  "ReportBox": "dashboard/src/components/ReportBox.tsx",
   "ResidentColumn": "dashboard/src/components/ResidentColumn.tsx",
   "RetainedView": "dashboard/src/App.tsx",
   "ScheduleEditor": "dashboard/src/components/ScheduleEditor.tsx",
