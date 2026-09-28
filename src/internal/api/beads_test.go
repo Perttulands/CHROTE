@@ -327,6 +327,146 @@ func decodeBeadsData(t *testing.T, rec *httptest.ResponseRecorder) map[string]in
 	return envelope.Data
 }
 
+// Exercise the registered write route with a fake bd, including argument
+// boundaries: a title beginning with a dash is text, not a CLI option.
+func TestBeadsHandler_CreateIssue(t *testing.T) {
+	for _, tc := range []struct {
+		name, title, description, issueType string
+		configured                          bool
+	}{
+		{"feature with literal flags", "-x --y", "-d starts\nSecond line: 'quoted'", "feature", false},
+		{"bug without description in configured store", "  Broken input  ", "", "bug", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project := t.TempDir()
+			makeValidBeadsWorkspace(t, project)
+			t.Setenv("CHROTE_ROOTS", project)
+			t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+			if tc.configured {
+				t.Setenv("CHROTE_ROOTS", t.TempDir())
+				t.Setenv("CHROTE_BEADS_WORKSPACES", project)
+			}
+			title := strings.TrimSpace(tc.title)
+			created, err := json.Marshal(map[string]string{"id": "test-new", "title": title})
+			if err != nil {
+				t.Fatal(err)
+			}
+			script, argsPath := makeSequencedBdCommand(t, string(created))
+			// NUL separators preserve spaces and newlines inside each argument.
+			fake := "#!/bin/sh\nprintf '%s\\0' \"$PWD\" \"$@\" > \"$BD_ARGS_FILE\"\ncat \"$BD_OUTPUT_DIR/1.json\"\n"
+			if err := os.WriteFile(script, []byte(fake), 0700); err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(map[string]string{
+				"path": project, "title": tc.title, "description": tc.description, "type": tc.issueType,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			mux := http.NewServeMux()
+			NewBeadsHandler().RegisterRoutes(mux)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/beads/issues", strings.NewReader(string(body))))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("create status = %d: %s", rec.Code, rec.Body.String())
+			}
+			data := decodeBeadsData(t, rec)
+			if data["id"] != "test-new" || data["title"] != title {
+				t.Fatalf("created issue = %#v", data)
+			}
+			raw, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []string{project, "--json", "create", "--title=" + title, "--description=" + tc.description, "--type=" + tc.issueType, ""}
+			if got := strings.Split(string(raw), "\x00"); !reflect.DeepEqual(got, want) {
+				t.Fatalf("bd directory and args = %#v, want %#v", got, want)
+			}
+		})
+	}
+}
+
+func TestBeadsHandler_CreateIssueRejectsInvalidRequestBeforeRunningBd(t *testing.T) {
+	project := t.TempDir()
+	makeValidBeadsWorkspace(t, project)
+	partial := filepath.Join(project, "partial")
+	makePartialBeadsDirectory(t, partial)
+	t.Setenv("CHROTE_ROOTS", project)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	_, argsPath := makeSequencedBdCommand(t, "{}")
+	mux := http.NewServeMux()
+	NewBeadsHandler().RegisterRoutes(mux)
+	for _, tc := range []struct {
+		name, path, title, issueType string
+		pathError                    bool
+	}{
+		{"missing path", "", "Title", "bug", true},
+		{"forbidden path", t.TempDir(), "Title", "bug", true},
+		{"missing directory", filepath.Join(project, "missing"), "Title", "bug", true},
+		{"partial store", partial, "Title", "bug", true},
+		{"empty title", project, " \n\t", "bug", false},
+		{"invalid type", project, "Title", "task", false},
+		{"missing type", project, "Title", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]string{"path": tc.path, "title": tc.title, "type": tc.issueType})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/beads/issues", strings.NewReader(string(body))))
+			if tc.pathError {
+				read := httptest.NewRecorder()
+				mux.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/api/beads/closed?path="+url.QueryEscape(tc.path), nil))
+				var createdError, readError struct {
+					Error struct{ Code, Message string }
+				}
+				if err := json.Unmarshal(rec.Body.Bytes(), &createdError); err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(read.Body.Bytes(), &readError); err != nil {
+					t.Fatal(err)
+				}
+				if rec.Code != read.Code || createdError != readError {
+					t.Fatalf("create error %d %s differs from read error %d %s", rec.Code, rec.Body.String(), read.Code, read.Body.String())
+				}
+			} else if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "BAD_REQUEST") {
+				t.Fatalf("validation status = %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/beads/issues", strings.NewReader("{")))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed JSON status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(argsPath); !os.IsNotExist(err) {
+		t.Fatalf("invalid request ran bd: %v", err)
+	}
+}
+
+func TestBeadsHandler_CreateIssueReportsBdFailure(t *testing.T) {
+	project := t.TempDir()
+	makeValidBeadsWorkspace(t, project)
+	t.Setenv("CHROTE_ROOTS", project)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	script, _ := makeSequencedBdCommand(t)
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho 'cannot write Dolt manifest: permission denied' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]string{"path": project, "title": "Title", "type": "bug"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	NewBeadsHandler().RegisterRoutes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/beads/issues", strings.NewReader(string(body))))
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "cannot write Dolt manifest: permission denied") {
+		t.Fatalf("bd failure = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestBeadPrefixReadsTheProjectOutOfAnID(t *testing.T) {
 	cases := map[string]string{
 		"chrote-5grx":     "chrote",
@@ -947,6 +1087,18 @@ func TestBeadsHandler_UnreadableWorkspaceReportsPermissionRatherThanAbsence(t *t
 				t.Errorf("response does not state the permission cause: %s", body)
 			}
 		})
+	}
+
+	// Filing into an unreadable store reports the same permission failure as
+	// reading it, before a subprocess can attempt to mutate the store.
+	createBody, err := json.Marshal(map[string]string{"path": project, "title": "Title", "type": "bug"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createRec := httptest.NewRecorder()
+	handler.CreateIssue(createRec, httptest.NewRequest(http.MethodPost, "/api/beads/issues", strings.NewReader(string(createBody))))
+	if createRec.Code != http.StatusForbidden || !strings.Contains(createRec.Body.String(), metadataPath) || !strings.Contains(createRec.Body.String(), "permission denied") {
+		t.Fatalf("create permission failure = %d: %s", createRec.Code, createRec.Body.String())
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+project, nil)

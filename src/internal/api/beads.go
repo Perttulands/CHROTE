@@ -58,6 +58,7 @@ func (h *BeadsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/beads/work", h.Work)
 	mux.HandleFunc("GET /api/beads/closed", h.ClosedWork)
 	mux.HandleFunc("GET /api/beads/issue", h.IssueDetail)
+	mux.HandleFunc("POST /api/beads/issues", h.CreateIssue)
 	mux.HandleFunc("GET /api/beads/formulas", h.Formulas)
 	mux.HandleFunc("GET /api/beads/formula", h.FormulaDetail)
 	mux.HandleFunc("GET /api/beads/molecules", h.Molecules)
@@ -337,7 +338,13 @@ func requiredQueryValue(r *http.Request, key string) (string, string, string) {
 }
 
 func (h *BeadsHandler) requestProject(w http.ResponseWriter, r *http.Request) (string, bool) {
-	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
+	return h.checkedProject(w, r.URL.Query().Get("path"))
+}
+
+// checkedProject applies the same path and store checks to query parameters
+// on read routes and the named destination in a creation request.
+func (h *BeadsHandler) checkedProject(w http.ResponseWriter, path string) (string, bool) {
+	projectPath, code, msg := validateBeadsProjectPath(path)
 	if code != "" {
 		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
 		return "", false
@@ -347,6 +354,52 @@ func (h *BeadsHandler) requestProject(w http.ResponseWriter, r *http.Request) (s
 		return "", false
 	}
 	return projectPath, true
+}
+
+// CreateIssue handles POST /api/beads/issues. The store remains authoritative:
+// bd creates the issue and chooses its id and default priority.
+func (h *BeadsHandler) CreateIssue(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Path        string `json:"path"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Type        string `json:"type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid issue JSON: "+err.Error())
+		return
+	}
+	projectPath, ok := h.checkedProject(w, request.Path)
+	if !ok {
+		return
+	}
+	request.Title = strings.TrimSpace(request.Title)
+	if request.Title == "" {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Title must not be empty")
+		return
+	}
+	if request.Type != "bug" && request.Type != "feature" {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Type must be bug or feature")
+		return
+	}
+
+	// Binding each value with '=' keeps leading dashes inside the text rather
+	// than letting bd's flag parser interpret them as options.
+	result, err := h.execBdJSON(r.Context(), projectPath, "create",
+		"--title="+request.Title, "--description="+request.Description, "--type="+request.Type)
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
+		return
+	}
+	issue, ok := result.(map[string]interface{})
+	if !ok || beadString(issue, "id") == "" || beadString(issue, "title") == "" {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", "bd create returned no issue id or title")
+		return
+	}
+	core.WriteSuccess(w, map[string]interface{}{
+		"id":    issue["id"],
+		"title": issue["title"],
+	})
 }
 
 // transformIssue converts raw JSONL issue to frontend-expected format
