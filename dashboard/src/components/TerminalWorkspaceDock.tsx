@@ -5,6 +5,7 @@ import type { WorkspaceId } from '../types'
 import { useSession } from '../context/SessionContext'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { registerSurface } from '../keys/dismiss'
+import { consumeOpenInFilesRequest } from '../terminal/openInFiles'
 import SessionPanel from './SessionPanel'
 import TerminalArea from './TerminalArea'
 import TerminalFilesPanel from './TerminalFilesPanel'
@@ -109,7 +110,9 @@ function TerminalWorkspaceDock({
 
   // A path from a terminal link takes the same way in as the tag's own menu.
   useEffect(() => {
-    if (openFilesRequest) openFilesAtPath(openFilesRequest.path)
+    if (!openFilesRequest) return
+    consumeOpenInFilesRequest()
+    openFilesAtPath(openFilesRequest.path)
   }, [openFilesRequest, openFilesAtPath])
 
   const closeAllSidecars = useCallback(() => {

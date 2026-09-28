@@ -24,7 +24,7 @@ import KeyEcho from './keys/KeyEcho'
 import DevMode from './dev/DevMode'
 import { closeLeaderWindow, useLeader } from './keys/chords'
 import { TerminalPoolProvider } from './components/TerminalPool'
-import { useOpenInFilesRequest } from './terminal/openInFiles'
+import { consumeOpenInFilesRequest, useOpenInFilesRequest } from './terminal/openInFiles'
 import { SessionCommandMark, SessionLabel } from './components/sessionLabel'
 import {
   readSessionsDockState,
@@ -295,10 +295,9 @@ function DashboardContent() {
   const openInFilesOnTerminalTab = isTerminalWorkspaceId(activeTab, mountedWorkspaceIds)
   useEffect(() => {
     if (!openInFilesRequest || openInFilesOnTerminalTab) return
+    consumeOpenInFilesRequest()
     handleOpenProjectInFiles(openInFilesRequest.path)
-    // Each request is answered once, where the operator was when it was made.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openInFilesRequest])
+  }, [openInFilesRequest, openInFilesOnTerminalTab, handleOpenProjectInFiles])
 
   // The leader is discovery: it toggles the keys panel and shuts its own
   // window, because from here the next key is search text rather than a chord.

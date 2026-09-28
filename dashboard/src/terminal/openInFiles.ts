@@ -29,6 +29,12 @@ export function openInFiles(path: string): void {
   publish()
 }
 
+/** The receiving view owns the path now; later tab switches have nothing to replay. */
+export function consumeOpenInFilesRequest(): void {
+  request = null
+  publish()
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener)
   return () => { listeners.delete(listener) }

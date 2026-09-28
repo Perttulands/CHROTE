@@ -157,7 +157,7 @@ test.describe('Terminal links', () => {
     await expect.poll(() => page.evaluate(() => window.__openedUrls)).toEqual([PRINTED_URL])
   })
 
-  test('a printed absolute path opens the file in the Files panel', async ({ page }) => {
+  test('a printed path opens once in its terminal tab across tab switches', async ({ page }) => {
     const { grid } = await openTerminalWithPath(page)
     const point = await pathPoint(page, grid.columns, PRINTED_PATH)
 
@@ -169,6 +169,14 @@ test.describe('Terminal links', () => {
     await expect(panel).toBeVisible()
     await expect(panel.locator('.files-panel-viewer-path')).toHaveAttribute('title', PRINTED_PATH)
     await expect(panel.locator('[data-ui="files.viewer"]')).toContainText('mock file content')
+
+    await page.getByRole('dialog', { name: 'File notes.txt' }).getByRole('button', { name: 'Close', exact: true }).click()
+    await panel.getByRole('button', { name: 'Close Files sidecar' }).click()
+    for (const tab of ['Terminal 2', 'Terminal 3', 'Terminal']) {
+      await page.getByRole('button', { name: tab, exact: true }).click()
+      await expect(page.getByRole('button', { name: 'Files sidecar', exact: true, pressed: false })).toBeVisible()
+      await expect(page.getByRole('dialog', { name: 'File notes.txt' })).toHaveCount(0)
+    }
   })
 
   // A picture takes the same way in as any other path now: the panel opens,

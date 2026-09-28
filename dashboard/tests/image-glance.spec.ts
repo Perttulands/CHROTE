@@ -75,6 +75,29 @@ async function mockFiles(page: Page) {
 }
 
 test.describe('the image glance', () => {
+  test('Open in Files from the Files tab is consumed before visiting terminal tabs', async ({ page }) => {
+    await mockApiRoutes(page)
+    await mockFiles(page)
+    await page.addInitScript(state => {
+      localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
+    }, seededState())
+    await page.goto('/')
+
+    const glance = await openGlanceFromFilesTab(page)
+    await glance.getByRole('button', { name: 'Open in Files' }).click()
+    await expect(glance).toHaveCount(0)
+    await expect(page.getByTestId('file-viewer-scroll').getByRole('button', { name: 'shot.png' })).toBeVisible()
+    await page.locator('.fb-editor-tab-close').first().click()
+
+    for (const tab of ['Terminal', 'Terminal 2', 'Terminal 3']) {
+      await page.getByRole('button', { name: tab, exact: true }).click()
+      await expect(page.getByRole('button', { name: 'Files sidecar', exact: true, pressed: false })).toBeVisible()
+      await expect(page.getByRole('dialog', { name: 'File shot.png' })).toHaveCount(0)
+    }
+    await page.click('.tab:has-text("Files")')
+    await expect(page.locator('.fb-row').filter({ hasText: 'shot.png' })).toBeVisible()
+  })
+
   test('never upscales the picture, and closes on Escape and on a press outside', async ({ page }) => {
     await mockApiRoutes(page)
     await mockFiles(page)

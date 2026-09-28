@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TerminalWorkspaceDock from './TerminalWorkspaceDock'
+import { openInFiles, resetOpenInFilesForTest, useOpenInFilesRequest } from '../terminal/openInFiles'
 import { registerSurface } from '../keys/dismiss'
 import {
   readSessionsDockState,
@@ -79,7 +80,8 @@ vi.mock('./TerminalArea', () => ({
   ),
 }))
 
-function DockHarness({ openFilesRequest = null }: { openFilesRequest?: { path: string; nonce: number } | null }) {
+function DockHarness() {
+  const openFilesRequest = useOpenInFilesRequest()
   const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
   const [filesOpen, setFilesOpen] = useState(false)
   const handleFilesOpenChange = useCallback((_workspaceId: string, open: boolean) => {
@@ -110,6 +112,7 @@ function renderDock() {
 
 describe('TerminalWorkspaceDock sidecar state machine', () => {
   beforeEach(() => {
+    resetOpenInFilesForTest()
     localStorage.clear()
     mocks.narrow = false
   })
@@ -180,12 +183,18 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
   // A path clicked in a terminal is a request from outside the dock: the
   // sidecar opens for it even when the operator had it closed, and the panel
   // is handed the path to walk to.
-  it('opens a closed Files sidecar for a path requested from a terminal link', () => {
-    const { rerender } = render(<DockHarness />)
+  it('consumes each terminal path request and opens the same path again when requested', () => {
+    render(<DockHarness />)
     expect(screen.queryByTestId('files-panel')).not.toBeInTheDocument()
 
-    rerender(<DockHarness openFilesRequest={{ path: '/tmp/shot.png', nonce: 1 }} />)
+    act(() => openInFiles('/tmp/shot.png'))
 
+    expect(screen.getByRole('button', { name: /Files sidecar/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-navigate-path', '/tmp/shot.png')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Acknowledge navigation' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close files' }))
+    act(() => openInFiles('/tmp/shot.png'))
     expect(screen.getByRole('button', { name: /Files sidecar/i })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('files-panel')).toHaveAttribute('data-navigate-path', '/tmp/shot.png')
   })
