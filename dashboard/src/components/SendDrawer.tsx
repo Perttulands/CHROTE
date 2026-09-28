@@ -14,8 +14,10 @@
  * looking at, and an edited reference names nothing. The note beneath it is
  * his, and it is where the cursor goes.
  *
- * Enter sends — paste and submit. Shift+Enter pastes without submitting, for
- * an agent that is still thinking. A send that succeeded closes the drawer and
+ * Enter sends — paste and submit. Shift+Enter breaks the line, so a note can
+ * span several. Ctrl+Enter pastes without submitting, for an agent that is
+ * still thinking; Alt+Enter is not the drawer's, because it is the global
+ * chord that focuses the tab's resident. A send that succeeded closes the drawer and
  * scrolls the target tile to the bottom, because the answer arrives there. A
  * send that failed keeps the drawer open with the server's own words above the
  * actions, because the note is still worth something and the operator is the
@@ -151,6 +153,7 @@ export default function SendDrawer() {
   const [deliveryUnknown, setDeliveryUnknown] = useState(false)
   const drawerRef = useRef<HTMLElement>(null)
   const noteRef = useRef<HTMLTextAreaElement>(null)
+  const targetListRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const activeSendRef = useRef<symbol | null>(null)
 
@@ -278,6 +281,25 @@ export default function SendDrawer() {
     return matches.map(session => ({ session, key: getSessionKey(session.name, session.unixUser) }))
   }, [sessions, search])
 
+  // The selected session is the one thing the picker must show, so it is
+  // brought to the middle of the list when the drawer opens and whenever the
+  // search reshapes the list. A click is not a reason: the row clicked is
+  // already under the pointer, and moving it would pull it away. The list is
+  // scrolled on its own, not through scrollIntoView, which would move the
+  // drawer and the page along with it. The frame lets the opening's own
+  // selection reach the list first.
+  useEffect(() => {
+    if (!open) return
+    const frame = requestAnimationFrame(() => {
+      const list = targetListRef.current
+      const row = list?.querySelector<HTMLElement>('[aria-selected="true"]')
+      if (!list || !row) return
+      const offset = row.getBoundingClientRect().top - list.getBoundingClientRect().top
+      list.scrollTop += offset - (list.clientHeight - row.offsetHeight) / 2
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open, sendToSessionRequestId, search])
+
   const addFiles = useCallback((incoming: File[]) => {
     if (incoming.length === 0) return
     setFiles(previous => [...previous, ...incoming])
@@ -358,10 +380,12 @@ export default function SendDrawer() {
     }, pane, message)
   }, [deliver, listSessionPanes, message])
 
+  // Shift+Enter is left to the textarea, which breaks the line; Alt+Enter is
+  // left to the document, where it is the resident chord.
   const handleNoteKeyDown = useCallback((event: React.KeyboardEvent) => {
-    if (event.key !== 'Enter') return
+    if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.metaKey) return
     event.preventDefault()
-    send(!event.shiftKey)
+    send(!event.ctrlKey)
   }, [send])
 
   if (!open) return null
@@ -439,7 +463,7 @@ export default function SendDrawer() {
           <div className="send-drawer-targets" role="listbox" aria-label="Target session">
             {/* The live sessions scroll; the row for one that does not exist yet
                 does not, so the new agent is reachable however long the list is. */}
-            <div className="send-drawer-target-list" role="presentation">
+            <div ref={targetListRef} className="send-drawer-target-list" role="presentation">
               {candidates.map(({ key, session }) => targetRow(key, session))}
             </div>
             <button
@@ -571,7 +595,7 @@ export default function SendDrawer() {
               {sending ? 'Sending…' : 'Send'}
             </button>
           </div>
-          <p className="send-drawer-hint">Enter sends · Shift+Enter pastes</p>
+          <p className="send-drawer-hint">Enter sends · Shift+Enter new line · Ctrl+Enter pastes</p>
         </div>
     </aside>
   )

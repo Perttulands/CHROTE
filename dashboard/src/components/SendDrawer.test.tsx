@@ -183,11 +183,11 @@ describe('SendDrawer', () => {
     expect(mockState.scrollToBottom).toHaveBeenCalled()
   })
 
-  it('pastes without submitting on Shift+Enter, and on the Paste action', async () => {
+  it('pastes without submitting on Ctrl+Enter, and on the Paste action', async () => {
     await renderOpen({ targetSessionKey: 'alice:alice-shell' })
 
     fireEvent.change(note(), { target: { value: 'stand by' } })
-    fireEvent.keyDown(note(), { key: 'Enter', shiftKey: true })
+    fireEvent.keyDown(note(), { key: 'Enter', ctrlKey: true })
     await waitFor(() => expect(mockState.sendToSession).toHaveBeenCalledTimes(1))
     expect(mockState.sendToSession.mock.calls[0][1]).toMatchObject({ text: 'stand by', submit: false })
 

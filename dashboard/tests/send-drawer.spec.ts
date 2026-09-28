@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from './fixtures'
-import { mockApiRoutes } from './mock-api'
+import { mockApiRoutes, mockSessions } from './mock-api'
 import { setWorkspaceState } from './helpers'
 
 const TARGET = 'gt-gastown-jack'
@@ -80,9 +80,34 @@ async function mockSendRoutes(page: Page, sends: SendRecord[]) {
   })
 }
 
+/**
+ * Enough sessions ahead of the target that its row starts below the fold of
+ * the picker's scrolling list.
+ */
+const crowdedSessions = {
+  ...mockSessions,
+  sessions: [
+    ...Array.from({ length: 24 }, (_, index) => ({
+      name: `aa-filler-${String(index).padStart(2, '0')}`,
+      windows: 1,
+      attached: false,
+      group: 'aa',
+    })),
+    ...mockSessions.sessions,
+  ],
+}
+
+/** The row lies wholly inside the list's visible area. */
+async function expectInView(row: Locator, list: Locator) {
+  await expect.poll(async () => {
+    const [r, l] = [await box(row), await box(list)]
+    return r.y >= l.y - 1 && r.y + r.height <= l.y + l.height + 1
+  }).toBe(true)
+}
+
 async function openWorkspace(page: Page, sends: SendRecord[]) {
   await page.setViewportSize({ width: 1400, height: 900 })
-  await mockApiRoutes(page)
+  await mockApiRoutes(page, { sessionsResponse: crowdedSessions })
   await mockSendRoutes(page, sends)
   await setWorkspaceState(page, {
     workspaces: {
@@ -104,7 +129,10 @@ test.describe('the Send to Session drawer', () => {
   // The drawer is a surface over the right edge of the workspace: it takes
   // nothing from the grid, so nothing moves under the pointer while a message
   // is written, and the tile it was opened from is still the target it offers.
-  test('overlays the right edge at 380px, leaves the grid where it was, and sends on Enter', async ({ page }) => {
+  // The selected row is the only thing on screen that says where the message
+  // goes, so it is in view without the operator scrolling for it; and a note
+  // may run to several lines before Enter sends it.
+  test('overlays the right edge at 380px, leaves the grid where it was, shows the target, and sends on Enter', async ({ page }) => {
     const sends: SendRecord[] = []
     await openWorkspace(page, sends)
 
@@ -123,15 +151,30 @@ test.describe('the Send to Session drawer', () => {
     expect(Math.round(drawerBox.width)).toBe(380)
     expect(Math.round(drawerBox.x + drawerBox.width)).toBe(Math.round(content.x + content.width))
 
-    await expect(drawer.getByRole('option', { name: new RegExp(TARGET) }))
-      .toHaveAttribute('aria-selected', 'true')
-
     const note = drawer.getByLabel('Message to send')
     await expect(note).toBeFocused()
-    await note.fill('status please')
+
+    const row = drawer.getByRole('option', { name: new RegExp(TARGET) })
+    const list = drawer.locator('.send-drawer-target-list')
+    await expect(row).toHaveAttribute('aria-selected', 'true')
+    await expectInView(row, list)
+
+    // Scrolled away by hand, the row comes back when the search reshapes the
+    // list; 'a' keeps it and most of the crowd, so the row still has to move.
+    await list.evaluate(element => { element.scrollTop = 0 })
+    await drawer.getByLabel('Search sessions').fill('a')
+    await expectInView(row, list)
+
+    await note.focus()
+    await note.pressSequentially('status')
+    await note.press('Shift+Enter')
+    await note.pressSequentially('please')
+    await expect(note).toHaveValue('status\nplease')
+    expect(sends).toEqual([])
     await note.press('Enter')
 
     await expect(drawer).toHaveCount(0)
-    expect(sends).toEqual([{ text: 'status please', submit: 'true' }])
+    // A multipart form carries every line break as CRLF, whatever the note held.
+    expect(sends).toEqual([{ text: 'status\r\nplease', submit: 'true' }])
   })
 })
