@@ -185,22 +185,6 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
       { id: 'keys.sessions', key: 'Tab', direct: { alt: true, shift: false, key: 'a' }, label: 'Sessions panel', scope: 'workspace', run: () => stateRef.current.surfaces.onToggleSessionsPanel() },
       { id: 'keys.files', key: 'f', direct: { alt: true, shift: false, key: 'o' }, label: 'Files panel', scope: 'workspace', run: () => clickInActiveDock('button[aria-label="Files sidecar"]') },
 
-      // Peek is a glance, so its chord toggles it: pressed again over the tile
-      // Peek shows, it closes; pressed over another tile, Peek switches.
-      {
-        id: 'keys.peek',
-        key: 'p',
-        direct: { alt: true, shift: false, key: 'p' },
-        label: "Peek the tile's session",
-        scope: 'tile',
-        run: () => {
-          const sessionKey = focusedSession()
-          if (!sessionKey) return
-          const { floatingSession, openFloatingModal, closeFloatingModal } = stateRef.current.session
-          if (floatingSession === sessionKey) closeFloatingModal()
-          else openFloatingModal(sessionKey)
-        },
-      },
       {
         id: 'keys.send',
         key: 's',

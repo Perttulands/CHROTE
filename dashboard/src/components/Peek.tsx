@@ -34,8 +34,8 @@
  * Opening Peek focuses its terminal, and Escape typed there is the session's,
  * so a menu can be cancelled and an agent interrupted from here. Dismissal is
  * otherwise the owner's: a press outside closes it and is consumed, Escape
- * with focus anywhere else closes it, and Alt+P closes it from inside its own
- * terminal. The header carries the mark, the name, Send and Close as words.
+ * with focus anywhere else closes it. The header carries the mark, the name,
+ * Send and Close as words.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -203,38 +203,21 @@ function Peek() {
   // right the moment it is drawn.
   const measuring = canOpenSession && windowGrid !== null && fitted === null
 
-  // Whether the focus is inside the window, which is what decides Alt+P below.
-  const [holdsFocus, setHoldsFocus] = useState(false)
-
-  // While Peek is open, Alt+S sends to the session it shows, and Alt+P with no
-  // tile focused closes it; over a focused tile the tile's own chord decides,
-  // which is what makes Alt+P a toggle there and a switch elsewhere. From
-  // inside Peek's own terminal Alt+P closes it whatever tile is focused: the
-  // operator is in Peek, so that is what the chord is about. Registered after
-  // the tile's, it wins the tile scope while the focus is here.
+  // While Peek is open, Alt+S sends to the session it shows. Registered after
+  // the tile's chord, it wins the tile scope as well as the global one.
   useEffect(() => {
     if (!floatingSession) return
     const send = () => openSendToSession({ targetSessionKey: floatingSession })
-    const chords: Chord[] = [
-      ...(['global', 'tile'] as const).map((scope): Chord => ({
-        id: `peek.send.${scope}`,
-        key: 's',
-        direct: { alt: true, shift: false, key: 's' },
-        label: `Send to ${displayName}`,
-        scope,
-        run: send,
-      })),
-      ...(holdsFocus ? ['global', 'tile'] as const : ['global'] as const).map((scope): Chord => ({
-        id: `peek.close.${scope}`,
-        key: 'p',
-        direct: { alt: true, shift: false, key: 'p' },
-        label: 'Close Peek',
-        scope,
-        run: closeFloatingModal,
-      })),
-    ]
+    const chords = (['global', 'tile'] as const).map((scope): Chord => ({
+      id: `peek.send.${scope}`,
+      key: 's',
+      direct: { alt: true, shift: false, key: 's' },
+      label: `Send to ${displayName}`,
+      scope,
+      run: send,
+    }))
     return registerChords(chords)
-  }, [floatingSession, displayName, holdsFocus, openSendToSession, closeFloatingModal])
+  }, [floatingSession, displayName, openSendToSession])
 
   if (!floatingSession) return null
 
@@ -248,10 +231,6 @@ function Peek() {
       style={frame.size
         ? { width: frame.size.width, height: frame.size.height, opacity: measuring ? 0 : undefined }
         : undefined}
-      onFocus={() => setHoldsFocus(true)}
-      onBlur={event => {
-        if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setHoldsFocus(false)
-      }}
     >
       <FloatingFrameHandles frame={frame} />
       <div className="peek-header">

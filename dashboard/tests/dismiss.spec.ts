@@ -1,5 +1,6 @@
 import { test, expect, type Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
+import { openSessionsSidecar } from './helpers'
 
 /**
  * One owner of dismissal (bead: chrote-5grx.36).
@@ -77,6 +78,7 @@ test('Escape closes the topmost surface and reaches no pane but Peek\'s own; a p
     localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
   }, seededState())
   await page.goto('/')
+  await openSessionsSidecar(page)
 
   const windows = page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-window')
   const first = windows.first()
@@ -101,7 +103,7 @@ test('Escape closes the topmost surface and reaches no pane but Peek\'s own; a p
   // Peek is a glance: a press on the other tile, beside the window, closes it,
   // is consumed, and leaves the focus where it was.
   await first.locator('.xterm-screen').click()
-  await page.keyboard.press('Alt+p')
+  await page.locator('.session-item').filter({ hasText: /^main/ }).first().click()
   const peek = page.getByRole('dialog', { name: /^Peek/ })
   await expect(peek).toBeVisible()
   const beside = (await second.locator('.terminal-window-body').boundingBox())!
@@ -111,24 +113,15 @@ test('Escape closes the topmost surface and reaches no pane but Peek\'s own; a p
   await expect(first).toHaveClass(/focused/)
 
   // Peek opens with its terminal focused, and Escape typed there is the
-  // session's: it reaches the peeked pty and Peek stays open. Alt+P from
-  // inside closes it, even with another tile focused, whose own Alt+P would
-  // have switched Peek to its session.
-  await page.keyboard.press('Alt+p')
+  // session's: it reaches the peeked pty and Peek stays open.
+  await page.locator('.session-item').filter({ hasText: /^main/ }).first().click()
   await expect(peek).toBeVisible()
   await expect(peek.locator('.xterm-helper-textarea')).toBeFocused()
   await page.keyboard.press('Escape')
   await expect.poll(() => peekTyped.join('')).toContain('\u001b')
   await expect(peek).toBeVisible()
-  await page.keyboard.press('Alt+w')
-  await expect(second).toHaveClass(/focused/)
-  await peek.locator('.xterm-screen').click()
-  await page.keyboard.press('Alt+p')
-  await expect(peek).toHaveCount(0)
 
   // With the focus outside Peek's terminal, Escape closes it.
-  await page.keyboard.press('Alt+p')
-  await expect(peek).toBeVisible()
   await peek.locator('.peek-name').click()
   await page.keyboard.press('Escape')
   await expect(peek).toHaveCount(0)

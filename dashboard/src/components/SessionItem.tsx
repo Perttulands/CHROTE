@@ -240,7 +240,7 @@ function SessionItem({ session }: SessionItemProps) {
     {
       id: 'look',
       rows: [
-        { id: 'peek', label: 'Peek', chord: 'Alt+P', onSelect: handlePeek },
+        { id: 'peek', label: 'Peek', onSelect: handlePeek },
         { id: 'send', label: 'Send to session', chord: 'Alt+S', onSelect: handleOpenSendToSession },
         { id: 'agent-context', label: 'What this agent sees', onSelect: handleShowAgentContext },
       ],

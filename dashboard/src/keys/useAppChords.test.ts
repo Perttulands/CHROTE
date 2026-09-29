@@ -4,9 +4,6 @@ import { useAppChords } from './useAppChords'
 import { resetChordsForTest } from './chords'
 
 const state = vi.hoisted(() => ({
-  floatingSession: null as string | null,
-  openFloatingModal: vi.fn(),
-  closeFloatingModal: vi.fn(),
   terminals: new Map<string, { claim: () => void }>(),
   connectionStates: new Map<string, string>(),
 }))
@@ -31,58 +28,12 @@ vi.mock('../context/SessionContext', () => ({
     // carries the workspace: this is what the tiles write.
     focusedWindowKey: 'terminal1-terminal1-window-0',
     settings: { keysEnabled: true },
-    floatingSession: state.floatingSession,
-    openFloatingModal: state.openFloatingModal,
-    closeFloatingModal: state.closeFloatingModal,
     updateSettings: vi.fn(),
     setFocusedWindowKey: vi.fn(),
     setWindowCount: vi.fn(),
     openSendToSession: vi.fn(),
   }),
 }))
-
-function altP() {
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', altKey: true, bubbles: true, cancelable: true }))
-}
-
-describe('Alt+P', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    state.floatingSession = null
-    resetChordsForTest()
-  })
-  afterEach(() => resetChordsForTest())
-
-  it('opens Peek on the focused tile, closes it when pressed again, and switches it from another tile', () => {
-    const { rerender } = renderHook(() => useAppChords({
-      activeTab: 'terminal1',
-      onTabChange: vi.fn(),
-      onToggleSessionsPanel: vi.fn(),
-      onOpenSessionsPanel: vi.fn(),
-      onToggleBeadsColumn: vi.fn(),
-      onToggleKeysPanel: vi.fn(),
-      onOpenReport: vi.fn(),
-    }))
-
-    altP()
-    expect(state.openFloatingModal).toHaveBeenCalledWith('alice:main')
-    expect(state.closeFloatingModal).not.toHaveBeenCalled()
-
-    // Peek now shows the focused tile's session: the same chord closes it.
-    state.floatingSession = 'alice:main'
-    rerender()
-    altP()
-    expect(state.closeFloatingModal).toHaveBeenCalledTimes(1)
-    expect(state.openFloatingModal).toHaveBeenCalledTimes(1)
-
-    // Peek shows another session: the chord switches it to this tile's.
-    state.floatingSession = 'alice:jack'
-    rerender()
-    altP()
-    expect(state.openFloatingModal).toHaveBeenLastCalledWith('alice:main')
-    expect(state.closeFloatingModal).toHaveBeenCalledTimes(1)
-  })
-})
 
 describe('Beads chords', () => {
   beforeEach(() => {

@@ -267,7 +267,7 @@ describe('direct chords', () => {
         chord({ id: 'prev-window', key: 'W', direct: { alt: true, shift: true, key: 'w' }, scope: 'global', run: other }),
         chord({ id: 'add-window', key: '=', direct: { alt: true, key: '+', layoutKeys: ['='] }, scope: 'global', run }),
         chord({ id: 'remove-window', key: '-', direct: { alt: true, key: '-' }, scope: 'global', run: other }),
-        chord({ id: 'peek', key: 'p', direct: { alt: true, shift: false, key: 'p' }, scope: 'tile', run: other }),
+        chord({ id: 'files', key: 'f', direct: { alt: true, shift: false, key: 'f' }, scope: 'tile', run: other }),
       ])
     })
   })
@@ -333,11 +333,11 @@ describe('direct chords', () => {
   })
 
   it('runs a scoped direct chord only while its scope is active', () => {
-    press({ key: 'p', altKey: true })
+    press({ key: 'f', altKey: true })
     expect(other).not.toHaveBeenCalled()
 
     act(() => setActiveScopes({ workspace: true, tile: true }))
-    press({ key: 'p', altKey: true })
+    press({ key: 'f', altKey: true })
     expect(other).toHaveBeenCalledTimes(1)
   })
 

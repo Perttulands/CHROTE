@@ -64,7 +64,7 @@ search (2); Peek (3); the Send drawer (4).
 **Chords.** `Alt+1`–`Alt+6` for the terminal tabs that exist; `Alt+W` and
 `Alt+Shift+W` for the next and previous window; `Alt+Plus` to add a window and
 `Alt+Minus` to remove the last empty one; `Alt+A` to toggle the Sessions panel;
-`Alt+P` to Peek at the focused tile's session; `Alt+S` to open the Send drawer.
+`Alt+S` to open the Send drawer.
 Session search has no direct chord: leader then `/`.
 
 ## 3. Understand the work

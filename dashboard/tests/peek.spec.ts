@@ -5,9 +5,9 @@ import { openSessionsSidecar } from './helpers'
 /**
  * Peek as a centred floating window sized by the session (bead: chrote-5grx.48).
  *
- * The window opens centred over the workspace; Alt+P toggles it and, pressed
- * over another tile, switches it. It holds the tmux window's own grid and
- * fits its font to the room it is given (beads: chrote-8eyu, chrote-wshh):
+ * The window opens centred over the workspace. It holds the tmux window's
+ * own grid and fits its font to the room it is given (beads: chrote-8eyu,
+ * chrote-wshh):
  * with room, the whole pane is shown and the window wraps it; without, the
  * font stops at a readable floor and the bottom rows stay in view. It opens
  * at one size, and a drag changes the font and never the grid. Real font
@@ -26,24 +26,17 @@ const PEEK_LINE = 'PEEK-SELECT-ME'
 
 /**
  * A ttyd stand-in that answers every handshake with tmux's mouse mode and one
- * line to paint, and keeps the latest columns each viewer asked for, keyed by
- * its mode and session: the handshake first, then every resize after it.
+ * line to paint.
  */
 async function serveTerminals(page: Page) {
-  const columns: Record<string, number> = {}
   await page.routeWebSocket(url => url.pathname === '/terminal/ws', ws => {
-    const [mode, name] = new URL(ws.url()).searchParams.getAll('arg')
     ws.onMessage(message => {
       const text = typeof message === 'string' ? message : message.toString('utf8')
       if (text.startsWith('{')) {
-        columns[`${mode}:${name}`] = (JSON.parse(text) as { columns: number }).columns
         ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(`${MOUSE_MODE_ON}${PEEK_LINE}`)]))
-      } else if (text.startsWith('1')) {
-        columns[`${mode}:${name}`] = (JSON.parse(text.slice(1)) as { columns: number }).columns
       }
     })
   })
-  return columns
 }
 
 function seededState() {
@@ -134,46 +127,6 @@ async function openPeekOnMain(page: Page) {
 }
 
 test.describe('Peek', () => {
-  test('opens centred from Alt+P, toggles on it, and switches from another tile', async ({ page }) => {
-    await mockApiRoutes(page)
-    const columns = await serveTerminals(page)
-    await page.addInitScript(state => {
-      localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
-    }, seededState())
-    await page.goto('/')
-
-    const windows = page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-window')
-    await windows.first().locator('.xterm-screen').click()
-    await expect(windows.first()).toHaveClass(/focused/)
-    await expect.poll(() => columns['tile:main']).toBeGreaterThan(0)
-
-    await page.keyboard.press('Alt+p')
-    const peek = page.locator('.peek')
-    await expect(peek).toBeVisible()
-    await expect(peek.locator('.peek-name')).toHaveText('main')
-
-    const peekBox = (await peek.boundingBox())!
-    const workspaceBox = (await page.locator('.dashboard-content').boundingBox())!
-    // Centred over the workspace.
-    expect(Math.abs((peekBox.x + peekBox.width / 2) - (workspaceBox.x + workspaceBox.width / 2))).toBeLessThanOrEqual(1)
-    expect(Math.abs((peekBox.y + peekBox.height / 2) - (workspaceBox.y + workspaceBox.height / 2))).toBeLessThanOrEqual(1)
-
-    // The same chord over the same tile closes it.
-    await page.keyboard.press('Alt+p')
-    await expect(peek).toHaveCount(0)
-
-    // Over another tile it opens on that tile's session, and switches to it
-    // while open.
-    await page.keyboard.press('Alt+p')
-    await expect(peek.locator('.peek-name')).toHaveText('main')
-    await page.keyboard.press('Alt+w')
-    await expect(windows.nth(1)).toHaveClass(/focused/)
-    await page.keyboard.press('Alt+p')
-    await expect(peek.locator('.peek-name')).toHaveText('gt-gastown-jack')
-    await page.keyboard.press('Alt+p')
-    await expect(peek).toHaveCount(0)
-  })
-
   for (const deviceScaleFactor of [1, 1.25, 1.5]) {
     test.describe(`at device scale ${deviceScaleFactor}`, () => {
       test.use({ viewport: { width: 1366, height: 768 }, deviceScaleFactor })
@@ -287,12 +240,11 @@ test.describe('Peek', () => {
     }, seededState())
     await page.goto('/')
 
-    const windows = page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-window')
-    await windows.first().locator('.xterm-screen').click()
-    await expect(windows.first()).toHaveClass(/focused/)
+    await openSessionsSidecar(page)
 
     const peek = page.locator('.peek')
-    await page.keyboard.press('Alt+p')
+    await page.getByRole('button', { name: 'Session actions for main', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Peek', exact: true }).click()
     await expect(peek).toBeVisible()
     await expect(peek.locator('.peek-name')).toHaveText('main')
     const opened = (await peek.boundingBox())!
@@ -312,9 +264,7 @@ test.describe('Peek', () => {
     // window, not the session inside it.
     await peek.getByRole('button', { name: 'Close' }).click()
     await expect(peek).toHaveCount(0)
-    await page.keyboard.press('Alt+w')
-    await expect(windows.nth(1)).toHaveClass(/focused/)
-    await page.keyboard.press('Alt+p')
+    await page.locator('.session-item').filter({ hasText: 'gt-gastown-jack' }).click()
     await expect(peek.locator('.peek-name')).toHaveText('gt-gastown-jack')
 
     const reopened = (await peek.boundingBox())!

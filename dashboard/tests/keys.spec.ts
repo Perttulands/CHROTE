@@ -82,7 +82,7 @@ test('the leader and Alt chords run over a focused terminal, and keys off hands 
   const nextWindow = panel.locator('.keys-panel-chord', { hasText: 'Next window' })
   await expect(nextWindow.locator('.keys-panel-key')).toHaveText('ALT + W')
   // Tile chords are listed because a tile is focused; the scope is real.
-  await expect(panel).toContainText("Peek the tile's session")
+  await expect(panel).toContainText("Send to the tile's session")
 
   // The opening effect clears the old query and then focuses this field.
   // Its focus, not unrelated panel content, makes the next key search text.

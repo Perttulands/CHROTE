@@ -214,7 +214,6 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | `Alt+Plus`, `Alt+Minus` | Add a window; remove the last empty one |
 | `Alt+N` | Launcher in the focused window |
 | `Alt+S` | Send to Session for the focused tile; in a tab with a resident, paste the table's reference into its prompt |
-| `Alt+P` | Peek the focused tile's session |
 | `Alt+A` | Sessions panel |
 | `Alt+O` | Files panel |
 | `Alt+I` | Close the table |
@@ -236,7 +235,7 @@ belongs to the Beads column on every tab.
 - **Panel.** The leader and `Alt+K` open the same centred list of every chord in
   scope, as `CHORD → action`. Typing filters it, `Enter` runs the current row.
 - **Toggles.** A chord that opens a glance closes it when pressed again: the
-  leader and `Alt+K` on the keybindings panel, `Alt+P` on Peek.
+  leader and `Alt+K` on the keybindings panel.
 - **Echo.** A registered chord that fires shows its key caps at the foot of the
   workspace for 800 ms, in the badge a confirmation also wears: the modifier is
   the filled cap and the key the outlined one. Nothing else echoes, because

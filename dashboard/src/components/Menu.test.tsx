@@ -6,7 +6,7 @@ const groups: MenuGroup[] = [
   {
     id: 'look',
     rows: [
-      { id: 'peek', label: 'Peek', chord: 'Alt+P', onSelect: vi.fn() },
+      { id: 'peek', label: 'Peek', onSelect: vi.fn() },
       { id: 'send', label: 'Send to session', chord: 'Alt+S', onSelect: vi.fn() },
     ],
   },
@@ -36,8 +36,8 @@ describe('Menu', () => {
 
     // The chord is printed beside the action and spoken as a shortcut, so it is
     // discoverable at the point of use without becoming part of the row's name.
-    expect(screen.getByRole('menuitem', { name: 'Peek' })).toHaveAttribute('aria-keyshortcuts', 'Alt+P')
-    expect(menu.textContent).toContain('Alt+P')
+    expect(screen.getByRole('menuitem', { name: 'Send to session' })).toHaveAttribute('aria-keyshortcuts', 'Alt+S')
+    expect(menu.textContent).toContain('Alt+S')
   })
 
   it('moves the highlight with the arrows and wraps at the ends', () => {
