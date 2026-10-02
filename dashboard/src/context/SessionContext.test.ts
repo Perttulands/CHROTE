@@ -374,6 +374,56 @@ describe('renameSession', () => {
   })
 })
 
+describe('deleteSessions', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('kills each target once as its own user, unbinds the killed, and says one receipt naming the failures', async () => {
+    const { result } = renderSessionWithStatus()
+    const fetchMock = vi.mocked(fetch as any)
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method !== 'DELETE') return new Promise<never>(() => {})
+      if (String(input).includes('/stuck')) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          text: () => Promise.resolve('{"success":false,"error":{"code":"TMUX_ERROR","message":"no server running"}}'),
+        })
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('') })
+    })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    act(() => {
+      result.current.session.addSessionToWindow('terminal1', 'terminal1-window-0', 'done', 'alice')
+      result.current.session.addSessionToWindow('terminal1', 'terminal1-window-0', 'stuck', 'bob')
+    })
+
+    let killed: string[] = []
+    await act(async () => {
+      killed = await result.current.session.deleteSessions([
+        { name: 'done', unixUser: 'alice' },
+        { name: 'stuck', unixUser: 'bob' },
+      ])
+    })
+
+    const deletes = fetchMock.mock.calls
+      .filter(([, init]) => (init as RequestInit | undefined)?.method === 'DELETE')
+      .map(([input]) => String(input))
+    expect(deletes).toEqual([
+      '/api/tmux/sessions/done?unixUser=alice',
+      '/api/tmux/sessions/stuck?unixUser=bob',
+    ])
+    expect(killed).toEqual(['alice:done'])
+    expect(result.current.session.workspaces.terminal1.windows[0].boundSessions).toEqual(['bob:stuck'])
+    expect(result.current.status.status).toMatchObject({
+      severity: 'error',
+      message: 'Killed 1 of 2 — failed: stuck (no server running)',
+    })
+  })
+})
+
 describe('sessionEvidence', () => {
   beforeEach(() => {
     localStorage.clear()

@@ -541,6 +541,10 @@ export interface DashboardActions {
   // Delete a session
   deleteSession: (sessionName: string, unixUser?: LaunchUser) => Promise<boolean>
 
+  // Kill several sessions, one DELETE each, with one receipt for the set.
+  // Resolves to the session keys that were killed.
+  deleteSessions: (targets: Array<{ name: string; unixUser?: LaunchUser }>) => Promise<string[]>
+
   // Rename a session
   renameSession: (oldName: string, newName: string, unixUser?: LaunchUser) => Promise<boolean>
 

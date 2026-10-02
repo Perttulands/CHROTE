@@ -51,6 +51,15 @@ async function readCreateSessionWarning(response: Response): Promise<string | nu
   }
 }
 
+/** The server's own words for a failed kill, or its status when it gave none. */
+function deleteFailureReason(body: string, status: number): string {
+  try {
+    const message = (JSON.parse(body) as { error?: { message?: unknown } })?.error?.message
+    if (typeof message === 'string' && message.trim() !== '') return message.trim()
+  } catch {}
+  return body.trim() || `HTTP ${status}`
+}
+
 /**
  * The dashboard state plus the one join the tile layer makes on it. The join is
  * held here rather than in each reader so a tile, its peek and the Send dialog
@@ -187,48 +196,79 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const closeFloatingModal = useCallback(() => setFloatingSession(null), [])
   const handleSessionClick = useCallback((sessionName: string) => openFloatingModal(sessionName), [openFloatingModal])
 
-  const deleteSession = useCallback(async (sessionName: string, unixUser?: LaunchUser) => {
+  // Every kill is one DELETE; this says why one failed, or null when it did not.
+  const killOnServer = useCallback(async (sessionName: string, unixUser?: LaunchUser): Promise<string | null> => {
     try {
       const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
       const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}${query}`, {
         method: 'DELETE',
         signal: AbortSignal.timeout(10000),
       })
-      if (!response.ok) {
-        console.error('Failed to delete session:', await response.text())
-        announce('Failed to delete session', 'error')
-        return false
-      }
-      const deletedKey = getSessionKey(sessionName, unixUser)
-      layouts.setWorkspaces(previous => {
-        const next: Record<WorkspaceId, TerminalWorkspace> = { ...previous }
-        idsInWorkspaces(previous).forEach(workspaceId => {
-          const workspace = previous[workspaceId]
-          next[workspaceId] = {
-            ...workspace,
-            windows: workspace.windows.map(window => {
-              const boundSessions = window.boundSessions.filter(bound => bound !== deletedKey && bound !== sessionName)
-              return {
-                ...window,
-                boundSessions,
-                activeSession: window.activeSession && boundSessions.includes(window.activeSession)
-                  ? window.activeSession
-                  : (boundSessions[0] ?? null),
-              }
-            }),
-          }
-        })
-        return next
-      })
-      announce(`Session '${sessionName}' deleted`, 'success')
-      poll.refreshSessions()
-      return true
+      if (response.ok) return null
+      const body = await response.text()
+      console.error('Failed to delete session:', body)
+      return deleteFailureReason(body, response.status)
     } catch (e) {
       console.error('Failed to delete session:', e)
+      return e instanceof Error && e.message ? e.message : 'request failed'
+    }
+  }, [])
+
+  // A killed session leaves every tile it was bound to, under either alias.
+  const unbindKilled = useCallback((killed: Array<{ name: string; key: string }>) => {
+    const aliases = new Set(killed.flatMap(({ name, key }) => [name, key]))
+    layouts.setWorkspaces(previous => {
+      const next: Record<WorkspaceId, TerminalWorkspace> = { ...previous }
+      idsInWorkspaces(previous).forEach(workspaceId => {
+        const workspace = previous[workspaceId]
+        next[workspaceId] = {
+          ...workspace,
+          windows: workspace.windows.map(window => {
+            const boundSessions = window.boundSessions.filter(bound => !aliases.has(bound))
+            return {
+              ...window,
+              boundSessions,
+              activeSession: window.activeSession && boundSessions.includes(window.activeSession)
+                ? window.activeSession
+                : (boundSessions[0] ?? null),
+            }
+          }),
+        }
+      })
+      return next
+    })
+  }, [layouts.setWorkspaces])
+
+  const deleteSession = useCallback(async (sessionName: string, unixUser?: LaunchUser) => {
+    const failure = await killOnServer(sessionName, unixUser)
+    if (failure !== null) {
       announce('Failed to delete session', 'error')
       return false
     }
-  }, [announce, layouts.setWorkspaces, poll.refreshSessions])
+    unbindKilled([{ name: sessionName, key: getSessionKey(sessionName, unixUser) }])
+    announce(`Session '${sessionName}' deleted`, 'success')
+    poll.refreshSessions()
+    return true
+  }, [announce, killOnServer, poll.refreshSessions, unbindKilled])
+
+  const deleteSessions = useCallback(async (targets: Array<{ name: string; unixUser?: LaunchUser }>) => {
+    const results = await Promise.all(targets.map(async target => ({
+      ...target,
+      key: getSessionKey(target.name, target.unixUser),
+      failure: await killOnServer(target.name, target.unixUser),
+    })))
+    const killed = results.filter(result => result.failure === null)
+    const failed = results.filter(result => result.failure !== null)
+    if (killed.length > 0) unbindKilled(killed)
+    if (failed.length === 0) {
+      announce(`Killed ${killed.length} ${killed.length === 1 ? 'session' : 'sessions'}`, 'success')
+    } else {
+      const reasons = failed.map(result => `${result.name} (${result.failure})`).join(', ')
+      announce(`Killed ${killed.length} of ${results.length} — failed: ${reasons}`, 'error')
+    }
+    poll.refreshSessions()
+    return killed.map(result => result.key)
+  }, [announce, killOnServer, poll.refreshSessions, unbindKilled])
 
   const renameSession = useCallback(async (
     oldName: string,
@@ -312,6 +352,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     createSession,
     restartSession,
     deleteSession,
+    deleteSessions,
     renameSession,
     updateSettings: layouts.updateSettings,
     setFocusedWindowKey: layouts.setFocusedWindowKey,
@@ -332,7 +373,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     send.sendToSessionRequestId, send.openSendToSession,
     send.closeSendToSession, send.listSessionPanes, send.sendToSession,
     addSessionToWindow, restartSession, openFloatingModal, closeFloatingModal, handleSessionClick,
-    createSession, deleteSession, renameSession,
+    createSession, deleteSession, deleteSessions, renameSession,
   ])
 
   return <SessionContext.Provider value={contextValue}>{children}</SessionContext.Provider>
