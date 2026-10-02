@@ -408,8 +408,8 @@ describe('deleteSessions', () => {
       ])
     })
 
-    const deletes = fetchMock.mock.calls
-      .filter(([, init]) => (init as RequestInit | undefined)?.method === 'DELETE')
+    const deletes = (fetchMock.mock.calls as Array<[RequestInfo | URL, RequestInit | undefined]>)
+      .filter(([, init]) => init?.method === 'DELETE')
       .map(([input]) => String(input))
     expect(deletes).toEqual([
       '/api/tmux/sessions/done?unixUser=alice',
