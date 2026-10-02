@@ -157,9 +157,10 @@ export function useImageZoom(): ImageZoomLevel {
 }
 
 /**
- * The pixels to draw a picture at outside the glance, or null to leave the
- * stylesheet's fit alone. Fit is what the Files panel and the file viewer
- * already do in CSS; a percent is the operator's word and is set in pixels.
+ * The pixels to draw a picture at outside the glance, or null at fit. Fit
+ * needs the room, which only the place drawing the picture can measure: the
+ * Files panel fits with `fitImage` against its measured frame, and the file
+ * viewer in CSS. A percent is the operator's word and is set in pixels.
  */
 export function zoomedPixels(natural: PixelSize | null, level: ImageZoomLevel): PixelSize | null {
   if (!natural || level.kind === 'fit') return null

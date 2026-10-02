@@ -10,15 +10,20 @@
  * where it was.
  *
  * The viewer suits itself to the file. Markdown is rendered in the theme, an
- * image is shown, JSON is pretty-printed, and everything else is monospace
- * text with line numbers, capped at the first 2000 lines and saying so.
+ * image is shown, a video or a sound plays with the browser's own controls,
+ * JSON is pretty-printed, and everything else is monospace text with line
+ * numbers, capped at the first 2000 lines and saying so.
+ *
+ * A picture or a video at fit is shown whole inside the room the viewer has,
+ * in both dimensions, at its own ratio and never above its own size: the room
+ * is measured, not assumed, so a drag of the panel or the window refits it.
  *
  * Diff is offered only when the file is inside a git repository, which the
  * panel learns once when the file opens: the same request carries the diff, so
  * pressing Diff costs nothing more.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useStatus } from '../context/StatusContext'
 import { copyAndAnnounce } from '../utils/clipboard'
 import { useConfirmInPlace } from './confirmInPlace'
@@ -26,7 +31,8 @@ import Editor from './Editor'
 import Markdown from './Markdown'
 import PanelPath from './PanelPath'
 import { openImageGlance } from './imageGlance'
-import { useImageZoom, zoomedPixels } from './imageZoom'
+import { fitImage, useImageZoom, zoomedPixels, type PixelSize } from './imageZoom'
+import { useMeasuredSize } from '../hooks/useMeasuredSize'
 import {
   getPreviewKind,
   getFileBaseName,
@@ -150,6 +156,42 @@ function TextLines({ content, label }: { content: string; label: string }) {
   )
 }
 
+/**
+ * The room a picture or a video is drawn in, and the size it is drawn at.
+ *
+ * The stage is measured, so fit is the whole thing inside it whatever the
+ * window's size; a size the operator asked for (`drawn`) is obeyed literally
+ * and the stage scrolls to it.
+ */
+function MediaStage({
+  natural,
+  drawn,
+  children,
+}: {
+  natural: PixelSize | null
+  drawn: PixelSize | null
+  children: (size: PixelSize | null) => ReactNode
+}) {
+  const room = useMeasuredSize()
+  const size = drawn ?? (natural ? fitImage(natural, { width: room.width, height: room.height }) : null)
+  return (
+    <div className={drawn ? 'files-panel-media is-zoomed' : 'files-panel-media'}>
+      <div className="files-panel-media-stage" ref={room.ref}>
+        {children(size)}
+      </div>
+    </div>
+  )
+}
+
+/** What the viewer says when the browser has nothing to show the file with. */
+function NoInlineView({ path }: { path: string }) {
+  return (
+    <p className="files-panel-note">
+      No inline view for this file. <a href={getDownloadUrl(path)} download>Download</a>
+    </p>
+  )
+}
+
 function FilePanelViewer({
   path,
   onClose,
@@ -166,7 +208,9 @@ function FilePanelViewer({
   const [error, setError] = useState<string | null>(null)
   const [diff, setDiff] = useState<FileDiffResult | null>(null)
   const [saving, setSaving] = useState(false)
-  const [pixels, setPixels] = useState<{ width: number; height: number } | null>(null)
+  const [pixels, setPixels] = useState<PixelSize | null>(null)
+  // A video or sound the browser cannot decode is offered as a download.
+  const [mediaFailed, setMediaFailed] = useState(false)
   // One zoom level governs every picture, here as in the glance.
   const zoomLevel = useImageZoom()
   const zoomed = zoomedPixels(pixels, zoomLevel)
@@ -183,6 +227,7 @@ function FilePanelViewer({
     setError(null)
     setDiff(null)
     setPixels(null)
+    setMediaFailed(false)
     setLoading(readable)
     if (readable) {
       const read = kind === 'text'
@@ -306,35 +351,65 @@ function FilePanelViewer({
         ) : error ? (
           <p className="files-panel-note">{error}</p>
         ) : kind === 'image' ? (
-          // The picture at the zoom level — the width it has here while that
-          // is fit — with its pixels beneath it. Where the picture is not
-          // already the look, a press on it opens the centred glance.
+          // The picture at the zoom level, whole in the room while that is
+          // fit, with its pixels beneath it. Where the picture is not already
+          // the look, a press on it opens the centred glance.
           <>
-            {pictureOpensGlance ? (
-              <button type="button" className={zoomed ? 'files-panel-image is-zoomed' : 'files-panel-image'} onClick={() => openImageGlance(path)}>
-                <img
-                  src={getDownloadUrl(path)}
-                  alt={name}
-                  style={zoomed ? { width: zoomed.width, height: zoomed.height } : undefined}
-                  onLoad={event => setPixels({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
-                />
-              </button>
-            ) : (
-              <div className={zoomed ? 'files-panel-image is-zoomed is-still' : 'files-panel-image is-still'}>
-                <img
-                  src={getDownloadUrl(path)}
-                  alt={name}
-                  style={zoomed ? { width: zoomed.width, height: zoomed.height } : undefined}
-                  onLoad={event => setPixels({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
-                />
-              </div>
-            )}
+            <MediaStage natural={pixels} drawn={zoomed}>
+              {size => {
+                const picture = (
+                  <img
+                    src={getDownloadUrl(path)}
+                    alt={name}
+                    style={size ? { width: size.width, height: size.height } : undefined}
+                    onLoad={event => setPixels({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+                  />
+                )
+                return pictureOpensGlance ? (
+                  <button type="button" className="files-panel-image" onClick={() => openImageGlance(path)}>{picture}</button>
+                ) : (
+                  <div className="files-panel-image is-still">{picture}</div>
+                )
+              }}
+            </MediaStage>
             <p className="files-panel-note">{pixels ? `${pixels.width} × ${pixels.height}` : ''}</p>
           </>
+        ) : (kind === 'video' || kind === 'audio') && mediaFailed ? (
+          <NoInlineView path={path} />
+        ) : kind === 'video' ? (
+          // Always fit: a video has no zoom levels.
+          <>
+            <MediaStage natural={pixels} drawn={null}>
+              {size => (
+                <video
+                  className="files-panel-video"
+                  src={getDownloadUrl(path)}
+                  aria-label={name}
+                  controls
+                  preload="metadata"
+                  style={size ? { width: size.width, height: size.height } : undefined}
+                  onLoadedMetadata={event => {
+                    const { videoWidth: width, videoHeight: height } = event.currentTarget
+                    if (width > 0 && height > 0) setPixels({ width, height })
+                  }}
+                  onError={() => setMediaFailed(true)}
+                />
+              )}
+            </MediaStage>
+            <p className="files-panel-note">{pixels ? `${pixels.width} × ${pixels.height}` : ''}</p>
+          </>
+        ) : kind === 'audio' ? (
+          <div className="files-panel-audio">
+            <audio
+              src={getDownloadUrl(path)}
+              aria-label={name}
+              controls
+              preload="metadata"
+              onError={() => setMediaFailed(true)}
+            />
+          </div>
         ) : content === null ? (
-          <p className="files-panel-note">
-            No inline view for this file. <a href={getDownloadUrl(path)} download>Download</a>
-          </p>
+          <NoInlineView path={path} />
         ) : isMarkdownFileName(name) ? (
           <div className="files-panel-markdown">
             <Markdown content={content} basePath={path} onOpenPath={onOpenPath} />

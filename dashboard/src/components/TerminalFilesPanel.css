@@ -438,38 +438,67 @@
 
 /* The picture is a control where a press on it opens the image glance, and
    plain where the window it is in is already the look. */
+.files-panel-media {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 10px;
+}
+
+/* The room a picture or a video is fitted to: measured, so the media is drawn
+   whole inside it, and centred by auto margins, which fall back to the start
+   edge when a zoom level makes the picture bigger than the room. */
+.files-panel-media-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* At a zoom level the picture is drawn at the pixels the operator asked for,
+   and the room scrolls to it rather than shrinking it. */
+.files-panel-media.is-zoomed .files-panel-media-stage {
+  overflow: auto;
+}
+
+.files-panel-image,
+.files-panel-video {
+  flex: none;
+  margin: auto;
+}
+
 .files-panel-image {
   display: block;
-  width: 100%;
-  padding: 12px 10px;
+  padding: 0;
   background: transparent;
   border: none;
   cursor: pointer;
 }
 
 .files-panel-image img {
-  max-width: 100%;
-  height: auto;
   display: block;
 }
 
-/* At a zoom level the picture is drawn at the pixels the operator asked for,
-   and the panel scrolls to it rather than shrinking it. */
 .files-panel-image.is-still {
   cursor: default;
-}
-
-.files-panel-image.is-zoomed {
-  width: max-content;
-}
-
-.files-panel-image.is-zoomed img {
-  max-width: none;
 }
 
 .files-panel-image:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
+}
+
+.files-panel-video {
+  display: block;
+}
+
+.files-panel-audio {
+  padding: 12px 10px;
+}
+
+.files-panel-audio audio {
+  width: 100%;
 }
 
 /* text with line numbers, capped at the first 2000 lines */
