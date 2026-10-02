@@ -1,14 +1,25 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
-import type { CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { X } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
-import { getGroupPriority } from '../types'
-import type { WorkspaceId } from '../types'
+import { getGroupPriority, getSessionKey } from '../types'
+import type { TmuxSession, WorkspaceId } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { useResizableWidth } from '../hooks/useResizableWidth'
 import Launcher from './Launcher'
 import SessionGroup from './SessionGroup'
 import DismissiblePanel from './DismissiblePanel'
+import Menu from './Menu'
+import type { SelectGesture } from './SessionItem'
+import {
+  EMPTY_SELECTION,
+  killTargets,
+  plainClick,
+  retainExisting,
+  selectRange,
+  toggleSession,
+  withoutKilled,
+} from './sessionSelection'
 
 type SessionPanelProps = {
   activeWorkspaceId: WorkspaceId
@@ -38,7 +49,7 @@ function SessionPanel({
   onCollapsedGroupsChange,
 }: SessionPanelProps) {
   // The list refreshes itself on a poll; there is no button that says so.
-  const { groupedSessions, loading, error, sidebarCollapsed } = useSession()
+  const { groupedSessions, loading, error, sidebarCollapsed, deleteSessions } = useSession()
   const isCollapsed = collapsed ?? sidebarCollapsed
   const [localSearchTerm, setLocalSearchTerm] = useState('')
   const [localCollapsedGroups, setLocalCollapsedGroups] = useState<string[]>([])
@@ -86,6 +97,79 @@ function SessionPanel({
     })
   }, [groupedSessions, searchTerm])
 
+  // Rows picked out to kill together. Only the rows the operator can see are
+  // ever killed; see sessionSelection.
+  const [selection, setSelection] = useState(EMPTY_SELECTION)
+  const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; armed: boolean } | null>(null)
+
+  const sessionsByKey = useMemo(() => {
+    const byKey = new Map<string, TmuxSession>()
+    for (const session of Object.values(groupedSessions).flat()) {
+      byKey.set(getSessionKey(session.name, session.unixUser), session)
+    }
+    return byKey
+  }, [groupedSessions])
+
+  const visibleKeys = useMemo(() => sortedGroups
+    .filter(([groupKey]) => !collapsedGroups.includes(groupKey))
+    .flatMap(([, sessions]) => sessions.map(session => getSessionKey(session.name, session.unixUser))),
+  [collapsedGroups, sortedGroups])
+
+  // A session that is gone leaves the selection, so a new one that takes its
+  // name is never killed in its place.
+  const existingKeys = useMemo(() => new Set(sessionsByKey.keys()), [sessionsByKey])
+  const liveSelection = retainExisting(selection, existingKeys)
+  useEffect(() => {
+    setSelection(previous => retainExisting(previous, existingKeys))
+  }, [existingKeys])
+
+  const targets = killTargets(liveSelection, visibleKeys)
+
+  const handleSelectGesture = useCallback((sessionKey: string, gesture: SelectGesture) => {
+    setSelectionMenu(null)
+    if (gesture === 'plain') {
+      setSelection(plainClick(sessionKey))
+      return
+    }
+    setSelection(previous => gesture === 'toggle'
+      ? toggleSession(previous, sessionKey)
+      : selectRange(previous, sessionKey, visibleKeys))
+    // The panel holds the keys for the selection, Delete and Escape.
+    panelRef.current?.focus({ preventScroll: true })
+  }, [visibleKeys])
+
+  const openSelectionMenu = useCallback((at: { x: number; y: number }) => {
+    setSelectionMenu({ ...at, armed: false })
+  }, [])
+
+  const killSelected = useCallback(async () => {
+    const chosen = targets.flatMap(key => {
+      const session = sessionsByKey.get(key)
+      return session ? [{ name: session.name, unixUser: session.unixUser }] : []
+    })
+    if (chosen.length === 0) return
+    const killed = await deleteSessions(chosen)
+    setSelection(previous => withoutKilled(previous, killed))
+  }, [deleteSessions, sessionsByKey, targets])
+
+  const handlePanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    // Keys from a menu drawn elsewhere, or typed into a field, are not ours.
+    const target = event.target as HTMLElement
+    if (!panelRef.current?.contains(target) || target.closest('input, textarea, [contenteditable="true"]')) return
+    if (event.key === 'Escape' && liveSelection.keys.size > 0) {
+      event.preventDefault()
+      event.stopPropagation()
+      setSelection(EMPTY_SELECTION)
+      setSelectionMenu(null)
+    } else if (event.key === 'Delete' && targets.length > 0) {
+      event.preventDefault()
+      event.stopPropagation()
+      const row = panelRef.current.querySelector(`[data-session-key="${CSS.escape(targets[0])}"]`)
+      const rect = (row ?? panelRef.current).getBoundingClientRect()
+      setSelectionMenu({ x: rect.left + 16, y: rect.bottom, armed: true })
+    }
+  }
+
   // The launcher is a glance until something has been typed into it: then a
   // press outside is an ordinary press, and only Escape or a launch closes it.
   const [launcherTyped, setLauncherTyped] = useState(false)
@@ -113,6 +197,8 @@ function SessionPanel({
       id={panelId}
       className={`session-panel ${isCollapsed ? 'collapsed' : ''} ${pinned ? 'sidecar-pinned' : 'sidecar-overlay'}`}
       style={panelStyle}
+      tabIndex={-1}
+      onKeyDown={handlePanelKeyDown}
       aria-label="Sessions sidecar"
       data-active-workspace={activeWorkspaceId}
     >
@@ -206,9 +292,32 @@ function SessionPanel({
               sessions={groupSessions}
               expanded={!collapsedGroups.includes(groupKey)}
               onExpandedChange={expanded => updateGroupExpanded(groupKey, expanded)}
+              selectedKeys={liveSelection.keys}
+              onSelectGesture={handleSelectGesture}
+              onSelectionMenu={openSelectionMenu}
             />
           ))}
         </div>
+      )}
+
+      {selectionMenu && targets.length > 0 && (
+        <Menu
+          at={{ x: selectionMenu.x, y: selectionMenu.y }}
+          label={`Actions for ${targets.length} selected ${targets.length === 1 ? 'session' : 'sessions'}`}
+          estimatedSize={{ width: 240, height: 60 }}
+          initiallyArmed={selectionMenu.armed ? 'kill-selected' : undefined}
+          onClose={() => setSelectionMenu(null)}
+          groups={[{
+            id: 'end',
+            rows: [{
+              id: 'kill-selected',
+              label: `Kill ${targets.length} ${targets.length === 1 ? 'session' : 'sessions'}`,
+              danger: true,
+              confirmLabel: `Confirm kill ${targets.length}`,
+              onSelect: () => { void killSelected() },
+            }],
+          }]}
+        />
       )}
 
       {!isCollapsed && onWidthChange && (

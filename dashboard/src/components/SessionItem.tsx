@@ -12,8 +12,24 @@ import { harnessOfCommand, openAgentContext } from '../agents/agentContextPanel'
 import { useAgentEventMarks } from '../agents/AgentEventsProvider'
 import { summaryLine } from '../agents/agentEvents'
 
+/** How a click on a row asks the panel to change its selection. */
+export type SelectGesture = 'toggle' | 'range' | 'plain'
+
 interface SessionItemProps {
   session: TmuxSession
+  /** Picked out, with others, to be killed together. */
+  selected?: boolean
+  onSelectGesture?: (sessionKey: string, gesture: SelectGesture) => void
+  /** A selected row's menu is the selection's menu, opened by the panel. */
+  onSelectionMenu?: (at: { x: number; y: number }) => void
+}
+
+// Ctrl, or Cmd on macOS, toggles a row; Shift selects a range. Either one
+// makes the click a selection, never a drag or a peek.
+function selectGestureOf(event: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): SelectGesture | null {
+  if (event.ctrlKey || event.metaKey) return 'toggle'
+  if (event.shiftKey) return 'range'
+  return null
 }
 
 interface ContextMenuState {
@@ -22,7 +38,7 @@ interface ContextMenuState {
   y: number
 }
 
-function SessionItem({ session }: SessionItemProps) {
+function SessionItem({ session, selected = false, onSelectGesture, onSelectionMenu }: SessionItemProps) {
   const { assignedSessions, handleSessionClick, deleteSession, renameSession, workspaces, workspaceIds, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, terminalUsers } = useSession()
   const focusedSession = useFocusedSession()
   const theme = useTheme()
@@ -94,9 +110,10 @@ function SessionItem({ session }: SessionItemProps) {
       }
     } else {
       pendingTouchPointer.current = null
+      if (onSelectGesture && selectGestureOf(event)) return
     }
     listeners?.onPointerDown?.(event)
-  }, [listeners])
+  }, [listeners, onSelectGesture])
 
   const clearPendingTouchGesture = useCallback(() => {
     clearLongPressTimer()
@@ -127,8 +144,12 @@ function SessionItem({ session }: SessionItemProps) {
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    if (selected && onSelectionMenu) {
+      onSelectionMenu({ x: e.clientX, y: e.clientY })
+      return
+    }
     setContextMenu({ show: true, x: e.clientX, y: e.clientY })
-  }, [])
+  }, [onSelectionMenu, selected])
 
   const closeContextMenu = useCallback(() => {
     setContextMenu({ show: false, x: 0, y: 0 })
@@ -194,9 +215,15 @@ function SessionItem({ session }: SessionItemProps) {
     })
   }, [session.currentCommand, session.cwd, session.unixUser, sessionKey])
 
-  const handleClick = useCallback(() => {
+  const handleClick = useCallback((event: React.MouseEvent) => {
+    const gesture = onSelectGesture ? selectGestureOf(event) : null
+    if (gesture) {
+      onSelectGesture?.(sessionKey, gesture)
+      return
+    }
+    onSelectGesture?.(sessionKey, 'plain')
     handleSessionClick(sessionKey)
-  }, [handleSessionClick, sessionKey])
+  }, [handleSessionClick, onSelectGesture, sessionKey])
 
   // Focus rename input when it appears
   useEffect(() => {
@@ -265,8 +292,9 @@ function SessionItem({ session }: SessionItemProps) {
     <>
       <div
         ref={setNodeRef}
-        className={`session-item ${isAssigned ? 'assigned' : ''} ${isInFocusedTile ? 'in-focused-tile' : ''} ${isDragging ? 'dragging' : ''} ${mark ? 'has-event' : ''}`}
+        className={`session-item ${isAssigned ? 'assigned' : ''} ${isInFocusedTile ? 'in-focused-tile' : ''} ${isDragging ? 'dragging' : ''} ${mark ? 'has-event' : ''} ${selected ? 'selected' : ''}`}
         data-ui="session.row"
+        data-session-key={sessionKey}
         style={style}
         title={dragLabel}
         aria-current={isInFocusedTile ? 'true' : undefined}
@@ -274,6 +302,8 @@ function SessionItem({ session }: SessionItemProps) {
         onPointerDown={handlePointerDown}
         onPointerUp={clearPendingTouchGesture}
         onPointerCancel={clearPendingTouchGesture}
+        // Shift would otherwise sweep the row text into a text selection.
+        onMouseDown={event => { if (onSelectGesture && event.shiftKey) event.preventDefault() }}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         onTouchStart={handleTouchStart}
@@ -328,7 +358,8 @@ function SessionItem({ session }: SessionItemProps) {
             event.preventDefault()
             event.stopPropagation()
             const rect = event.currentTarget.getBoundingClientRect()
-            setContextMenu({ show: true, x: rect.right, y: rect.bottom })
+            if (selected && onSelectionMenu) onSelectionMenu({ x: rect.right, y: rect.bottom })
+            else setContextMenu({ show: true, x: rect.right, y: rect.bottom })
           }}
         >
           ⋯

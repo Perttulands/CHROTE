@@ -282,6 +282,18 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* Rows picked out to kill together: a solid foreground outline, so the mark
+   reads apart from hover's wash and the focused tile's bar, in any theme. */
+.session-item.selected {
+  outline: 1px solid var(--text-primary);
+  outline-offset: -1px;
+}
+
+/* The panel takes focus only to hold Delete and Escape for a selection. */
+.session-panel:focus {
+  outline: none;
+}
+
 /* Session rename input */
 .session-item.renaming {
   height: auto;

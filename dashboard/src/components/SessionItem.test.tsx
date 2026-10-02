@@ -248,7 +248,7 @@ describe('SessionItem user badge and context actions', () => {
     expect(mockState.addSessionToWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-0', 'alice-shell', 'alice')
   })
 
-  it('offers Send to Session from context menu and ctrl-click shortcut', () => {
+  it('offers Send to Session from the context menu', () => {
     render(
       <SessionItem
         session={{
@@ -261,15 +261,52 @@ describe('SessionItem user badge and context actions', () => {
       />
     )
 
-    const row = rowLabel('alice-shell')
-    fireEvent.click(row, { ctrlKey: true })
-    expect(mockState.openSendToSession).not.toHaveBeenCalled()
-    expect(mockState.handleSessionClick).toHaveBeenCalledWith('alice:alice-shell')
-
-    fireEvent.contextMenu(row)
+    fireEvent.contextMenu(rowLabel('alice-shell'))
     fireEvent.click(screen.getByRole('menuitem', { name: /Send to session/i }))
     expect(mockState.openSendToSession).toHaveBeenCalledTimes(1)
     expect(mockState.openSendToSession).toHaveBeenLastCalledWith({ targetSessionKey: 'alice:alice-shell' })
+  })
+
+  it('makes a Ctrl, Cmd or Shift click a selection, never a drag or a peek, and a plain click both', () => {
+    const onSelectGesture = vi.fn()
+    render(
+      <SessionItem
+        session={{ name: 'alice-shell', windows: 1, attached: false, group: 'main', unixUser: 'alice' }}
+        onSelectGesture={onSelectGesture}
+      />
+    )
+    const row = rowLabel('alice-shell')
+
+    for (const modifier of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }]) {
+      fireEvent.pointerDown(row, { pointerType: 'mouse', ...modifier })
+      fireEvent.click(row, modifier)
+    }
+    expect(mockState.dragListeners.onPointerDown).not.toHaveBeenCalled()
+    expect(mockState.handleSessionClick).not.toHaveBeenCalled()
+    expect(onSelectGesture.mock.calls).toEqual([
+      ['alice:alice-shell', 'toggle'],
+      ['alice:alice-shell', 'toggle'],
+      ['alice:alice-shell', 'range'],
+    ])
+
+    fireEvent.click(row)
+    expect(onSelectGesture).toHaveBeenLastCalledWith('alice:alice-shell', 'plain')
+    expect(mockState.handleSessionClick).toHaveBeenCalledWith('alice:alice-shell')
+  })
+
+  it('opens the selection menu from a selected row and its own menu from an unselected one', () => {
+    const onSelectionMenu = vi.fn()
+    const session = { name: 'alice-shell', windows: 1, attached: false, group: 'main', unixUser: 'alice' }
+    const { rerender } = render(<SessionItem session={session} selected onSelectionMenu={onSelectionMenu} />)
+
+    fireEvent.contextMenu(rowLabel('alice-shell'), { clientX: 10, clientY: 20 })
+    expect(onSelectionMenu).toHaveBeenCalledWith({ x: 10, y: 20 })
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    rerender(<SessionItem session={session} selected={false} onSelectionMenu={onSelectionMenu} />)
+    fireEvent.contextMenu(rowLabel('alice-shell'))
+    expect(onSelectionMenu).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('menuitem', { name: 'Kill session' })).toBeInTheDocument()
   })
 
   it('calls removeSessionFromWindow when Unassign is chosen from the context menu', () => {

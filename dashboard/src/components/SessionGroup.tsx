@@ -1,15 +1,18 @@
 import type { TmuxSession } from '../types'
 import { getGroupDisplayName, getSessionKey } from '../types'
-import SessionItem from './SessionItem'
+import SessionItem, { type SelectGesture } from './SessionItem'
 
 interface SessionGroupProps {
   groupKey: string
   sessions: TmuxSession[]
   expanded: boolean
   onExpandedChange: (expanded: boolean) => void
+  selectedKeys?: ReadonlySet<string>
+  onSelectGesture?: (sessionKey: string, gesture: SelectGesture) => void
+  onSelectionMenu?: (at: { x: number; y: number }) => void
 }
 
-function SessionGroup({ groupKey, sessions, expanded, onExpandedChange }: SessionGroupProps) {
+function SessionGroup({ groupKey, sessions, expanded, onExpandedChange, selectedKeys, onSelectGesture, onSelectionMenu }: SessionGroupProps) {
   const displayName = getGroupDisplayName(groupKey)
 
   return (
@@ -25,9 +28,18 @@ function SessionGroup({ groupKey, sessions, expanded, onExpandedChange }: Sessio
 
       {expanded && (
         <div className="session-group-items">
-          {sessions.map(session => (
-            <SessionItem key={getSessionKey(session.name, session.unixUser)} session={session} />
-          ))}
+          {sessions.map(session => {
+            const sessionKey = getSessionKey(session.name, session.unixUser)
+            return (
+              <SessionItem
+                key={sessionKey}
+                session={session}
+                selected={selectedKeys?.has(sessionKey) ?? false}
+                onSelectGesture={onSelectGesture}
+                onSelectionMenu={onSelectionMenu}
+              />
+            )
+          })}
         </div>
       )}
     </div>

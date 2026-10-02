@@ -10,13 +10,14 @@ import { dragAndDrop, openSessionsSidecar } from './helpers'
  */
 
 interface Rename { from: string; to: string }
+interface Mutations { renames: Rename[]; deletes: string[] }
 
 /**
  * API mocks that also answer DELETE and PATCH for sessions. A delete removes
  * the session from later GETs and a rename replaces the name in them, so the
  * poll tells the dashboard what the mutation really did.
  */
-async function mockApiRoutesWithMutations(page: Page): Promise<Rename[]> {
+async function mockApiRoutesWithMutations(page: Page): Promise<Mutations> {
   await mockTerminalSocket(page)
 
   await mockThemeApiRoute(page)
@@ -30,9 +31,12 @@ async function mockApiRoutesWithMutations(page: Page): Promise<Rename[]> {
   await mockPersistentTabApiRoutes(page)
 
   const renames: Rename[] = []
+  const deletes: string[] = []
 
-  // Mutable copy of session list so delete/rename are reflected on refresh
-  let sessions = structuredClone(mockSessions.sessions)
+  // Mutable copy of session list so delete/rename are reflected on refresh.
+  // Two sessions belong to Unix users, so a kill has to say whose it is.
+  let sessions: Array<(typeof mockSessions.sessions)[number] & { unixUser?: string }> = structuredClone(mockSessions.sessions)
+    .map(s => s.name === 'gt-gastown-jack' ? { ...s, unixUser: 'alice' } : s.name === 'gt-gastown-joe' ? { ...s, unixUser: 'bob' } : s)
 
   const buildResponse = () => {
     const grouped: Record<string, typeof sessions> = {}
@@ -64,11 +68,13 @@ async function mockApiRoutesWithMutations(page: Page): Promise<Rename[]> {
   // DELETE /api/tmux/sessions/<name>
   await page.route('**/api/tmux/sessions/*', async (route, request) => {
     const url = request.url()
-    const encodedName = url.split('/api/tmux/sessions/')[1]
+    const encodedName = url.split('/api/tmux/sessions/')[1]?.split('?')[0]
     if (!encodedName) { await route.continue(); return }
     const sessionName = decodeURIComponent(encodedName)
 
     if (request.method() === 'DELETE') {
+      const { pathname, search } = new URL(url)
+      deletes.push(decodeURIComponent(pathname.replace('/api/tmux/sessions/', '')) + search)
       sessions = sessions.filter(s => s.name !== sessionName)
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) })
     } else if (request.method() === 'PATCH') {
@@ -85,14 +91,15 @@ async function mockApiRoutesWithMutations(page: Page): Promise<Rename[]> {
     }
   })
 
-  return renames
+  return { renames, deletes }
 }
 
 test.describe('Session Context Menu', () => {
   let renames: Rename[]
+  let deletes: string[]
 
   test.beforeEach(async ({ page }) => {
-    renames = await mockApiRoutesWithMutations(page)
+    ;({ renames, deletes } = await mockApiRoutesWithMutations(page))
     await page.goto('/')
     await page.waitForSelector('.dashboard')
     await openSessionsSidecar(page)
@@ -153,5 +160,44 @@ test.describe('Session Context Menu', () => {
     await page.locator('.menu-sheet .menu-row:has-text("Confirm kill")').click()
 
     await expect(page.locator('.session-item:has-text("hq-marshal")')).not.toBeVisible()
+  })
+
+  test('kills a Ctrl and Shift selection through the menu and through Delete, never a hidden row', async ({ page }) => {
+    const panel = page.locator('.session-panel')
+    const row = (name: string) => panel.locator(`.session-item:has(.session-name[title="${name}"])`)
+
+    // Ctrl picks one row; Shift sweeps from it to another; Ctrl adds a row
+    // from another group.
+    await row('gt-gastown-jack').click({ modifiers: ['ControlOrMeta'] })
+    await row('gt-gastown-max').click({ modifiers: ['Shift'] })
+    await row('hq-mayor').click({ modifiers: ['ControlOrMeta'] })
+
+    // Filtered out, hq-mayor stays selected but is not one of the kills.
+    await page.getByPlaceholder('Filter sessions...').fill('gastown')
+    await expect(row('hq-mayor')).toHaveCount(0)
+
+    await row('gt-gastown-joe').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Kill 3 sessions' }).click()
+    await page.getByRole('menuitem', { name: 'Confirm kill 3' }).click()
+
+    await expect.poll(() => [...deletes].sort()).toEqual([
+      'gt-gastown-jack?unixUser=alice',
+      'gt-gastown-joe?unixUser=bob',
+      'gt-gastown-max',
+    ])
+    await expect(row('gt-gastown-max')).toHaveCount(0)
+
+    // Back in view, hq-mayor is still selected; Ctrl adds main, and Delete
+    // asks for the same confirm before anything is killed.
+    await page.getByPlaceholder('Filter sessions...').fill('')
+    await row('main').click({ modifiers: ['ControlOrMeta'] })
+    await page.keyboard.press('Delete')
+    await expect(page.getByRole('menuitem', { name: 'Confirm kill 2' })).toBeFocused()
+    expect(deletes).toHaveLength(3)
+    await page.keyboard.press('Enter')
+
+    await expect.poll(() => deletes.slice(3).sort()).toEqual(['hq-mayor', 'main'])
+    await expect(row('hq-deacon')).toBeVisible()
+    expect(deletes).toHaveLength(5)
   })
 })

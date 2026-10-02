@@ -66,6 +66,8 @@ export interface MenuProps {
   zIndex?: number
   /** Estimated size, so the first paint is already inside the viewport. */
   estimatedSize?: { width: number; height: number }
+  /** A confirm row that opens already armed, when a key asked for its action. */
+  initiallyArmed?: string
 }
 
 function isAction(row: MenuRow): row is MenuAction {
@@ -151,12 +153,12 @@ function MenuRows({ rows, armed, onArm, onSelect, openSubmenu, onToggleSubmenu, 
   )
 }
 
-export default function Menu({ at, label, groups, onClose, zIndex, estimatedSize }: MenuProps) {
+export default function Menu({ at, label, groups, onClose, zIndex, estimatedSize, initiallyArmed }: MenuProps) {
   const position = useViewportMenuPosition<HTMLDivElement>(at, {
     estimatedSize: estimatedSize ?? { width: 240, height: 280 },
   })
   const firstRowRef = useRef<HTMLButtonElement>(null)
-  const [armed, setArmed] = useState<string | null>(null)
+  const [armed, setArmed] = useState<string | null>(initiallyArmed ?? null)
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(null)
 
   useEffect(() => {
