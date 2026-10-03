@@ -130,6 +130,7 @@
 }
 
 .beads-main {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -139,6 +140,7 @@
 
 .beads-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   flex: none;
@@ -169,6 +171,7 @@
 }
 
 .beads-search {
+  min-width: 120px;
   flex: 0 1 380px;
   padding: 4px 10px;
   border: 1px solid var(--divider);
@@ -180,6 +183,15 @@
 .beads-search:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* Keep Flow's origin fixed when its table opens; list controls can wrap. */
+.beads-controls-flow {
+  flex-wrap: nowrap;
+}
+
+.beads-controls-flow .beads-search {
+  min-width: 0;
 }
 
 .beads-stale-days {
@@ -206,6 +218,7 @@
 
 .beads-content {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   padding-bottom: 16px;
@@ -343,10 +356,14 @@
 
 .bead-row {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
+  min-width: 0;
   gap: 8px;
+  padding-top: 8px;
+  padding-bottom: 8px;
   padding-right: 12px;
-  line-height: 1.9;
+  line-height: 1.5;
+  border-bottom: 1px solid var(--divider);
 }
 
 .bead-row:hover {
@@ -355,8 +372,8 @@
 
 /* The fold slot: a chevron and the child count, or the same width of nothing. */
 .bead-row-fold {
-  flex: none;
-  width: 36px;
+  grid-row: 1 / 3;
+  width: 28px;
   color: var(--text-dim);
 }
 
@@ -371,9 +388,10 @@
 }
 
 .bead-row-open {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  gap: 3px 8px;
   flex: 1;
   min-width: 0;
   padding: 0;
@@ -387,8 +405,34 @@
 
 .bead-row-type {
   flex: none;
-  width: 72px;
   font-size: 10px;
+}
+
+.bead-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.bead-row-updated {
+  margin-left: auto;
+}
+
+.bead-row-trailing {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  max-width: 90px;
+}
+
+.bead-row-open:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* An epic is the roof the rows beneath it hang from: heavier, and closed off
@@ -409,18 +453,17 @@
 }
 
 .bead-row-id {
-  flex: none;
-  width: 168px;
+  overflow-wrap: anywhere;
+  min-width: 0;
   color: var(--text-primary);
 }
 
 .bead-row-title {
-  flex: 1;
+  grid-column: 2;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  white-space: normal;
+  color: var(--text-primary);
 }
 
 .bead-row-open:hover .bead-row-title,
@@ -429,6 +472,8 @@
 }
 
 .bead-row-blocked {
+  padding-right: 12px;
+  overflow-wrap: anywhere;
   color: var(--text-dim);
   line-height: 1.6;
 }
@@ -448,6 +493,7 @@
 }
 
 .bead-map-acceptance {
+  overflow-wrap: anywhere;
   padding-right: 12px;
   padding-bottom: 6px;
   max-width: 1200px;
@@ -493,9 +539,60 @@
 
 .beads-columns {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 24px;
   padding: 4px 0;
+}
+
+.beads-column {
+  min-width: 0;
+}
+
+.beads-sort {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.beads-sort select {
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--divider);
+  background-color: var(--surface-primary);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+/* Respond to the space left by the table and Clerk, not the window width. */
+@container (max-width: 900px) {
+  .beads-columns {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+}
+
+@container (max-width: 480px) {
+  .beads-controls {
+    gap: 8px;
+  }
+
+  .beads-views {
+    flex-wrap: wrap;
+  }
+
+  .beads-search {
+    flex: 1 1 100%;
+  }
+
+  .beads-stale-days {
+    margin-left: 0;
+  }
+
+  .bead-row-updated {
+    margin-left: 0;
+  }
 }
 
 .beads-column h2 {

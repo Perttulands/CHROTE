@@ -18,13 +18,11 @@ interface MapViewProps {
 }
 
 /**
- * The columns a row draws in, so what explains a row lines up under it: the
- * row's 12px inset, the 36px fold slot, the 14px glyph, then the type and the
- * id at their fixed widths, with the row's 8px gaps between.
+ * Explanations align with the wrapped title after the fold slot. Deep branches
+ * cap their indentation so nesting cannot consume the whole reading area.
  */
-const ROW_INDENT = 22
-const TYPE_COLUMN = 78
-const TITLE_COLUMN = 334
+const ROW_INDENT = 16
+const TITLE_COLUMN = 48
 
 /**
  * Expand all or Collapse all, given on a row and followed by every row beneath
@@ -41,7 +39,7 @@ let lastOrder = 0
 
 function BlockedBy({ ids, depth, projectPath }: { ids: string[]; depth: number; projectPath: string }) {
   return (
-    <div className="bead-row-blocked" style={{ paddingLeft: `${TITLE_COLUMN + depth * ROW_INDENT}px` }}>
+    <div className="bead-row-blocked" style={{ paddingLeft: `${TITLE_COLUMN + Math.min(depth, 5) * ROW_INDENT}px` }}>
       blocked by{' '}
       {ids.map((id, index) => (
         <span key={id}>
@@ -92,7 +90,7 @@ function MapNode({ node, depth, expandAll, order }: MapNodeProps) {
         <BlockedBy ids={row.blockedBy} depth={depth} projectPath={row.projectPath} />
       )}
       {expanded && row.acceptance && (
-        <div className="bead-map-acceptance" style={{ paddingLeft: `${TYPE_COLUMN + depth * ROW_INDENT}px` }}>
+        <div className="bead-map-acceptance" style={{ paddingLeft: `${TITLE_COLUMN + Math.min(depth, 5) * ROW_INDENT}px` }}>
           <h3>Acceptance criteria</h3>
           <p>{row.acceptance}</p>
         </div>

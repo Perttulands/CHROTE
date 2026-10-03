@@ -53,6 +53,7 @@ import {
   type WorkRow,
 } from '../../beads/beadsTree'
 import { isBeadClosed } from '../../beads/beadStatus'
+import { BEAD_SORTS, sortBeadRows, sortBeadTree, type BeadSort } from '../../beads/beadsSort'
 import type { BeadsViewSetting } from '../../types'
 import './BeadsView.css'
 import type { FlowRevealRequest } from './FlowView'
@@ -212,6 +213,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
     VIEWS.some(item => item.id === settings.beadsView) ? settings.beadsView : 'map',
   )
   const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<BeadSort>('default')
   const [staleDays, setStaleDays] = useState(DEFAULT_STALE_DAYS)
   const [rows, setRows] = useState<WorkRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -437,10 +439,10 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
     updateSettings({ beadsSelectedProject: reveal.projectPath, beadsView: 'map' })
   }, [reveal, updateSettings])
 
-  const map = useMemo(() => filterBeadTree(buildBeadMap(rows), query), [rows, query])
+  const map = useMemo(() => sortBeadTree(filterBeadTree(buildBeadMap(rows), query), sort), [rows, query, sort])
   const matching = useMemo(() => filterBeadRows(rows, query), [rows, query])
   const closed = closedCache[selected]
-  const closedMatching = useMemo(() => filterBeadRows(closed?.rows ?? [], query), [closed?.rows, query])
+  const closedMatching = useMemo(() => sortBeadRows(filterBeadRows(closed?.rows ?? [], query), sort), [closed?.rows, query, sort])
   const loadedClosedRows = useMemo(
     () => Object.values(closedCache).flatMap(snapshot => snapshot.loading ? [] : snapshot.rows),
     [closedCache],
@@ -671,7 +673,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
       </Rail>
 
       <div className="beads-main">
-        <div className="beads-controls">
+        <div className={`beads-controls${view === 'flow' ? ' beads-controls-flow' : ''}`}>
           <div className="beads-views" role="tablist" aria-label="Beads views">
             {VIEWS.map(item => (
               <button
@@ -697,6 +699,14 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
             />
           )}
           {templateSelection && <span className="beads-template-mode">Read-only template</span>}
+          {!templateSelection && view !== 'flow' && (
+            <label className="beads-sort">
+              Sort
+              <select aria-label="Sort Beads" value={sort} onChange={event => setSort(event.target.value as BeadSort)}>
+                {BEAD_SORTS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </select>
+            </label>
+          )}
           {!templateSelection && view === 'stale' && (
             <label className="beads-stale-days">
               No update in
@@ -730,12 +740,12 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
             {!templateSelection && view !== 'closed' && !error && loading && <p className="beads-empty">Reading Beads…</p>}
             {!templateSelection && !error && !loading && view === 'map' && <MapView roots={map} expandAll={query.trim() !== ''} />}
             {!templateSelection && !error && !loading && view === 'ready' && (
-              <ReadyView ready={readyRows(matching)} inProgress={inProgressRows(matching)} />
+              <ReadyView ready={sortBeadRows(readyRows(matching), sort)} inProgress={sortBeadRows(inProgressRows(matching), sort)} />
             )}
             {/* The flow is a graph: search narrows the lists, not the drawing,
                 because a filtered graph loses the edges that explain it. */}
             {!templateSelection && !error && !loading && view === 'flow' && <FlowView rows={flowRows} reveal={flowReveal} />}
-            {!templateSelection && !error && !loading && view === 'stale' && <StaleView rows={staleRows(matching, staleDays)} />}
+            {!templateSelection && !error && !loading && view === 'stale' && <StaleView rows={sortBeadRows(staleRows(matching, staleDays), sort)} />}
             {!templateSelection && view === 'closed' && projects.length === 0 && error && <p className="beads-error">{error}</p>}
             {!templateSelection && view === 'closed' && !(projects.length === 0 && error) && (!closed || closed.loading) && (
               <p className="beads-empty">Reading closed Beads…</p>

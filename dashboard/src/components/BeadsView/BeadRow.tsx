@@ -51,6 +51,8 @@ export default function BeadRow({ row, depth = 0, fold, trailing }: BeadRowProps
   const { announce } = useStatus()
   const glyph = beadGlyph(row.status, row.blocked)
   const state = beadStatusLabel(row.status, row.blocked)
+  const updated = new Date(row.updated ?? '')
+  const hasDate = Number.isFinite(updated.getTime())
   const flow = useFlowNavigation(row)
   // A closed Bead reads grey end to end; an epic reads heavier, with a hairline
   // beneath it, because it is the roof the rows under it hang from.
@@ -120,7 +122,7 @@ export default function BeadRow({ row, depth = 0, fold, trailing }: BeadRowProps
 
   return (
     <MenuTarget label={`Actions for ${row.id}`} groups={menu}>
-      <div className={shape} data-ui="beads.row" style={{ paddingLeft: `${12 + depth * 22}px` }}>
+      <div className={shape} data-ui="beads.row" style={{ paddingLeft: `${12 + Math.min(depth, 5) * 16}px` }}>
         <button
           type="button"
           className="bead-row-open"
@@ -137,12 +139,20 @@ export default function BeadRow({ row, depth = 0, fold, trailing }: BeadRowProps
               </>
             )}
           </span>
-          <span className="bead-row-glyph" title={state}>{glyph}</span>
-          <BeadTypeLabel type={row.type} className="bead-row-type" />
-          <span className="bead-row-id">{row.id}</span>
+          <span className="bead-row-meta">
+            <span className="bead-row-glyph" title={state}>{glyph}</span>
+            <BeadTypeLabel type={row.type} className="bead-row-type" />
+            <span className="bead-row-id">{row.id}</span>
+            <span className="bead-row-priority" title={`Priority ${row.priority}`}>P{row.priority}</span>
+            {hasDate
+              ? <time className="bead-row-updated" dateTime={row.updated} title={`Updated ${updated.toLocaleString()}`}>
+                  Updated {updated.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+                </time>
+              : <span className="bead-row-updated">Update unknown</span>}
+          </span>
           <span className="bead-row-title">{row.title}</span>
         </button>
-        {trailing}
+        {trailing && <span className="bead-row-trailing">{trailing}</span>}
       </div>
     </MenuTarget>
   )

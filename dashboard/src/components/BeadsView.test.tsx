@@ -211,6 +211,42 @@ afterEach(() => {
 })
 
 describe('the Beads tab', () => {
+  it('applies sorting within groups and keeps it across search and lazy closed reads', async () => {
+    mockState.work.set('/srv/chrote', {
+      prefix: 'chrote', projectPath: '/srv/chrote', beads: [
+        bead({ id: 'chrote-z', title: 'Zebra', priority: 0, updated: OLD }),
+        bead({ id: 'chrote-a', title: 'Alpha', priority: 3, updated: FRESH }),
+      ],
+    })
+    render(<BeadsView />)
+    await screen.findByText('Zebra')
+    fireEvent.click(screen.getByRole('button', { name: 'chrote' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Open' }))
+    const ids = () => [...document.querySelectorAll('.bead-row-id')].map(item => item.textContent)
+    await waitFor(() => expect(ids()).toEqual(['chrote-a', 'chrote-z']))
+    fireEvent.change(screen.getByLabelText('Sort Beads'), { target: { value: 'updated-oldest' } })
+    expect(ids()).toEqual(['chrote-z', 'chrote-a'])
+    fireEvent.change(screen.getByLabelText('Sort Beads'), { target: { value: 'priority' } })
+    expect(ids()).toEqual(['chrote-z', 'chrote-a'])
+    fireEvent.change(screen.getByLabelText('Sort Beads'), { target: { value: 'title' } })
+    expect(ids()).toEqual(['chrote-a', 'chrote-z'])
+    fireEvent.change(screen.getByLabelText('Search Beads'), { target: { value: 'zebra' } })
+    expect(ids()).toEqual(['chrote-z'])
+    fireEvent.change(screen.getByLabelText('Search Beads'), { target: { value: '' } })
+    expect(ids()).toEqual(['chrote-a', 'chrote-z'])
+    expect(mockState.fetchClosedBeadWork).not.toHaveBeenCalled()
+    mockState.closed.set('/srv/chrote', {
+      prefix: 'chrote', projectPath: '/srv/chrote', beads: [
+        bead({ id: 'chrote-done-z', title: 'Zulu closed', status: 'closed' }),
+        bead({ id: 'chrote-done-a', title: 'Alpha closed', status: 'closed' }),
+      ],
+    })
+    fireEvent.click(screen.getByRole('tab', { name: 'Closed' }))
+    await screen.findByText('Alpha closed')
+    expect(ids()).toEqual(['chrote-done-a', 'chrote-done-z'])
+    expect(screen.getByLabelText('Sort Beads')).toHaveValue('title')
+  })
+
   it('refreshes discovered projects without changing the selected project or query', async () => {
     render(<BeadsView />)
     fireEvent.click(await screen.findByRole('button', { name: 'chrote' }))

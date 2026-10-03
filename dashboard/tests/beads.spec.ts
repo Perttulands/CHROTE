@@ -39,6 +39,55 @@ test.describe('Beads', () => {
     await page.waitForSelector('.dashboard')
   })
 
+  // Real font and grid geometry own this regression: long titles must wrap
+  // inside the space left by both side columns, including after a resize.
+  test('keeps long Open titles readable beside the table and Clerk', async ({ page }, testInfo) => {
+    const title = 'Make every configured project and all its long-running agent work readable beside the detail table and Clerk without losing the end of this title'
+    await page.route('**/api/beads/work?*', async route => {
+      if (new URL(route.request().url()).searchParams.get('path') !== '/code/test-project') {
+        await route.fallback()
+        return
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ ...mockBeadsWork, data: { ...mockBeadsWork.data, beads: mockBeadsWork.data.beads.map(row => ({
+          ...row, title: row.id === 'test-ep1.1' ? title : row.title,
+        })) } }),
+      })
+    })
+    await openBeadsTab(page)
+    await page.getByRole('button', { name: 'test', exact: true }).click()
+    await page.getByRole('tab', { name: 'Open' }).click()
+    const longTitle = page.locator('.bead-row-title').getByText(title, { exact: true })
+    await longTitle.click()
+    const table = page.getByRole('complementary', { name: 'Bead test-ep1.1' })
+    await expect(table).toBeVisible()
+
+    for (const width of [2048, 1280, 900]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect(longTitle).toBeVisible()
+      await expect.poll(async () => {
+        const [titleBox, mainBox] = await Promise.all([box(longTitle), box(page.locator('.beads-main'))])
+        return titleBox.x >= mainBox.x && titleBox.x + titleBox.width <= mainBox.x + mainBox.width + 1
+      }).toBe(true)
+      const metrics = await longTitle.evaluate(node => ({
+        height: node.getBoundingClientRect().height,
+        lineHeight: parseFloat(getComputedStyle(node).lineHeight),
+        visibleWidth: node.clientWidth, fullWidth: node.scrollWidth,
+        visibleHeight: node.clientHeight, fullHeight: node.scrollHeight,
+      }))
+      expect(metrics.height).toBeGreaterThan(metrics.lineHeight)
+      expect(metrics.fullWidth).toBeLessThanOrEqual(metrics.visibleWidth + 1)
+      expect(metrics.fullHeight).toBeLessThanOrEqual(metrics.visibleHeight + 1)
+      await expect.poll(() => page.locator('.beads-content').evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1)
+      const mainBox = await box(page.locator('.beads-main'))
+      const readyBox = await box(page.getByRole('heading', { name: 'Ready to start' }))
+      const activeBox = await box(page.getByRole('heading', { name: 'In progress', exact: true }))
+      if (mainBox.width <= 900) expect(activeBox.y).toBeGreaterThan(readyBox.y + readyBox.height)
+      await page.screenshot({ path: testInfo.outputPath(`beads-readable-${width}.png`) })
+    }
+  })
+
   test('opens the Beads column from any tab and puts its row on the table', async ({ page }) => {
     await page.keyboard.press('Alt+b')
     const column = page.getByRole('complementary', { name: 'Beads column' })
