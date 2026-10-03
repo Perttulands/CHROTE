@@ -7,6 +7,7 @@ import { loadStoredState } from '../context/workspaceLayouts'
 
 const refreshSessions = vi.fn()
 const createSession = vi.fn()
+const copySession = vi.fn()
 const addSessionToWindow = vi.fn()
 const announce = vi.fn()
 const removeSessionFromWindow = vi.fn()
@@ -76,6 +77,7 @@ vi.mock('../context/SessionContext', () => ({
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout', createdAt: 1, workspaces: {} }],
     refreshSessions,
     createSession,
+    copySession,
     addSessionToWindow,
     removeSessionFromWindow,
     setActiveSession,
@@ -273,7 +275,7 @@ describe('TerminalWindow launch user', () => {
     const sendEvent = openInactiveMenu()
     expect(sendEvent.defaultPrevented).toBe(true)
     const menuButtons = screen.getAllByRole('menuitem')
-    expect(menuButtons).toHaveLength(8)
+    expect(menuButtons).toHaveLength(9)
     for (const label of [
       'Send to session',
       'What this agent sees',
@@ -282,12 +284,17 @@ describe('TerminalWindow launch user', () => {
       'Refit frame',
       'Open files in working directory',
       'Rename session',
+      'Copy session',
       'Kill session',
     ]) {
       expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument()
     }
     fireEvent.click(screen.getByRole('menuitem', { name: 'Send to session' }))
     expect(openSendToSession).toHaveBeenCalledWith({ targetSessionKey: 'alice:shell-existing' })
+
+    openInactiveMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy session' }))
+    expect(copySession).toHaveBeenCalledWith(mockSessions.find(session => session.name === 'shell-existing'))
 
     openInactiveMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect frame' }))

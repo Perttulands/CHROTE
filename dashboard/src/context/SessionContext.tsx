@@ -19,6 +19,8 @@ import { useStatus } from './StatusContext'
 import { useSendToSession } from './useSendToSession'
 import { useSessionsPoll } from './useSessionsPoll'
 import { useWorkspaceLayouts } from './useWorkspaceLayouts'
+import { copySessionUnavailableReason, nextCopiedSessionName } from './sessionCopy'
+import { harnessIdForCommand } from '../components/harnessMarks'
 import {
   deduplicateWorkspaceBindings,
   idsInWorkspaces,
@@ -131,30 +133,45 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     })
   }, [layouts.setWorkspaces])
 
-  const createSession = useCallback(async (options: CreateSessionOptions = {}): Promise<string | null> => {
+  const createSession = useCallback(async (
+    options: CreateSessionOptions = {},
+    nextNameOnConflict?: (name: string) => string,
+  ): Promise<string | null> => {
     const workspaceId = options.workspaceId ?? options.attachTo?.workspaceId ?? 'terminal1'
     const unixUser = options.unixUser ?? resolveLaunchUser(layouts.settings, workspaceId, poll.terminalUsers)
     const prefix = getSessionPrefixForUser(layouts.settings, unixUser, poll.terminalUsers)
-    const sessionName = options.name?.trim() || nextSessionNameForPrefix(poll.sessions, prefix)
+    let sessionName = options.name?.trim() || nextSessionNameForPrefix(poll.sessions, prefix)
     try {
-      const response = await fetch('/api/tmux/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: sessionName,
-          unixUser,
-          mouseScroll: options.mouseScroll ?? layouts.settings.mouseScroll,
-          ...(options.cwd ? { cwd: options.cwd } : {}),
-          ...(options.harness ? { harness: options.harness } : {}),
-          // An empty line is a real answer — this launch takes no flags — so
-          // it travels, and only an absent field leaves the server its default.
-          ...(options.flags !== undefined ? { flags: options.flags } : {}),
-          ...(options.notify !== undefined ? { notify: options.notify } : {}),
-        }),
-        signal: AbortSignal.timeout(10000),
-      })
+      let response: Response
+      let conflicts = 0
+      for (;;) {
+        response = await fetch('/api/tmux/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: sessionName,
+            unixUser,
+            mouseScroll: options.mouseScroll ?? layouts.settings.mouseScroll,
+            ...(options.cwd ? { cwd: options.cwd } : {}),
+            ...(options.harness ? { harness: options.harness } : {}),
+            // An empty line is a real answer — this launch takes no flags — so
+            // it travels, and only an absent field leaves the server its default.
+            ...(options.flags !== undefined ? { flags: options.flags } : {}),
+            ...(options.notify !== undefined ? { notify: options.notify } : {}),
+          }),
+          signal: AbortSignal.timeout(10000),
+        })
+        // Only an explicit name conflict can be retried: other failures may
+        // leave a created session and must never launch a second agent.
+        if (response.status !== 409 || !nextNameOnConflict || conflicts >= 20) break
+        const failure = await response.clone().json().catch(() => null) as { error?: { code?: string } } | null
+        if (failure?.error?.code !== 'SESSION_NAME_CONFLICT') break
+        conflicts += 1
+        sessionName = nextNameOnConflict(sessionName)
+      }
       if (!response.ok) {
-        announce('Failed to create session', 'error')
+        const reason = deleteFailureReason(await response.text(), response.status)
+        announce(`Failed to create session · ${reason}`, 'error')
         return null
       }
       announce(`Session '${sessionName}' created`, 'success')
@@ -173,6 +190,25 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return null
     }
   }, [addSessionToWindow, announce, layouts.settings, poll.refreshSessions, poll.sessions, poll.terminalUsers])
+
+  const copySession = useCallback(async (source: TmuxSession): Promise<string | null> => {
+    const reason = copySessionUnavailableReason(source)
+    if (reason) {
+      announce(`Cannot copy session · ${reason}`, 'error')
+      return null
+    }
+    const taken = new Set(poll.sessions
+      .filter(session => (session.unixUser ?? '') === (source.unixUser ?? ''))
+      .map(session => session.name))
+    const name = nextCopiedSessionName(source.name, taken)
+    return createSession({
+      name, cwd: source.cwd, unixUser: source.unixUser ?? '',
+      harness: harnessIdForCommand(source.currentCommand)!,
+    }, conflict => {
+      taken.add(conflict)
+      return nextCopiedSessionName(source.name, taken)
+    })
+  }, [announce, createSession, poll.sessions])
 
   // Restart an ended binding in place: same name, same Unix user, same tile.
   // The previous command is deliberately not re-run — the poll reports only
@@ -350,6 +386,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     handleSessionClick,
     refreshSessions: poll.refreshSessions,
     createSession,
+    copySession,
     restartSession,
     deleteSession,
     deleteSessions,
@@ -373,7 +410,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     send.sendToSessionRequestId, send.openSendToSession,
     send.closeSendToSession, send.listSessionPanes, send.sendToSession,
     addSessionToWindow, restartSession, openFloatingModal, closeFloatingModal, handleSessionClick,
-    createSession, deleteSession, deleteSessions, renameSession,
+    createSession, copySession, deleteSession, deleteSessions, renameSession,
   ])
 
   return <SessionContext.Provider value={contextValue}>{children}</SessionContext.Provider>

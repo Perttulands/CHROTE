@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
 import { Send } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
+import { copySessionUnavailableReason } from '../context/sessionCopy'
 import { useTerminalPool } from './TerminalPool'
 import TerminalSurface from './TerminalSurface'
 import { getSessionBadges, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserInitial } from '../types'
@@ -32,7 +33,7 @@ interface SessionTagProps {
 }
 
 function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive, tileState, headerMenuAt, onHeaderMenuClose }: SessionTagProps) {
-  const { sessions, terminalUsers, deleteSession, renameSession, openSendToSession } = useSession()
+  const { sessions, terminalUsers, deleteSession, renameSession, copySession, openSendToSession } = useSession()
   const theme = useTheme()
   const pool = useTerminalPool()
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
@@ -182,6 +183,12 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
           onSelect: () => pool.terminals.get(sessionName)?.fit(),
         },
         { id: 'rename', label: 'Rename session', onSelect: startRename },
+        {
+          id: 'copy-session', label: 'Copy session',
+          disabled: !session || !!copySessionUnavailableReason(session),
+          reason: session ? copySessionUnavailableReason(session) : 'Session unavailable',
+          onSelect: () => { if (session) void copySession(session) },
+        },
       ],
     },
     {

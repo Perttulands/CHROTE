@@ -535,6 +535,9 @@ export interface DashboardActions {
   // Create a tmux session, optionally attaching it to a terminal window
   createSession: (options?: CreateSessionOptions) => Promise<string | null>
 
+  // Start a fresh instance of this session's harness in its current folder.
+  copySession: (source: TmuxSession) => Promise<string | null>
+
   // Recreate an ended binding's session in place, under the same name and tile
   restartSession: (workspaceId: WorkspaceId, windowId: string, sessionKey: string) => Promise<boolean>
 

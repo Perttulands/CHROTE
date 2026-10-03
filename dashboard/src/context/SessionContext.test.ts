@@ -1,7 +1,67 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import { DEFAULT_SETTINGS, resolveLaunchUser } from '../types'
+import type { TmuxSession } from '../types'
 import { renderSession, renderSessionWithStatus } from './SessionContext.test.support'
+
+describe('copySession', () => {
+  beforeEach(() => localStorage.clear())
+
+  const source = (command: string, name: string): TmuxSession => ({
+    name, cwd: '/work/project', currentCommand: command, unixUser: 'alice',
+    windows: 1, attached: true, group: 'agents',
+  })
+
+  function stubCopyFetch(sessions: TmuxSession[], post: (body: Record<string, unknown>) => Response) {
+    const requests: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>
+        requests.push(body)
+        return Promise.resolve(post(body))
+      }
+      return Promise.resolve(new Response(JSON.stringify({ sessions, grouped: {}, terminalUsers: ['alice', 'build'] })))
+    }))
+    return requests
+  }
+
+  it.each([['codex', 'codex'], ['claude', 'claude-code']])('starts a fresh %s in the same directory and user with numbered copies', async (command, harness) => {
+    const original = source(command, `${command}-project`)
+    const taken = new Set([original.name, `${original.name}-2`])
+    const requests = stubCopyFetch([original, { ...original, name: `${original.name}-2`, unixUser: 'build' }], body => {
+      const name = String(body.name)
+      if (taken.has(name)) return new Response(JSON.stringify({ error: { code: 'SESSION_NAME_CONFLICT' } }), { status: 409 })
+      taken.add(name)
+      return new Response('{}')
+    })
+    const { result } = renderSession()
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2))
+    let copied: string | null = null
+    await act(async () => { copied = await result.current.copySession(original) })
+    expect(copied).toBe(`${original.name}-3`)
+    // The inventory stays stale deliberately: tmux is the final name arbiter.
+    await act(async () => { copied = await result.current.copySession({ ...original, name: `${original.name}-3` }) })
+    expect(copied).toBe(`${original.name}-4`)
+    expect(requests.map(body => body.name)).toEqual([
+      `${original.name}-2`, `${original.name}-3`, `${original.name}-2`, `${original.name}-3`, `${original.name}-4`,
+    ])
+    requests.forEach(body => expect(body).toMatchObject({ harness, cwd: '/work/project', unixUser: 'alice' }))
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
+  })
+
+  it('shows the server refusal without retrying and refuses unknown commands or missing directories', async () => {
+    const original = source('codex', 'codex-project')
+    const requests = stubCopyFetch([original], () => new Response(JSON.stringify({ error: { message: 'Folder is not accessible' } }), { status: 400 }))
+    const { result } = renderSessionWithStatus()
+    await waitFor(() => expect(result.current.session.sessions).toHaveLength(1))
+    await act(async () => { expect(await result.current.session.copySession(original)).toBeNull() })
+    expect(requests).toHaveLength(1)
+    expect(result.current.status.status?.message).toContain('Folder is not accessible')
+    await act(async () => { expect(await result.current.session.copySession({ ...original, currentCommand: 'node' })).toBeNull() })
+    await act(async () => { expect(await result.current.session.copySession({ ...original, cwd: undefined })).toBeNull() })
+    expect(requests).toHaveLength(1)
+  })
+})
 
 describe('resolveLaunchUser', () => {
   it('keeps default/no configured-users mode as bare tmux sessions even with stale stored launch user settings', () => {

@@ -10,7 +10,7 @@ import { dragAndDrop, openSessionsSidecar } from './helpers'
  */
 
 interface Rename { from: string; to: string }
-interface Mutations { renames: Rename[]; deletes: string[] }
+interface Mutations { renames: Rename[]; deletes: string[]; copies: Record<string, unknown>[] }
 
 /**
  * API mocks that also answer DELETE and PATCH for sessions. A delete removes
@@ -32,11 +32,12 @@ async function mockApiRoutesWithMutations(page: Page): Promise<Mutations> {
 
   const renames: Rename[] = []
   const deletes: string[] = []
+  const copies: Record<string, unknown>[] = []
 
   // Mutable copy of session list so delete/rename are reflected on refresh.
   // Two sessions belong to Unix users, so a kill has to say whose it is.
   let sessions: Array<(typeof mockSessions.sessions)[number] & { unixUser?: string }> = structuredClone(mockSessions.sessions)
-    .map(s => s.name === 'gt-gastown-jack' ? { ...s, unixUser: 'alice' } : s.name === 'gt-gastown-joe' ? { ...s, unixUser: 'bob' } : s)
+    .map(s => s.name === 'gt-gastown-jack' ? { ...s, unixUser: 'alice', cwd: '/code/project', currentCommand: 'codex' } : s.name === 'gt-gastown-joe' ? { ...s, unixUser: 'bob', cwd: '/code/project', currentCommand: 'claude' } : s)
 
   const buildResponse = () => {
     const grouped: Record<string, typeof sessions> = {}
@@ -60,6 +61,17 @@ async function mockApiRoutesWithMutations(page: Page): Promise<Mutations> {
         contentType: 'application/json',
         body: JSON.stringify(buildResponse()),
       })
+    } else if (request.method() === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>
+      copies.push(body)
+      if (sessions.some(session => session.name === body.name && (session.unixUser ?? '') === body.unixUser)) {
+        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { code: 'SESSION_NAME_CONFLICT' } }) })
+        return
+      }
+      const original = sessions.find(session => (session.unixUser ?? '') === body.unixUser)
+      if (!original) throw new Error('Copy requested an unknown Unix user')
+      sessions.push({ ...original, name: String(body.name), attached: false, cwd: String(body.cwd) })
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true }) })
     } else {
       await route.continue()
     }
@@ -91,19 +103,35 @@ async function mockApiRoutesWithMutations(page: Page): Promise<Mutations> {
     }
   })
 
-  return { renames, deletes }
+  return { renames, deletes, copies }
 }
 
 test.describe('Session Context Menu', () => {
   let renames: Rename[]
   let deletes: string[]
+  let copies: Record<string, unknown>[]
 
   test.beforeEach(async ({ page }) => {
-    ;({ renames, deletes } = await mockApiRoutesWithMutations(page))
+    ;({ renames, deletes, copies } = await mockApiRoutesWithMutations(page))
     await page.goto('/')
     await page.waitForSelector('.dashboard')
     await openSessionsSidecar(page)
     await page.waitForSelector('.session-item')
+  })
+
+  test('copies Codex and Claude sessions from the menu with sequential names in their folder', async ({ page }) => {
+    const row = (name: string) => page.locator('.session-panel .session-item').filter({ has: page.locator(`.session-name[title="${name}"]`) })
+    for (const [name, harness, unixUser] of [['gt-gastown-jack', 'codex', 'alice'], ['gt-gastown-joe', 'claude-code', 'bob']]) {
+      for (const suffix of [2, 3, 4]) {
+        await row(name).click({ button: 'right' })
+        await page.getByRole('menuitem', { name: 'Copy session', exact: true }).click()
+        await expect(row(`${name}-${suffix}`)).toBeVisible()
+        expect(copies.at(-1)).toMatchObject({ name: `${name}-${suffix}`, cwd: '/code/project', harness, unixUser })
+        await expect(row(name)).toBeVisible()
+      }
+    }
+    expect(deletes).toEqual([])
+    expect(renames).toEqual([])
   })
 
   test('renames an attached session from the row and from its tag, then kills it', async ({ page }) => {

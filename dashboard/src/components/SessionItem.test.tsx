@@ -14,6 +14,7 @@ const mockState = vi.hoisted(() => ({
   addSessionToWindow: vi.fn(),
   removeSessionFromWindow: vi.fn(),
   renameSession: vi.fn(),
+  copySession: vi.fn(),
   dragListeners: { onPointerDown: vi.fn() },
   dragAttributes: { role: 'button', tabIndex: 0 },
   dragTransform: null as { x: number; y: number } | null,
@@ -45,6 +46,7 @@ vi.mock('../context/SessionContext', () => ({
     addSessionToWindow: mockState.addSessionToWindow,
     removeSessionFromWindow: mockState.removeSessionFromWindow,
     renameSession: mockState.renameSession,
+    copySession: mockState.copySession,
     openFloatingModal: mockState.openFloatingModal,
     openSendToSession: mockState.openSendToSession,
     settings: DEFAULT_SETTINGS,
@@ -57,6 +59,22 @@ vi.mock('../context/SessionContext', () => ({
 const rowLabel = (name: string) => screen.getByTitle(name)
 
 describe('SessionItem user badge and context actions', () => {
+  it('copies the exact session from its context menu and explains an unavailable copy', () => {
+    const source: TmuxSession = {
+      name: 'codex-project', unixUser: 'alice', currentCommand: 'codex', cwd: '/work/project',
+      windows: 1, attached: false, group: 'codex',
+    }
+    const { rerender } = render(<SessionItem session={source} />)
+    fireEvent.contextMenu(rowLabel(source.name))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy session' }))
+    expect(mockState.copySession).toHaveBeenCalledWith(source)
+    rerender(<SessionItem session={{ ...source, cwd: undefined }} />)
+    fireEvent.contextMenu(rowLabel(source.name))
+    const unavailable = screen.getByRole('menuitem', { name: /Copy session/ })
+    expect(unavailable).toBeDisabled()
+    expect(unavailable).toHaveAttribute('title', 'Working directory unavailable')
+  })
+
   afterEach(() => {
     mockState.assignedSessions.clear()
     mockState.openFloatingModal.mockClear()
@@ -66,6 +84,7 @@ describe('SessionItem user badge and context actions', () => {
     mockState.addSessionToWindow.mockClear()
     mockState.removeSessionFromWindow.mockClear()
     mockState.renameSession.mockClear()
+    mockState.copySession.mockClear()
     mockState.dragListeners.onPointerDown.mockClear()
     mockState.dragTransform = null
     mockState.isDragging = false

@@ -11,6 +11,7 @@ import Menu, { type MenuAction, type MenuGroup } from './Menu'
 import { harnessOfCommand, openAgentContext } from '../agents/agentContextPanel'
 import { useAgentEventMarks } from '../agents/AgentEventsProvider'
 import { summaryLine } from '../agents/agentEvents'
+import { copySessionUnavailableReason } from '../context/sessionCopy'
 
 /** How a click on a row asks the panel to change its selection. */
 export type SelectGesture = 'toggle' | 'range' | 'plain'
@@ -39,7 +40,7 @@ interface ContextMenuState {
 }
 
 function SessionItem({ session, selected = false, onSelectGesture, onSelectionMenu }: SessionItemProps) {
-  const { assignedSessions, handleSessionClick, deleteSession, renameSession, workspaces, workspaceIds, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, terminalUsers } = useSession()
+  const { assignedSessions, handleSessionClick, deleteSession, renameSession, copySession, workspaces, workspaceIds, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, terminalUsers } = useSession()
   const focusedSession = useFocusedSession()
   const theme = useTheme()
   const sessionKey = getSessionKey(session.name, session.unixUser)
@@ -278,6 +279,12 @@ function SessionItem({ session, selected = false, onSelectGesture, onSelectionMe
         { id: 'attach', label: 'Attach to window', submenu: windowRows },
         ...(isAssigned ? [{ id: 'unassign', label: 'Unassign', onSelect: handleUnassign }] : []),
         { id: 'rename', label: 'Rename', onSelect: handleStartRename },
+        {
+          id: 'copy-session', label: 'Copy session',
+          disabled: !!copySessionUnavailableReason(session),
+          reason: copySessionUnavailableReason(session),
+          onSelect: () => { void copySession(session) },
+        },
       ],
     },
     {
