@@ -90,6 +90,46 @@ func workspaceByPath(found []Workspace, path string) (Workspace, bool) {
 	return Workspace{}, false
 }
 
+func TestWorkspacesDiscoverNestedProjectsBeforeAnySessionRunsThere(t *testing.T) {
+	tree := newWorkspaceTestTree(t)
+	// A broad access root must not consume the discovery depth of a user's
+	// home or another explicitly configured project root beneath it.
+	tree.handler.roots = func() []string { return []string{tree.base, tree.root, tree.root} }
+	game := tree.gitRoot(t, filepath.Join(tree.home, "game-studio", "sea-garden"))
+	makeValidBeadsWorkspace(t, game)
+	deepProject := tree.gitRoot(t, filepath.Join(tree.root, "one", "two", "three"))
+	tooDeep := tree.gitRoot(t, filepath.Join(tree.home, "one", "two", "three", "four"))
+
+	found := tree.list(t, "")
+	for _, path := range []string{game, deepProject} {
+		entry, ok := workspaceByPath(found, path)
+		if !ok {
+			t.Fatalf("nested project %s missing before any session runs there; got %v", path, workspacePaths(found))
+		}
+		if len(entry.Sessions) != 0 {
+			t.Fatalf("project %s must be discovered without live sessions", path)
+		}
+	}
+	entry, _ := workspaceByPath(found, game)
+	if strings.Join(entry.Sources, ",") != "git,store" {
+		t.Fatalf("game sources = %v, want git and store", entry.Sources)
+	}
+	if _, ok := workspaceByPath(found, tooDeep); ok {
+		t.Fatal("the walk exceeded the depth budget of the home root")
+	}
+	if len(found) != 2 {
+		t.Fatalf("overlapping roots produced duplicate entries: %v", workspacePaths(found))
+	}
+	link := filepath.Join(tree.base, "home-alias")
+	if err := os.Symlink(tree.home, link); err != nil {
+		t.Fatalf("symlink home: %v", err)
+	}
+	tree.handler.roots = func() []string { return []string{tree.base, tree.root, tree.root, link} }
+	if roots := tree.handler.walkRoots(); len(roots) != 3 {
+		t.Fatalf("discovery roots = %v, want broad root, one home and one project root", roots)
+	}
+}
+
 func TestWorkspacesWalkListsGitRootsAndStoresToDepthThreeAndNothingExcluded(t *testing.T) {
 	tree := newWorkspaceTestTree(t)
 	repo := tree.gitRoot(t, filepath.Join(tree.root, "repo"))

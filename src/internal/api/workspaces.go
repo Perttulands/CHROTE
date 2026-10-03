@@ -223,8 +223,8 @@ func (h *WorkspacesHandler) list(probeStores bool, waitForStores ...bool) []Work
 }
 
 // walkRoots is every configured root and every launchable user's home, each
-// resolved, none of them under another: a root inside a root would only walk
-// the same folders twice.
+// resolved and unique. Nested roots retain their own depth budget: removing a
+// home beneath a broad root would hide its projects before a session runs there.
 func (h *WorkspacesHandler) walkRoots() []string {
 	candidates := append([]string{}, h.roots()...)
 	for _, unixUser := range h.users() {
@@ -241,7 +241,7 @@ func (h *WorkspacesHandler) walkRoots() []string {
 	sort.Strings(resolved)
 	roots := []string{}
 	for _, root := range resolved {
-		if !isPathUnder(root, roots) {
+		if len(roots) == 0 || root != roots[len(roots)-1] {
 			roots = append(roots, root)
 		}
 	}
