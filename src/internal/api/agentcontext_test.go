@@ -273,6 +273,32 @@ func TestAgentContext_ListsManagedPolicyRulesAndImportsInLoadingOrder(t *testing
 	}
 }
 
+// Rules commonly use either YAML block lists or inline flow lists. The API
+// must expose the same globs and project rung for both spellings.
+func TestAgentContext_ConditionalRulePaths(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		frontmatter string
+		want        []string
+	}{
+		{"block", "paths:\n  - src/**/*.go\n  - dashboard/**/*.tsx", []string{"src/**/*.go", "dashboard/**/*.tsx"}},
+		{"flow", "paths: [src/**/*.go, dashboard/**/*.tsx]", []string{"src/**/*.go", "dashboard/**/*.tsx"}},
+		{"quoted flow", `paths: ["src/**/*.{go,mod}", 'dashboard/**/*.tsx']`, []string{"src/**/*.{go,mod}", "dashboard/**/*.tsx"}},
+		{"glob brackets", `paths: ["src/[ab]/*.go", "src/**/*.go"]`, []string{"src/[ab]/*.go", "src/**/*.go"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			host := newAgentTestHost(t)
+			folder := filepath.Join(host.root, "project")
+			writeFile(t, filepath.Join(folder, ".claude", "rules", "go.md"), "---\n"+tt.frontmatter+"\n---\n# Rule\n")
+			resolved := host.handler.resolve(folder, harnessClaudeCode, "", host.home)
+			if len(resolved.Instructions) != 1 || resolved.Instructions[0].Scope != scopeProject {
+				t.Fatalf("instructions = %#v, want one project rule", resolved.Instructions)
+			}
+			assertSequence(t, resolved.Instructions[0].Paths, tt.want, "conditional rule paths")
+		})
+	}
+}
+
 // The one failure this surface exists to prevent is an instruction the operator
 // cannot see. A file the server cannot open stays on the list, marked.
 func TestAgentContext_ListsAnUnreadableInstructionRatherThanDroppingIt(t *testing.T) {

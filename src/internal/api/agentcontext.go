@@ -660,7 +660,7 @@ func readFrontmatter(path string) map[string]string {
 }
 
 // frontmatterFields parses the leading YAML block's top-level keys, each with
-// the values it names: none, one scalar, or the items of a block list. It is
+// the values it names: none, one scalar, or the items of a block or inline list. It is
 // deliberately not a YAML parser — these files declare a name, a description or
 // a path list, and anything deeper belongs to the harness, not here.
 func frontmatterFields(path string) map[string][]string {
@@ -699,11 +699,55 @@ func frontmatterFields(path string) map[string][]string {
 		}
 		key = strings.TrimSpace(name)
 		fields[key] = nil
-		if value = unquote(strings.TrimSpace(value)); value != "" {
-			fields[key] = []string{value}
+		if value = strings.TrimSpace(value); value != "" {
+			fields[key] = frontmatterValues(value)
 		}
 	}
 	return fields
+}
+
+// frontmatterValues reads the scalar and flow-list forms used by instruction
+// metadata. Commas inside quoted globs and brace expansions belong to the glob.
+func frontmatterValues(value string) []string {
+	if !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
+		return []string{unquote(value)}
+	}
+	body := value[1 : len(value)-1]
+	values := []string{}
+	start, depth := 0, 0
+	var quote byte
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if quote != 0 {
+			if quote == '"' && c == '\\' {
+				i++
+			} else if c == quote {
+				if quote == '\'' && i+1 < len(body) && body[i+1] == quote {
+					i++
+				} else {
+					quote = 0
+				}
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '[', '{':
+			depth++
+		case ']', '}':
+			depth--
+		case ',':
+			if depth == 0 {
+				values = append(values, unquote(strings.TrimSpace(body[start:i])))
+				start = i + 1
+			}
+		}
+	}
+	if item := strings.TrimSpace(body[start:]); item != "" {
+		values = append(values, unquote(item))
+	}
+	return values
 }
 
 func unquote(value string) string {
