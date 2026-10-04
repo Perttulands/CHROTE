@@ -494,7 +494,10 @@ func (s *instructionStack) addClaudeRules(dir, scope, home string) {
 			continue
 		}
 		if paths, conditional := frontmatterFields(path)["paths"]; conditional {
-			s.rows[index].Paths = paths
+			// Newly appended imports load through the same conditional rule.
+			for i := index; i < len(s.rows); i++ {
+				s.rows[i].Paths = paths
+			}
 		}
 	}
 }

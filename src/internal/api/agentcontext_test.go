@@ -299,6 +299,22 @@ func TestAgentContext_ConditionalRulePaths(t *testing.T) {
 	}
 }
 
+// An import reached through a conditional rule shares that rule's paths.
+func TestAgentContext_ConditionalRuleImportsKeepPaths(t *testing.T) {
+	host := newAgentTestHost(t)
+	folder := filepath.Join(host.root, "project")
+	rule := writeFile(t, filepath.Join(folder, ".claude", "rules", "go.md"), "---\npaths: [src/**/*.go]\n---\nRead @../../docs/workflow.md before editing.\n")
+	imported := writeFile(t, filepath.Join(folder, "docs", "workflow.md"), "# Workflow\n")
+	resolved := host.handler.resolve(folder, harnessClaudeCode, "", host.home)
+	assertSequence(t, instructionPaths(resolved.Instructions), []string{rule, imported}, "instructions")
+	for _, instruction := range resolved.Instructions {
+		if instruction.Scope != scopeProject {
+			t.Fatalf("instruction %s scope = %q, want project", instruction.Path, instruction.Scope)
+		}
+		assertSequence(t, instruction.Paths, []string{"src/**/*.go"}, "conditional instruction paths")
+	}
+}
+
 // The one failure this surface exists to prevent is an instruction the operator
 // cannot see. A file the server cannot open stays on the list, marked.
 func TestAgentContext_ListsAnUnreadableInstructionRatherThanDroppingIt(t *testing.T) {
