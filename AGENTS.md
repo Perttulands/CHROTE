@@ -1,80 +1,30 @@
 # CHROTE
 
-CHROTE is a browser-based agentic IDE for one trusted operator. It makes tmux-hosted terminal sessions easy to run, arrange, observe, and steer from any device on the operator's private network.
+CHROTE is a browser-based agentic IDE for one trusted operator. It makes tmux-hosted terminal sessions easy to run, arrange, observe, and steer from devices on the operator's private network.
 
-## Project map
+## Product boundaries
 
-- `dashboard/src/` owns the React user interface and device-local workspace presentation.
-- `src/cmd/server/` assembles and starts the Go server.
-- `src/internal/api/` exposes host resources and component APIs to the browser.
-- `src/internal/proxy/` owns terminal transport and the pseudo-terminals it attaches on.
-- `src/internal/dashboard/` embeds the built dashboard served by the Go binary.
-- `scripts/` owns the canonical build, validation, installation, and source-contract entrypoints.
-- `docs/` contains durable product, architecture, user, and maintainer documentation.
+tmux owns live sessions. Product changes, tests, deployments, browser disconnects and service restarts must preserve existing sessions. Exact operator-authorized deletion and cleanup of test-owned or failed-creation-owned sessions are the exceptions.
 
-Read `VISION.md` for product intent, `PRD.md` for the durable product contract, `ARCHITECTURE.md` for system ownership and boundaries, and `SECURITY.md` for the trust boundary. Use Beads, never Markdown, for roadmap, status, dependencies, or outstanding work.
+Broad access within configured roots is intentional. Unix permissions define access; report failures plainly. Tracked source and documentation stay host-neutral. Real deployment paths, ports, sockets, service identities and private operator material belong in operator configuration.
 
-## Golden invariants
+For product intent use `VISION.md`; for supported behavior use `PRD.md`; for component boundaries use `ARCHITECTURE.md`; for changes to trust or access use `SECURITY.md`.
 
-tmux owns live sessions. CHROTE, its tests, development tools, deployments, browser disconnects, and service restarts must never implicitly or accidentally terminate or disrupt existing tmux sessions. Exact operator-authorized deletion and exact cleanup of test-owned or failed-creation-owned sessions are allowed.
+## Source and build entrypoints
 
-Broad access within configured roots is intentional. Rely on Unix permissions and report access failures plainly; do not narrow ownership, modes, ACLs, or configured roots as speculative hardening.
+- `dashboard/src/` owns React UI and device-local presentation.
+- `src/internal/api/` exposes host resources; `src/internal/proxy/` owns terminal transport and attached pseudo-terminals.
+- `src/cmd/server/` assembles the server; `src/internal/dashboard/` embeds the dashboard it serves.
+- `scripts/` owns build, installation and validation entrypoints.
 
-Tracked source and documentation stay host-neutral. Keep real deployment paths, ports, sockets, service identities, credentials, transcripts, and recovery procedures in private operator configuration.
+Generate embedded assets with `./scripts/build-embedded-dashboard.sh`; `python3 scripts/check-embedded-dashboard.py` checks their consistency. Directly copying build output bypasses that contract.
 
-Use `./scripts/build-embedded-dashboard.sh` for the embedded dashboard. Do not hand-copy build output; verify it with `python3 scripts/check-embedded-dashboard.py`.
+This repository owns the `chrote-` Beads store. Host deployment configuration belongs to its operator workspace.
 
-## Work state
+## Verification and delivery
 
-Run `bd` from this repository root so work resolves to CHROTE's `.beads` store and `chrote-` prefix. Use the shared Beads skills for drafting, review, execution, and discovered work.
+For test changes, consult `docs/TEST_STRATEGY.md` for behavior ownership and CI routing. `CONTRIBUTING.md` gives commands and environments for Go, dashboard, built-server and installer checks. Select checks for the changed behavior.
 
-Execute only the active Bead. Record unrelated findings as linked Beads instead of fixing them in place.
+Documentation changes use `python3 scripts/doc-lint.py`, `python3 scripts/host-neutrality.py` and `git diff --check` from the repository root. The CI documentation allowlist runs these without proving the built product; manual `workflow_dispatch` runs all product jobs.
 
-## Git discipline
-
-Keep `main` current, clean, tested, and deployable. Do ordinary work directly there and commit verified increments promptly. Use a branch or worktree only when isolation materially helps; merge verified work back to `main` immediately, then remove the temporary state. Build and deploy from `main`.
-
-Stage only files owned by the active Bead. Preserve unrelated work already present in the tree.
-
-## Validation
-
-`docs/TEST_STRATEGY.md` states the rule a test must satisfy to earn its place, which layer owns which behaviour, and how these gates are split across CI; read it before adding or deleting a test.
-
-Run the gates relevant to the changed area:
-
-```bash
-# Embedded product build
-npm ci --prefix dashboard
-./scripts/build-embedded-dashboard.sh
-python3 scripts/check-embedded-dashboard.py
-
-# Go server
-cd src
-test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
-GOTOOLCHAIN=go1.26.6 go vet ./...
-GOTOOLCHAIN=go1.26.6 go test -race ./...
-
-# Dashboard
-cd dashboard
-npm run lint
-npm run test:unit
-npm test
-
-# Integrated and source contracts
-cd ..
-./scripts/test-built-server-contract.sh
-python3 scripts/doc-lint.py
-python3 scripts/host-neutrality.py
-git diff --check
-```
-
-CI validates pushes and pull requests targeting `main` or `master`. Documentation
-changes on the explicit allowlist run document and host-neutrality checks; other
-changes run the five product jobs, including installer smoke against the stamped
-binary. Manual `workflow_dispatch` always runs the full product checks.
-
-Read `CONTRIBUTING.md` when reproducing CI or collecting exact-commit evidence.
-A documentation-only success does not prove the built product. Before deployment,
-require full-product success for the candidate commit. Runtime deployment is
-separate and requires the operator-approved local target. When changing the
-installer, run its smoke in both source and binary modes locally.
+Deployment to the established internal target requires full-product success for the candidate commit. For installer changes, the source-mode and binary-mode smoke checks exercise distinct installation paths.
