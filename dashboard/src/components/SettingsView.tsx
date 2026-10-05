@@ -16,9 +16,6 @@ function normalizeProjectPath(path: string): string {
   return trimmed.replace(/\/+$/, '')
 }
 
-// Sessions the server refuses to destroy, whatever the dashboard asks.
-const PROTECTED_SESSIONS = new Set(['chrote-chat'])
-
 function SettingsView() {
   const { settings, updateSettings, terminalUsers, sessions, refreshSessions, workspaceIds } = useSession()
   const { announce } = useStatus()
@@ -149,8 +146,6 @@ function SettingsView() {
   // The button that destroys is the button that asks. A first press arms it and
   // names what is at stake; a second within three seconds runs it.
   const nuke = useConfirmInPlace(() => { void nukeAllSessions() })
-  const protectedNames = sessions.map(session => session.name).filter(name => PROTECTED_SESSIONS.has(name))
-  const killableCount = sessions.length - protectedNames.length
 
   return (
     <div className="settings-view">
@@ -428,12 +423,9 @@ function SettingsView() {
           {nuking
             ? 'Nuking…'
             : nuke.armed
-              ? `Confirm: destroy ${killableCount} session${killableCount === 1 ? '' : 's'}`
+              ? `Confirm: destroy ${sessions.length} session${sessions.length === 1 ? '' : 's'}`
               : 'Nuke All sessions'}
         </button>
-        {nuke.armed && protectedNames.length > 0 && (
-          <p className="settings-hint">Preserved: {protectedNames.join(', ')}</p>
-        )}
       </section>
 
       {/* Beads Projects Section */}
