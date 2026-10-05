@@ -2,8 +2,8 @@
  * A tab keeps the work the operator left in it (bead: chrote-5grx.73).
  *
  * The browser is the point here. Three real tab switches prove that local
- * selection survives, the front resident alone owns the keyboard, and no
- * view asks the server for the same data again on return.
+ * selection survives, the front resident alone owns the keyboard, and loaded
+ * content is retained while Beads checks discovery and freshness on return.
  */
 
 import { test, expect, type Page } from './fixtures'
@@ -54,7 +54,6 @@ test('returns to Beads, Library and Agents exactly as they were left', async ({ 
     if (request.method() !== 'GET') return
     const url = new URL(request.url())
     if (![
-      '/api/workspaces',
       '/api/residents',
       '/api/beads/work',
       '/api/beads/issue',
@@ -131,7 +130,20 @@ test('returns to Beads, Library and Agents exactly as they were left', async ({ 
 
   const readsBeforeReturn = new Map(reads)
 
+  // Returning to Beads rechecks host discovery and source state. Complete those
+  // checks before proving that unchanged work and the open card were not read again.
+  const resumedDiscovery = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return response.status() === 200 && url.pathname === '/api/workspaces' && url.searchParams.get('beads') === '1'
+  })
+  const resumedState = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return response.status() === 200 && url.pathname === '/api/beads/state' &&
+      url.searchParams.getAll('path').includes('/code/another-project')
+  })
   await page.getByRole('button', { name: 'Beads', exact: true }).click()
+  const returnChecks = await Promise.all([resumedDiscovery, resumedState])
+  await Promise.all(returnChecks.map(response => response.finished()))
   await expect(page.getByRole('complementary', { name: 'Bead test-ep1.1' })).toContainText('Fix login bug')
 
   await page.getByRole('button', { name: 'Library', exact: true }).click()

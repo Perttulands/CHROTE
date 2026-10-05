@@ -1,5 +1,6 @@
 import { Page, Route } from '@playwright/test'
 import type { AgentEvent, SessionsResponse, TmuxSession } from '../src/types'
+import type { BeadProject } from '../src/beads/beadsApi'
 import { DEFAULT_THEME } from '../src/theme/theme'
 
 const fileResourcesPattern = /.*\/api\/files\/resources(?:\/.*)?$/
@@ -702,11 +703,24 @@ export async function mockBeadsApiRoutes(page: Page, options?: {
 
   await page.route('**/api/beads/state**', async route => {
     const paths = new URL(route.request().url()).searchParams.getAll('path')
-    const projects = (options?.projectsResponse ?? mockBeadsProjects) as typeof mockBeadsProjects
+    const projects = (options?.projectsResponse ?? mockBeadsProjects) as { data: { projects: BeadProject[] } }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(envelope({
       stores: paths.map(path => {
         const project = projects.data.projects.find(project => project.path === path)
-        return { ...project, path, pending: false, availableGeneration: project?.error ? undefined : 'mock-one' }
+        if (project?.error) return { path, pending: false, error: project.error }
+        // A successful snapshot includes counts even when the identity catalog
+        // has not listed the store. Quiet workspaces are authoritative zeroes.
+        const workspace = mockWorkspaces.find(workspace => workspace.path === path)
+        const counts = project?.counts ?? workspace?.beadsCounts ?? {
+          status: { open: 0, inProgress: 0, blocked: 0, closed: 0, deferred: 0 },
+          type: { epic: 0, task: 0, bug: 0, feature: 0, decision: 0, chore: 0 },
+        }
+        return {
+          path, pending: false, availableGeneration: 'mock-one', observedGeneration: 'mock-one', counts,
+          openBeads: project?.openBeads ?? workspace?.openBeads ??
+            counts.status.open + counts.status.inProgress + counts.status.blocked + counts.status.deferred,
+          newestUpdate: project?.newestUpdate ?? workspace?.beadsNewestUpdate,
+        }
       }),
     })) })
   })
