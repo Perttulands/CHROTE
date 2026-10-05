@@ -106,36 +106,21 @@ function TerminalsSection() {
       <p className="help-intro">Each workspace has up to 4 panes in a responsive grid.</p>
 
       <div className="help-card">
-        <h3>Three Workspaces</h3>
+        <h3>Independent Workspaces</h3>
         <p>
-          <strong>Terminal</strong>, <strong>Terminal 2</strong>, and <strong>Terminal 3</strong> are independent.
-          Each has its own set of 4 panes with different sessions bound.
+          Choose 1 to 6 terminal workspaces in Settings. Each has its own layout and bound sessions.
           Use the visible tab bar to switch between them.
         </p>
       </div>
 
       <div className="help-card">
-        <h3>Pane Controls</h3>
+        <h3>Terminal Tab Menu</h3>
         <div className="help-control-list">
-          <div className="help-control-item">
-            <span className="help-control-icon">&#x25A1;</span>
-            <div>
-              <strong>Pop Out</strong>
-              <p>Open terminal in a floating window.</p>
-            </div>
-          </div>
           <div className="help-control-item">
             <span className="help-control-icon">&#x2715;</span>
             <div>
-              <strong>Clear</strong>
-              <p>Unbind sessions from this pane (doesn't kill them).</p>
-            </div>
-          </div>
-          <div className="help-control-item">
-            <span className="help-control-icon">&#x21BB;</span>
-            <div>
-              <strong>Cycle</strong>
-              <p>When multiple sessions are bound, cycle through them.</p>
+              <strong>Clear tab assignments</strong>
+              <p>Open the terminal tab's menu to unbind its sessions without killing them.</p>
             </div>
           </div>
         </div>
@@ -147,31 +132,7 @@ function TerminalsSection() {
         <ul className="help-list">
           <li><strong>Click a tag</strong> - Switch to that session</li>
           <li><strong>Drag a tag</strong> - Move to another pane</li>
-          <li><strong>Drag outside</strong> - Unbind from pane</li>
         </ul>
-      </div>
-
-      <div className="help-card">
-        <h3>Watch vs Control Mode</h3>
-        <div className="help-control-list">
-          <div className="help-control-item">
-            <span className="help-control-icon">&#x1F441;</span>
-            <div>
-              <strong>Watch Mode (default)</strong>
-              <p>See output, scroll freely. Keyboard input disabled.</p>
-            </div>
-          </div>
-          <div className="help-control-item">
-            <span className="help-control-icon">&#x2328;</span>
-            <div>
-              <strong>Control Mode</strong>
-              <p>Click the pane to enable input. Type directly into tmux.</p>
-            </div>
-          </div>
-        </div>
-        <p style={{ marginTop: '1rem', opacity: 0.8 }}>
-          Watch mode is default because agents don't like surprise keyboard input.
-        </p>
       </div>
     </div>
   )
@@ -246,28 +207,7 @@ function FilesSection() {
   return (
     <div className="help-section-content">
       <h2>File Browser</h2>
-      <p className="help-intro">Browse files on the server. Read-only for /vault.</p>
-
-      <div className="help-card">
-        <h3>Available Paths</h3>
-        <div className="help-shortcuts-table">
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <code>/code</code>
-            </div>
-            <span>Project files (read/write)</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <code>/vault</code>
-            </div>
-            <span>Reference files (read-only)</span>
-          </div>
-        </div>
-        <p style={{ marginTop: '1rem', opacity: 0.8 }}>
-          All other paths are restricted for security.
-        </p>
-      </div>
+      <p className="help-intro">Browse files under the server's configured roots. Unix permissions determine what you can read and write.</p>
 
       <div className="help-card">
         <h3>Features</h3>
@@ -283,7 +223,7 @@ function FilesSection() {
             <span className="help-control-icon">&#x1F4C4;</span>
             <div>
               <strong>View</strong>
-              <p>Click files to preview with syntax highlighting.</p>
+              <p>Click files to preview them.</p>
             </div>
           </div>
           <div className="help-control-item">
@@ -303,7 +243,7 @@ function TmuxSection() {
   return (
     <div className="help-section-content">
       <h2>tmux Reference</h2>
-      <p className="help-intro">Useful when you're in control mode. Prefix is <kbd>Ctrl</kbd> + <kbd>B</kbd>.</p>
+      <p className="help-intro">Use these keys in a focused terminal. Prefix is <kbd>Ctrl</kbd> + <kbd>B</kbd>.</p>
 
       <div className="help-card">
         <h3>Scrolling & Copy</h3>
@@ -417,7 +357,7 @@ function TmuxSection() {
         <h3>Pro Tip</h3>
         <p>
           Hold <kbd>Shift</kbd> while selecting text with your mouse to bypass tmux
-          and use native browser copy. Works in watch mode too.
+          and use native browser copy.
         </p>
       </div>
     </div>
