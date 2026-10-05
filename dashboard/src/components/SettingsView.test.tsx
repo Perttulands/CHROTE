@@ -194,7 +194,7 @@ describe('SettingsView terminal launch users', () => {
   // Bulk destruction lives here, and the byte-exact confirmation header is the
   // only thing standing between a stray click and every live tmux session. The
   // browser spec that used to pin it is gone; this owns it now.
-  it('arms in place, names what is preserved, and only then sends DELETE with the exact confirmation header', async () => {
+  it('arms in place, counts every session, and only then sends DELETE with the exact confirmation header', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('') })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -211,8 +211,7 @@ describe('SettingsView terminal launch users', () => {
     const nukeButton = screen.getByRole('button', { name: /Nuke All/i })
     fireEvent.click(nukeButton)
 
-    expect(nukeButton).toHaveTextContent('Confirm: destroy 1 session')
-    expect(screen.getByText(/Preserved: chrote-chat/)).toBeInTheDocument()
+    expect(nukeButton).toHaveTextContent('Confirm: destroy 2 sessions')
     expect(fetchMock).not.toHaveBeenCalled()
 
     fireEvent.click(nukeButton)

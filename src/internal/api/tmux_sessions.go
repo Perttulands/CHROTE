@@ -899,9 +899,6 @@ func (h *TmuxHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// protectedSessions is the list of sessions that should not be killed by nuke
-var protectedSessions = map[string]bool{}
-
 // DeleteAllSessions handles DELETE /api/tmux/sessions/all
 func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) {
 	// Verify the request came from the dashboard UI
@@ -919,17 +916,12 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 	// Get list of all sessions first.
 	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_name}")
 	var sessionNames []string
-	var protectedNames []string
 	if err == nil {
 		lines := strings.Split(strings.TrimSpace(output), "\n")
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if line != "" {
-				if protectedSessions[line] {
-					protectedNames = append(protectedNames, line)
-				} else {
-					sessionNames = append(sessionNames, line)
-				}
+				sessionNames = append(sessionNames, line)
 			}
 		}
 	} else if !isTmuxNoServerErrorForSocket(tmuxErrorDiagnostic(err), target.socket) {
@@ -941,14 +933,14 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"success":   true,
 			"killed":    0,
-			"protected": protectedNames,
-			"message":   "No sessions to kill (protected sessions preserved)",
+			"protected": nil,
+			"message":   "No sessions to kill",
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		})
 		return
 	}
 
-	// Kill each session individually instead of kill-server to preserve protected sessions
+	// Kill each session individually.
 	var killed []string
 	var errors []string
 	for _, name := range sessionNames {
@@ -964,7 +956,7 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 		"success":   len(errors) == 0,
 		"killed":    len(killed),
 		"sessions":  killed,
-		"protected": protectedNames,
+		"protected": nil,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	}
 	if len(errors) > 0 {

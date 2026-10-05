@@ -829,7 +829,8 @@ func TestAPIEnvelopeContract_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.T)
 
 func TestTmuxHandler_DeleteAllSessionsRequiresExactNukeConfirmationHeader(t *testing.T) {
 	_, argsPath := installFakeTmux(t)
-	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a,build=/tmp/tmux-b")
+	t.Setenv("TMUX_BULK_SESSION_NAMES", "shell\nchrote-chat")
 	handler := NewTmuxHandler()
 
 	tests := []struct {
@@ -866,9 +867,9 @@ func TestTmuxHandler_DeleteAllSessionsRequiresExactNukeConfirmationHeader(t *tes
 			headerValue: "DASHBOARD-NUKE-CONFIRMED",
 			wantStatus:  http.StatusOK,
 			wantCalls: []string{
-				"-S /tmp/tmux-a list-sessions -F #{session_name}",
-				"-S /tmp/tmux-a kill-session -t alpha",
-				"-S /tmp/tmux-a kill-session -t beta",
+				"-S /tmp/tmux-b list-sessions -F #{session_name}",
+				"-S /tmp/tmux-b kill-session -t shell",
+				"-S /tmp/tmux-b kill-session -t chrote-chat",
 			},
 		},
 	}
@@ -878,7 +879,7 @@ func TestTmuxHandler_DeleteAllSessionsRequiresExactNukeConfirmationHeader(t *tes
 			if err := os.WriteFile(argsPath, nil, 0600); err != nil {
 				t.Fatalf("reset tmux args: %v", err)
 			}
-			req := httptest.NewRequest(http.MethodDelete, "/api/tmux/sessions/all", nil)
+			req := httptest.NewRequest(http.MethodDelete, "/api/tmux/sessions/all?unixUser=build", nil)
 			if tt.headerValue != "" {
 				req.Header.Set("X-Nuke-Confirm", tt.headerValue)
 			}
@@ -891,6 +892,11 @@ func TestTmuxHandler_DeleteAllSessionsRequiresExactNukeConfirmationHeader(t *tes
 			}
 			if gotCalls := readFakeCommandCalls(t, argsPath); !reflect.DeepEqual(gotCalls, tt.wantCalls) {
 				t.Fatalf("tmux calls = %#v, want %#v", gotCalls, tt.wantCalls)
+			}
+			if rec.Code == http.StatusOK {
+				if protected, exists := decodeJSONMap(t, rec)["protected"]; !exists || protected != nil {
+					t.Fatalf("protected = %#v (present=%v), want the existing null response field", protected, exists)
+				}
 			}
 		})
 	}
@@ -915,7 +921,8 @@ case "$*" in
     printf 'alpha:1:0\nbeta:2:1\n'
     ;;
   "list-sessions -F #{session_name}")
-    printf 'alpha\nbeta\n'
+    printf '%s\n' "${TMUX_BULK_SESSION_NAMES-alpha
+beta}"
     ;;
   capture-pane*)
     printf 'line one\nline two\n'
