@@ -39,6 +39,64 @@ test.describe('Beads', () => {
     await page.waitForSelector('.dashboard')
   })
 
+  test('updates live work and the open card without remounting the folded map or repeating unchanged projections', async ({ page }) => {
+    let generation = 'one'
+    let workReads = 0
+    let cardReads = 0
+    let stateChecks = 0
+    await page.route('**/api/beads/state**', async route => {
+      const paths = new URL(route.request().url()).searchParams.getAll('path')
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, data: {
+        stores: paths.map(path => ({ path, availableGeneration: generation, observedGeneration: generation, pending: false })),
+      } }) })
+      stateChecks += 1
+    })
+    await page.route('**/api/beads/work?*', async route => {
+      const path = new URL(route.request().url()).searchParams.get('path')
+      if (path !== '/code/test-project') { await route.fallback(); return }
+      workReads += 1
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, data: {
+        ...mockBeadsWork.data,
+        beads: mockBeadsWork.data.beads.map(row => row.id === 'test-ep1'
+          ? { ...row, title: generation === 'one' ? row.title : 'One interaction language refreshed' } : row),
+        state: { path, availableGeneration: generation, observedGeneration: generation, pending: false },
+      } }) })
+    })
+    await page.route('**/api/beads/issue?*', async route => {
+      const url = new URL(route.request().url())
+      if (url.searchParams.get('id') !== 'test-ep1') { await route.fallback(); return }
+      cardReads += 1
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, data: {
+        bead: { id: 'test-ep1', title: generation === 'one' ? 'One interaction language' : 'One interaction language refreshed',
+          status: 'open', type: 'epic', priority: 1, description: `Current description ${generation}`,
+          parents: [], children: [], blockedBy: [], blocks: [] },
+        projectPath: '/code/test-project',
+        state: { path: '/code/test-project', availableGeneration: generation, observedGeneration: generation, pending: false },
+      } }) })
+    })
+    await openBeadsTab(page)
+    const epic = page.locator('.bead-row[data-ui="beads.row"]', { hasText: 'One interaction language' })
+    await expect(epic.locator('.bead-row-fold')).toHaveText('▾3')
+    await epic.locator('.bead-row-title').click()
+    await expect(epic.locator('.bead-row-fold')).toHaveText('▸3')
+    await expect(page.locator('.bead-card')).toContainText('Current description one')
+    await page.locator('.bead-map').evaluate(node => { node.setAttribute('data-retained-proof', 'yes') })
+    const checksBefore = stateChecks
+    await expect.poll(() => stateChecks).toBeGreaterThan(checksBefore)
+    expect(workReads).toBe(1)
+    expect(cardReads).toBe(1)
+    generation = 'two'
+    await expect(page.locator('.bead-card-title')).toHaveText('One interaction language refreshed')
+    await expect(page.locator('.bead-card')).toContainText('Current description two')
+    await expect(epic.locator('.bead-row-fold')).toHaveText('▸3')
+    await expect(page.locator('.bead-map')).toHaveAttribute('data-retained-proof', 'yes')
+    await page.fill('.beads-search', 'interaction')
+    generation = 'three'
+    await expect(page.locator('.bead-card')).toContainText('Current description three')
+    await expect(page.locator('.beads-search')).toHaveValue('interaction')
+    await expect(page.getByRole('complementary', { name: 'Bead test-ep1' })).toBeVisible()
+  })
+
   // Real font and grid geometry own this regression: long titles must wrap
   // inside the space left by both side columns, including after a resize.
   test('keeps long Open titles readable beside the table and Clerk', async ({ page }, testInfo) => {
@@ -200,8 +258,8 @@ test.describe('Beads', () => {
     await expect(table.locator('.bead-card-title')).toHaveText('Fix login bug')
     await expect(table).toContainText('A login survives a reload.')
     await expect(table.locator('.bead-card-fields')).toContainText('test-ep1')
-    // Vite's development StrictMode replays the one reader's mount effect.
-    expect(detailReads).toBe(2)
+    // StrictMode and retained surfaces share one applied card projection.
+    expect(detailReads).toBe(1)
 
     // Read the clipboard result; announcement emission belongs to the unit tests.
     await table.getByRole('button', { name: 'Copy id' }).click()
@@ -228,7 +286,7 @@ test.describe('Beads', () => {
     await page.keyboard.press('Alt+1')
     const column = page.locator('.terminal-workspace-dock[data-active="true"] .table-column')
     await expect(column.locator('.bead-card-id')).toHaveText('test-ep1.1')
-    expect(detailReads).toBe(2)
+    expect(detailReads).toBe(1)
     const gridAfter = await box(grid)
     const columnBox = await box(column)
     expect(gridAfter.width).toBeLessThan(gridBefore.width)

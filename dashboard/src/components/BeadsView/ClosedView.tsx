@@ -10,11 +10,12 @@ export interface ClosedFailure {
 
 interface ClosedViewProps {
   rows: WorkRow[]
+  incomplete?: boolean
   failures: ClosedFailure[]
   query: string
 }
 
-export default function ClosedView({ rows, failures, query }: ClosedViewProps) {
+export default function ClosedView({ rows, failures, query, incomplete }: ClosedViewProps) {
   const groups = new Map<string, WorkRow[]>()
   rows.forEach(row => {
     const group = groups.get(row.projectPath) ?? []
@@ -33,7 +34,7 @@ export default function ClosedView({ rows, failures, query }: ClosedViewProps) {
           ))}
         </div>
       )}
-      {rows.length === 0 && (
+      {rows.length === 0 && !incomplete && (
         <p className="beads-empty">
           {query.trim() === '' ? 'No closed Beads in this scope.' : `No closed Beads match "${query.trim()}".`}
         </p>

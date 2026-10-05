@@ -18,10 +18,11 @@ import { copyAndAnnounce } from '../utils/clipboard'
 import { registerChords, type Chord } from '../keys/chords'
 import { backInBeadCard, closeBeadCard, followBeadFromCard, useBeadCardRequest } from '../beads/beadCard'
 import { beadIdPattern, beadProjectPath, ensureBeadProjects } from '../beads/beadIds'
-import type { BeadDetail, BeadLink } from '../beads/beadsApi'
-import { knownBead, readBead } from '../beads/knownBeads'
+import type { BeadLink } from '../beads/beadsApi'
+import { knownBead } from '../beads/knownBeads'
+import { beadStoreRead, useBeadsRead } from '../beads/beadsRead'
 import { beadReference } from '../beads/beadReference'
-import { beadGlyph, beadStatusLabel, formatBeadTime, isBeadClosed } from '../beads/beadStatus'
+import { currentBead, beadGlyph, beadStatusLabel, formatBeadTime, isBeadClosed } from '../beads/beadStatus'
 import BeadTypeLabel from './BeadTypeLabel'
 import { nameBeadOnTable } from '../context/TableContext'
 import { useResidentPresent } from '../residents/residentPresence'
@@ -68,12 +69,10 @@ export default function BeadCard({ onOpenInBeads, active = true }: BeadCardProps
   // The store an id was found in when no caller named one, once the project
   // list has been read for it.
   const [resolved, setResolved] = useState<{ id: string; path: string } | null>(null)
-  const [fetched, setFetched] = useState<{ key: string; bead: BeadDetail } | null>(null)
   const [failure, setFailure] = useState<{ id: string; message: string } | null>(null)
   // In a tab with a resident, Alt+S is the resident's: it pastes the Bead into
   // that prompt. The card's Send stays a word for every other session.
   const residentPresent = useResidentPresent()
-  const [loading, setLoading] = useState(false)
 
   const manualPaths = useMemo(() => settings.beadsProjectPaths || [], [settings.beadsProjectPaths])
   const id = request?.id ?? null
@@ -82,44 +81,32 @@ export default function BeadCard({ onOpenInBeads, active = true }: BeadCardProps
     ? request?.projectPath ?? beadProjectPath(id) ?? (resolved?.id === id ? resolved.path : null)
     : null
 
-  // Everything drawn is keyed on the Bead in hand, so a card whose id changes
-  // can never show the one before it: what does not match the key is not
-  // drawn. Until the server answers, the card is what the map already said,
-  // read once per Bead so the seed keeps its identity across renders.
-  const key = id && projectPath ? `${projectPath} ${id}` : null
-  const known = useMemo(() => (id && projectPath ? knownBead(projectPath, id) : null), [id, projectPath])
-  const bead = fetched?.key === key ? fetched.bead : known?.bead ?? null
-  const complete = fetched?.key === key || known?.complete === true
-  const error = failure?.id === id ? failure.message : null
+  const readRevision = useBeadsRead({ paths: projectPath ? [projectPath] : [],
+    ...(id && projectPath ? { card: { path: projectPath, id } } : {}),
+  }, active && !!id && !!projectPath)
+  const known = useMemo(() => id && projectPath ? knownBead(projectPath, id) : null, [id, projectPath, readRevision])
+  const projection = id && projectPath ? beadStoreRead(projectPath)?.cards.get(id) : undefined
+  const source = projectPath ? beadStoreRead(projectPath)?.state : undefined
+  const remembered = known?.bead ?? projection?.data
+  const bead = remembered ? currentBead(remembered) : null
+  const complete = known?.complete === true
+  const error = (failure?.id === id ? failure.message : null) || projection?.error || source?.error
+  const loading = !!id && (!projectPath || !!projection?.loading || !projection?.data && !projection?.error)
 
-  // Every open reads the card from the server, whether or not the session
-  // already holds it: a remembered card is shown at once and refreshed behind.
   useEffect(() => {
-    if (!id) return
+    if (!active || !id || request?.projectPath || beadProjectPath(id)) return
     let current = true
-    setLoading(true)
     setFailure(null)
-    const resolve = async () => {
-      const named = request?.projectPath ?? beadProjectPath(id)
-      if (named) return named
-      await ensureBeadProjects(manualPaths)
-      return beadProjectPath(id)
-    }
-    resolve()
-      .then(async path => {
-        if (!path) throw new Error(`No configured Beads project owns ${id}`)
-        if (current) setResolved({ id, path })
-        const detail = await readBead(path, id)
-        if (current) setFetched({ key: `${path} ${id}`, bead: detail })
-        if (current) nameBeadOnTable(detail.id, detail.title)
-      })
-      .catch((cause: unknown) => {
-        if (!current) return
-        setFailure({ id, message: cause instanceof Error ? cause.message : `Could not read ${id}` })
-      })
-      .finally(() => { if (current) setLoading(false) })
+    void ensureBeadProjects(manualPaths).then(() => {
+      if (!current) return
+      const path = beadProjectPath(id)
+      if (path) setResolved({ id, path })
+      else setFailure({ id, message: `No configured Beads project owns ${id}` })
+    })
     return () => { current = false }
-  }, [id, request?.nonce, request?.projectPath, manualPaths])
+  }, [active, id, request?.nonce, request?.projectPath, manualPaths])
+
+  useEffect(() => { if (bead) nameBeadOnTable(bead.id, bead.title) }, [bead])
 
   // A link followed from the card extends the trail, so Back and Escape can
   // retrace it; the trail is the table's, and outlives this mount.
@@ -206,7 +193,9 @@ export default function BeadCard({ onOpenInBeads, active = true }: BeadCardProps
           )}
         </p>
         {loading && !bead && <p className="bead-card-note">Reading {request.id}…</p>}
-        {error && <p className="bead-card-error">{error}</p>}
+        {error && <p className="bead-card-error">{bead ? 'Last successful read · ' : ''}{error}</p>}
+        {bead && source?.pending && <p className="bead-card-note">Refreshing · showing the last successful read</p>}
+        {bead && isBeadClosed(bead.status) && <p className="bead-card-note">This Bead is closed. Your reading context remains here.</p>}
         {bead && (
           <>
             <h2 className="bead-card-title">{bead.title}</h2>

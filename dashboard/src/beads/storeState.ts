@@ -82,7 +82,7 @@ export interface StoreStateInput {
  * because with no projection there is nothing else true to say about it.
  */
 export function storeWarnings(store: StoreStateInput, now: number = Date.now()): StoreWarning[] {
-  if (store.error) return [{ kind: 'unreadable', text: `Store unreadable · ${store.error}` }]
+  if (store.error) return [{ kind: 'unreadable', text: `${store.counts ? 'Last successful read · refresh failed' : 'Store unreadable'} · ${store.error}` }]
   const warnings: StoreWarning[] = []
   const age = daysSince(store.newestUpdate, now)
   if (age >= STORE_STALE_DAYS) {

@@ -1,9 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TableHost, TableSlot } from './TableHost'
 import { TableProvider, clearTable, putOnTable, readTable, resetTableForTest } from '../context/TableContext'
 import { openBeadCard } from '../beads/beadCard'
 import { resetBeadProjectsForTest, setBeadProjects } from '../beads/beadIds'
+import { resetBeadsReadForTest } from '../beads/beadsRead'
 import { resetKnownBeadsForTest } from '../beads/knownBeads'
 import { openAgentContext } from '../agents/agentContextPanel'
 import { resetChordsForTest } from '../keys/chords'
@@ -28,6 +29,8 @@ vi.mock('../context/SessionContext', () => ({
 vi.mock('../context/StatusContext', () => ({ useStatus: () => ({ announce: vi.fn() }) }))
 vi.mock('../beads/beadsApi', () => ({
   fetchBeadProjects: () => Promise.resolve([]),
+  fetchBeadStates: (paths: string[]) => Promise.resolve(paths.map(path => ({ path, pending: false, availableGeneration: 'one' }))),
+  fetchBeadSnapshot: async (path: string, id: string) => ({ bead: await api.fetchBead(path, id), projectPath: path }),
   fetchBead: (...args: unknown[]) => api.fetchBead(...args),
 }))
 vi.mock('./FilesView/fileService', async () => ({
@@ -54,6 +57,7 @@ function Dashboard({ tab, oldSlot = true }: { tab: 'first' | 'second' | 'unsuppo
 }
 
 beforeEach(() => {
+  resetBeadsReadForTest()
   vi.clearAllMocks()
   api.fetchBead.mockImplementation((_path: string, id: string) => Promise.resolve({
     id, title: `Title ${id}`, status: 'open', type: 'task', priority: 1,
@@ -78,7 +82,7 @@ afterEach(() => {
 })
 
 describe('the persistent table', () => {
-  it('reads one Bead per selection, carries its trail across slots, and refreshes a new request', async () => {
+  it('reads one Bead per selection, carries its trail across slots, and checks freshness on return', async () => {
     const view = render(<Dashboard tab="first" />)
     act(() => openBeadCard('test-one', '/project'))
     await screen.findByText('Title test-one')
@@ -101,9 +105,10 @@ describe('the persistent table', () => {
     view.rerender(<Dashboard tab="first" />)
     fireEvent.click(screen.getByRole('button', { name: 'Back' }))
     await screen.findByText('Title test-one')
-    expect(api.fetchBead).toHaveBeenCalledTimes(3)
+    expect(api.fetchBead).toHaveBeenCalledTimes(2)
     act(() => openBeadCard('test-one', '/project'))
-    await waitFor(() => expect(api.fetchBead).toHaveBeenCalledTimes(4))
+    await act(async () => {})
+    expect(api.fetchBead).toHaveBeenCalledTimes(2)
   })
 
   it('keeps a file editor, draft and scroll through parking and slot retirement', async () => {

@@ -700,6 +700,17 @@ export async function mockBeadsApiRoutes(page: Page, options?: {
   // only shadow that one with an identical body. Register it only to override.
   if (options?.projectsResponse) await mockBeadsProjectsRoute(page, options.projectsResponse)
 
+  await page.route('**/api/beads/state**', async route => {
+    const paths = new URL(route.request().url()).searchParams.getAll('path')
+    const projects = (options?.projectsResponse ?? mockBeadsProjects) as typeof mockBeadsProjects
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(envelope({
+      stores: paths.map(path => {
+        const project = projects.data.projects.find(project => project.path === path)
+        return { ...project, path, pending: false, availableGeneration: project?.error ? undefined : 'mock-one' }
+      }),
+    })) })
+  })
+
   // Each store answers for itself: the second project is empty, so "All" is a
   // sum of stores rather than the same rows twice.
   await page.route('**/api/beads/work**', async route => {

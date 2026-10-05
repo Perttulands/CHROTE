@@ -35,9 +35,9 @@ describe('the store state projection', () => {
 })
 
 describe('the store warnings', () => {
-  it('says only that a store is unreadable, with the error the server gave', () => {
+  it('labels retained counts as a failed refresh, with the server error', () => {
     expect(storeWarnings({ error: 'permission denied', counts: counts({ blocked: 5 }) }, NOW)).toEqual([
-      { kind: 'unreadable', text: 'Store unreadable · permission denied' },
+      { kind: 'unreadable', text: 'Last successful read · refresh failed · permission denied' },
     ])
   })
 

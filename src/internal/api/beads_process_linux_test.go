@@ -90,12 +90,13 @@ func beadsProcessRunning(pid int) bool {
 	return len(fields) > 0 && fields[0] != "Z"
 }
 
-func startBeadsWork(h *BeadsHandler, ctx context.Context, project string) <-chan *httptest.ResponseRecorder {
-	done := make(chan *httptest.ResponseRecorder, 1)
+// Runner ownership is independent of HTTP subscribers: a store read must
+// outlive a disconnected consumer, while runBd must still own all descendants.
+func startBeadsCommand(h *BeadsHandler, ctx context.Context, project string) <-chan error {
+	done := make(chan error, 1)
 	go func() {
-		rec := httptest.NewRecorder()
-		h.Work(rec, httptest.NewRequest(http.MethodGet, "/api/beads/work?path="+project, nil).WithContext(ctx))
-		done <- rec
+		_, err := h.execBdIssues(ctx, project, "list", "--status", "all", "--limit", "0")
+		done <- err
 	}()
 	return done
 }
@@ -112,15 +113,15 @@ func TestBeadsCommandStopsDescendants(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			done := startBeadsWork(h, ctx, project)
+			done := startBeadsCommand(h, ctx, project)
 			awaitBeadsProcess(t, func() bool { return len(beadsFixturePIDs(t, dir)) == 1 })
 			if cause == "disconnect" {
 				cancel()
 			}
 			select {
-			case rec := <-done:
-				if rec.Code != http.StatusBadGateway {
-					t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			case err := <-done:
+				if err == nil {
+					t.Fatal("runner completed without its cancellation/pipe error")
 				}
 				want := "context canceled"
 				if cause == "deadline" {
@@ -129,8 +130,8 @@ func TestBeadsCommandStopsDescendants(t *testing.T) {
 				if cause == "wrapper_exit" {
 					want = "WaitDelay"
 				}
-				if !strings.Contains(rec.Body.String(), want) {
-					t.Fatalf("missing %q: %s", want, rec.Body.String())
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("missing %q: %v", want, err)
 				}
 			case <-time.After(2 * time.Second):
 				t.Fatal("handler remained blocked on a descendant after cancellation")
@@ -145,14 +146,14 @@ func TestBeadsCommandsShareLimitAndCanceledWaitersNeverStart(t *testing.T) {
 	h, project, dir := beadsProcessFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var work []<-chan *httptest.ResponseRecorder
+	var work []<-chan error
 	for i := 0; i < 4; i++ {
-		work = append(work, startBeadsWork(h, ctx, project))
+		work = append(work, startBeadsCommand(h, ctx, project))
 	}
 	awaitBeadsProcess(t, func() bool { return len(beadsFixturePIDs(t, dir)) >= 4 })
 	waitCtx, stopWaiting := context.WithCancel(context.Background())
 	defer stopWaiting()
-	waiting := startBeadsWork(h, waitCtx, project)
+	waiting := startBeadsCommand(h, waitCtx, project)
 	health := make(chan struct{})
 	go func() {
 		h.Health(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/beads/health", nil).WithContext(waitCtx))
@@ -208,5 +209,75 @@ func TestBeadsCommandsShareLimitAndCanceledWaitersNeverStart(t *testing.T) {
 	}
 	if got := len(beadsFixturePIDs(t, dir)); got != 5 {
 		t.Fatalf("launched %d commands; canceled waiters must never launch", got)
+	}
+}
+
+// Prefix catalog and snapshot background demand must together leave process
+// capacity for the selected store. This exercises the real runner, not a read
+// stub whose concurrency could bypass the four subprocess slots.
+func TestBeadsForegroundPromotionEscapesBackgroundCatalogAdmission(t *testing.T) {
+	h, project, dir := beadsProcessFixture(t)
+	paths := []string{filepath.Join(dir, "background-one"), filepath.Join(dir, "background-two")}
+	for _, path := range paths {
+		makeValidBeadsWorkspace(t, path)
+	}
+	catalogCtx, cancelCatalog := context.WithCancel(context.Background())
+	catalogDone := make(chan struct{})
+	projects := make([]map[string]interface{}, 12)
+	for i := range projects {
+		projects[i] = map[string]interface{}{"path": project}
+	}
+	go func() {
+		h.addProjectPrefixes(catalogCtx, projects)
+		close(catalogDone)
+	}()
+	t.Cleanup(func() {
+		cancelCatalog()
+		awaitReaderEvent(t, catalogDone)
+		h.stores.mu.Lock()
+		jobs := make([]*beadsStoreJob, 0)
+		for _, entry := range h.stores.entries {
+			if entry.job != nil {
+				entry.job.cancel()
+				jobs = append(jobs, entry.job)
+			}
+		}
+		h.stores.mu.Unlock()
+		for _, job := range jobs {
+			awaitReaderEvent(t, job.done)
+		}
+	})
+	awaitBeadsProcess(t, func() bool { return len(beadsFixturePIDs(t, dir)) == 2 })
+	initial := make(map[int]bool)
+	for _, pair := range beadsFixturePIDs(t, dir) {
+		initial[pair[0]] = true
+	}
+	for _, path := range paths {
+		_, _, _ = h.stores.get(context.Background(), path, storeReadDemand{})
+	}
+	h.stores.mu.Lock()
+	if h.stores.active != 2 || h.stores.background != 2 {
+		t.Errorf("fixture did not activate two background snapshot jobs")
+	}
+	h.stores.mu.Unlock()
+	// Promote the already active job waiting on optional admission. Its source
+	// read must enter a spare process slot without either prefix command ending.
+	selected := readerWork(h, paths[0], context.Background())
+	awaitBeadsProcess(t, func() bool { return len(beadsFixturePIDs(t, dir)) == 3 })
+	if len(h.execSlots) != 3 || len(h.optionalSlots) != 2 {
+		t.Fatalf("foreground did not reserve capacity: active=%d optional=%d", len(h.execSlots), len(h.optionalSlots))
+	}
+	for _, pair := range beadsFixturePIDs(t, dir) {
+		if !initial[pair[0]] {
+			if err := syscall.Kill(pair[1], syscall.SIGTERM); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if rec := awaitReaderEvent(t, selected); rec.Code != http.StatusOK {
+		t.Fatalf("selected project waited behind catalog demand: %s", rec.Body.String())
+	}
+	if got := len(beadsFixturePIDs(t, dir)); got != 3 {
+		t.Fatalf("selected demand duplicated the store job or admitted excess background commands: %d", got)
 	}
 }

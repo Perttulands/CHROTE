@@ -321,7 +321,6 @@ func (h *WorkspacesHandler) probeStores(entries []*workspaceEntry, waitForSummar
 			entry.BeadsSummaryPending = pending
 			if err != nil {
 				entry.BeadsError = err.Error()
-				return
 			}
 			if !ready {
 				return

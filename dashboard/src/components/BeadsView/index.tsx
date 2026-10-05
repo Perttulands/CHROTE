@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import ClosedView, { type ClosedFailure } from './ClosedView'
+import ClosedView from './ClosedView'
 import FlowView from './FlowView'
 import { FlowNavigationProvider } from './FlowNavigation'
 import MapView from './MapView'
@@ -26,10 +26,6 @@ import { tableReference, useTableObject } from '../../context/TableContext'
 import { refreshBeadProjects } from '../../beads/beadIds'
 import {
   fetchBeadProjectList,
-  fetchBeadProjects,
-  fetchBeadWork,
-  fetchBead,
-  fetchClosedBeadWork,
   fetchFormula,
   fetchFormulas,
   fetchMolecule,
@@ -41,7 +37,7 @@ import {
   type FormulaSummary,
   type MoleculeSummary,
 } from '../../beads/beadsApi'
-import { rememberBeadRows } from '../../beads/knownBeads'
+import { beadProjectSkeletons, beadRows, beadStoreRead, rememberedBeadProjects, rememberBeadProjects, readBeadDetail, refreshBeads, useBeadsRead } from '../../beads/beadsRead'
 import { flowComponent, flowComponentKey } from '../../beads/flowLayout'
 import {
   buildBeadMap,
@@ -52,7 +48,6 @@ import {
   staleRows,
   type WorkRow,
 } from '../../beads/beadsTree'
-import { isBeadClosed } from '../../beads/beadStatus'
 import { BEAD_SORTS, sortBeadRows, sortBeadTree, type BeadSort } from '../../beads/beadsSort'
 import type { BeadsViewSetting } from '../../types'
 import './BeadsView.css'
@@ -83,12 +78,6 @@ interface BeadsViewProps {
   active?: boolean
   /** A Bead the card asked to be shown here, in its own project. */
   reveal?: BeadsRevealRequest | null
-}
-
-interface ClosedSnapshot {
-  loading: boolean
-  rows: WorkRow[]
-  failures: ClosedFailure[]
 }
 
 interface TemplateCatalog {
@@ -172,7 +161,7 @@ function flowRowsFromDetail(snapshot: readonly WorkRow[], target: WorkRow, detai
     status: detail.status || target.status,
     type: detail.type || target.type,
     priority: detail.priority,
-    parent: target.parent || detail.parents[0]?.id,
+    parent: detail.parents[0]?.id,
     blockedBy: blockers,
     blocked: blockers.length > 0,
     linked: true,
@@ -194,18 +183,26 @@ function flowRowsFromDetail(snapshot: readonly WorkRow[], target: WorkRow, detai
   return [...rows.values()]
 }
 
-/** What one project's load says on the status line. */
-function projectTally(name: string, rows: { status: string }[]): string {
-  const open = rows.filter(row => !isBeadClosed(row.status) && row.status !== 'in_progress').length
-  const active = rows.filter(row => row.status === 'in_progress').length
-  return active > 0 ? `${name} ${open} open, ${active} in progress` : `${name} ${open} open`
+/** Join only changed project projections, so freshness checks do not relayout Flow. */
+function useScopeRows(projects: readonly BeadProject[], kind: 'work' | 'closed', currentOnly = false): WorkRow[] {
+  const groups = projects.map(project => {
+    const store = beadStoreRead(project.path)
+    return currentOnly && store?.[kind].generation !== store?.state?.availableGeneration
+      ? null : beadRows(project.path, project.prefix || project.name, kind)
+  }).filter((rows): rows is WorkRow[] => rows !== null)
+  const retained = useRef<{ groups: WorkRow[][]; rows: WorkRow[] }>({ groups: [], rows: [] })
+  if (groups.length !== retained.current.groups.length || groups.some((rows, index) => rows !== retained.current.groups[index])) {
+    retained.current = { groups, rows: groups.flat() }
+  }
+  return retained.current.rows
 }
 
 export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}) {
   const { settings, updateSettings } = useSession()
   const { announce } = useStatus()
-  const [projects, setProjects] = useState<BeadProject[]>([])
-  const [projectsReady, setProjectsReady] = useState(false)
+  const [listedProjects, setProjects] = useState<BeadProject[]>(() => beadProjectSkeletons(rememberedBeadProjects(), [
+    ...(settings.beadsProjectPaths || []), ...(settings.beadsSelectedProject && settings.beadsSelectedProject !== ALL_PROJECTS ? [settings.beadsSelectedProject] : []),
+  ]))
   const [projectsRefresh, setProjectsRefresh] = useState(0)
   const [projectsError, setProjectsError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string>(settings.beadsSelectedProject || ALL_PROJECTS)
@@ -215,14 +212,9 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<BeadSort>('default')
   const [staleDays, setStaleDays] = useState(DEFAULT_STALE_DAYS)
-  const [rows, setRows] = useState<WorkRow[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [quietShown, setQuietShown] = useState(false)
   const [flowReveal, setFlowReveal] = useState<FlowRevealRequest | null>(null)
   const [flowSupplements, setFlowSupplements] = useState<WorkRow[]>([])
-  const [closedCache, setClosedCache] = useState<Record<string, ClosedSnapshot>>({})
-  const closedRequested = useRef(new Set<string>())
   const [templateCatalogs, setTemplateCatalogs] = useState<Record<string, TemplateCatalog>>({})
   const templateCatalogRequested = useRef(new Set<string>())
   const [templateSelection, setTemplateSelection] = useState<TemplateSelection | null>(null)
@@ -236,177 +228,105 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
   const manualPaths = useMemo(() => settings.beadsProjectPaths || [], [settings.beadsProjectPaths])
 
   useEffect(() => {
+    if (!active) return
     let current = true
-    // Identities are independent of the all-issue counts projection. A failed
-    // count read must not erase a known manual store's terminal links.
-    void refreshBeadProjects(manualPaths).catch((cause: unknown) => {
+    const apply = (found: BeadProject[]) => {
+      if (!current) return
+      setProjects(previous => {
+        const skeletons = beadProjectSkeletons(found, manualPaths).map(project => {
+          const prior = previous.find(old => old.path === project.path)
+          return { ...prior, ...project, prefix: project.prefix || prior?.prefix }
+        })
+        rememberBeadProjects(skeletons)
+        return skeletons
+      })
+      setProjectsError(null)
+    }
+    // Publish the cheap host skeleton first. Identity enrichment (including
+    // manually configured stores) is independent of source snapshot reads.
+    void fetchBeadProjectList().then(found => {
+      apply(found.map(project => ({ ...listedProjects.find(old => old.path === project.path), ...project })))
+    }).catch((cause: unknown) => {
+      if (current) setProjectsError(errorMessage(cause, 'Could not list Beads projects'))
+    })
+    void refreshBeadProjects(manualPaths).then(found => {
+      if (current) setProjects(previous => {
+        const merged = beadProjectSkeletons(found.map(project => ({ ...previous.find(old => old.path === project.path), ...project })), manualPaths)
+        rememberBeadProjects(merged)
+        return merged
+      })
+    }).catch((cause: unknown) => {
       if (current) announce(`Bead links unavailable · ${errorMessage(cause, 'Could not discover Bead links')}`, 'error')
     })
-    fetchBeadProjectList()
-      .then(found => {
-        if (!current) return
-        setProjects(found)
-        setProjectsError(null)
-        if (found.length === 0) setLoading(false)
-
-        void fetchBeadProjects(manualPaths)
-          .then(detailed => {
-            if (!current) return
-            setProjects(detailed)
-            setProjectsReady(true)
-            setSelected(previous => {
-              if (previous === ALL_PROJECTS || detailed.some(project => project.path === previous)) return previous
-              updateSettings({ beadsSelectedProject: ALL_PROJECTS })
-              return ALL_PROJECTS
-            })
-          })
-          .catch((cause: unknown) => {
-            if (!current) return
-            setProjectsReady(true)
-            const message = cause instanceof Error ? cause.message : 'Could not read Beads counts'
-            announce(`Beads counts unavailable · ${message}`, 'error')
-          })
-      })
-      .catch((cause: unknown) => {
-        if (!current) return
-        setProjectsReady(true)
-        setProjectsError(cause instanceof Error ? cause.message : 'Could not list Beads projects')
-        setLoading(false)
-      })
     return () => { current = false }
-  }, [announce, manualPaths, projectsRefresh, updateSettings])
+    // The remembered list is a seed; source discovery follows visibility and settings.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, announce, manualPaths, projectsRefresh])
 
-  // A quiet store has nothing open: it is folded in the rail, and "All" does
-  // not ask it, because the answer is known to be empty.
-  const unreadableProjects = useMemo(() => projects.filter(project => !!project.error), [projects])
-  const readableProjects = useMemo(() => projects.filter(project => !project.error), [projects])
-  const openProjects = useMemo(() => readableProjects.filter(project => project.openBeads !== 0), [readableProjects])
-  const quietProjects = useMemo(() => readableProjects.filter(project => project.openBeads === 0), [readableProjects])
-  const closedMode = view === 'closed'
-  const selectedStore = useMemo(
-    () => (selected === ALL_PROJECTS ? null : projects.find(project => project.path === selected) ?? null),
-    [projects, selected],
-  )
-  const summariesPending = selected === ALL_PROJECTS && projects.some(project => project.summaryPending)
-  const chosen = useMemo(() => {
-    if (summariesPending) return []
-    return selected === ALL_PROJECTS ? openProjects : readableProjects.filter(project => project.path === selected)
-  }, [openProjects, readableProjects, selected, summariesPending])
-  const chosenRef = useRef(chosen)
-  const projectsRef = useRef(projects)
-  chosenRef.current = chosen
-  projectsRef.current = projects
-  const chosenKey = chosen.map(project => project.path).join('\u0000')
+  const scopePaths = useMemo(() => selected === ALL_PROJECTS
+    ? listedProjects.map(project => project.path) : [selected], [listedProjects, selected])
+  const readRevision = useBeadsRead({
+    paths: scopePaths, foreground: selected === ALL_PROJECTS ? [] : [selected],
+    work: true, closed: view === 'closed',
+  }, active)
+  const flowReadRevision = useBeadsRead({
+    paths: flowReveal ? [flowReveal.projectPath] : [],
+    ...(flowReveal ? { card: { path: flowReveal.projectPath, id: flowReveal.id } } : {}),
+  }, active && view === 'flow' && !!flowReveal)
+  const projects = useMemo(() => listedProjects.map(project => {
+    const state = beadStoreRead(project.path)?.state
+    return state ? {
+      ...project, state, counts: state.counts, openBeads: state.openBeads,
+      newestUpdate: state.newestUpdate, error: state.error, summaryPending: state.pending,
+    } : project
+  }), [listedProjects, readRevision])
+  const unreadableProjects = projects.filter(project => !!project.error && !project.state?.availableGeneration)
+  const readableProjects = projects.filter(project => !unreadableProjects.includes(project))
+  const openProjects = readableProjects.filter(project => project.openBeads !== 0)
+  const quietProjects = readableProjects.filter(project => project.openBeads === 0)
+  const selectedStore = selected === ALL_PROJECTS ? null : projects.find(project => project.path === selected) ?? null
   const selectedQuiet = quietProjects.find(project => project.path === selected)
-
+  const scoped = selected === ALL_PROJECTS ? projects : projects.filter(project => project.path === selected)
+  const rows = useScopeRows(scoped, 'work')
+  const loading = scoped.some(project => {
+    const store = beadStoreRead(project.path)
+    return !store?.work.data && !store?.work.error && !store?.state?.error
+  }) || (listedProjects.length === 0 && !projectsError)
+  const failures = scoped.flatMap(project => {
+    const store = beadStoreRead(project.path)
+    const message = store?.work.error || store?.state?.error || project.error
+    return message ? [{ projectName: project.prefix || project.name, message }] : []
+  })
+  const error = failures.map(failure => `${failure.projectName}: ${failure.message}`).join(' · ') || projectsError
+  const sourcePending = scoped.some(project => {
+    const store = beadStoreRead(project.path)
+    return project.state?.pending || store?.work.loading || !!store?.work.data && store.work.generation !== store.state?.availableGeneration
+  })
+  const incomplete = loading || scoped.some(project => !beadStoreRead(project.path)?.work.data)
+  const closedRows = useScopeRows(scoped, 'closed')
+  const closed = {
+    rows: closedRows,
+    loading: scoped.some(project => {
+      const store = beadStoreRead(project.path)
+      return !store?.closed.data && !store?.closed.error && !store?.state?.error
+    }),
+    failures: scoped.flatMap(project => {
+      const store = beadStoreRead(project.path)
+      const message = store?.closed.error || store?.state?.error || project.error
+      return message ? [{ projectName: project.prefix || project.name, message }] : []
+    }),
+  }
+  const reportRef = useRef('')
   useEffect(() => {
-    if (closedMode) return
-    if (projectsRef.current.length === 0) return
-    if (summariesPending) {
-      setLoading(true)
-      setError(null)
-      return
-    }
-    const loadProjects = chosenRef.current
-    if (loadProjects.length === 0) {
-      setRows([])
-      setLoading(false)
-      const selectedProject = projectsRef.current.find(project => project.path === selected)
-      setError(selectedProject?.error ?? null)
-      if (selectedProject?.error) {
-        announce(`Beads unavailable · ${selectedProject.prefix || selectedProject.name}: ${selectedProject.error}`, 'error')
-      }
-      return
-    }
-    let current = true
-    setLoading(true)
-    setError(null)
-    Promise.allSettled(loadProjects.map(async project => ({
-      project,
-      work: await fetchBeadWork(project.path),
-    })))
-      .then(settled => {
-        if (!current) return
-        const loaded = settled.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])
-        const failures = settled.flatMap((result, index) => {
-          if (result.status === 'fulfilled') return []
-          const project = loadProjects[index]
-          const message = result.reason instanceof Error ? result.reason.message : 'Could not read open work'
-          return [{ project, message }]
-        })
-        // The card opens from these rows before the server has answered.
-        loaded.forEach(({ project, work }) => rememberBeadRows(project.path, work.beads))
-        const all = loaded.flatMap(({ project, work }) => work.beads.map(bead => ({
-          ...bead,
-          projectPath: project.path,
-          projectName: project.name,
-        })))
-        setRows(all)
-        setLoading(false)
-        if (loaded.length > 0) {
-          const tally = loaded.map(({ project, work }) => projectTally(project.prefix || project.name, work.beads))
-          announce(`Beads loaded · ${tally.join(' · ')}`, 'info')
-        }
-        if (failures.length > 0) {
-          const failure = failures.map(({ project, message }) => `${project.prefix || project.name}: ${message}`).join(' · ')
-          announce(`Beads unavailable · ${failure}`, 'error')
-          if (loaded.length === 0) setError(failure)
-        }
-        const knownFailures = projectsRef.current.filter(project => !!project.error)
-        if (knownFailures.length > 0) {
-          const failure = knownFailures.map(project => `${project.prefix || project.name}: ${project.error}`).join(' · ')
-          announce(`Beads unavailable · ${failure}`, 'error')
-        }
-      })
-    return () => { current = false }
-  }, [announce, chosenKey, closedMode, selected, summariesPending])
-
-  // Closed is a separate read. The cache key is the operator's selected scope,
-  // so returning to it in this mounted tab does not run bd again.
-  useEffect(() => {
-    if (view !== 'closed' || !projectsReady || closedRequested.current.has(selected)) return
-    closedRequested.current.add(selected)
-    const loadProjects = selected === ALL_PROJECTS
-      ? readableProjects
-      : readableProjects.filter(project => project.path === selected)
-    const knownFailures = (selected === ALL_PROJECTS ? unreadableProjects : unreadableProjects.filter(project => project.path === selected))
-      .map(project => ({ projectName: project.prefix || project.name, message: project.error || 'Unreadable store' }))
-    setClosedCache(previous => ({
-      ...previous,
-      [selected]: { loading: true, rows: [], failures: knownFailures },
-    }))
-    void Promise.allSettled(loadProjects.map(async project => ({
-      project,
-      work: await fetchClosedBeadWork(project.path),
-    }))).then(settled => {
-      const loaded = settled.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])
-      const failures = settled.flatMap((result, index) => result.status === 'rejected'
-        ? [{
-            projectName: loadProjects[index].prefix || loadProjects[index].name,
-            message: errorMessage(result.reason, 'Could not read closed work'),
-          }]
-        : [])
-      loaded.forEach(({ project, work }) => rememberBeadRows(project.path, work.beads))
-      const closedRows = loaded.flatMap(({ project, work }) => work.beads.map(bead => ({
-        ...bead,
-        projectPath: project.path,
-        projectName: project.prefix || project.name,
-      })))
-      setClosedCache(previous => ({
-        ...previous,
-        [selected]: { loading: false, rows: closedRows, failures: [...knownFailures, ...failures] },
-      }))
-      if (failures.length > 0 || knownFailures.length > 0) {
-        const report = [...knownFailures, ...failures].map(failure => `${failure.projectName}: ${failure.message}`).join(' · ')
-        announce(`Closed Beads unavailable · ${report}`, 'error')
-      }
-    })
-  }, [announce, projectsReady, readableProjects, selected, unreadableProjects, view])
+    if (!error || reportRef.current === error) return
+    reportRef.current = error
+    announce(`Beads unavailable · ${error}`, 'error')
+  }, [announce, error])
 
   // Formula and molecule lists belong to one store. They load when the store
   // is selected, remain in the rail, and fail independently of open work.
   useEffect(() => {
-    if (!selectedStore || selectedStore.error || templateCatalogRequested.current.has(selectedStore.path)) return
+    if (!active || !selectedStore || selectedStore.error || !beadStoreRead(selectedStore.path)?.work.data || templateCatalogRequested.current.has(selectedStore.path)) return
     const path = selectedStore.path
     templateCatalogRequested.current.add(path)
     setTemplateCatalogs(previous => ({
@@ -429,7 +349,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
         },
       }))
     })
-  }, [selectedStore])
+  }, [active, readRevision, selectedStore])
 
   useEffect(() => {
     if (!reveal) return
@@ -441,24 +361,34 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
 
   const map = useMemo(() => sortBeadTree(filterBeadTree(buildBeadMap(rows), query), sort), [rows, query, sort])
   const matching = useMemo(() => filterBeadRows(rows, query), [rows, query])
-  const closed = closedCache[selected]
   const closedMatching = useMemo(() => sortBeadRows(filterBeadRows(closed?.rows ?? [], query), sort), [closed?.rows, query, sort])
-  const loadedClosedRows = useMemo(
-    () => Object.values(closedCache).flatMap(snapshot => snapshot.loading ? [] : snapshot.rows),
-    [closedCache],
-  )
+  const loadedClosedRows = useScopeRows(listedProjects, 'closed', true)
   const flowRows = useMemo(
-    () => mergeFlowRows(rows, loadedClosedRows, flowSupplements),
+    () => mergeFlowRows(flowSupplements, loadedClosedRows, rows),
     [flowSupplements, loadedClosedRows, rows],
   )
   const flowRowsRef = useRef(flowRows)
   flowRowsRef.current = flowRows
+  const flowDetailApplied = useRef<BeadDetail | null>(null)
+  useEffect(() => {
+    if (!flowReveal) return
+    const store = beadStoreRead(flowReveal.projectPath)
+    const card = store?.cards.get(flowReveal.id)
+    if (!card?.data || card.data === flowDetailApplied.current || card.generation !== store?.state?.availableGeneration) return
+    flowDetailApplied.current = card.data
+    const target = rows.find(row => row.projectPath === flowReveal.projectPath && row.id === flowReveal.id)
+      ?? flowSupplements.find(row => row.projectPath === flowReveal.projectPath && row.id === flowReveal.id)
+    if (target) setFlowSupplements(flowRowsFromDetail(rows, target, card.data))
+    // Data changes (including removed relations) replace this one-hop projection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flowReadRevision, flowReveal])
   const catalog = selectedStore ? templateCatalogs[selectedStore.path] : undefined
   const formulas = (catalog?.formulas ?? []).filter(formula => formulaName(formula) !== '')
   const protos = (catalog?.molecules ?? []).filter(molecule => moleculeID(molecule) !== '' && isTemplateProto(molecule))
   const molecules = (catalog?.molecules ?? []).filter(molecule => moleculeID(molecule) !== '' && !isTemplateProto(molecule))
   const selectProject = useCallback((path: string) => {
     setFlowReveal(null)
+    setFlowSupplements([])
     setTemplateSelection(null)
     setTemplateDetail(null)
     setSelected(path)
@@ -466,6 +396,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
   }, [updateSettings])
   const selectView = useCallback((next: BeadsTabView) => {
     setFlowReveal(null)
+    setFlowSupplements([])
     setTemplateSelection(null)
     setTemplateDetail(null)
     setView(next)
@@ -474,13 +405,13 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
   const openInFlow = useCallback((row: WorkRow) => {
     flowRequestNonce.current += 1
     const request = flowRequestNonce.current
-    void fetchBead(row.projectPath, row.id).then(detail => {
+    void readBeadDetail(row.projectPath, row.id).then(detail => {
       if (flowRequestNonce.current !== request) return
       const supplements = flowRowsFromDetail(flowRowsRef.current, row, detail)
       const nextRows = mergeFlowRows(flowRowsRef.current, supplements)
       const target = nextRows.find(candidate => candidate.projectPath === row.projectPath && candidate.id === row.id) ?? row
       const component = flowComponent(nextRows, target)
-      setFlowSupplements(previous => mergeFlowRows(previous, supplements))
+      setFlowSupplements(supplements)
       flowRevealNonce.current += 1
       setFlowReveal({
         projectPath: row.projectPath,
@@ -529,7 +460,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
         onWidthCommit={commitRailWidth}
       >
         <RailSection fill>
-        <button type="button" className="beads-refresh" onClick={() => setProjectsRefresh(value => value + 1)}>
+        <button type="button" className="beads-refresh" onClick={() => { refreshBeads(scopePaths); setProjectsRefresh(value => value + 1) }}>
           Refresh projects
         </button>
         {projectsError && <p className="beads-rail-error">{projectsError}</p>}
@@ -737,21 +668,23 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
               />
             )}
             {!templateSelection && view !== 'closed' && error && <p className="beads-error">{error}</p>}
-            {!templateSelection && view !== 'closed' && !error && loading && <p className="beads-empty">Reading Beads…</p>}
-            {!templateSelection && !error && !loading && view === 'map' && <MapView roots={map} expandAll={query.trim() !== ''} />}
-            {!templateSelection && !error && !loading && view === 'ready' && (
-              <ReadyView ready={sortBeadRows(readyRows(matching), sort)} inProgress={sortBeadRows(inProgressRows(matching), sort)} />
+            {!templateSelection && view === 'flow' && flowReveal && beadStoreRead(flowReveal.projectPath)?.cards.get(flowReveal.id)?.error && <p className="beads-error">Selected linked Bead unavailable · {beadStoreRead(flowReveal.projectPath)?.cards.get(flowReveal.id)?.error} · showing the last successful graph</p>}
+            {!templateSelection && view !== 'closed' && loading && <p className="beads-empty">Reading Beads… · {scoped.filter(project => !!beadStoreRead(project.path)?.work.data).length}/{scoped.length} stores loaded</p>}
+            {!templateSelection && !loading && sourcePending && <p className="beads-store-note">Refreshing Beads · showing the last successful read</p>}
+            {!templateSelection && view === 'map' && <MapView roots={map} expandAll={query.trim() !== ''} incomplete={incomplete} />}
+            {!templateSelection && view === 'ready' && (
+              <ReadyView incomplete={incomplete} ready={sortBeadRows(readyRows(matching), sort)} inProgress={sortBeadRows(inProgressRows(matching), sort)} />
             )}
             {/* The flow is a graph: search narrows the lists, not the drawing,
                 because a filtered graph loses the edges that explain it. */}
-            {!templateSelection && !error && !loading && view === 'flow' && <FlowView rows={flowRows} reveal={flowReveal} />}
-            {!templateSelection && !error && !loading && view === 'stale' && <StaleView rows={sortBeadRows(staleRows(matching, staleDays), sort)} />}
+            {!templateSelection && view === 'flow' && <FlowView rows={flowRows} reveal={flowReveal} scopeKey={selected} incomplete={incomplete} />}
+            {!templateSelection && view === 'stale' && <StaleView incomplete={incomplete} rows={sortBeadRows(staleRows(matching, staleDays), sort)} />}
             {!templateSelection && view === 'closed' && projects.length === 0 && error && <p className="beads-error">{error}</p>}
             {!templateSelection && view === 'closed' && !(projects.length === 0 && error) && (!closed || closed.loading) && (
               <p className="beads-empty">Reading closed Beads…</p>
             )}
-            {!templateSelection && view === 'closed' && !(projects.length === 0 && error) && closed && !closed.loading && (
-              <ClosedView rows={closedMatching} failures={closed.failures} query={query} />
+            {!templateSelection && view === 'closed' && !(projects.length === 0 && error) && closed && (
+              <ClosedView rows={closedMatching} failures={closed.failures} query={query} incomplete={closed.loading || scoped.some(project => !beadStoreRead(project.path)?.closed.data)} />
             )}
           </div>
         </FlowNavigationProvider>

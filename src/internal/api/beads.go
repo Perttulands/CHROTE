@@ -26,13 +26,13 @@ import (
 
 // BeadsHandler handles beads-related API endpoints
 type BeadsHandler struct {
-	bdCommand   string
-	execTimeout time.Duration
-	execSlots   chan struct{}
+	bdCommand     string
+	execTimeout   time.Duration
+	execSlots     chan struct{}
+	prefixSlots   chan struct{}
+	optionalSlots chan struct{}
 
-	storeSummaryMu      sync.Mutex
-	storeSummaries      map[string]storeSummaryCacheEntry
-	storeSummaryRefresh map[string]*storeSummaryRefresh
+	stores *beadsStoreReader
 }
 
 // NewBeadsHandler creates a new BeadsHandler
@@ -42,13 +42,15 @@ func NewBeadsHandler() *BeadsHandler {
 		bdCommand = "bd"
 	}
 
-	return &BeadsHandler{
-		bdCommand:           bdCommand,
-		execTimeout:         60 * time.Second,
-		execSlots:           make(chan struct{}, 4),
-		storeSummaries:      make(map[string]storeSummaryCacheEntry),
-		storeSummaryRefresh: make(map[string]*storeSummaryRefresh),
+	h := &BeadsHandler{
+		bdCommand:     bdCommand,
+		execTimeout:   60 * time.Second,
+		execSlots:     make(chan struct{}, 4),
+		prefixSlots:   make(chan struct{}, 2),
+		optionalSlots: make(chan struct{}, 2),
 	}
+	h.stores = newBeadsStoreReader(h)
+	return h
 }
 
 // RegisterRoutes registers the beads routes on the given mux
@@ -56,6 +58,7 @@ func (h *BeadsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/beads/health", h.Health)
 	mux.HandleFunc("GET /api/beads/projects", h.ListProjects)
 	mux.HandleFunc("GET /api/beads/work", h.Work)
+	mux.HandleFunc("GET /api/beads/state", h.State)
 	mux.HandleFunc("GET /api/beads/closed", h.ClosedWork)
 	mux.HandleFunc("GET /api/beads/issue", h.IssueDetail)
 	mux.HandleFunc("POST /api/beads/issues", h.CreateIssue)
@@ -226,6 +229,11 @@ func (h *BeadsHandler) runBd(ctx context.Context, projectPath string, timeout ti
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	releaseOptional, err := h.admitOptionalBd(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseOptional()
 	select {
 	case h.execSlots <- struct{}{}:
 		defer func() { <-h.execSlots }()
@@ -519,23 +527,13 @@ type storeSummary struct {
 	NewestUpdated string
 }
 
-type storeSummaryCacheEntry struct {
-	manifestHash string
-	summary      storeSummary
-}
-
-type storeSummaryRefresh struct {
-	done    chan struct{}
-	summary storeSummary
-	err     error
-}
-
 // beadCard is the Bead the card shows: its own text, and every neighbour it
 // links to.
 type beadCard struct {
 	beadBrief
 	Updated     string      `json:"updated,omitempty"`
 	Created     string      `json:"created,omitempty"`
+	DeferUntil  string      `json:"deferUntil,omitempty"`
 	Assignee    string      `json:"assignee,omitempty"`
 	Description string      `json:"description,omitempty"`
 	Design      string      `json:"design,omitempty"`
@@ -657,6 +655,21 @@ func beadIsLinked(raw map[string]interface{}) bool {
 // projectPrefix asks bd for one Bead of the project and reads its prefix. An
 // empty project has no prefix to report and no ids in anyone's terminal either.
 func (h *BeadsHandler) projectPrefix(ctx context.Context, projectPath string) string {
+	// Reuse a known positive identity without demanding any snapshot or counts.
+	if prefix := h.stores.retainedPrefix(projectPath); prefix != "" {
+		return prefix
+	}
+	ctx = context.WithValue(ctx, optionalBdContextKey{}, true)
+	// Prefix catalog demand is optional, but it shares runBd with selected
+	// projects. Never enqueue the whole host ahead of foreground work.
+	ctx, cancel := context.WithTimeout(ctx, h.execTimeout)
+	defer cancel()
+	select {
+	case h.prefixSlots <- struct{}{}:
+		defer func() { <-h.prefixSlots }()
+	case <-ctx.Done():
+		return ""
+	}
 	issues, err := h.execBdIssues(ctx, projectPath, "list", "--status", "all", "--limit", "1")
 	if err != nil || len(issues) == 0 {
 		return ""
@@ -664,7 +677,7 @@ func (h *BeadsHandler) projectPrefix(ctx context.Context, projectPath string) st
 	return beadPrefix(beadString(issues[0], "id"))
 }
 
-// storeManifestHash is the cache key for the counts projection: the content of
+// storeManifestHash identifies an authoritative store generation: the content of
 // the store's Dolt manifest. The mtime cannot serve, because reading a store
 // rewrites the manifest with the same bytes, so a time-keyed entry expired on
 // the very read that filled it and no request ever saw a count. Content
@@ -759,121 +772,55 @@ func addBeadType(counts *BeadsTypeCounts, issueType string) {
 	}
 }
 
-// readStoreSummary computes the one complete projection used by the workspace
-// route and the Beads rail. The status counts are exclusive so their sum is the
-// store's total, while the legacy open count can be derived by omitting closed.
-func (h *BeadsHandler) readStoreSummary(projectPath string) (storeSummary, error) {
-	// A shared refresh outlives any one HTTP request, but runBd still bounds
-	// its queue wait and execution by execTimeout.
-	issues, err := h.execBdIssues(context.Background(), projectPath, "list", "--status", "all", "--limit", "0")
-	if err != nil {
-		return storeSummary{}, err
-	}
-	byID := make(map[string]map[string]interface{}, len(issues))
-	for _, issue := range issues {
-		if id := beadString(issue, "id"); id != "" {
-			byID[id] = issue
-		}
-	}
-
-	now := time.Now()
-	summary := storeSummary{}
-	for _, issue := range issues {
-		if summary.Prefix == "" {
-			summary.Prefix = beadPrefix(beadString(issue, "id"))
-		}
+// snapshotSummary computes time-sensitive classification from immutable records.
+// A defer_until expiry changes counts without changing the authoritative store.
+func snapshotSummary(snapshot *beadsStoreSnapshot, now time.Time) storeSummary {
+	summary := storeSummary{Prefix: snapshot.prefix}
+	for _, issue := range snapshot.issues {
 		updated := firstString(issue["updated_at"], issue["updated"])
 		if updated > summary.NewestUpdated {
 			summary.NewestUpdated = updated
 		}
 		addBeadType(&summary.Counts.Type, firstString(issue["issue_type"], issue["type"]))
-
 		status := beadString(issue, "status")
 		switch {
 		case isClosedBead(issue):
 			summary.Counts.Status.Closed++
 		case status == "in_progress":
 			summary.Counts.Status.InProgress++
-		case status == "blocked" || hasActiveBlocker(issue, byID):
+		case status == "blocked" || hasActiveBlocker(issue, snapshot.byID):
 			summary.Counts.Status.Blocked++
-		case status == "deferred" || isFutureDefer(issue, now):
+		case beadDeferred(issue, now):
 			summary.Counts.Status.Deferred++
 		default:
 			summary.Counts.Status.Open++
 		}
 	}
-	return summary, nil
+	return summary
 }
 
-func (h *BeadsHandler) ensureStoreSummaryStateLocked() {
-	if h.storeSummaries == nil {
-		h.storeSummaries = make(map[string]storeSummaryCacheEntry)
+// A dated deferral expires even if bd has not yet rewritten the status field.
+// An undated explicit deferred status remains deferred until an actual write.
+func beadDeferred(issue map[string]interface{}, now time.Time) bool {
+	if beadString(issue, "status") != "deferred" {
+		return isFutureDefer(issue, now)
 	}
-	if h.storeSummaryRefresh == nil {
-		h.storeSummaryRefresh = make(map[string]*storeSummaryRefresh)
-	}
-}
-
-func (h *BeadsHandler) refreshStoreSummary(projectPath string, refresh *storeSummaryRefresh) {
-	summary, err := h.readStoreSummary(projectPath)
-	// The key is read after bd has run, because bd rewrites the manifest as it
-	// reads. Hashing before would file the entry under bytes that no longer
-	// exist, which is the miss this handler used to take on every request.
-	var hash string
-	if err == nil {
-		hash, err = storeManifestHash(projectPath)
-	}
-
-	h.storeSummaryMu.Lock()
-	refresh.summary = summary
-	refresh.err = err
-	if err == nil {
-		h.storeSummaries[projectPath] = storeSummaryCacheEntry{
-			manifestHash: hash,
-			summary:      summary,
-		}
-	}
-	if h.storeSummaryRefresh[projectPath] == refresh {
-		delete(h.storeSummaryRefresh, projectPath)
-	}
-	close(refresh.done)
-	h.storeSummaryMu.Unlock()
-}
-
-// cachedStoreSummary returns a matching cached projection at once. A miss
-// starts one background refresh. A follow-up request may wait for that exact
-// refresh after the browser has already painted the store rail.
-func (h *BeadsHandler) cachedStoreSummary(projectPath string, wait bool) (storeSummary, bool, bool, error) {
-	hash, err := storeManifestHash(projectPath)
+	deadline, err := time.Parse(time.RFC3339, deferredUntil(issue))
 	if err != nil {
-		return storeSummary{}, false, false, err
+		deadline, err = time.Parse("2006-01-02", deferredUntil(issue))
 	}
+	// Missing or malformed dates cannot establish that a deferral expired.
+	return err != nil || deadline.After(now)
+}
 
-	h.storeSummaryMu.Lock()
-	h.ensureStoreSummaryStateLocked()
-	if cached, ok := h.storeSummaries[projectPath]; ok && cached.manifestHash == hash {
-		h.storeSummaryMu.Unlock()
-		return cached.summary, true, false, nil
+// Keep the workspace counts interface while sharing its complete store read
+// with work, Closed and cards. Legacy beads=wait callers wait for freshness.
+func (h *BeadsHandler) cachedStoreSummary(projectPath string, wait bool) (storeSummary, bool, bool, error) {
+	snapshot, state, err := h.stores.get(context.Background(), projectPath, storeReadDemand{foreground: wait, waitFresh: wait, waitCold: wait})
+	if snapshot == nil {
+		return storeSummary{}, false, state.Pending, err
 	}
-	refresh := h.storeSummaryRefresh[projectPath]
-	if refresh == nil {
-		refresh = &storeSummaryRefresh{done: make(chan struct{})}
-		h.storeSummaryRefresh[projectPath] = refresh
-		go h.refreshStoreSummary(projectPath, refresh)
-	}
-	done := refresh.done
-	h.storeSummaryMu.Unlock()
-
-	if !wait {
-		return storeSummary{}, false, true, nil
-	}
-	<-done
-	if refresh.err != nil {
-		return storeSummary{}, false, false, refresh.err
-	}
-	// A write during the refresh changes the next request's cache key. This
-	// response can still use the complete snapshot the refresh just produced.
-	return refresh.summary, true, false, nil
+	return snapshotSummary(snapshot, h.stores.now()), true, state.Pending, err
 }
 
 // addProjectPrefixes gives every discovered project the prefix its Bead ids
@@ -904,9 +851,8 @@ func (h *BeadsHandler) addProjectPrefixes(ctx context.Context, projects []map[st
 // Work handles GET /api/beads/work: the unfinished work of one project, which
 // is what the map, the ready lists and the stale list are all views of.
 //
-// The installed service CLI applies the explicit multi-status filter while
-// `--all` removes the result limit, so the command returns one complete
-// unfinished snapshot without loading closed rows.
+// The complete authoritative store snapshot is shared with counts, Closed and
+// cards. Only unfinished rows are projected into the primary browser views.
 func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
 	if code != "" {
@@ -919,21 +865,16 @@ func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issues, err := h.execBdIssues(r.Context(), projectPath, "list", "--status", "open,in_progress,blocked,deferred", "--all")
-	if err != nil {
+	snapshot, state, err := h.stores.get(r.Context(), projectPath, storeReadDemand{foreground: true, waitCold: true})
+	if err != nil && snapshot == nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
 	}
-
-	byID := make(map[string]map[string]interface{}, len(issues))
-	for _, issue := range issues {
-		if id := beadString(issue, "id"); id != "" {
-			byID[id] = issue
-		}
-	}
+	issues, byID := snapshot.issues, snapshot.byID
 
 	beads := make([]beadRow, 0, len(issues))
-	prefix := ""
+	prefix := snapshot.prefix
+	now := h.stores.now()
 	for _, issue := range issues {
 		id := beadString(issue, "id")
 		if id == "" || isClosedBead(issue) {
@@ -949,6 +890,9 @@ func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 			DeferUntil: deferredUntil(issue),
 			Parent:     parent,
 			Linked:     beadIsLinked(issue),
+		}
+		if row.Status == "deferred" && !beadDeferred(issue, now) {
+			row.Status = "open"
 		}
 		row.BlockedBy = unfinishedBlockers(issue, byID, prefix)
 		row.Blocked = len(row.BlockedBy) > 0
@@ -969,26 +913,28 @@ func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 		"beads":       beads,
 		"prefix":      prefix,
 		"projectPath": projectPath,
+		"state":       state,
 	})
 }
 
 // ClosedWork handles GET /api/beads/closed. The dashboard calls this route
-// only when the operator opens Closed, so the normal Beads views never pay to
-// load finished work.
+// only when the operator opens Closed. Finished records share the reader,
+// while this projection and its browser rendering remain lazy.
 func (h *BeadsHandler) ClosedWork(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := h.requestProject(w, r)
 	if !ok {
 		return
 	}
 
-	issues, err := h.execBdIssues(r.Context(), projectPath, "list", "--status", "all", "--all")
-	if err != nil {
+	snapshot, state, err := h.stores.get(r.Context(), projectPath, storeReadDemand{foreground: true, waitCold: true})
+	if err != nil && snapshot == nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
 	}
 
+	issues := snapshot.issues
 	beads := make([]beadRow, 0)
-	prefix := ""
+	prefix := snapshot.prefix
 	for _, issue := range issues {
 		if !isClosedBead(issue) {
 			continue
@@ -1022,6 +968,7 @@ func (h *BeadsHandler) ClosedWork(w http.ResponseWriter, r *http.Request) {
 		"beads":       beads,
 		"prefix":      prefix,
 		"projectPath": projectPath,
+		"state":       state,
 	})
 }
 
@@ -1199,10 +1146,8 @@ func sortBriefs(briefs []beadBrief) {
 
 // IssueDetail handles GET /api/beads/issue: one Bead as the card reads it.
 //
-// One `bd list --status all` answers all of it, the same call the map makes:
-// the Bead's own text is in its record, its parents are the records the parent
-// field names, and its children and dependents are the records that name it.
-// bd is spawned once per card, whatever the depth of the chain.
+// Its record, parents, children and dependents come from the same immutable
+// full-store snapshot used by every Beads projection.
 func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
 	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
 	if code != "" {
@@ -1220,18 +1165,12 @@ func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issues, err := h.execBdIssues(r.Context(), projectPath, "list", "--status", "all", "--limit", "0")
-	if err != nil {
+	snapshot, state, err := h.stores.get(r.Context(), projectPath, storeReadDemand{foreground: true, waitCold: true})
+	if err != nil && snapshot == nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
 	}
-
-	byID := make(map[string]map[string]interface{}, len(issues))
-	for _, raw := range issues {
-		if id := beadString(raw, "id"); id != "" {
-			byID[id] = raw
-		}
-	}
+	issues, byID := snapshot.issues, snapshot.byID
 	issue, known := byID[issueID]
 	if !known {
 		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("No Bead %s in %s", issueID, projectPath))
@@ -1242,6 +1181,7 @@ func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
 		beadBrief:   beadBriefOf(issue),
 		Updated:     firstString(issue["updated_at"], issue["updated"]),
 		Created:     firstString(issue["created_at"], issue["created"]),
+		DeferUntil:  deferredUntil(issue),
 		Assignee:    beadString(issue, "assignee"),
 		Description: beadString(issue, "description"),
 		Design:      beadString(issue, "design"),
@@ -1251,6 +1191,9 @@ func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
 		Children:    []beadBrief{},
 		BlockedBy:   []beadBrief{},
 		Blocks:      []beadBrief{},
+	}
+	if card.Status == "deferred" && !beadDeferred(issue, h.stores.now()) {
+		card.Status = "open"
 	}
 	for _, blockerID := range beadDependencyIDs(issue, blocksDependency) {
 		card.BlockedBy = append(card.BlockedBy, briefByID(byID, blockerID))
@@ -1271,6 +1214,7 @@ func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
 	core.WriteSuccess(w, map[string]interface{}{
 		"bead":        card,
 		"projectPath": projectPath,
+		"state":       state,
 	})
 }
 

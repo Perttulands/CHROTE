@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import BeadCard from './BeadCard'
+import { resetBeadsReadForTest } from '../beads/beadsRead'
 import { DEFAULT_SETTINGS } from '../types'
 import { closeBeadCard, openBeadCard, resetBeadCardForTest } from '../beads/beadCard'
 import { resetBeadProjectsForTest, setBeadProjects } from '../beads/beadIds'
@@ -10,6 +11,7 @@ import type { BeadDetail, BeadRow } from '../beads/beadsApi'
 
 const mockState = vi.hoisted(() => ({
   openSendToSession: vi.fn(),
+  generation: 'one',
   announce: vi.fn(),
   fetchBead: vi.fn(),
   copy: vi.fn(),
@@ -25,6 +27,8 @@ vi.mock('../context/StatusContext', () => ({
 
 vi.mock('../beads/beadsApi', () => ({
   fetchBeadProjects: () => Promise.resolve([]),
+  fetchBeadStates: (paths: string[]) => Promise.resolve(paths.map(path => ({ path, pending: false, availableGeneration: mockState.generation }))),
+  fetchBeadSnapshot: async (path: string, id: string) => ({ bead: await mockState.fetchBead(path, id), projectPath: path, state: { path, pending: false, availableGeneration: mockState.generation } }),
   fetchBead: (path: string, id: string) => mockState.fetchBead(path, id),
 }))
 
@@ -57,6 +61,8 @@ const CARD = detail({
 })
 
 beforeEach(() => {
+  resetBeadsReadForTest()
+  mockState.generation = 'one'
   mockState.openSendToSession.mockReset()
   mockState.announce.mockReset()
   mockState.copy.mockReset()
@@ -224,7 +230,7 @@ describe('the Bead card', () => {
     expect(screen.queryByText('The card opens from a terminal id.')).toBeNull()
   })
 
-  it('reopens from what the session remembers and refreshes it behind', async () => {
+  it('reopens immediately and checks freshness without repeating an unchanged card read', async () => {
     render(<BeadCard />)
     act(() => openBeadCard('chrote-5grx.15'))
     await screen.findByText('The card opens from a terminal id.')
@@ -237,7 +243,29 @@ describe('the Bead card', () => {
 
     expect(screen.getByText('The card opens from a terminal id.')).toBeInTheDocument()
     expect(screen.queryByText('Reading…')).toBeNull()
-    await waitFor(() => expect(mockState.fetchBead).toHaveBeenCalledWith('/srv/chrote', 'chrote-5grx.15'))
+    await act(async () => {})
+    expect(mockState.fetchBead).not.toHaveBeenCalled()
+  })
+
+  it('updates a closing selection and explains later deletion while retaining its last detail and reference', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<BeadCard />)
+      act(() => openBeadCard('chrote-5grx.15'))
+      await act(async () => { for (let i = 0; i < 16; i += 1) await Promise.resolve() })
+      expect(screen.getByText('The card opens from a terminal id.')).toBeVisible()
+      mockState.generation = 'two'
+      mockState.fetchBead.mockResolvedValue({ ...CARD, status: 'closed' })
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(screen.getByText('This Bead is closed. Your reading context remains here.')).toBeVisible()
+      mockState.generation = 'three'
+      mockState.fetchBead.mockRejectedValue(new Error('Bead chrote-5grx.15 not found'))
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(screen.getByText('Last successful read · Bead chrote-5grx.15 not found')).toBeVisible()
+      expect(screen.getByText('The card opens from a terminal id.')).toBeVisible()
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      expect(mockState.openSendToSession).toHaveBeenCalledWith({ reference: 'bead chrote-5grx.15: Title of chrote-5grx.15' })
+    } finally { vi.useRealTimers() }
   })
 
   it('offers the Bead to the tab that maps its project', async () => {

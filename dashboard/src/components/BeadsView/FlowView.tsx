@@ -50,7 +50,8 @@ export interface FlowRevealRequest {
   nonce: number
 }
 
-export default function FlowView({ rows, reveal }: { rows: WorkRow[]; reveal?: FlowRevealRequest | null }) {
+export default function FlowView({ rows, reveal, scopeKey, incomplete }: { rows: WorkRow[]; reveal?: FlowRevealRequest | null; scopeKey?: string; incomplete?: boolean }) {
+  const previousScope = useRef(scopeKey)
   const table = useTableObject()
   const epics = useMemo(() => flowEpics(rows), [rows])
   // The picker's choice outlives a click on a node; until it is made, the epic
@@ -65,14 +66,21 @@ export default function FlowView({ rows, reveal }: { rows: WorkRow[]; reveal?: F
     ? epics.find(epic => epic.id === table.id && (!table.projectPath || table.projectPath === epic.projectPath))
     : undefined
 
+  useEffect(() => {
+    if (previousScope.current !== scopeKey) {
+      previousScope.current = scopeKey
+      setPicked(null)
+    }
+  }, [scopeKey])
+
   // Entering Flow from an epic already on the table chooses that graph. Latch
   // the choice before a child click replaces the table object, or the fallback
   // would silently jump to the first epic in the store.
   useEffect(() => {
-    if (picked === null && onTable) setPicked(beadRowKey(onTable))
-  }, [onTable, picked])
+    if (picked === null && (onTable || epics[0])) setPicked(beadRowKey(onTable ?? epics[0]))
+  }, [onTable, picked, epics])
 
-  const epic = epics.find(candidate => beadRowKey(candidate) === picked) ?? onTable ?? epics[0]
+  const epic = picked ? epics.find(candidate => beadRowKey(candidate) === picked) : onTable ?? epics[0]
 
   const graph = useMemo(
     () => (revealing && revealTarget
@@ -121,6 +129,11 @@ export default function FlowView({ rows, reveal }: { rows: WorkRow[]; reveal?: F
     travel(key, step)
   }
 
+  if (!revealing && picked && !epic) return <div className="bead-flow-view">
+    <p className="beads-empty">The selected epic is no longer in open work. Its reading context remains on the table.</p>
+    {epics.map(candidate => <button key={beadRowKey(candidate)} type="button" className="bead-flow-epic-pick" onClick={() => pickEpic(beadRowKey(candidate))}>Choose {candidate.id}</button>)}
+  </div>
+  if (!revealing && epics.length === 0 && incomplete) return null
   if (!revealing && epics.length === 0) return <p className="beads-empty">No epic here to flow.</p>
   if (graph.nodes.length === 0) {
     return (

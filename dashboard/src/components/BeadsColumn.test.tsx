@@ -1,12 +1,15 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BeadProject, BeadRow, BeadWork } from '../beads/beadsApi'
 import { resetBeadCardForTest, useBeadCardRequest } from '../beads/beadCard'
 import { DEFAULT_SETTINGS } from '../types'
+import { resetBeadsReadForTest } from '../beads/beadsRead'
 import BeadsColumn, { arrangeBeadsColumnGroups } from './BeadsColumn'
 
 const mockState = vi.hoisted(() => ({
   updateSettings: vi.fn(),
+  generation: 'one',
+  manualPending: false,
   projects: [] as BeadProject[],
   manualProjects: [] as BeadProject[],
   beadsProjectPaths: [] as string[],
@@ -25,8 +28,12 @@ vi.mock('../beads/beadsApi', async () => {
   const actual = await vi.importActual<typeof import('../beads/beadsApi')>('../beads/beadsApi')
   return {
     ...actual,
+    fetchBeadStates: (paths: string[]) => Promise.resolve(paths.map(path => ({
+      path, pending: false, availableGeneration: mockState.generation,
+      ...[...mockState.projects, ...mockState.manualProjects].find(project => project.path === path),
+    }))),
     fetchBeadProjectList: () => Promise.resolve(mockState.projects),
-    fetchManualBeadProjects: () => Promise.resolve(mockState.manualProjects),
+    fetchManualBeadProjects: () => mockState.manualPending ? new Promise(() => {}) : Promise.resolve(mockState.manualProjects),
     fetchBeadWork: (path: string) => {
       mockState.workRequests.push(path)
       const result = mockState.work.get(path)
@@ -45,6 +52,9 @@ function CardProbe() {
 }
 
 beforeEach(() => {
+  resetBeadsReadForTest()
+  mockState.generation = 'one'
+  mockState.manualPending = false
   mockState.updateSettings.mockReset()
   mockState.manualProjects = []
   mockState.beadsProjectPaths = []
@@ -115,6 +125,36 @@ describe('the Beads column', () => {
     expect(await screen.findByText('m-ready')).toBeInTheDocument()
     expect(mockState.workRequests.filter(path => path === '/zeta')).toHaveLength(1)
     expect([...mockState.workRequests].sort()).toEqual(['/alpha', '/manual', '/zeta'])
+  })
+
+  it('publishes a saved manual store while its identity request is still pending', async () => {
+    mockState.beadsProjectPaths = ['/manual']
+    mockState.manualPending = true
+    mockState.work.set('/manual', { prefix: 'm', projectPath: '/manual', beads: [row('m-ready', 'open', '2026-09-04T00:00:00Z')] })
+    render(<BeadsColumn open onClose={vi.fn()} />)
+    expect(await screen.findByText('m-ready')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'm' })).toBeVisible()
+  })
+
+  it.each(['closed', 'blocked'])('removes remembered readiness after authoritative work becomes %s', async status => {
+    vi.useFakeTimers()
+    try {
+      render(<BeadsColumn open onClose={vi.fn()} />)
+      await act(async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve() })
+      expect(screen.getByText('a-ready')).toBeVisible()
+      mockState.generation = 'two'
+      const alpha = mockState.projects.find(project => project.path === '/alpha')!
+      alpha.openBeads = status === 'closed' ? 0 : 2
+      alpha.counts = { status: { open: 0, inProgress: 0, blocked: status === 'blocked' ? 2 : 0, closed: status === 'closed' ? 2 : 0, deferred: 0 },
+        type: { epic: 0, task: 2, bug: 0, feature: 0, decision: 0, chore: 0 } }
+      mockState.work.set('/alpha', { prefix: 'a', projectPath: '/alpha', beads: status === 'closed' ? [] : [
+        row('a-ready', 'blocked', '2026-09-04T00:00:00Z', true),
+        row('a-blocked', 'blocked', '2026-09-05T00:00:00Z', true),
+      ] })
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(screen.queryByText('a-ready')).toBeNull()
+      expect(screen.getByText('z-new-active')).toBeVisible()
+    } finally { vi.useRealTimers() }
   })
 
   it('lists a failed store without hiding readable work', async () => {

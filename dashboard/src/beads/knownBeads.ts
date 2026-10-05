@@ -13,6 +13,11 @@
 import { fetchBead, type BeadDetail, type BeadLink, type BeadRow } from './beadsApi'
 
 const rowsByProject = new Map<string, Map<string, BeadRow>>()
+interface RowGroup { rows: readonly BeadRow[]; generation?: string; order: number }
+const rowGroups = new Map<string, { work?: RowGroup; closed?: RowGroup }>()
+const generations = new Map<string, string>()
+const cardGenerations = new Map<string, string | undefined>()
+const generationOrders = new Map<string, { next: number; orders: Map<string, number> }>()
 const cards = new Map<string, BeadDetail>()
 
 /** How far up a parent chain a seed walks; bd ids nest no deeper in practice. */
@@ -31,8 +36,61 @@ function byPriorityThenId(a: BeadLink, b: BeadLink): number {
   return a.id.localeCompare(b.id)
 }
 
-export function rememberBeadRows(projectPath: string, rows: readonly BeadRow[]): void {
-  rowsByProject.set(projectPath, new Map(rows.map(row => [row.id, row])))
+export function rememberBeadRows(projectPath: string, rows: readonly BeadRow[], generation?: string, group: 'work' | 'closed' = 'work'): void {
+  if (generation && !generations.has(projectPath)) invalidateKnownBeads(projectPath, generation)
+  const groups = rowGroups.get(projectPath) ?? {}
+  const order = generation ? generationOrders.get(projectPath)?.orders.get(generation)
+    ?? (groups[group]?.generation === generation ? groups[group]?.order : 0) : 0
+  groups[group] = { rows, generation, order: order ?? 0 }
+  rowGroups.set(projectPath, groups)
+  indexRowGroups(projectPath)
+}
+
+function indexRowGroups(projectPath: string): void {
+  const groups = rowGroups.get(projectPath)
+  if (!groups) return
+  const current = generations.get(projectPath)
+  // Preserve previous context while projections arrive independently, but a
+  // stale group can never overwrite the current group's version of an id.
+  const ordered = [groups.closed, groups.work].filter((value): value is RowGroup => !!value)
+    .sort((left, right) => Number(left.generation === current) - Number(right.generation === current) || left.order - right.order)
+  rowsByProject.set(projectPath, new Map(ordered.flatMap(value => value.rows.map(row => [row.id, row] as const))))
+}
+
+export function invalidateKnownBeads(projectPath: string, generation?: string): void {
+  if (generation) {
+    generations.set(projectPath, generation)
+    const observed = generationOrders.get(projectPath) ?? { next: 0, orders: new Map<string, number>() }
+    if (!observed.orders.has(generation)) {
+      observed.next += 1
+      observed.orders.set(generation, observed.next)
+      while (observed.orders.size > 16) observed.orders.delete(observed.orders.keys().next().value!)
+    }
+    generationOrders.set(projectPath, observed)
+    const groups = rowGroups.get(projectPath)
+    for (const group of [groups?.work, groups?.closed]) {
+      if (group?.generation === generation) group.order = observed.orders.get(generation) ?? group.order
+    }
+    indexRowGroups(projectPath)
+    return
+  }
+  generations.delete(projectPath)
+  generationOrders.delete(projectPath)
+  rowsByProject.delete(projectPath)
+  rowGroups.delete(projectPath)
+  for (const key of cards.keys()) if (key.startsWith(`${projectPath} `)) { cards.delete(key); cardGenerations.delete(key) }
+}
+
+export function forgetBeadDetail(projectPath: string, id: string): void {
+  const key = cardKey(projectPath, id)
+  cards.delete(key)
+  cardGenerations.delete(key)
+}
+
+export function rememberBeadDetail(projectPath: string, detail: BeadDetail, generation?: string): void {
+  const key = cardKey(projectPath, detail.id)
+  cards.set(key, detail)
+  cardGenerations.set(key, generation)
 }
 
 /** A Bead the map drew, as much of a card as its row can say. */
@@ -78,21 +136,26 @@ export interface KnownBead {
 /** The best the session holds for a Bead, or null when it has never seen it. */
 export function knownBead(projectPath: string, id: string): KnownBead | null {
   const card = cards.get(cardKey(projectPath, id))
-  if (card) return { bead: card, complete: true }
+  const current = !generations.has(projectPath) || cardGenerations.get(cardKey(projectPath, id)) === generations.get(projectPath)
+  if (card && current) return { bead: card, complete: true }
   const rows = rowsByProject.get(projectPath)
   const row = rows?.get(id)
-  if (!rows || !row) return null
-  return { bead: seedFromRow(rows, row), complete: false }
+  if (!rows || !row) return card ? { bead: card, complete: false } : null
+  return { bead: { ...card, ...seedFromRow(rows, row) }, complete: false }
 }
 
 /** Read the card from the server and remember it for the session. */
 export async function readBead(projectPath: string, id: string): Promise<BeadDetail> {
   const detail = await fetchBead(projectPath, id)
-  cards.set(cardKey(projectPath, id), detail)
+  rememberBeadDetail(projectPath, detail)
   return detail
 }
 
 export function resetKnownBeadsForTest(): void {
   rowsByProject.clear()
   cards.clear()
+  rowGroups.clear()
+  generations.clear()
+  generationOrders.clear()
+  cardGenerations.clear()
 }

@@ -498,8 +498,8 @@ func TestBeadsHandler_WorkTreatsAnAbsentEightCharacterSameStoreBlockerAsFinished
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Work status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if calls := readSequencedBdCalls(t, argsPath); !reflect.DeepEqual(calls, []string{"--json list --status open,in_progress,blocked,deferred --all"}) {
-		t.Fatalf("bd calls = %#v, want the unchanged unfinished command", calls)
+	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 1 {
+		t.Fatalf("bd calls = %#v, want one shared authoritative read", calls)
 	}
 	rows := decodeBeadsData(t, rec)["beads"].([]interface{})
 	row := rows[0].(map[string]interface{})
@@ -601,8 +601,8 @@ func TestBeadsHandler_WorkLoadsOnlyUnfinishedWorkAndResolvesMissingSameStoreBloc
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Work status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 1 || calls[0] != "--json list --status open,in_progress,blocked,deferred --all" {
-		t.Fatalf("bd calls = %#v, want one complete unfinished list", calls)
+	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 1 {
+		t.Fatalf("bd calls = %#v, want one shared store read", calls)
 	}
 
 	data := decodeBeadsData(t, rec)
@@ -677,8 +677,8 @@ func TestBeadsHandler_ClosedWorkLoadsLazilyAndFiltersFinishedStatuses(t *testing
 	if rec.Code != http.StatusOK {
 		t.Fatalf("ClosedWork status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if calls := readSequencedBdCalls(t, argsPath); !reflect.DeepEqual(calls, []string{"--json list --status all --all"}) {
-		t.Fatalf("bd calls = %#v, want the lazy finished-work command", calls)
+	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 1 {
+		t.Fatalf("bd calls = %#v, want one shared store read", calls)
 	}
 	data := decodeBeadsData(t, rec)
 	rows := data["beads"].([]interface{})

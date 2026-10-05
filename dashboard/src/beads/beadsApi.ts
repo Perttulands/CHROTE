@@ -2,7 +2,7 @@
  * What the browser knows about Beads, and how it asks.
  *
  * Every answer comes from `bd` through the server: there is no second store
- * here, and nothing is cached beyond the request that asked for it. The one
+ * here; visible readers share disposable remembered projections. The one
  * write is filing a new bug or feature, which the complaint box does.
  */
 
@@ -23,6 +23,7 @@ export interface BeadProject {
   newestUpdate?: string
   error?: string
   summaryPending?: boolean
+  state?: BeadStoreState
 }
 
 /** A Bead as a link from somewhere else: a row, a parent, a blocker. */
@@ -49,6 +50,7 @@ export interface BeadRow extends BeadLink {
 
 /** A Bead as the card reads it, with every neighbour it links to. */
 export interface BeadDetail extends BeadLink {
+  deferUntil?: string
   updated?: string
   created?: string
   assignee?: string
@@ -62,10 +64,30 @@ export interface BeadDetail extends BeadLink {
   blocks: BeadLink[]
 }
 
+export interface BeadStoreState {
+  path: string
+  availableGeneration?: string
+  observedGeneration?: string
+  readAt?: string
+  checkedAt?: string
+  pending: boolean
+  error?: string
+  counts?: BeadsCounts
+  openBeads?: number
+  newestUpdate?: string
+}
+
+export interface BeadSnapshot {
+  bead: BeadDetail
+  projectPath: string
+  state?: BeadStoreState
+}
+
 export interface BeadWork {
   beads: BeadRow[]
   prefix: string
   projectPath: string
+  state?: BeadStoreState
 }
 
 /** The formula registry and molecule commands intentionally return their full
@@ -105,13 +127,13 @@ interface ApiEnvelope<T> {
 
 const API_BASE = '/api/beads'
 
-async function get<T>(path: string, params: Record<string, string | string[]>): Promise<T> {
+async function get<T>(path: string, params: Record<string, string | string[]>, timeoutMs = 30000): Promise<T> {
   const url = new URL(`${API_BASE}${path}`, window.location.origin)
   Object.entries(params).forEach(([key, value]) => {
     if (Array.isArray(value)) value.forEach(item => url.searchParams.append(key, item))
     else url.searchParams.set(key, value)
   })
-  const response = await fetch(url.toString(), { signal: AbortSignal.timeout(30000) })
+  const response = await fetch(url.toString(), { signal: AbortSignal.timeout(timeoutMs) })
   const envelope = await response.json().catch(() => null) as ApiEnvelope<T> | null
   if (!envelope || envelope.success !== true || envelope.data === undefined) {
     throw new Error(envelope?.error?.message || `Beads request failed (${response.status})`)
@@ -164,7 +186,7 @@ export async function fetchBeadProjectIdentities(manualPaths: readonly string[] 
 function fetchProjectIdentities(paths: readonly string[]): Promise<BeadProject[]> {
   const normalized = [...new Set(paths.map(path => path.trim()).filter(Boolean))].sort()
   return shareInFlight(`bead-identities:${JSON.stringify(normalized)}`, async () => {
-    const data = await get<{ projects: BeadProject[] }>('/projects', { path: normalized })
+    const data = await get<{ projects: BeadProject[] }>('/projects', { path: normalized }, 90000)
     return data.projects ?? []
   })
 }
@@ -181,7 +203,15 @@ export function withManualProjects(projects: BeadProject[], manual: BeadProject[
   return [...projects, ...manual.filter(project => !known.has(project.path))]
 }
 
-/** The open work of one project, with the finished children of its open epics. */
+/** Check only known stores; authoritative reads are scheduled independently. */
+export async function fetchBeadStates(paths: readonly string[], foreground: readonly string[] = [], refresh = false): Promise<BeadStoreState[]> {
+  const data = await get<{ stores: BeadStoreState[] }>('/state', {
+    path: [...paths], foreground: [...foreground], ...(refresh ? { refresh: 'true' } : {}),
+  })
+  return data.stores
+}
+
+/** The unfinished work of one project. */
 export async function fetchBeadWork(projectPath: string): Promise<BeadWork> {
   return get<BeadWork>('/work', { path: projectPath })
 }
@@ -210,8 +240,11 @@ export async function fetchMolecule(projectPath: string, id: string): Promise<Be
 }
 
 export async function fetchBead(projectPath: string, id: string): Promise<BeadDetail> {
-  const data = await get<{ bead: BeadDetail }>('/issue', { path: projectPath, id })
-  return data.bead
+  return (await fetchBeadSnapshot(projectPath, id)).bead
+}
+
+export async function fetchBeadSnapshot(projectPath: string, id: string): Promise<BeadSnapshot> {
+  return get<BeadSnapshot>('/issue', { path: projectPath, id })
 }
 
 export type FiledBeadType = 'bug' | 'feature'

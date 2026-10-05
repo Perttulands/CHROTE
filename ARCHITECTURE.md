@@ -90,9 +90,30 @@ The Files, Beads, Agents, Library and Server views, and the Beads column, start
 loading on first use and retain their state after that. Retained state does not
 require continuous requests: the Server view reads
 only while visible, with independent bounded status and history requests.
-Concurrent metadata reads share in-flight work, while later reads and explicit
-refresh actions reach the host again. A lightweight Bead catalog supplies
-terminal links independently of opening the Beads view. Session discovery and
+Concurrent metadata reads share in-flight work. Beads additionally retains
+disposable successful reads so host and project navigation can show useful work
+immediately. One reader per owning store shares a verified full snapshot across
+counts, unfinished work, requested Closed work and card relationships. Source
+fingerprints must agree before and after a read; a changing or unavailable store
+keeps its previous snapshot with explicit pending or error state. Checking the
+source and reading its records have separate timestamps. Unknown counts remain
+absent, and time-based deferrals are evaluated without reopening the store.
+The reader retains at most 128 stores and an estimated 128 MiB of decoded
+snapshots, using four times their JSON size as its working estimate. Idle entries
+expire after ten minutes. Background snapshot and prefix reads share two command
+admissions; selected project and card demand promotes the existing job within
+the command runner's four-slot bound. Failed reads retry through demand with
+backoff from one to thirty seconds. These bounds keep the cache disposable and leave capacity for
+interactive work.
+
+The browser's Beads reader shares demand from visible reading surfaces and the
+table. It publishes each project independently and checks source state about
+every two seconds while the document is visible. Successful projections retain
+their own applied generation; a failed request can retry that same generation.
+Refresh keeps loaded views and the table mounted, preserving reading context
+and drafts. Hidden surfaces retain their data without continuing refresh traffic.
+Closed remains a lazy presentation demand. A lightweight Bead catalog supplies
+terminal links independently of counts and work reads. Session discovery and
 completion notifications retain their own background lifetime.
 
 Saved terminal bindings establish their first connection when displayed at real

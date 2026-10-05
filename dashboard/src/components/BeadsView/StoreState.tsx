@@ -33,7 +33,7 @@ export default function StoreState({ store }: { store: BeadProject | null }) {
   }
 
   const warnings = storeWarnings(store)
-  const counts = store.error ? undefined : store.counts
+  const counts = store.counts
 
   return (
     <div className="beads-store">
@@ -43,6 +43,8 @@ export default function StoreState({ store }: { store: BeadProject | null }) {
       </div>
       <p className="beads-store-path" title={store.path}>{store.path}</p>
 
+      {store.state?.pending && <p className="beads-store-note">{counts ? 'Refreshing · showing last successful read' : 'Reading this store…'}</p>}
+      {store.state?.readAt && <p className="beads-store-note">Read {formatBeadTime(store.state.readAt)}</p>}
       {warnings.length > 0 && (
         <ul className="beads-store-warnings">
           {warnings.map(warning => (

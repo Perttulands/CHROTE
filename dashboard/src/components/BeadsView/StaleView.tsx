@@ -12,6 +12,7 @@ import { beadRowKey, type WorkRow } from '../../beads/beadsTree'
 
 interface StaleViewProps {
   rows: WorkRow[]
+  incomplete?: boolean
   now?: number
 }
 
@@ -19,9 +20,10 @@ export function staleReference(id: string): string {
   return `bead ${id} looks stale: close it or revive it`
 }
 
-export default function StaleView({ rows, now = Date.now() }: StaleViewProps) {
+export default function StaleView({ rows, now = Date.now(), incomplete }: StaleViewProps) {
   const { openSendToSession } = useSession()
 
+  if (rows.length === 0 && incomplete) return null
   if (rows.length === 0) return <p className="beads-empty">Nothing has gone stale.</p>
 
   return (

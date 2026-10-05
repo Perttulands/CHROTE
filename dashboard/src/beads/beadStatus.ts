@@ -27,6 +27,13 @@ export function beadStatusLabel(status: string, blocked = false): string {
   return status.replace(/_/g, ' ')
 }
 
+/** Dated deferrals expire without a store write or another projection read. */
+export function currentBead<T extends { status: string; deferUntil?: string }>(bead: T, now: number = Date.now()): T {
+  const until = bead.deferUntil ? Date.parse(bead.deferUntil) : NaN
+  return bead.status === 'deferred' && Number.isFinite(until) && until <= now
+    ? { ...bead, status: 'open' } : bead
+}
+
 /** Whole days between a bd timestamp and now; -1 when there is no timestamp. */
 export function daysSince(updated: string | undefined, now: number = Date.now()): number {
   if (!updated) return -1

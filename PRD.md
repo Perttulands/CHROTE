@@ -58,6 +58,12 @@ Beads, Library and Agents each host a resident agent, the Clerk, the Librarian a
 
 Components remain separated in the codebase and fail independently. A missing Beads workspace or unconfigured context corpus must not prevent terminal work.
 
+Beads browsing shows remembered successful work immediately and fills a first
+host overview project by project. Visible work updates automatically while
+preserving query, selection, graph position, table trail and drafts. Each store
+reports whether its data is current, refreshing, stale or unavailable; incomplete
+host data must not imply there is no work. Closed work loads when requested.
+
 CHROTE exposes terminal sessions and delivers operator input. The programs
 running in those sessions own their work, coordination and completion rules.
 

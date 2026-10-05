@@ -30,3 +30,13 @@ describe('how a Bead reads', () => {
     expect(formatBeadTime(undefined)).toBe('')
   })
 })
+
+it('expires an explicitly deferred retained record by its date without changing undated deferrals', async () => {
+  const { currentBead } = await import('./beadStatus')
+  const until = '2026-10-05T20:00:00Z'
+  const deferred = { status: 'deferred', deferUntil: until, title: 'Later' }
+  expect(currentBead(deferred, Date.parse(until) - 1)).toBe(deferred)
+  expect(currentBead(deferred, Date.parse(until)).status).toBe('open')
+  expect(deferred.status).toBe('deferred')
+  expect(currentBead({ status: 'deferred' }).status).toBe('deferred')
+})

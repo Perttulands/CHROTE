@@ -13,6 +13,7 @@ import { beadRowKey, type BeadTreeNode } from '../../beads/beadsTree'
 
 interface MapViewProps {
   roots: BeadTreeNode[]
+  incomplete?: boolean
   /** Search keeps a branch for its match, so a filtered map opens itself. */
   expandAll: boolean
 }
@@ -102,7 +103,8 @@ function MapNode({ node, depth, expandAll, order }: MapNodeProps) {
   )
 }
 
-export default function MapView({ roots, expandAll }: MapViewProps) {
+export default function MapView({ roots, expandAll, incomplete }: MapViewProps) {
+  if (roots.length === 0 && incomplete) return null
   if (roots.length === 0) return <p className="beads-empty">No open work here.</p>
   return (
     <div className="bead-map">

@@ -15,13 +15,12 @@ import {
   fetchBeadProjectList,
   fetchManualBeadProjects,
   withManualProjects,
-  fetchBeadWork,
   type BeadProject,
   type BeadWork,
 } from '../beads/beadsApi'
-import { beadGlyph } from '../beads/beadStatus'
+import { beadGlyph, currentBead } from '../beads/beadStatus'
 import { inProgressRows, readyRows, type WorkRow } from '../beads/beadsTree'
-import { rememberBeadRows } from '../beads/knownBeads'
+import { beadProjectSkeletons, beadStoreRead, rememberedBeadProjects, rememberBeadProjects, useBeadsRead } from '../beads/beadsRead'
 import { useSession } from '../context/SessionContext'
 import { useResizableWidth } from '../hooks/useResizableWidth'
 import { useSurface } from '../keys/dismiss'
@@ -52,7 +51,7 @@ export interface BeadsColumnFailure {
 export function arrangeBeadsColumnGroups(stores: readonly LoadedStore[]): BeadsColumnGroup[] {
   return stores.flatMap(({ project, work }) => {
     const rows = work.beads.map(bead => ({
-      ...bead,
+      ...currentBead(bead),
       projectPath: project.path,
       projectName: project.name,
     }))
@@ -89,9 +88,8 @@ interface BeadsColumnProps {
 
 export default function BeadsColumn({ open, onClose }: BeadsColumnProps) {
   const { settings, updateSettings } = useSession()
-  const [groups, setGroups] = useState<BeadsColumnGroup[]>([])
-  const [failures, setFailures] = useState<BeadsColumnFailure[]>([])
-  const [loading, setLoading] = useState(false)
+  const [projects, setProjects] = useState<BeadProject[]>(() => beadProjectSkeletons(rememberedBeadProjects(), settings.beadsProjectPaths || []))
+  const [listing, setListing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const columnRef = useRef<HTMLElement>(null)
   const manualPaths = useMemo(() => settings.beadsProjectPaths || [], [settings.beadsProjectPaths])
@@ -101,56 +99,49 @@ export default function BeadsColumn({ open, onClose }: BeadsColumnProps) {
   useEffect(() => {
     if (!open) return
     let current = true
-
-    const readProjects = async (projects: BeadProject[], listError: string | null) => {
-      const knownFailures = projects.flatMap(project => project.error
-        ? [{ label: project.prefix || project.name, message: project.error }]
-        : [])
-      const candidates = projects.filter(shouldReadWork)
-      const settled = await Promise.allSettled(candidates.map(async project => ({
-        project,
-        work: await fetchBeadWork(project.path),
-      })))
-      if (!current) return
-      const loaded = settled.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])
-      const requestFailures = settled.flatMap((result, index) => {
-        if (result.status === 'fulfilled') return []
-        const project = candidates[index]
-        const message = result.reason instanceof Error ? result.reason.message : 'Could not read open work'
-        return [{ label: project.prefix || project.name, message }]
-      })
-      loaded.forEach(({ project, work }) => rememberBeadRows(project.path, work.beads))
-      setGroups(arrangeBeadsColumnGroups(loaded))
-      setFailures([...knownFailures, ...requestFailures].sort((a, b) => a.label.localeCompare(b.label)))
-      setLoading(false)
-      setError(listError)
-    }
-
-    setLoading(true)
+    setListing(true)
     setError(null)
-    fetchBeadProjectList()
-      .then(async projects => {
-        // One work request per store: the manual paths join the listed stores
-        // before anything is read, so a store named twice is still read once.
-        let manual: BeadProject[] = []
-        let listError: string | null = null
-        try {
-          manual = await fetchManualBeadProjects(manualPaths)
-        } catch (cause) {
-          listError = cause instanceof Error ? cause.message : 'Could not list manual Beads stores'
-        }
+    void fetchBeadProjectList().then(found => {
+      if (!current) return
+      const skeletons = beadProjectSkeletons(found, manualPaths)
+      setProjects(skeletons)
+      rememberBeadProjects(skeletons)
+      setListing(false)
+      void fetchManualBeadProjects(manualPaths).then(manual => {
         if (!current) return
-        await readProjects(withManualProjects(projects, manual), listError)
+        const merged = withManualProjects(skeletons, manual)
+        setProjects(merged)
+        rememberBeadProjects(merged)
+      }).catch((cause: unknown) => {
+        if (current) setError(cause instanceof Error ? cause.message : 'Could not list manual Beads stores')
       })
-      .catch((cause: unknown) => {
-        if (!current) return
-        setGroups([])
-        setFailures([])
-        setLoading(false)
-        setError(cause instanceof Error ? cause.message : 'Could not list Beads stores')
-      })
+    }).catch((cause: unknown) => {
+      if (!current) return
+      setListing(false)
+      setError(cause instanceof Error ? cause.message : 'Could not list Beads stores')
+    })
     return () => { current = false }
   }, [manualPaths, open])
+  const revision = useBeadsRead({ paths: projects.map(project => project.path), work: true,
+    workPaths: projects.filter(project => {
+      const state = beadStoreRead(project.path)?.state
+      const work = beadStoreRead(project.path)?.work
+      return !!work?.data && work.generation !== state?.availableGeneration || shouldReadWork(state ? { ...project, ...state } : project)
+    }).map(project => project.path) }, open)
+  const loaded = useMemo(() => projects.flatMap(project => {
+    const store = beadStoreRead(project.path)
+    return store?.work.data ? [{ project, work: store.work.data }] : []
+  }), [projects, revision])
+  const groups = useMemo(() => arrangeBeadsColumnGroups(loaded), [loaded])
+  const failures = projects.flatMap(project => {
+    const store = beadStoreRead(project.path)
+    const message = store?.work.error || store?.state?.error || project.error
+    return message ? [{ label: project.prefix || project.name, message }] : []
+  })
+  const loading = listing || projects.some(project => {
+    const store = beadStoreRead(project.path)
+    return !store?.work.data && !store?.work.error && !store?.state?.error && shouldReadWork(project)
+  })
 
   const widest = useCallback(() => {
     const room = columnRef.current?.parentElement?.clientWidth || Number.POSITIVE_INFINITY
@@ -200,7 +191,7 @@ export default function BeadsColumn({ open, onClose }: BeadsColumnProps) {
         {!loading && !error && groups.length === 0 && failures.length === 0 && (
           <p className="beads-global-column-note">Nothing is moving.</p>
         )}
-        {!loading && groups.map(group => (
+        {groups.map(group => (
           <section className="beads-global-store" key={group.projectPath}>
             <h3>{group.label}</h3>
             {group.inProgress.length > 0 && (
@@ -209,7 +200,7 @@ export default function BeadsColumn({ open, onClose }: BeadsColumnProps) {
             {group.ready.length > 0 && <BeadsColumnRows label="Ready" rows={group.ready} />}
           </section>
         ))}
-        {!loading && failures.length > 0 && (
+        {failures.length > 0 && (
           <section className="beads-global-failures">
             <h3>Unreadable</h3>
             {failures.map(failure => (
