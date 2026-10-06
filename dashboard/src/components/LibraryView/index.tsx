@@ -28,6 +28,7 @@ import { useTheme } from '../../theme/ThemeContext'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { useSurface } from '../../keys/dismiss'
+import { createLibraryResolver } from '../../library/libraryLinks'
 import { getSessionKey } from '../../types'
 import { pasteToResident } from '../../residents/residentPresence'
 import { fetchResidents, readCachedResidents } from '../../residents/residentsApi'
@@ -137,6 +138,11 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   }, [announce])
 
   const root = shelves?.root ?? ''
+  const resolveTarget = useMemo(() => createLibraryResolver(graph?.pages ?? []), [graph])
+  const resolveWikiLink = useCallback((target: string) => {
+    const path = resolveTarget(target, page?.path ?? '')
+    return path === undefined ? undefined : `/${path}`
+  }, [resolveTarget, page?.path])
 
   useEffect(() => {
     if (!root) return
@@ -749,6 +755,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
                     content={libraryProse(page.content, page.title)}
                     basePath={`/${page.path}`}
                     onOpenPath={path => openPage(path.replace(/^\//, ''))}
+                    resolveWikiLink={resolveWikiLink}
                   />
                   {neighbours.length > 0 && linkList('Neighbours', neighbours)}
                   {backlinks.length > 0 && linkList('Linked from', backlinks)}

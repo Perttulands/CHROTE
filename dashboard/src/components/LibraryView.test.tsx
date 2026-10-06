@@ -284,6 +284,40 @@ describe('LibraryView', () => {
     expect(steps()).toEqual(['Workflow Preferences'])
   })
 
+  it('follows prose wikilinks through the dive trail and leaves unknown targets as text', async () => {
+    const workflow = mockState.page.get('preferences/workflow.md')!
+    mockState.page.set(workflow.path, {
+      ...workflow,
+      content: `${workflow.content}\n[[chiron#Health|Chiron]] stewards this system. [[nowhere]] stays unknown. [[workflow|This page]].`,
+    })
+    mockState.graph!.pages.push({
+      path: 'observations/chiron.md', shelf: 'observations', title: 'Chiron',
+      words: 20, updated: NOW, created: NOW, candidate: false,
+    })
+    mockState.page.set('observations/chiron.md', {
+      path: 'observations/chiron.md', title: 'Chiron', content: '# Chiron\n\nCare for the shared system.',
+      updated: NOW, author: 'The Operator', history: [],
+    })
+    await openLibrary()
+    await openWorkflowPage()
+
+    const link = region('library-dive').getByRole('link', { name: 'Chiron' })
+    expect(link).toHaveAttribute('href', '/observations/chiron.md')
+    expect(region('library-dive').getByText(/\[\[nowhere\]\] stays unknown/)).toBeInTheDocument()
+    expect(region('library-dive').queryByRole('link', { name: /nowhere/ })).toBeNull()
+    fireEvent.click(link)
+    expect(await screen.findByText('Care for the shared system.')).toBeInTheDocument()
+
+    const trail = () => within(screen.getByRole('navigation', { name: 'This dive' }))
+    expect(trail().getAllByRole('button').map(button => button.textContent))
+      .toEqual(['Workflow Preferences', 'Chiron', 'CloseEsc'])
+    fireEvent.click(trail().getByRole('button', { name: 'Workflow Preferences' }))
+    const self = await region('library-dive').findByRole('link', { name: 'This page' })
+    fireEvent.click(self)
+    await waitFor(() => expect(trail().queryByRole('button', { name: 'Chiron' })).toBeNull())
+    expect(trail().getAllByRole('button', { name: 'Workflow Preferences' })).toHaveLength(1)
+  })
+
   it('closes the dive with Escape and leaves the map standing', async () => {
     await openLibrary()
     fireEvent.click(mapNode('Workflow Preferences'))

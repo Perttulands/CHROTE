@@ -35,6 +35,8 @@ export interface MarkdownProps {
   /** Bare tokens matching this become controls the host opens. */
   tokenPattern?: RegExp
   onToken?: (token: string) => void
+  /** Opt in to prose [[target|label]] links; return a file path for known targets. */
+  resolveWikiLink?: (target: string) => string | undefined
   className?: string
 }
 
@@ -42,6 +44,9 @@ export interface MarkdownProps {
 const SAFE_SCHEME = /^(https?:|mailto:)/i
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i
 const TOKEN_HREF_PREFIX = '#token-'
+// Match the native Library graph's target/anchor/alias syntax. The anchor is
+// part of an unaliased label, but only the target names a page.
+const WIKI_LINK = /\[\[(([^[\]|#]+)(?:#[^[\]|]*)?)(?:\|([^[\]]*))?\]\]/g
 
 /** Resolve `href` against the directory holding `basePath`, POSIX style. */
 export function resolveMarkdownPath(basePath: string, href: string): string {
@@ -78,8 +83,8 @@ interface MdastNode {
   children?: MdastNode[]
 }
 
-/** Split the text nodes of a tree on a pattern, linking what matched. */
-function linkifyTokens(pattern: RegExp) {
+/** Split parsed prose text, preserving unresolved matches and existing links. */
+function linkifyText(pattern: RegExp, resolve: (match: RegExpMatchArray) => { url: string; label: string } | undefined) {
   const global = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`)
   const split = (node: MdastNode): MdastNode[] => {
     const text = node.value ?? ''
@@ -88,11 +93,13 @@ function linkifyTokens(pattern: RegExp) {
     let cursor = 0
     for (const match of text.matchAll(global)) {
       if (match.index === undefined) continue
+      const link = resolve(match)
+      if (!link) continue
       if (match.index > cursor) parts.push({ type: 'text', value: text.slice(cursor, match.index) })
       parts.push({
         type: 'link',
-        url: `${TOKEN_HREF_PREFIX}${match[0]}`,
-        children: [{ type: 'text', value: match[0] }],
+        url: link.url,
+        children: [{ type: 'text', value: link.label }],
       })
       cursor = match.index + match[0].length
     }
@@ -102,13 +109,24 @@ function linkifyTokens(pattern: RegExp) {
   }
   const walk = (node: MdastNode): void => {
     if (!node.children) return
-    // A token inside a link is already a link, and one inside code is text the
+    // Text inside a link is already a link, and code is text the
     // writer asked to be left alone.
-    if (node.type === 'link' || node.type === 'linkReference') return
+    if (node.type === 'link' || node.type === 'linkReference' || node.type === 'code' || node.type === 'inlineCode') return
     node.children = node.children.flatMap(child => (child.type === 'text' ? split(child) : [child]))
     node.children.forEach(walk)
   }
   return () => (tree: MdastNode) => { walk(tree) }
+}
+
+function linkifyTokens(pattern: RegExp) {
+  return linkifyText(pattern, match => ({ url: `${TOKEN_HREF_PREFIX}${match[0]}`, label: match[0] }))
+}
+
+function linkifyWikiLinks(resolve: NonNullable<MarkdownProps['resolveWikiLink']>) {
+  return linkifyText(WIKI_LINK, match => {
+    const path = resolve(match[2])
+    return path === undefined ? undefined : { url: path, label: match[3] ?? match[1] }
+  })
 }
 
 function MarkdownLink(
@@ -154,10 +172,10 @@ function MarkdownImage({ src, basePath, ...rest }: ImgHTMLAttributes<HTMLImageEl
   return <img {...rest} src={resolved} />
 }
 
-function Markdown({ content, basePath = '/', onOpenPath, tokenPattern, onToken, className }: MarkdownProps) {
+function Markdown({ content, basePath = '/', onOpenPath, tokenPattern, onToken, resolveWikiLink, className }: MarkdownProps) {
   const plugins = useMemo(
-    () => (tokenPattern ? [remarkGfm, linkifyTokens(tokenPattern)] : [remarkGfm]),
-    [tokenPattern],
+    () => [remarkGfm, ...(resolveWikiLink ? [linkifyWikiLinks(resolveWikiLink)] : []), ...(tokenPattern ? [linkifyTokens(tokenPattern)] : [])],
+    [tokenPattern, resolveWikiLink],
   )
   return (
     <div className={className ? `chrote-markdown ${className}` : 'chrote-markdown'}>

@@ -103,3 +103,43 @@ describe('Markdown tokens', () => {
     expect(screen.queryByRole('button')).toBeNull()
   })
 })
+
+describe('Markdown wikilinks', () => {
+  it('opts in to resolved prose links without changing code, existing links or unknown syntax', () => {
+    const openPath = vi.fn()
+    const resolveWikiLink = vi.fn((target: string) => target === 'chiron' ? '/observations/chiron.md' : undefined)
+    render(<Markdown
+      content={[
+        '[[chiron|Chiron]] and [[chiron#Health]]; [[unknown|Unknown]].',
+        '',
+        '`[[chiron|Inline]]`',
+        '',
+        '```md',
+        '[[chiron|Fenced]]',
+        '```',
+        '',
+        '[[[chiron|Existing]]](https://example.com) and [[[chiron|Reference]]][ref].',
+        '',
+        '[ref]: https://example.org',
+      ].join('\n')}
+      resolveWikiLink={resolveWikiLink}
+      onOpenPath={openPath}
+    />)
+
+    fireEvent.click(screen.getByRole('link', { name: 'Chiron' }))
+    expect(openPath).toHaveBeenCalledWith('/observations/chiron.md')
+    expect(screen.getByRole('link', { name: 'chiron#Health' })).toHaveAttribute('href', '/observations/chiron.md')
+    expect(screen.getByText(/\[\[unknown\|Unknown\]\]/)).toBeInTheDocument()
+    expect(screen.getByText('[[chiron|Inline]]').tagName).toBe('CODE')
+    expect(screen.getByText('[[chiron|Fenced]]').tagName).toBe('CODE')
+    expect(screen.getByRole('link', { name: '[[chiron|Existing]]' })).toHaveAttribute('href', 'https://example.com')
+    expect(screen.getByRole('link', { name: '[[chiron|Reference]]' })).toHaveAttribute('href', 'https://example.org')
+    expect(resolveWikiLink.mock.calls).toEqual([['chiron'], ['chiron'], ['unknown']])
+  })
+
+  it('keeps wiki syntax literal in hosts that have not supplied a resolver', () => {
+    render(<Markdown content="[[chiron|Chiron]]" onOpenPath={vi.fn()} />)
+    expect(screen.getByText('[[chiron|Chiron]]')).toBeInTheDocument()
+    expect(screen.queryByRole('link')).toBeNull()
+  })
+})
