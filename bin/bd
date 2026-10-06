@@ -68,10 +68,21 @@ JS
 }
 
 normalize_beads_permissions() {
-  local store
-  store=$(resolve_beads_store "$@")
-  [ -n "$store" ] || return 0
-  "$BEADS_NORMALIZER" "$store" >/dev/null 2>&1 || true
+  [ -n "$beads_store" ] || return 0
+  "$BEADS_NORMALIZER" "$beads_store" >/dev/null 2>&1 || true
+}
+
+finish_beads() {
+  local status="$1"
+  shift
+  trap - EXIT HUP INT TERM
+  # init can create a store that did not exist before the command. Existing
+  # stores reuse the captured path so interrupted cleanup need not reopen it.
+  if [ -z "$beads_store" ]; then
+    beads_store=$(resolve_beads_store "$@")
+  fi
+  normalize_beads_permissions
+  exit "$status"
 }
 
 filter_beads_stderr() {
@@ -79,11 +90,15 @@ filter_beads_stderr() {
 }
 
 # Dolt may rewrite its manifest as writer-only. Normalize before opening so a
-# different permitted service user can read it, then normalize again after the
-# command for the next user.
-normalize_beads_permissions "$@"
+# different permitted service user can read it. Catchable group interruption
+# must also give the writer a final repair; SIGKILL cannot execute this trap.
+beads_store=$(resolve_beads_store "$@")
+trap 'finish_beads "$?" "$@"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+normalize_beads_permissions
 node "$BD_REAL" "$@" 2> >(filter_beads_stderr >&2)
 status=$?
 wait
-normalize_beads_permissions "$@"
 exit "$status"

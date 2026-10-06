@@ -6,10 +6,12 @@ import json
 import os
 from pathlib import Path
 import stat
+import signal
 import subprocess
 import tempfile
 import textwrap
 import unittest
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = Path(os.environ.get('CHROTE_BD_WRAPPER_UNDER_TEST', ROOT / 'bin' / 'bd'))
@@ -53,7 +55,12 @@ FAKE_BD = textwrap.dedent('''\
     }
     process.stdout.write(process.env.BD_TEST_STDOUT || '');
     process.stderr.write(process.env.BD_TEST_STDERR || '');
-    process.exit(Number(process.env.BD_TEST_STATUS));
+    if (process.env.BD_TEST_WAIT) {
+      fs.writeFileSync(process.env.BD_TEST_WAIT, String(process.pid));
+      setInterval(() => {}, 1000);
+    } else {
+      process.exit(Number(process.env.BD_TEST_STATUS));
+    }
 ''')
 FAKE_NORMALIZER = textwrap.dedent('''\
     #!/usr/bin/env python3
@@ -140,6 +147,78 @@ class BdWrapperTest(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(json.loads(self.args_log.read_text()), args)
                     self.assertEqual(self.normalizer_calls(), [[str(self.other / '.beads')]] * 2)
+
+    def test_group_interruption_repairs_selected_manifest_and_preserves_other_store(self) -> None:
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            with self.subTest(signal=sig):
+                manifest = self.other / '.beads' / 'manifest'
+                untouched = self.workspace / '.beads' / 'manifest'
+                for file in (manifest, untouched):
+                    file.write_text('original manifest\n')
+                    file.chmod(0o660)
+                waiting = self.root / 'waiting'
+                waiting.unlink(missing_ok=True)
+                self.normalizer_log.unlink(missing_ok=True)
+                self.env.update(BD_TEST_STATUS='0', BD_TEST_REPAIR='1',
+                                BD_TEST_MANIFEST=str(manifest), BD_TEST_WAIT=str(waiting))
+                proc = subprocess.Popen([str(SCRIPT), '-C', str(self.other), 'ready'],
+                                        cwd=self.workspace, env=self.env, start_new_session=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    deadline = time.monotonic() + 10
+                    while not waiting.exists() and proc.poll() is None and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.assertTrue(waiting.exists(), 'writer never replaced the manifest')
+                    self.assertEqual(stat.S_IMODE(manifest.stat().st_mode), 0o600)
+                    os.killpg(proc.pid, sig)
+                    _, stderr = proc.communicate(timeout=5)
+                    self.assertEqual(proc.returncode, 128 + sig, stderr.decode())
+                    self.assertEqual(stat.S_IMODE(manifest.stat().st_mode), 0o660)
+                    self.assertEqual(untouched.read_text(), 'original manifest\n')
+                    self.assertEqual(self.normalizer_calls(), [[str(self.other / '.beads')]] * 2)
+                finally:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    proc.communicate(timeout=5)
+
+    def test_new_store_is_resolved_after_creation(self) -> None:
+        new = self.root / 'new project'
+        new.mkdir()
+        self.fake_bd.write_text(FAKE_BD.replace(
+            "fs.writeFileSync(process.env.BD_TEST_ARGS, JSON.stringify(args));",
+            "fs.mkdirSync(path.join(process.cwd(), '.beads'));\n"
+            "fs.writeFileSync(process.env.BD_TEST_ARGS, JSON.stringify(args));"))
+        self.env['BD_TEST_STATUS'] = '0'
+        result = subprocess.run([str(SCRIPT), 'init'], cwd=new, env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.normalizer_calls(), [[str(new / '.beads')]])
+
+    def test_closed_output_pipe_preserves_writer_failure_and_repairs_manifest(self) -> None:
+        manifest = self.other / '.beads' / 'manifest'
+        manifest.write_text('original\n')
+        manifest.chmod(0o660)
+        self.fake_bd.write_text(FAKE_BD.replace(
+            'process.exit(Number(process.env.BD_TEST_STATUS));',
+            "process.stdout.on('error', err => process.exit(err.code === 'EPIPE' ? 77 : 78));\n"
+            "process.stdout.write('x'.repeat(1048576), err => process.exit(err ? (err.code === 'EPIPE' ? 77 : 78) : 0));"))
+        self.env.update(BD_TEST_STATUS='0', BD_TEST_REPAIR='1',
+                        BD_TEST_MANIFEST=str(manifest))
+        proc = subprocess.Popen([str(SCRIPT), '-C', str(self.other), 'ready'],
+                                cwd=self.workspace, env=self.env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        proc.stdout.close()
+        try:
+            self.assertEqual(proc.wait(timeout=5), 77)
+            self.assertEqual(stat.S_IMODE(manifest.stat().st_mode), 0o660)
+            self.assertEqual(self.normalizer_calls(), [[str(self.other / '.beads')]] * 2)
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+            proc.stderr.close()
 
     def test_beads_dir_and_argument_terminator(self) -> None:
         self.env['BEADS_DIR'] = str(self.other / '.beads')

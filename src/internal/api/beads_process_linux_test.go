@@ -142,6 +142,65 @@ func TestBeadsCommandStopsDescendants(t *testing.T) {
 	}
 }
 
+func TestBeadsCancellationAllowsWriterExitCleanup(t *testing.T) {
+	for _, cause := range []string{"deadline", "disconnect", "ignores_term"} {
+		t.Run(cause, func(t *testing.T) {
+			h, project, dir := beadsProcessFixture(t)
+			manifest := filepath.Join(project, ".beads", "embeddeddolt", "test", ".dolt", "noms", "manifest")
+			t.Setenv("CHROTE_BD_TEST_MANIFEST", manifest)
+			script := `#!/bin/sh
+trap 'chmod 660 "$CHROTE_BD_TEST_MANIFEST"' EXIT
+trap 'exit 143' TERM
+chmod 600 "$CHROTE_BD_TEST_MANIFEST"
+sleep 30 &
+child=$!
+printf '%s %s\n' "$$" "$child" > "$CHROTE_BD_TEST_DIR/pids-$$"
+wait
+`
+			if cause == "ignores_term" {
+				script = strings.ReplaceAll(script, "trap 'exit 143' TERM", "trap '' TERM")
+			}
+			if err := os.WriteFile(h.bdCommand, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			h.execTimeout = 200 * time.Millisecond
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := startBeadsCommand(h, ctx, project)
+			awaitBeadsProcess(t, func() bool { return len(beadsFixturePIDs(t, dir)) == 1 })
+			before, err := os.Stat(manifest)
+			if err != nil || before.Mode().Perm() != 0600 {
+				t.Fatalf("writer did not restrict manifest: %v, %v", before, err)
+			}
+			if cause == "disconnect" {
+				cancel()
+			}
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("canceled writer returned success")
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("writer exceeded bounded cancellation cleanup")
+			}
+			after, err := os.Stat(manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := os.FileMode(0660)
+			if cause == "ignores_term" {
+				// Forced kill cannot execute cleanup; only catchable exits promise repair.
+				want = 0600
+			}
+			if after.Mode().Perm() != want {
+				t.Fatalf("manifest mode after cancellation = %o, want %o", after.Mode().Perm(), want)
+			}
+			pair := beadsFixturePIDs(t, dir)[0]
+			awaitBeadsProcess(t, func() bool { return !beadsProcessRunning(pair[0]) && !beadsProcessRunning(pair[1]) })
+		})
+	}
+}
+
 func TestBeadsCommandsShareLimitAndCanceledWaitersNeverStart(t *testing.T) {
 	h, project, dir := beadsProcessFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())

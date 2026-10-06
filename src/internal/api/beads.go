@@ -248,7 +248,9 @@ func (h *BeadsHandler) runBd(ctx context.Context, projectPath string, timeout ti
 	cmd.Dir = projectPath
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		// Give the writer wrapper a catchable exit so its permission cleanup
+		// can run. WaitDelay bounds this grace; force all descendants below.
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 		if errors.Is(err, syscall.ESRCH) {
 			return os.ErrProcessDone
 		}
@@ -258,7 +260,7 @@ func (h *BeadsHandler) runBd(ctx context.Context, projectPath string, timeout ti
 	cmd.WaitDelay = time.Second
 	output, err := cmd.Output()
 	if err != nil && cmd.Process != nil {
-		_ = cmd.Cancel()
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
