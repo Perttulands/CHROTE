@@ -87,7 +87,10 @@ function systemHistoryMockBody() {
 // and is refused takes the failPoll path and logs nothing here, and a malformed
 // body rejects with SyntaxError, so neither is covered by this. Everything else
 // a spec sees on the console is still a failure.
-const ABORTED_SESSIONS_POLL = /^error: Failed to fetch sessions: TypeError: Failed to fetch$/
+// Chromium may append the poll's source stack to that same Error argument.
+// Accept only those frames; another source or trailing failure stays unexpected.
+// This preserves the text policy, not proof of every error's lifecycle cause.
+const ABORTED_SESSIONS_POLL = /^error: Failed to fetch sessions: TypeError: Failed to fetch(?:\n[ \t]+at https?:\/\/[^\s/]+\/src\/context\/useSessionsPoll\.ts:\d+:\d+)*$/
 
 export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
   allowedConsoleMessages: [[], { option: true }],
