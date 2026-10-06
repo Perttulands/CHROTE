@@ -683,10 +683,10 @@ func beadIsLinked(raw map[string]interface{}) bool {
 
 // projectPrefix asks bd for one Bead of the project and reads its prefix. An
 // empty project has no prefix to report and no ids in anyone's terminal either.
-func (h *BeadsHandler) projectPrefix(ctx context.Context, projectPath string) string {
+func (h *BeadsHandler) projectPrefix(ctx context.Context, projectPath string) (string, error) {
 	// Reuse a known positive identity without demanding any snapshot or counts.
 	if prefix := h.stores.retainedPrefix(projectPath); prefix != "" {
-		return prefix
+		return prefix, nil
 	}
 	ctx = context.WithValue(ctx, optionalBdContextKey{}, true)
 	// Prefix catalog demand is optional, but it shares runBd with selected
@@ -697,13 +697,16 @@ func (h *BeadsHandler) projectPrefix(ctx context.Context, projectPath string) st
 	case h.prefixSlots <- struct{}{}:
 		defer func() { <-h.prefixSlots }()
 	case <-ctx.Done():
-		return ""
+		return "", ctx.Err()
 	}
 	issues, err := h.execBdIssues(ctx, projectPath, "list", "--status", "all", "--limit", "1")
-	if err != nil || len(issues) == 0 {
-		return ""
+	if err != nil {
+		return "", err
 	}
-	return beadPrefix(beadString(issues[0], "id"))
+	if len(issues) == 0 {
+		return "", nil
+	}
+	return beadPrefix(beadString(issues[0], "id")), nil
 }
 
 // storeManifestHash identifies an authoritative store generation: the content of
@@ -858,6 +861,7 @@ func (h *BeadsHandler) cachedStoreSummary(projectPath string, wait bool) (storeS
 func (h *BeadsHandler) addProjectPrefixes(ctx context.Context, projects []map[string]interface{}) {
 	var wait sync.WaitGroup
 	prefixes := make([]string, len(projects))
+	prefixErrors := make([]error, len(projects))
 	for index, project := range projects {
 		path, _ := project["path"].(string)
 		if path == "" {
@@ -866,13 +870,16 @@ func (h *BeadsHandler) addProjectPrefixes(ctx context.Context, projects []map[st
 		wait.Add(1)
 		go func(index int, path string) {
 			defer wait.Done()
-			prefixes[index] = h.projectPrefix(ctx, path)
+			prefixes[index], prefixErrors[index] = h.projectPrefix(ctx, path)
 		}(index, path)
 	}
 	wait.Wait()
 	for index, prefix := range prefixes {
 		if prefix != "" {
 			projects[index]["prefix"] = prefix
+		}
+		if prefixErrors[index] != nil {
+			projects[index]["prefixError"] = prefixErrors[index].Error()
 		}
 	}
 }

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import BeadsView from './BeadsView'
-import { resetBeadsReadForTest } from '../beads/beadsRead'
+import { rememberBeadProjects, resetBeadsReadForTest } from '../beads/beadsRead'
 import { DEFAULT_SETTINGS } from '../types'
 import { resetBeadCardForTest, useBeadCardRequest } from '../beads/beadCard'
 import { beadProjectPath, resetBeadProjectsForTest, setBeadProjects } from '../beads/beadIds'
@@ -284,6 +284,45 @@ describe('the Beads tab', () => {
 
     await waitFor(() => expect(mockState.announce).toHaveBeenCalledWith('Bead links unavailable · identity unavailable', 'error'))
     expect(beadProjectPath('manual-abc')).toBe('/work/manual')
+  })
+
+  it('keeps identity warnings separate from healthy work through late discovery and clears them on explicit refresh without resetting the reading context', async () => {
+    mockState.settings = { ...DEFAULT_SETTINGS, beadsSelectedProject: '/srv/chrote' }
+    const healthy = mockState.projects.map(project => ({ ...(project as BeadProject),
+      ...((project as BeadProject).path === '/srv/chrote' ? { name: 'checkout' } : {}),
+    }))
+    rememberBeadProjects(healthy)
+    const failed = healthy.map(project => ({ ...(project as BeadProject),
+      ...((project as BeadProject).path === '/srv/chrote' ? { prefix: undefined, prefixError: 'identity lookup refused' } : {}),
+    }))
+    mockState.fetchBeadProjectIdentities.mockResolvedValue(failed)
+    let release: (projects: unknown[]) => void = () => {}
+    mockState.projectListRequest = new Promise(resolve => { release = resolve })
+    render(<><BeadsView /><CardProbe /></>)
+
+    const warning = 'Bead link lookup failed · /srv/chrote: identity lookup refused'
+    await screen.findByText(warning)
+    expect(screen.getByRole('button', { name: 'chrote' })).toHaveClass('active')
+    expect(await screen.findByText('Title of chrote-ep.1')).toBeVisible()
+    expect(screen.queryByRole('button', { name: /unreadable/ })).toBeNull()
+    await act(async () => { release(healthy) })
+    expect(screen.getByText(warning)).toBeVisible()
+    const query = screen.getByLabelText('Search Beads')
+    fireEvent.change(query, { target: { value: 'chrote-ep.1' } })
+    fireEvent.click(screen.getByText('Title of chrote-ep.1'))
+    expect(screen.getByTestId('card-request')).toHaveTextContent('chrote-ep.1')
+
+    let releaseRefresh: (projects: unknown[]) => void = () => {}
+    mockState.projectListRequest = new Promise(resolve => { releaseRefresh = resolve })
+    mockState.fetchBeadProjectIdentities.mockResolvedValue(healthy)
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh projects' }))
+    await waitFor(() => expect(screen.queryByText(warning)).toBeNull())
+    await act(async () => { releaseRefresh(healthy) })
+    expect(screen.queryByText(warning)).toBeNull()
+    expect(screen.getByRole('button', { name: 'chrote' })).toHaveClass('active')
+    expect(query).toHaveValue('chrote-ep.1')
+    expect(screen.getByTestId('card-request')).toHaveTextContent('chrote-ep.1')
+    expect(beadProjectPath('chrote-abc')).toBe('/srv/chrote')
   })
 
   it('renders a saved manual store before a slow host identity catalog completes', async () => {

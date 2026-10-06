@@ -17,6 +17,8 @@ export interface BeadProject {
   source?: string
   /** The prefix this project's ids carry, which is what terminal output shows. */
   prefix?: string
+  /** Identity lookup failure; independent of the store's snapshot readability. */
+  prefixError?: string
   /** How many Beads are not closed. Absent when the server could not count. */
   openBeads?: number
   counts?: BeadsCounts

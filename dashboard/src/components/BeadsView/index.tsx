@@ -235,7 +235,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
       setProjects(previous => {
         const skeletons = beadProjectSkeletons(found, manualPaths).map(project => {
           const prior = previous.find(old => old.path === project.path)
-          return { ...prior, ...project, prefix: project.prefix || prior?.prefix }
+          return { ...prior, ...project, prefix: project.prefix || prior?.prefix, prefixError: prior?.prefixError }
         })
         rememberBeadProjects(skeletons)
         return skeletons
@@ -244,14 +244,15 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
     }
     // Publish the cheap host skeleton first. Identity enrichment (including
     // manually configured stores) is independent of source snapshot reads.
-    void fetchBeadProjectList().then(found => {
-      apply(found.map(project => ({ ...listedProjects.find(old => old.path === project.path), ...project })))
-    }).catch((cause: unknown) => {
+    void fetchBeadProjectList().then(apply).catch((cause: unknown) => {
       if (current) setProjectsError(errorMessage(cause, 'Could not list Beads projects'))
     })
     void refreshBeadProjects(manualPaths).then(found => {
       if (current) setProjects(previous => {
-        const merged = beadProjectSkeletons(found.map(project => ({ ...previous.find(old => old.path === project.path), ...project })), manualPaths)
+        const merged = beadProjectSkeletons(found.map(project => {
+          const prior = previous.find(old => old.path === project.path)
+          return { ...prior, ...project, prefix: project.prefix || prior?.prefix, prefixError: project.prefixError }
+        }), manualPaths)
         rememberBeadProjects(merged)
         return merged
       })
@@ -465,6 +466,11 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
         </button>
         {projectsError && <p className="beads-rail-error">{projectsError}</p>}
         <RailScroll>
+          {projects.filter(project => project.prefixError).map(project => (
+            <p key={project.path} className="beads-rail-error" role="status">
+              Bead link lookup failed · {project.path}: {project.prefixError}
+            </p>
+          ))}
           <button
             type="button"
             className={`beads-rail-item ${selected === ALL_PROJECTS ? 'active' : ''}`}

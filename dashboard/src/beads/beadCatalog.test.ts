@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createElement } from 'react'
+import { render, waitFor } from '@testing-library/react'
 import { fetchBeadProjectIdentities } from './beadsApi'
-import { beadProjectPath, refreshBeadProjects, resetBeadProjectsForTest, setBeadProjects } from './beadIds'
+import { beadProjectPath, beadProjects, refreshBeadProjects, resetBeadProjectsForTest, setBeadProjects } from './beadIds'
+import BeadCatalog from './BeadCatalog'
+
+const announce = vi.hoisted(() => vi.fn())
+vi.mock('../context/SessionContext', () => ({ useSession: () => ({ settings: { beadsProjectPaths: ['/work/manual'] } }) }))
+vi.mock('../context/StatusContext', () => ({ useStatus: () => ({ announce }) }))
 
 const store = { path: '/work/discovered', sources: ['store'], sessions: [], instructions: 0 }
 const projects = [
@@ -9,11 +16,40 @@ const projects = [
 ]
 
 afterEach(() => {
+  announce.mockReset()
   vi.unstubAllGlobals()
   resetBeadProjectsForTest()
 })
 
 describe('terminal Bead catalog', () => {
+  it('reports a partial identity failure while healthy links and a retained prefix stay usable, then clears it on refresh', async () => {
+    setBeadProjects([projects[0]])
+    let failed = true
+    const known = { ...projects[0], prefix: undefined, prefixError: 'identity lookup refused' }
+    const unknown = { name: 'unknown', path: '/work/unknown', beadsPath: '/work/unknown/.beads', prefixError: 'identity unavailable' }
+    const empty = { name: 'empty', path: '/work/empty', beadsPath: '/work/empty/.beads' }
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((input: string) => Promise.resolve(new Response(JSON.stringify(
+      input === '/api/workspaces' ? [store] : { success: true, data: { projects: failed
+        ? [known, projects[1], unknown, empty]
+        : [projects[0], projects[1], { ...unknown, prefix: 'new', prefixError: undefined }, empty] } },
+    )))))
+
+    render(createElement(BeadCatalog))
+    await waitFor(() => expect(announce).toHaveBeenCalledWith(
+      'Bead link lookup failed · /work/discovered: identity lookup refused · /work/unknown: identity unavailable', 'error',
+    ))
+    expect(beadProjectPath('found-abc')).toBe(store.path)
+    expect(beadProjectPath('manual-abc')).toBe('/work/manual')
+    expect(beadProjectPath('new-abc')).toBeNull()
+    expect(beadProjects().find(project => project.path === store.path)?.prefixError).toBe('identity lookup refused')
+    expect(beadProjects().find(project => project.path === '/work/empty')?.prefixError).toBeUndefined()
+
+    failed = false
+    await refreshBeadProjects(['/work/manual'])
+    expect(beadProjectPath('new-abc')).toBe('/work/unknown')
+    expect(beadProjects().every(project => !project.prefixError)).toBe(true)
+  })
+
   it('retains missing prefixes only for stores that still exist and accepts changed prefixes', async () => {
     setBeadProjects([
       ...projects,

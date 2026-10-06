@@ -479,7 +479,7 @@ func TestBeadsReaderEntryCountAndRetainedPrefixDoNotStartAnotherRead(t *testing.
 		t.Fatalf("retained %d entries above store bound", len(h.stores.entries))
 	}
 	h.bdCommand = "missing-bd-command-for-retained-prefix"
-	if prefix := h.projectPrefix(context.Background(), paths[2]); prefix != "test" || calls.Load() != 3 {
-		t.Fatalf("known terminal prefix demanded another command: prefix=%q reads=%d", prefix, calls.Load())
+	if prefix, err := h.projectPrefix(context.Background(), paths[2]); prefix != "test" || err != nil || calls.Load() != 3 {
+		t.Fatalf("known terminal prefix demanded another command: prefix=%q err=%v reads=%d", prefix, err, calls.Load())
 	}
 }
