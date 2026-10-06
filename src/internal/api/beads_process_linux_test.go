@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,6 +15,143 @@ import (
 	"testing"
 	"time"
 )
+
+func beadsCompletedJSONFixture(t *testing.T, output string, status int) (*BeadsHandler, string, string) {
+	t.Helper()
+	h, project, dir := beadsProcessFixture(t)
+	t.Setenv("CHROTE_BD_TEST_OUTPUT", output)
+	t.Setenv("CHROTE_BD_TEST_STATUS", strconv.Itoa(status))
+	// The native result is complete and its parent exits. Only the owned
+	// descendant's stderr remains open, as with the wrapper's stderr filter.
+	script := `#!/bin/sh
+sleep 30 >/dev/null &
+child=$!
+printf '%s %s\n' "$$" "$child" > "$CHROTE_BD_TEST_DIR/pids-$$"
+printf '%s' "$CHROTE_BD_TEST_OUTPUT"
+exit "$CHROTE_BD_TEST_STATUS"
+`
+	if err := os.WriteFile(h.bdCommand, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return h, project, dir
+}
+
+func assertBeadsFixtureStopped(t *testing.T, dir string) {
+	t.Helper()
+	pairs := beadsFixturePIDs(t, dir)
+	if len(pairs) != 1 {
+		t.Fatalf("expected one owned source invocation: %v", pairs)
+	}
+	awaitBeadsProcess(t, func() bool {
+		return !beadsProcessRunning(pairs[0][0]) && !beadsProcessRunning(pairs[0][1])
+	})
+}
+
+func TestBeadsCompletedJSONSnapshotSurvivesStderrPipeCleanup(t *testing.T) {
+	const issue = `{"id":"test-aaa","title":"Current","status":"open","issue_type":"task"}`
+	for _, output := range []string{"[" + issue + "]", `{"issues":[` + issue + "]}"} {
+		t.Run(output[:1], func(t *testing.T) {
+			h, project, dir := beadsCompletedJSONFixture(t, output, 0)
+			rec := awaitReaderEvent(t, readerWork(h, project, context.Background()))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("completed native result rejected after pipe cleanup: %s", rec.Body.String())
+			}
+			data := decodeBeadsData(t, rec)
+			rows := data["beads"].([]interface{})
+			if len(rows) != 1 || rows[0].(map[string]interface{})["title"] != "Current" {
+				t.Fatalf("wrong native result published: %s", rec.Body.String())
+			}
+			state := data["state"].(map[string]interface{})
+			generation, err := storeManifestHash(project)
+			if err != nil || state["availableGeneration"] != generation || state["readAt"] == "" {
+				t.Fatalf("snapshot has unverified metadata: %s, %v", rec.Body.String(), err)
+			}
+			snapshot, _, err := h.stores.get(context.Background(), project, storeReadDemand{})
+			if err != nil || snapshot == nil || snapshot.byID["test-aaa"]["title"] != "Current" {
+				t.Fatalf("snapshot index lost native records: %v, %v", snapshot, err)
+			}
+			assertBeadsFixtureStopped(t, dir)
+		})
+	}
+}
+
+func TestBeadsCompletedJSONDoesNotOverrideCommandOrProtocolFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name, output string
+		status       int
+		want         string
+	}{
+		{"empty", "", 0, "invalid JSON"},
+		{"truncated", `[{"id":"test-aaa"`, 0, "invalid JSON"},
+		{"unsupported", `{}`, 0, "expected JSON array"},
+		{"nonzero", `[{"id":"test-aaa"}]`, 7, "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, project, dir := beadsCompletedJSONFixture(t, tc.output, tc.status)
+			_, err := h.execBdIssues(context.Background(), project, "list")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("failed result became successful or lost cause: %v", err)
+			}
+			assertBeadsFixtureStopped(t, dir)
+		})
+	}
+}
+
+func TestBeadsCompletedJSONAcknowledgementKeepsExitStatus(t *testing.T) {
+	for _, status := range []int{0, 7} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			h, project, dir := beadsCompletedJSONFixture(t, `{"id":"test-aaa"}`, status)
+			result, err := h.execBdJSON(context.Background(), project, "create", "--title", "Test")
+			if status == 0 {
+				if err != nil || result.(map[string]interface{})["id"] != "test-aaa" {
+					t.Fatalf("completed acknowledgement rejected: %v, %v", result, err)
+				}
+			} else if err == nil {
+				t.Fatal("valid JSON overrode a failed write command")
+			}
+			assertBeadsFixtureStopped(t, dir)
+		})
+	}
+}
+
+func TestBeadsCompletedJSONStillFailsWhenContextEndsDuringPipeGrace(t *testing.T) {
+	for _, cause := range []string{"deadline", "cancel"} {
+		t.Run(cause, func(t *testing.T) {
+			h, project, dir := beadsCompletedJSONFixture(t, `[{"id":"test-aaa"}]`, 0)
+			if cause == "deadline" {
+				h.execTimeout = 200 * time.Millisecond
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := startBeadsCommand(h, ctx, project)
+			awaitBeadsProcess(t, func() bool {
+				pairs := beadsFixturePIDs(t, dir)
+				return len(pairs) == 1 && !beadsProcessRunning(pairs[0][0])
+			})
+			if cause == "cancel" {
+				cancel()
+			}
+			err := awaitReaderEvent(t, done)
+			want := "timed out"
+			if cause == "cancel" {
+				want = "context canceled"
+			}
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("completed JSON overrode context failure: %v", err)
+			}
+			assertBeadsFixtureStopped(t, dir)
+		})
+	}
+}
+
+func TestBeadsRawVersionKeepsPipeError(t *testing.T) {
+	h, project, dir := beadsCompletedJSONFixture(t, "bd test\n", 0)
+	output, err := h.runBd(context.Background(), project, h.execTimeout, "version")
+	if !errors.Is(err, exec.ErrWaitDelay) || string(output) != "bd test\n" {
+		t.Fatalf("raw runner changed its transport contract: %q, %v", output, err)
+	}
+	assertBeadsFixtureStopped(t, dir)
+}
 
 func TestBeadsSnapshotCostsCanceledAdmissionDoesNotCountAProcess(t *testing.T) {
 	for _, admission := range []string{"optional", "process"} {
@@ -224,7 +362,7 @@ func TestBeadsCommandStopsDescendants(t *testing.T) {
 					want = "timed out"
 				}
 				if cause == "wrapper_exit" {
-					want = "WaitDelay"
+					want = "invalid JSON"
 				}
 				if !strings.Contains(err.Error(), want) {
 					t.Fatalf("missing %q: %v", want, err)

@@ -126,6 +126,12 @@ whole refresh through publication fingerprint and bookkeeping. These same-job
 measurements diagnose repeated verified reads without removing the generation
 guard or attributing wrapper execution to intrinsic source cost.
 
+The command runner bounds execution and cleans its owned descendants. When a
+successful command leaves an output pipe open, completed JSON may proceed after
+that bounded cleanup through the existing decoder, caller shape checks and
+snapshot generation guard. Failed or canceled commands and incomplete payloads
+remain errors; plain version output retains the runner's transport contract.
+
 Saved terminal bindings establish their first connection when displayed at real
 layout dimensions. Once started, their pooled connection and frame survive
 hiding or moving the terminal, as specified by ADR-0017.

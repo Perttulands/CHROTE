@@ -291,7 +291,10 @@ func (h *BeadsHandler) runBd(ctx context.Context, projectPath string, timeout ti
 func (h *BeadsHandler) execBdJSON(ctx context.Context, projectPath string, args ...string) (interface{}, error) {
 	cmdArgs := append([]string{"--json"}, args...)
 	output, err := h.runBd(ctx, projectPath, h.execTimeout, cmdArgs...)
-	if err != nil {
+	// ErrWaitDelay means a successful exit left descendant pipes open. runBd
+	// already bounded and cleaned that group and prioritized context failure;
+	// only a complete JSON result may proceed to the caller's shape checks.
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, fmt.Errorf("bd %s timed out: %w", strings.Join(args, " "), err)
 		}
