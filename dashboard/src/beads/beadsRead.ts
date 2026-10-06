@@ -36,6 +36,7 @@ interface Demand {
   card?: { path: string; id: string }
 }
 const POLL_MS = 2000
+const PENDING_POLL_MS = 250
 const MAX_STORES = 64
 const MAX_CARDS = 128
 const IDLE_MS = 10 * 60 * 1000
@@ -220,7 +221,12 @@ function evict() {
 function schedule() {
   if (timer) clearTimeout(timer)
   timer = undefined
-  if (demands.size && visible()) timer = setTimeout(() => { void check() }, POLL_MS)
+  if (demands.size && visible()) {
+    // A foreground job is already running. Check its completion promptly;
+    // settled and background-only demand keep the ordinary cheap cadence.
+    const pending = [...currentDemand().foreground].some(path => stores.get(path)?.state?.pending)
+    timer = setTimeout(() => { void check() }, pending ? PENDING_POLL_MS : POLL_MS)
+  }
 }
 async function check(refreshPaths?: readonly string[]) {
   if (!visible() || !demands.size) { schedule(); return }

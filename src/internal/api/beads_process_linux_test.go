@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,101 @@ import (
 	"testing"
 	"time"
 )
+
+func TestBeadsSnapshotCostsCanceledAdmissionDoesNotCountAProcess(t *testing.T) {
+	for _, admission := range []string{"optional", "process"} {
+		t.Run(admission, func(t *testing.T) {
+			h, project, dir := beadsProcessFixture(t)
+			job := &beadsStoreJob{owner: h.stores, promoted: make(chan struct{})}
+			if admission == "optional" {
+				for i := 0; i < cap(h.optionalSlots); i++ {
+					h.optionalSlots <- struct{}{}
+				}
+			} else {
+				job.foreground = true
+				close(job.promoted)
+				for i := 0; i < cap(h.execSlots); i++ {
+					h.execSlots <- struct{}{}
+				}
+			}
+			ctx := context.WithValue(context.Background(), beadsJobContextKey{}, job)
+			_, err := h.runBd(ctx, project, 30*time.Millisecond, "list")
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("held %s admission did not expire: %v", admission, err)
+			}
+			if job.costs.bdAdmission <= 0 || job.costs.sourceCalls != 0 || job.costs.bdProcess != 0 {
+				t.Fatalf("waiting was attributed to an unlaunched process: %+v", job.costs)
+			}
+			if pids := beadsFixturePIDs(t, dir); len(pids) != 0 {
+				t.Fatalf("expired admission launched source processes: %v", pids)
+			}
+		})
+	}
+}
+
+func TestBeadsSnapshotCostsCountRealProcessesAcrossVerificationRetry(t *testing.T) {
+	h, project, dir := beadsProcessFixture(t)
+	command, err := os.ReadFile(h.bdCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep the real runner and descendant lifecycle fixture, returning a record
+	// that the reader must decode and index after successful verification.
+	command = []byte(strings.Replace(string(command), "printf '[]'", `printf '%s' '[{"id":"test-aaa","title":"Current","status":"open","issue_type":"task"}]'`, 1))
+	if err := os.WriteFile(h.bdCommand, command, 0700); err != nil {
+		t.Fatal(err)
+	}
+	read := h.stores.read
+	captured := make(chan *beadsStoreJob, 1)
+	calls := 0
+	h.stores.read = func(ctx context.Context, path string) ([]map[string]interface{}, error) {
+		calls++
+		if calls == 1 {
+			captured <- ctx.Value(beadsJobContextKey{}).(*beadsStoreJob)
+		}
+		issues, err := read(ctx, path)
+		if err == nil && calls == 1 {
+			// The first actual command finished, then the source changed. Its
+			// now-obsolete records must not be relabeled as the newer generation.
+			readerManifest(t, path, "concurrent source checkpoint")
+			issues[0]["title"] = "Obsolete"
+		}
+		return issues, err
+	}
+	for i := 0; i < cap(h.execSlots); i++ {
+		h.execSlots <- struct{}{}
+	}
+	done := readerWork(h, project, context.Background())
+	job := awaitReaderEvent(t, captured)
+	if pids := beadsFixturePIDs(t, dir); len(pids) != 0 {
+		t.Fatalf("full process admission launched source processes: %v", pids)
+	}
+	<-h.execSlots // Admit the same queued source call, not another job.
+	for count := 1; count <= 2; count++ {
+		awaitBeadsProcess(t, func() bool { return len(beadsFixturePIDs(t, dir)) == count })
+		for _, pair := range beadsFixturePIDs(t, dir) {
+			// Ending the held child lets its parent return valid JSON normally.
+			_ = syscall.Kill(pair[1], syscall.SIGTERM)
+		}
+	}
+	rec := awaitReaderEvent(t, done)
+	awaitReaderEvent(t, job.done)
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	data := decodeBeadsData(t, rec)
+	rows := data["beads"].([]interface{})
+	if rows[0].(map[string]interface{})["title"] != "Current" || job.snapshot.byID["test-aaa"]["title"] != "Current" {
+		t.Fatalf("unverified first records were published: %s", rec.Body.String())
+	}
+	if job.costs.sourceCalls != 2 || job.costs.readAttempts != 2 || job.costs.bdAdmission <= 0 || job.costs.bdProcess <= 0 || job.costs.jsonDecode <= 0 || job.costs.snapshotBuild <= 0 {
+		t.Fatalf("actual two-command verification costs were not retained: %+v", job.costs)
+	}
+	state := data["state"].(map[string]interface{})
+	if state["readAt"] != job.snapshot.readAt.UTC().Format(time.RFC3339Nano) || state["availableGeneration"] != job.snapshot.generation {
+		t.Fatalf("diagnostic job and published snapshot identify different reads: %s", rec.Body.String())
+	}
+}
 
 // Each invocation holds both output pipes open in a real child. Recording both
 // PIDs also lets the failing, pre-fix test clean up without touching any tmux.

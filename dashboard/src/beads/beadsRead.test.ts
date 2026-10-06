@@ -31,6 +31,88 @@ beforeEach(() => {
 afterEach(() => { resetBeadsReadForTest(); vi.useRealTimers() })
 
 describe('visible Beads read owner', () => {
+  it.each([undefined, 'earlier source failure'])('checks pending foreground recovery promptly with retained error %s', async error => {
+    demandBeads({ paths: ['/one'], work: true, card: { path: '/one', id: row.id } })
+    await settle()
+    const retainedWork = beadStoreRead('/one')?.work.data
+    const retainedCard = beadStoreRead('/one')?.cards.get(row.id)?.data
+    api.state.mockImplementation((paths: string[]) => Promise.resolve(paths.map(path => ({
+      ...state(path), observedGeneration: 'two', pending: true, error,
+    }))))
+    await tick()
+    const checks = api.state.mock.calls.length
+    generation = 'two'
+    api.state.mockImplementation((paths: string[]) => Promise.resolve(paths.map(state)))
+    api.work.mockImplementation((path: string) => Promise.resolve({ beads: [{ ...row, title: 'New' }], prefix: 'test', projectPath: path, state: state(path) }))
+    api.card.mockImplementation((path: string) => Promise.resolve({ bead: { ...detail, title: 'New' }, projectPath: path, state: state(path) }))
+    await vi.advanceTimersByTimeAsync(249); await settle()
+    expect(api.state).toHaveBeenCalledTimes(checks)
+    expect(beadStoreRead('/one')?.work.data).toBe(retainedWork)
+    expect(beadStoreRead('/one')?.cards.get(row.id)?.data).toBe(retainedCard)
+    await vi.advanceTimersByTimeAsync(1); await settle()
+    expect(api.state).toHaveBeenCalledTimes(checks + 1)
+    expect(beadStoreRead('/one')?.work.data?.beads[0].title).toBe('New')
+    expect(beadStoreRead('/one')?.cards.get(row.id)?.data?.title).toBe('New')
+    expect(api.work).toHaveBeenCalledTimes(2)
+    expect(api.card).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(250); await settle()
+    expect(api.state).toHaveBeenCalledTimes(checks + 1)
+    await vi.advanceTimersByTimeAsync(1750); await settle()
+    expect(api.state).toHaveBeenCalledTimes(checks + 2)
+    expect(api.work).toHaveBeenCalledTimes(2)
+    expect(api.card).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps background-only pending reads at the normal cadence', async () => {
+    demandBeads({ paths: ['/one'], work: true })
+    await settle()
+    api.state.mockImplementation((paths: string[]) => Promise.resolve(paths.map(path => ({ ...state(path), pending: true }))))
+    await tick()
+    const checks = api.state.mock.calls.length
+    await vi.advanceTimersByTimeAsync(250); await settle()
+    expect(api.state).toHaveBeenCalledTimes(checks)
+    await vi.advanceTimersByTimeAsync(1750); await settle()
+    expect(api.state).toHaveBeenCalledTimes(checks + 1)
+    expect(api.work).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns to the normal cadence when a foreground read fails without an active job', async () => {
+    demandBeads({ paths: ['/one'], foreground: ['/one'], work: true })
+    await settle()
+    const retained = beadStoreRead('/one')?.work.data
+    api.state.mockImplementation((paths: string[]) => Promise.resolve(paths.map(path => ({ ...state(path), pending: true }))))
+    await tick()
+    const checks = api.state.mock.calls.length
+    api.state.mockImplementation((paths: string[]) => Promise.resolve(paths.map(path => ({ ...state(path), error: 'source unavailable' }))))
+    await vi.advanceTimersByTimeAsync(250); await settle()
+    expect(api.state).toHaveBeenCalledTimes(checks + 1)
+    expect(beadStoreRead('/one')?.state?.error).toBe('source unavailable')
+    expect(beadStoreRead('/one')?.work.data).toBe(retained)
+    await vi.advanceTimersByTimeAsync(250); await settle()
+    expect(api.state).toHaveBeenCalledTimes(checks + 1)
+    await vi.advanceTimersByTimeAsync(1750); await settle()
+    expect(api.state).toHaveBeenCalledTimes(checks + 2)
+  })
+
+  it('cancels pending foreground checks when hidden or no longer demanded', async () => {
+    const stop = demandBeads({ paths: ['/one'], foreground: ['/one'], work: true })
+    await settle()
+    api.state.mockImplementation((paths: string[]) => Promise.resolve(paths.map(path => ({ ...state(path), pending: true }))))
+    await tick()
+    const checks = api.state.mock.calls.length
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(1000); await settle()
+    expect(api.state).toHaveBeenCalledTimes(checks)
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await settle()
+    expect(api.state).toHaveBeenCalledTimes(checks + 1)
+    stop()
+    await tick()
+    expect(api.state).toHaveBeenCalledTimes(checks + 1)
+  })
+
   it('shares overlapping demand and polls unchanged state without projection reads', async () => {
     const stopHost = demandBeads({ paths: ['/one'], work: true })
     const stopCard = demandBeads({ paths: ['/one'], card: { path: '/one', id: row.id } })

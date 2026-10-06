@@ -69,6 +69,25 @@ type beadsStoreJob struct {
 	observed          string
 	checkedAt         time.Time
 	err               error
+	costs             beadsReadCosts
+}
+
+// These costs belong to one refresh goroutine, including both verification
+// attempts. They never change source truth or the command admission policy.
+type beadsReadCosts struct {
+	sourceCalls   int
+	readAttempts  int
+	bdAdmission   time.Duration
+	bdProcess     time.Duration
+	jsonDecode    time.Duration
+	snapshotBuild time.Duration
+}
+
+func beadsCostsFromContext(ctx context.Context) *beadsReadCosts {
+	if job, _ := ctx.Value(beadsJobContextKey{}).(*beadsStoreJob); job != nil {
+		return &job.costs
+	}
+	return nil
 }
 
 // Jobs, including their queue wait, have the same bounded lifetime as runBd.
@@ -353,6 +372,7 @@ func (s *beadsStoreReader) readVerified(job *beadsStoreJob) (*beadsStoreSnapshot
 		// The ordinary wrapped command may repair caller-owned manifest ACLs.
 		// Without a trusted before generation, its result still needs a new
 		// verified pair; it cannot be certified by an after-only fingerprint.
+		job.costs.readAttempts++
 		issues, err := s.read(job.ctx, job.path)
 		if err != nil {
 			return nil, err
@@ -366,13 +386,16 @@ func (s *beadsStoreReader) readVerified(job *beadsStoreJob) (*beadsStoreSnapshot
 		case before != after:
 			lastErr = errors.New("Beads changed during read; waiting for a verified snapshot")
 		default:
+			buildStarted := time.Now()
 			encoded, err := json.Marshal(issues)
 			if err != nil {
+				job.costs.snapshotBuild += time.Since(buildStarted)
 				return nil, fmt.Errorf("measure Beads snapshot: %w", err)
 			}
 			snapshot := &beadsStoreSnapshot{issues: issues, byID: make(map[string]map[string]interface{}, len(issues)),
 				generation: before, readAt: s.now(), bytes: int64(len(encoded)) * 4}
 			if snapshot.bytes > s.maxBytes {
+				job.costs.snapshotBuild += time.Since(buildStarted)
 				return nil, fmt.Errorf("Beads snapshot exceeds the %d MiB reader budget", s.maxBytes>>20)
 			}
 			for _, issue := range issues {
@@ -383,6 +406,7 @@ func (s *beadsStoreReader) readVerified(job *beadsStoreJob) (*beadsStoreSnapshot
 					}
 				}
 			}
+			job.costs.snapshotBuild += time.Since(buildStarted)
 			return snapshot, nil
 		}
 	}
@@ -400,7 +424,15 @@ func (s *beadsStoreReader) refresh(job *beadsStoreJob) {
 	s.finishLocked(job, snapshot, err)
 	s.dispatchLocked()
 	s.mu.Unlock()
-	log.Printf("beads snapshot path=%q readerQueue=%s command=%s error=%v", job.path, started.Sub(job.queuedAt), s.now().Sub(started), err)
+	readAt := ""
+	if snapshot != nil {
+		readAt = snapshot.readAt.UTC().Format(time.RFC3339Nano)
+	}
+	// command retains its original whole-refresh meaning, through publication
+	// fingerprint/bookkeeping. Admission and process are same-job sub-stages.
+	log.Printf("beads snapshot path=%q readerQueue=%s command=%s sourceCalls=%d readAttempts=%d bdAdmission=%s bdProcess=%s jsonDecode=%s snapshotBuild=%s readAt=%q error=%v",
+		job.path, started.Sub(job.queuedAt), s.now().Sub(started), job.costs.sourceCalls, job.costs.readAttempts,
+		job.costs.bdAdmission, job.costs.bdProcess, job.costs.jsonDecode, job.costs.snapshotBuild, readAt, err)
 }
 
 func (s *beadsStoreReader) finishLocked(job *beadsStoreJob, snapshot *beadsStoreSnapshot, err error) {

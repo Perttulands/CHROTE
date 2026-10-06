@@ -108,13 +108,23 @@ interactive work.
 
 The browser's Beads reader shares demand from visible reading surfaces and the
 table. It publishes each project independently and checks source state about
-every two seconds while the document is visible. Successful projections retain
+every two seconds while the document is visible. While a demanded foreground
+store or card has an active read, the same timer checks every 250 milliseconds
+so completed data need not wait for another ordinary interval. Background-only
+pending stores keep the ordinary cadence. Successful projections retain
 their own applied generation; a failed request can retry that same generation.
 Refresh keeps loaded views and the table mounted, preserving reading context
 and drafts. Hidden surfaces retain their data without continuing refresh traffic.
 Closed remains a lazy presentation demand. A lightweight Bead catalog supplies
 terminal links independently of counts and work reads. Session discovery and
 completion notifications retain their own background lifetime.
+
+The snapshot log separates the reader queue from command admission, wrapped
+process time, JSON decoding and snapshot construction, and counts actual source
+processes and verification attempts. Its legacy `command` duration includes the
+whole refresh through publication fingerprint and bookkeeping. These same-job
+measurements diagnose repeated verified reads without removing the generation
+guard or attributing wrapper execution to intrinsic source cost.
 
 Saved terminal bindings establish their first connection when displayed at real
 layout dimensions. Once started, their pooled connection and frame survive

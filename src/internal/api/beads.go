@@ -228,6 +228,14 @@ func (h *BeadsHandler) appendProject(projects *[]map[string]interface{}, seen ma
 func (h *BeadsHandler) runBd(ctx context.Context, projectPath string, timeout time.Duration, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	costs := beadsCostsFromContext(ctx)
+	admissionStarted := time.Now()
+	admitted := false
+	defer func() {
+		if costs != nil && !admitted {
+			costs.bdAdmission += time.Since(admissionStarted)
+		}
+	}()
 
 	releaseOptional, err := h.admitOptionalBd(ctx)
 	if err != nil {
@@ -243,6 +251,10 @@ func (h *BeadsHandler) runBd(ctx context.Context, projectPath string, timeout ti
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if costs != nil {
+		costs.bdAdmission += time.Since(admissionStarted)
+	}
+	admitted = true
 
 	cmd := exec.CommandContext(ctx, h.bdCommand, args...)
 	cmd.Dir = projectPath
@@ -258,7 +270,14 @@ func (h *BeadsHandler) runBd(ctx context.Context, projectPath string, timeout ti
 	}
 	// A wrapper can exit while its descendants still hold the output pipes.
 	cmd.WaitDelay = time.Second
+	processStarted := time.Now()
 	output, err := cmd.Output()
+	if costs != nil {
+		costs.bdProcess += time.Since(processStarted)
+		if cmd.Process != nil {
+			costs.sourceCalls++
+		}
+	}
 	if err != nil && cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
@@ -283,7 +302,12 @@ func (h *BeadsHandler) execBdJSON(ctx context.Context, projectPath string, args 
 	}
 
 	var result interface{}
-	if err := json.Unmarshal(output, &result); err != nil {
+	decodeStarted := time.Now()
+	err = json.Unmarshal(output, &result)
+	if costs := beadsCostsFromContext(ctx); costs != nil {
+		costs.jsonDecode += time.Since(decodeStarted)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("bd %s returned invalid JSON: %v. Output: %s", strings.Join(args, " "), err, string(output)[:min(200, len(output))])
 	}
 
