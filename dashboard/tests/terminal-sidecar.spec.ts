@@ -65,7 +65,6 @@ test.describe('terminal workspace sidecars', () => {
     await page.getByRole('button', { name: 'Close Sessions sidecar' }).click()
     await expect(dock.locator('.session-panel')).toHaveCount(0)
     await expect(dock.locator('.terminal-files-panel.sidecar-pinned')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Pin Files sidecar' })).toHaveCount(0)
     await expect(dock.locator('.terminal-sidecar-dismiss')).toHaveCount(0)
     const pinned = await box(terminal)
     expect(pinned.width).toBeLessThan(initial.width - 200)

@@ -32,18 +32,18 @@ describe('workspace Files persistence', () => {
   })
 
   it('keeps Files presentation isolated per terminal workspace', () => {
-    writeWorkspaceFilesDockState('terminal1', { open: true, pinned: true, width: 360 })
+    writeWorkspaceFilesDockState('terminal1', { open: true, width: 360 })
 
-    expect(readWorkspaceFilesDockState('terminal1')).toEqual({ open: true, pinned: true, width: 360 })
+    expect(readWorkspaceFilesDockState('terminal1')).toEqual({ open: true, width: 360 })
     expect(readWorkspaceFilesDockState('terminal2')).toEqual(DEFAULT_WORKSPACE_FILES_DOCK_STATE)
   })
 
-  it('keeps independent Sessions and Files pin preferences while either panel is closed', () => {
+  it('keeps the Sessions pin preference and Files width while either panel is closed', () => {
     writeSessionsDockState({ ...DEFAULT_SESSIONS_DOCK_STATE, open: false, pinned: true, width: 280 })
-    writeWorkspaceFilesDockState('terminal1', { open: false, pinned: true, width: 340 })
+    writeWorkspaceFilesDockState('terminal1', { open: false, width: 340 })
 
     expect(readSessionsDockState()).toEqual({ ...DEFAULT_SESSIONS_DOCK_STATE, open: false, pinned: true, width: 280 })
-    expect(readWorkspaceFilesDockState('terminal1')).toEqual({ open: false, pinned: true, width: 340 })
+    expect(readWorkspaceFilesDockState('terminal1')).toEqual({ open: false, width: 340 })
   })
 
   it('migrates only Files presentation from the former per-workspace dock state', () => {
@@ -65,8 +65,8 @@ describe('workspace Files persistence', () => {
       },
     }))
 
-    expect(readWorkspaceFilesDockState('terminal1')).toEqual({ open: true, pinned: true, width: 360 })
-    expect(readWorkspaceFilesDockState('terminal2')).toEqual({ open: false, pinned: false, width: 340 })
+    expect(readWorkspaceFilesDockState('terminal1')).toEqual({ open: true, width: 360 })
+    expect(readWorkspaceFilesDockState('terminal2')).toEqual({ open: false, width: 340 })
     expect(readSessionsDockState()).toEqual(DEFAULT_SESSIONS_DOCK_STATE)
   })
 
@@ -99,7 +99,7 @@ describe('workspace Files persistence', () => {
     }))
     window.localStorage.setItem('chrote-dashboard-state', JSON.stringify({ sidebarCollapsed: false }))
 
-    expect(readWorkspaceFilesDockState('terminal1')).toEqual({ open: true, pinned: true, width: 380 })
+    expect(readWorkspaceFilesDockState('terminal1')).toEqual({ open: true, width: 380 })
     expect(readSessionsDockState()).toEqual(DEFAULT_SESSIONS_DOCK_STATE)
 
     // Even a current generation the reader cannot make sense of outranks it:

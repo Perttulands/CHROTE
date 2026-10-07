@@ -22,7 +22,6 @@ interface TerminalWorkspaceDockProps {
   active: boolean
   sessionsDockState: SessionsDockState
   onSessionsDockStateChange: Dispatch<SetStateAction<SessionsDockState>>
-  sessionsForcedPinned: boolean
   onFilesOpenChange: (workspaceId: WorkspaceId, open: boolean) => void
   onOpenInFiles: (path: string) => void
   /** A path asked for from a terminal link, routed here while this dock is the active tab. */
@@ -120,11 +119,6 @@ function TerminalWorkspaceDock({
     closeFiles()
   }, [closeFiles, closeSessions])
 
-  const toggleFilesPin = useCallback(() => {
-    if (isNarrow) return
-    setFilesDockState(previous => ({ ...previous, pinned: !previous.pinned }))
-  }, [isNarrow])
-
   // Unpinned sidecars overlay the terminals, so they are a glance: Escape and a
   // press outside close them, through the owner, and anything opened on top of
   // them is reached first.
@@ -214,9 +208,7 @@ function TerminalWorkspaceDock({
           collapsed={false}
           width={filesDockState.width}
           pinned={filesPinned}
-          canPin={false}
           panelId={filesPanelId}
-          onTogglePin={toggleFilesPin}
           onClose={closeFiles}
           onWidthChange={width => setFilesDockState(previous => ({ ...previous, width }))}
           onOpenInFiles={onOpenInFiles}

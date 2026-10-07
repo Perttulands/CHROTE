@@ -420,7 +420,6 @@ function DashboardContent() {
               active={activeTab === workspaceId}
               sessionsDockState={sessionsDockState}
               onSessionsDockStateChange={setSessionsDockState}
-              sessionsForcedPinned={sessionsForcedPinned}
               onFilesOpenChange={handleFilesOpenChange}
               onOpenInFiles={handleOpenProjectInFiles}
               openFilesRequest={activeTab === workspaceId ? openInFilesRequest : null}

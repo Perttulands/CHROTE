@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from 'react'
-import { ArrowUp, Pin, PinOff, X } from 'lucide-react'
+import { ArrowUp, X } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
 import { useResizableWidth } from '../hooks/useResizableWidth'
@@ -41,9 +41,7 @@ interface TerminalFilesPanelProps {
   collapsed: boolean
   width: number
   pinned: boolean
-  canPin: boolean
   panelId: string
-  onTogglePin: () => void
   onClose: () => void
   onWidthChange: (width: number) => void
   onOpenInFiles: (path: string) => void
@@ -83,9 +81,7 @@ function TerminalFilesPanel({
   collapsed,
   width,
   pinned,
-  canPin,
   panelId,
-  onTogglePin,
   onClose,
   onWidthChange,
   onOpenInFiles,
@@ -361,29 +357,15 @@ function TerminalFilesPanel({
       <header className="terminal-files-header">
         <strong className="terminal-sidecar-title">Files</strong>
         {!collapsed && (
-          <>
-            {canPin && (
-              <button
-                type="button"
-                className="sidecar-pin-btn"
-                aria-label={pinned ? 'Unpin Files sidecar' : 'Pin Files sidecar'}
-                title={pinned ? 'Unpin sidecar' : 'Pin sidecar'}
-                aria-pressed={pinned}
-                onClick={onTogglePin}
-              >
-                {pinned ? <PinOff size={15} aria-hidden="true" /> : <Pin size={15} aria-hidden="true" />}
-              </button>
-            )}
-            <button
-              type="button"
-              className="sidecar-close-btn"
-              aria-label="Close Files sidecar"
-              title="Close sidecar"
-              onClick={onClose}
-            >
-              <X size={16} aria-hidden="true" />
-            </button>
-          </>
+          <button
+            type="button"
+            className="sidecar-close-btn"
+            aria-label="Close Files sidecar"
+            title="Close sidecar"
+            onClick={onClose}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
         )}
       </header>
       {!collapsed && (

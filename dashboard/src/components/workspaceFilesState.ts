@@ -28,7 +28,6 @@ export interface SessionsDockState {
 
 export interface WorkspaceFilesDockState {
   open: boolean
-  pinned: boolean
   width: number
 }
 
@@ -55,7 +54,6 @@ export const DEFAULT_SESSIONS_DOCK_STATE: SessionsDockState = {
 
 export const DEFAULT_WORKSPACE_FILES_DOCK_STATE: WorkspaceFilesDockState = {
   open: false,
-  pinned: false,
   width: 320,
 }
 
@@ -195,7 +193,6 @@ export function readWorkspaceFilesDockState(workspaceId: WorkspaceId): Workspace
   if (isRecord(raw)) {
     return {
       open: raw.open === true,
-      pinned: raw.pinned === true,
       width: finiteNumber(raw.width, DEFAULT_WORKSPACE_FILES_DOCK_STATE.width, 240, 560),
     }
   }
@@ -207,7 +204,6 @@ export function readWorkspaceFilesDockState(workspaceId: WorkspaceId): Workspace
       : legacyV2.activeSidecar ? [legacyV2.activeSidecar] : []
     return {
       open: openSidecars.includes('files'),
-      pinned: legacyV2.sidecarPinned === true,
       width: finiteNumber(legacyV2.filesWidth, DEFAULT_WORKSPACE_FILES_DOCK_STATE.width, 240, 560),
     }
   }
@@ -216,7 +212,6 @@ export function readWorkspaceFilesDockState(workspaceId: WorkspaceId): Workspace
   if (isRecord(legacy)) {
     return {
       open: legacy.filesCollapsed === false,
-      pinned: legacy.filesCollapsed === false,
       width: finiteNumber(legacy.filesWidth, DEFAULT_WORKSPACE_FILES_DOCK_STATE.width, 240, 560),
     }
   }
@@ -227,7 +222,6 @@ export function readWorkspaceFilesDockState(workspaceId: WorkspaceId): Workspace
 export function writeWorkspaceFilesDockState(workspaceId: WorkspaceId, state: WorkspaceFilesDockState): void {
   writeStorageMap(WORKSPACE_FILES_DOCK_STORAGE_KEY, workspaceId, {
     open: state.open === true,
-    pinned: state.pinned === true,
     width: finiteNumber(state.width, DEFAULT_WORKSPACE_FILES_DOCK_STATE.width, 240, 560),
   })
 }

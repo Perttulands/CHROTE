@@ -103,9 +103,7 @@ function renderPanel(onOpenInFiles = vi.fn()) {
       collapsed={false}
       width={320}
       pinned={false}
-      canPin
       panelId="terminal1-files-sidecar"
-      onTogglePin={vi.fn()}
       onClose={vi.fn()}
       onWidthChange={vi.fn()}
       onOpenInFiles={onOpenInFiles}
@@ -306,8 +304,7 @@ describe('TerminalFilesPanel', () => {
     expect(mockedWriteTextFile).not.toHaveBeenCalled()
   })
 
-  it('exposes sidecar pin and close controls and keeps the tree selection', async () => {
-    const togglePin = vi.fn()
+  it('closes the sidecar and keeps the tree selection', async () => {
     const close = vi.fn()
     render(
       <TerminalFilesPanel
@@ -315,9 +312,7 @@ describe('TerminalFilesPanel', () => {
         collapsed={false}
         width={320}
         pinned={false}
-        canPin
         panelId="terminal1-files-sidecar"
-        onTogglePin={togglePin}
         onClose={close}
         onWidthChange={vi.fn()}
         onOpenInFiles={vi.fn()}
@@ -328,8 +323,6 @@ describe('TerminalFilesPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Close' }))
     expect(await screen.findByRole('treeitem', { name: /README\.md/ })).toHaveAttribute('aria-selected', 'true')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Pin Files sidecar' }))
-    expect(togglePin).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByRole('button', { name: 'Close Files sidecar' }))
     expect(close).toHaveBeenCalledOnce()
     await waitFor(() => {
@@ -346,9 +339,7 @@ describe('TerminalFilesPanel', () => {
       collapsed: false,
       width: 320,
       pinned: true,
-      canPin: true,
       panelId: 'terminal1-files-sidecar',
-      onTogglePin: vi.fn(),
       onClose: vi.fn(),
       onWidthChange: vi.fn(),
       onOpenInFiles: vi.fn(),
@@ -375,9 +366,7 @@ describe('TerminalFilesPanel', () => {
       collapsed: false,
       width: 320,
       pinned: true,
-      canPin: true,
       panelId: 'terminal1-files-sidecar',
-      onTogglePin: vi.fn(),
       onClose: vi.fn(),
       onWidthChange: vi.fn(),
       onOpenInFiles: vi.fn(),
@@ -574,9 +563,7 @@ describe('TerminalFilesPanel', () => {
           collapsed={false}
           width={320}
           pinned={false}
-          canPin
           panelId="terminal1-files-sidecar"
-          onTogglePin={vi.fn()}
           onClose={vi.fn()}
           onWidthChange={vi.fn()}
           onOpenInFiles={vi.fn()}

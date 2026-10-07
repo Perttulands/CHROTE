@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TerminalWorkspaceDock from './TerminalWorkspaceDock'
@@ -43,9 +43,7 @@ vi.mock('./TerminalFilesPanel', () => ({
   default: (props: {
     collapsed: boolean
     pinned: boolean
-    canPin: boolean
     panelId: string
-    onTogglePin: () => void
     onClose: () => void
     navigateRequest?: { path: string, requestId: number } | null
     onNavigateRequestHandled?: (requestId: number) => void
@@ -56,7 +54,6 @@ vi.mock('./TerminalFilesPanel', () => ({
       data-pinned={String(props.pinned)}
       data-navigate-path={props.navigateRequest?.path || ''}
     >
-      {props.canPin && <button onClick={props.onTogglePin}>Pin files</button>}
       {props.navigateRequest && (
         <button onClick={() => props.onNavigateRequestHandled?.(props.navigateRequest!.requestId)}>Acknowledge navigation</button>
       )}
@@ -83,10 +80,6 @@ vi.mock('./TerminalArea', () => ({
 function DockHarness() {
   const openFilesRequest = useOpenInFilesRequest()
   const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
-  const [filesOpen, setFilesOpen] = useState(false)
-  const handleFilesOpenChange = useCallback((_workspaceId: string, open: boolean) => {
-    setFilesOpen(open)
-  }, [])
 
   useEffect(() => {
     writeSessionsDockState(sessionsDockState)
@@ -98,8 +91,7 @@ function DockHarness() {
       active
       sessionsDockState={sessionsDockState}
       onSessionsDockStateChange={setSessionsDockState}
-      sessionsForcedPinned={filesOpen}
-      onFilesOpenChange={handleFilesOpenChange}
+      onFilesOpenChange={vi.fn()}
       onOpenInFiles={vi.fn()}
       openFilesRequest={openFilesRequest}
     />
