@@ -8,6 +8,8 @@ tmux owns live sessions. Product changes, tests, deployments, browser disconnect
 
 Broad access within configured roots is intentional. Unix permissions define access; report failures plainly. Tracked source and documentation stay host-neutral. Real deployment paths, ports, sockets, service identities and private operator material belong in operator configuration.
 
+CHROTE has repeatedly grown by scope expansion followed by hardening: new surface draws review findings, and the fixes add more surface. When a review or a discovered issue proposes added handling, evidence, timeouts, guards or tests of absence, the default answer is no; ask what the change removes instead. Name any expansion beyond the assigned Bead as expansion when filing it.
+
 For product intent use `VISION.md`; for supported behavior use `PRD.md`; for component boundaries use `ARCHITECTURE.md`; for changes to trust or access use `SECURITY.md`.
 
 ## Source and build entrypoints
