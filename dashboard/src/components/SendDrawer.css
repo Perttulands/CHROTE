@@ -329,3 +329,12 @@
   font-size: 12px;
   text-align: right;
 }
+
+.send-drawer-schedule-target { overflow-wrap: anywhere; font-size: 13px; color: var(--text-primary); }
+.send-drawer-schedule-target span { display: block; font-size: 11px; color: var(--text-dim); }
+.send-drawer-schedule { border: 0; padding: 0; margin: 8px 0; min-width: 0; }
+.send-drawer-schedule .scheduled-when { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.send-drawer-schedule .scheduled-targets-head { flex-direction: column; align-items: flex-start; gap: 4px; }
+.send-drawer-schedule .scheduled-field.compact { max-width: 100%; }
+.send-drawer-refine { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; font-size: 12px; color: var(--text-primary); }
+.send-drawer-refine input { accent-color: var(--accent); }

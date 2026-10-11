@@ -1003,3 +1003,18 @@ export async function mockLibraryApiRoutes(page: Page, options?: { shelves?: obj
     return flat(route, found)
   })
 }
+
+/** In-memory scheduler for journeys that create through the session menu. */
+export async function mockScheduledTasksRoutes(page: Page) {
+  const tasks: Record<string, unknown>[] = []
+  await page.route('**/api/scheduled-tasks', async route => {
+    if (route.request().method() === 'POST') {
+      const task = { ...route.request().postDataJSON(), id: `tsk_${tasks.length + 1}`, nextRun: '2026-10-12T09:00:00Z' }
+      tasks.push(task)
+      await route.fulfill({ json: { success: true, data: { task } } })
+    } else {
+      await route.fulfill({ json: { success: true, data: { tasks } } })
+    }
+  })
+  return tasks
+}

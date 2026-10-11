@@ -330,6 +330,8 @@ export interface SendToSessionReport {
  * cannot be edited into something that no longer names the thing it came from.
  */
 export interface SendToSessionRequest {
+  /** Compose a recurring prompt for the named session in the same drawer. */
+  scheduledTask?: boolean
   /** The session to preselect; the focused tile's session when absent. */
   targetSessionKey?: string
   /** The one line naming what the operator was looking at. */

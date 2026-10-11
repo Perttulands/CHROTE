@@ -184,6 +184,18 @@ typed.
 
 Users can edit, pause/resume, run-now, duplicate, or delete agent-created tasks from the same UI.
 
+From a session's right-click menu, **Schedule task…** opens the Send drawer with
+that session fixed as the target. Enter a prompt and pick a schedule. **Create task**
+saves it directly; its name comes from the prompt's first line. The timezone defaults
+to the browser's IANA zone.
+
+Turn on **Have agent refine** to use **Send to agent** instead. This sends the
+original prompt, target and schedule, together with CHROTE scheduler API instructions,
+through Send to Session. The agent is asked to refine the wording, preserve the target
+and timing, create or update the task, and report its ID and next run. The dashboard
+does not create a task in this mode: delivery is a handoff, and the agent's resulting
+task appears in Scheduled. Sessions with several panes require an explicit pane choice.
+
 ## Safety contract
 
 The API fails closed for:

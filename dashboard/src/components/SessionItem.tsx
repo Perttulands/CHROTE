@@ -270,6 +270,7 @@ function SessionItem({ session, selected = false, onSelectGesture, onSelectionMe
       rows: [
         { id: 'peek', label: 'Peek', onSelect: handlePeek },
         { id: 'send', label: 'Send to session', chord: 'Alt+S', onSelect: handleOpenSendToSession },
+        { id: 'schedule', label: 'Schedule task…', onSelect: () => openSendToSession({ targetSessionKey: sessionKey, scheduledTask: true }) },
         { id: 'agent-context', label: 'What this agent sees', onSelect: handleShowAgentContext },
       ],
     },

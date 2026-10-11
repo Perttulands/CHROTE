@@ -1,3 +1,4 @@
+import { scheduledRequest as fetchJSON, SCHEDULED_TASKS_CHANGED } from './scheduledTasksApi'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import { useDndMonitor, useDroppable } from '@dnd-kit/core'
@@ -98,30 +99,6 @@ function targetLabel(target: ScheduledTarget): string {
   return target.sessionName
 }
 
-function apiErrorMessage(response: unknown, fallback: string): string {
-  if (response && typeof response === 'object' && 'error' in response) {
-    const error = (response as { error?: { message?: string } }).error
-    if (error?.message) return error.message
-  }
-  return fallback
-}
-
-async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Chrote-Intent': 'scheduled-task',
-      ...(init?.headers || {}),
-    },
-  })
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok || payload?.success === false) {
-    throw new Error(apiErrorMessage(payload, `Request failed: ${response.status}`))
-  }
-  return (payload?.data ?? payload) as T
-}
-
 function formatDateTime(value?: string): string {
   if (!value) return '—'
   const date = new Date(value)
@@ -193,6 +170,9 @@ function ScheduledTasksView({
 
   useEffect(() => {
     void load()
+    const refresh = () => { void load() }
+    window.addEventListener(SCHEDULED_TASKS_CHANGED, refresh)
+    return () => window.removeEventListener(SCHEDULED_TASKS_CHANGED, refresh)
   }, [load])
 
   // Countdowns tick once a minute; the list itself only reloads after actions.

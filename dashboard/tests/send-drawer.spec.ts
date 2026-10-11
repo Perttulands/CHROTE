@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from './fixtures'
-import { mockApiRoutes, mockSessions } from './mock-api'
+import { mockApiRoutes, mockSessions, mockScheduledTasksRoutes } from './mock-api'
 import { setWorkspaceState } from './helpers'
 
 const TARGET = 'gt-gastown-jack'
@@ -177,4 +177,40 @@ test.describe('the Send to Session drawer', () => {
     // A multipart form carries every line break as CRLF, whatever the note held.
     expect(sends).toEqual([{ text: 'status\r\nplease', submit: 'true' }])
   })
+})
+
+
+test('a session menu schedules a prompt directly or hands its setup to the agent', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await mockApiRoutes(page)
+  const tasks = await mockScheduledTasksRoutes(page)
+  const sends: SendRecord[] = []
+  await mockSendRoutes(page, sends)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
+  await page.locator('.session-item').filter({ has: page.locator(`[title="${TARGET}"]`) }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Schedule task…' }).click()
+  const drawer = page.getByRole('dialog', { name: 'Schedule task', exact: true })
+  await expect(drawer.getByLabel('Prompt', { exact: true })).toBeFocused()
+  await drawer.getByLabel('Prompt', { exact: true }).fill('Review build failures')
+  await drawer.getByRole('button', { name: 'Create task', exact: true }).click()
+  await expect(drawer).toHaveCount(0)
+  expect(tasks).toHaveLength(1)
+  expect(tasks[0]).toMatchObject({ prompt: 'Review build failures', targets: [{ sessionName: TARGET }] })
+
+  await page.locator('.session-item').filter({ has: page.locator(`[title="${TARGET}"]`) }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Schedule task…' }).click()
+  await drawer.getByLabel('Prompt', { exact: true }).fill('Review blockers with project context')
+  await drawer.getByLabel('Have agent refine').check()
+  const bounds = await box(drawer)
+  expect(bounds.x).toBeGreaterThanOrEqual(0)
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(391)
+  await drawer.getByRole('button', { name: 'Send to agent', exact: true }).click()
+  await expect(drawer).toHaveCount(0)
+  expect(sends).toHaveLength(1)
+  expect(sends[0].text).toContain('Review blockers with project context')
+  expect(sends[0].text).toContain('X-Chrote-Intent: scheduled-task')
+  expect(sends[0].submit).toBe('true')
+  // Refinement delegates creation; pre-creating would give the operator two jobs.
+  expect(tasks).toHaveLength(1)
 })

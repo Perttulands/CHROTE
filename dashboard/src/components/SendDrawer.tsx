@@ -48,6 +48,13 @@ import {
 } from '../types'
 import { SessionCommandMark, SessionLabel } from './sessionLabel'
 import Launcher from './Launcher'
+import { useStatus } from '../context/StatusContext'
+import { useConfirmInPlace } from './confirmInPlace'
+import ScheduleEditor from './ScheduleEditor'
+import { emptyScheduleForm, scheduleFormError, scheduleFromForm } from './scheduledSchedule'
+import { scheduledRequest, SCHEDULED_TASKS_CHANGED } from './scheduledTasksApi'
+import { scheduledTaskDraft, scheduledTaskHandoff } from './scheduledTaskHandoff'
+import './ScheduledTasksView.css'
 import './SendDrawer.css'
 
 /** The picker's own row for a session that does not exist yet. */
@@ -136,6 +143,7 @@ export default function SendDrawer() {
     settings,
     updateSettings,
   } = useSession()
+  const { announce } = useStatus()
   const pool = useTerminalPool()
   const theme = useTheme()
   const evidence = useSessionEvidence()
@@ -145,6 +153,8 @@ export default function SendDrawer() {
   const [note, setNote] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [sending, setSending] = useState(false)
+  const [schedule, setSchedule] = useState(emptyScheduleForm)
+  const [refine, setRefine] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
   const [panes, setPanes] = useState<SendSessionPane[]>([])
   const [selectedPane, setSelectedPane] = useState('')
@@ -160,6 +170,7 @@ export default function SendDrawer() {
   const open = sendToSessionRequest !== null
   const reference = sendToSessionRequest?.reference
   const launch = sendToSessionRequest?.launch
+  const scheduling = Boolean(sendToSessionRequest?.scheduledTask)
 
   /** The session in the focused tile: what "Send" means with nothing in hand. */
   const focusedSessionKey = useFocusedSession()
@@ -183,6 +194,8 @@ export default function SendDrawer() {
     setSelected(sendToSessionRequest.targetSessionKey ?? (launchWanted ? NEW_AGENT : focusedSessionKey) ?? null)
     setSearch('')
     setNote(sendToSessionRequest.note ?? '')
+    setSchedule(emptyScheduleForm())
+    setRefine(false)
     setFiles([])
     setSending(false)
     setFailure(null)
@@ -212,7 +225,13 @@ export default function SendDrawer() {
 
   // A work surface: Escape closes it while it is the topmost thing open, and
   // a click outside leaves it where it is.
-  useSurface({ open, kind: 'work', onClose: closeSendToSession, ref: drawerRef })
+  const { armed: discardArmed, press: confirmDiscard } = useConfirmInPlace(closeSendToSession)
+  const close = () => {
+    if (scheduling && sending) return
+    if (scheduling && note.trim()) confirmDiscard()
+    else closeSendToSession()
+  }
+  useSurface({ open, kind: 'work', onClose: close, ref: drawerRef })
 
   /** The widest the drawer may be here: the workspace keeps its 480px. */
   const widest = useCallback(() => {
@@ -241,7 +260,7 @@ export default function SendDrawer() {
   // The exact pane is resolved before the operator can press Send, so a target
   // that cannot receive says so here rather than failing at delivery.
   useEffect(() => {
-    if (!open || !target) {
+    if (!open || !target || (scheduling && !refine)) {
       setPanes([])
       setSelectedPane('')
       setPanesLoading(false)
@@ -269,7 +288,7 @@ export default function SendDrawer() {
       setSelectedPane(result.length === 1 ? result[0].pane : '')
     })
     return () => { current = false }
-  }, [open, listSessionPanes, sendToSessionRequestId, target?.key, target?.name, target?.unixUser, target?.ended, target?.unresolvedBare]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, scheduling, refine, listSessionPanes, sendToSessionRequestId, target?.key, target?.name, target?.unixUser, target?.ended, target?.unresolvedBare]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const candidates = useMemo(() => {
     const needle = search.trim().toLowerCase()
@@ -317,9 +336,12 @@ export default function SendDrawer() {
     [panes, selectedPane],
   )
 
-  const message = composeMessage(reference, note)
+  const scheduleError = scheduleFormError(schedule)
+  const draft = target ? scheduledTaskDraft(note, target.name, target.unixUser, scheduleFromForm(schedule)) : null
+  const message = scheduling && draft ? scheduledTaskHandoff(draft, window.location.origin) : composeMessage(reference, note)
   const canSend = Boolean(target) && Boolean(message.trim() || files.length > 0) &&
-    Boolean(selectedPaneTarget) && !panesLoading && !sending && !deliveryUnknown
+    Boolean(selectedPaneTarget) && !panesLoading && !sending && !deliveryUnknown &&
+    (!scheduling || (Boolean(note.trim()) && !scheduleError))
 
   const deliver = useCallback(async (submit: boolean, session: DrawerTarget, pane: SendSessionPane, text: string) => {
     const token = Symbol(session.key)
@@ -359,6 +381,29 @@ export default function SendDrawer() {
     void deliver(submit, target, selectedPaneTarget, message)
   }, [canSend, deliver, message, selectedPaneTarget, target])
 
+  const createScheduledTask = async () => {
+    if (!draft || !note.trim() || scheduleError || sending || deliveryUnknown || target?.ended || target?.unresolvedBare) return
+    const token = Symbol('scheduled-task')
+    activeSendRef.current = token
+    setSending(true)
+    setFailure(null)
+    try {
+      const { task } = await scheduledRequest<{ task: { id: string; nextRun?: string } }>('/api/scheduled-tasks', {
+        method: 'POST', body: JSON.stringify(draft),
+      })
+      window.dispatchEvent(new Event(SCHEDULED_TASKS_CHANGED))
+      announce(`Created ${task.id}${task.nextRun ? ` · next run ${new Date(task.nextRun).toLocaleString()}` : ''}`, 'success')
+      if (activeSendRef.current === token) closeSendToSession()
+    } catch (cause) {
+      if (activeSendRef.current === token) setFailure(cause instanceof Error ? cause.message : 'Could not create scheduled task.')
+    } finally {
+      if (activeSendRef.current === token) {
+        activeSendRef.current = null
+        setSending(false)
+      }
+    }
+  }
+
   // A session that did not exist a moment ago is not ready for a submitted
   // prompt: the harness may still be starting. The message is pasted and left
   // on the agent's line, so the operator presses Enter when it is awake.
@@ -383,10 +428,11 @@ export default function SendDrawer() {
   // Shift+Enter is left to the textarea, which breaks the line; Alt+Enter is
   // left to the document, where it is the resident chord.
   const handleNoteKeyDown = useCallback((event: React.KeyboardEvent) => {
+    if (scheduling) return
     if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.metaKey) return
     event.preventDefault()
     send(!event.ctrlKey)
-  }, [send])
+  }, [send, scheduling])
 
   if (!open) return null
 
@@ -425,7 +471,7 @@ export default function SendDrawer() {
       ref={drawerRef}
       className="send-drawer"
       role="dialog"
-      aria-label="Send to session"
+      aria-label={scheduling ? 'Schedule task' : 'Send to session'}
       style={{ width: resize.width } as CSSProperties}
     >
       <div
@@ -439,19 +485,21 @@ export default function SendDrawer() {
         tabIndex={0}
       />
       <div className="send-drawer-header">
-        <span className="send-drawer-title">Send to session</span>
+        <span className="send-drawer-title">{scheduling ? 'Schedule task' : 'Send to session'}</span>
         <button
           type="button"
           className="send-drawer-close"
-          onClick={closeSendToSession}
-          aria-label="Close Send to Session"
+          onClick={close}
+          disabled={scheduling && sending}
+          aria-label={scheduling ? (discardArmed ? 'Discard scheduled task' : 'Close scheduled task') : 'Close Send to Session'}
           aria-keyshortcuts="Escape"
         >
-          Close<span className="send-drawer-chord" aria-hidden="true">Esc</span>
+          {scheduling && discardArmed ? 'Discard draft' : 'Close'}<span className="send-drawer-chord" aria-hidden="true">Esc</span>
         </button>
       </div>
         <div className="send-drawer-body" data-ui="send.drawer">
           <div className="send-drawer-section">Target</div>
+          {scheduling ? <div className="send-drawer-schedule-target">{target?.name}<span>{target?.unixUser}</span></div> : <>
           <input
             type="search"
             className="send-drawer-search"
@@ -476,6 +524,8 @@ export default function SendDrawer() {
               <span className="send-drawer-target-name">{launch?.label ?? 'New agent…'}</span>
             </button>
           </div>
+
+          </>}
 
           {selected === NEW_AGENT && (
             <div className="send-drawer-launcher">
@@ -516,13 +566,13 @@ export default function SendDrawer() {
             </label>
           )}
 
-          <div className="send-drawer-section">Message</div>
+          <div className="send-drawer-section">{scheduling ? 'Prompt' : 'Message'}</div>
           <div
             className="send-drawer-message"
-            onDragOver={event => event.preventDefault()}
+            onDragOver={event => { if (!scheduling) event.preventDefault() }}
             onDrop={event => {
               event.preventDefault()
-              addFiles(filesFromList(event.dataTransfer.files))
+              if (!scheduling) addFiles(filesFromList(event.dataTransfer.files))
             }}
           >
             {reference && <div className="send-drawer-reference">{reference}</div>}
@@ -530,14 +580,17 @@ export default function SendDrawer() {
               ref={noteRef}
               id="send-drawer-note"
               className="send-drawer-note"
-              aria-label="Message to send"
+              aria-label={scheduling ? 'Prompt' : 'Message to send'}
+              placeholder={scheduling ? 'What should this session do each time?' : undefined}
+              disabled={scheduling && sending}
               value={note}
               onChange={event => setNote(event.target.value)}
-              onPaste={handlePaste}
+              onPaste={scheduling ? undefined : handlePaste}
               onKeyDown={handleNoteKeyDown}
             />
           </div>
 
+          {!scheduling && <>
           {files.length > 0 && (
             <ul className="send-drawer-files" aria-label="Files queued for Send to Session">
               {files.map((file, index) => (
@@ -573,10 +626,31 @@ export default function SendDrawer() {
             }}
           />
 
+          </>}
+          {scheduling && (
+            <fieldset className="send-drawer-schedule" disabled={sending || deliveryUnknown}>
+              <ScheduleEditor schedule={schedule} onChange={setSchedule} />
+              {scheduleError && <p className="send-drawer-status error" role="alert">{scheduleError}</p>}
+              <label className="send-drawer-refine"><input type="checkbox" checked={refine} onChange={event => setRefine(event.target.checked)} />Have agent refine</label>
+              <p className="send-drawer-hint">{refine
+                ? 'Send your prompt and schedule to this session now. The agent refines the prompt and sets up the task.'
+                : 'Create a recurring prompt for this session. Manage it in Scheduled.'}</p>
+            </fieldset>
+          )}
+
           {failure !== null && (
             <p className="send-drawer-status error" role="alert">{failure}</p>
           )}
 
+          {scheduling ? (
+            <div className="send-drawer-actions">
+              <button type="button" className="send-drawer-primary"
+                disabled={refine ? !canSend : !draft || !note.trim() || Boolean(scheduleError) || sending || deliveryUnknown || Boolean(target?.ended || target?.unresolvedBare)}
+                onClick={() => refine ? send(true) : void createScheduledTask()}>
+                {sending ? (refine ? 'Sending…' : 'Creating…') : refine ? 'Send to agent' : 'Create task'}
+              </button>
+            </div>
+          ) : <>
           <div className="send-drawer-actions">
             <button
               type="button"
@@ -596,6 +670,7 @@ export default function SendDrawer() {
             </button>
           </div>
           <p className="send-drawer-hint">Enter sends · Shift+Enter new line · Ctrl+Enter pastes</p>
+          </>}
         </div>
     </aside>
   )

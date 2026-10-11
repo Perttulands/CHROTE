@@ -30,7 +30,7 @@ function workspace(activeSession: string | null): TerminalWorkspace {
 }
 
 const mockState = vi.hoisted(() => ({
-  request: null as { targetSessionKey?: string; reference?: string; note?: string } | null,
+  request: null as SendToSessionRequest | null,
   requestId: 0,
   sessions: [] as TmuxSession[],
   focusedWindowKey: 'terminal1-terminal1-window-0' as string | null,
@@ -68,6 +68,8 @@ vi.mock('../context/SessionContext', () => ({
   }),
 }))
 
+vi.mock('../context/StatusContext', () => ({ useStatus: () => ({ announce: vi.fn() }) }))
+
 vi.mock('./TerminalPool', () => ({
   useTerminalPool: () => ({
     terminals: new Map([['alice:alice-shell', { scrollToBottom: mockState.scrollToBottom }]]),
@@ -103,6 +105,57 @@ describe('SendDrawer', () => {
     mockState.listSessionPanes.mockResolvedValue([RESOLVED_PANE])
     mockState.sendToSession.mockResolvedValue({ outcome: 'sent', message: "Pasted to 'alice-shell' (%1)" })
     mockState.createSession.mockResolvedValue('shell-home')
+  })
+
+  it('creates a scheduled prompt directly for the menu session', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: { task: { id: 'tsk_1', nextRun: '2026-10-12T09:00:00Z' } } })))
+    open({ targetSessionKey: 'build:forge', scheduledTask: true })
+    render(<SendDrawer />)
+    fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Review build failures' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Every' }))
+    fireEvent.change(screen.getByLabelText('Interval'), { target: { value: '45' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }))
+    await waitFor(() => expect(mockState.closeSendToSession).toHaveBeenCalled())
+    expect(fetcher).toHaveBeenCalledWith('/api/scheduled-tasks', expect.objectContaining({
+      method: 'POST', headers: expect.objectContaining({ 'X-Chrote-Intent': 'scheduled-task' }),
+    }))
+    const body = JSON.parse(fetcher.mock.calls[0][1]!.body as string)
+    expect(body).toMatchObject({ prompt: 'Review build failures', targets: [{ sessionName: 'forge', unixUser: 'build' }], schedule: { type: 'interval', everyMinutes: 45 }, enabled: true, paused: false })
+    fetcher.mockRestore()
+  })
+
+  it('sends the schedule and setup instructions through the exact pane for refinement', async () => {
+    open({ targetSessionKey: 'alice:codex-agent', scheduledTask: true })
+    render(<SendDrawer />)
+    fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Review blockers' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Have agent refine' }))
+    const send = screen.getByRole('button', { name: 'Send to agent' })
+    await waitFor(() => expect(send).toBeEnabled())
+    fireEvent.click(send)
+    await waitFor(() => expect(mockState.sendToSession).toHaveBeenCalledWith('codex-agent', expect.objectContaining({
+      text: expect.stringContaining('X-Chrote-Intent: scheduled-task'), submit: true,
+      pane: '%1', sessionId: '$1', panePid: '101', serverPid: '9001',
+    }), 'alice'))
+    const text = mockState.sendToSession.mock.calls[0][1].text
+    expect(text).toContain('Review blockers')
+    expect(text).toContain('"sessionName": "codex-agent"')
+    expect(text).toContain('"expression": "0 9 * * *"')
+    expect(text).toContain('/api/scheduled-tasks')
+  })
+
+  it('keeps a failed scheduled task draft and confirms before discarding it', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ error: { message: 'Session disappeared' } }), { status: 404 }))
+    open({ targetSessionKey: 'build:forge', scheduledTask: true })
+    render(<SendDrawer />)
+    fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Keep this draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Session disappeared')
+    expect(screen.getByLabelText('Prompt')).toHaveValue('Keep this draft')
+    fireEvent.click(screen.getByRole('button', { name: 'Close scheduled task' }))
+    expect(mockState.closeSendToSession).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Discard scheduled task' }))
+    expect(mockState.closeSendToSession).toHaveBeenCalled()
+    fetcher.mockRestore()
   })
 
   // The drawer opens at whatever width this device last gave it, and the
