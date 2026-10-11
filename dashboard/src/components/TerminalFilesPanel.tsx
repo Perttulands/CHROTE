@@ -381,11 +381,17 @@ function TerminalFilesPanel({
             <input
               aria-label="Find files"
               placeholder="Find files…"
+              title="Down enters the list; Up/Down browses and opens files"
               autoComplete="off"
               spellCheck={false}
               value={query}
               onChange={event => setQuery(event.target.value)}
               onKeyDown={event => {
+                if (event.key === 'ArrowDown' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                  const first = panelRef.current?.querySelector<HTMLElement>(trimmedQuery ? '.terminal-files-match' : '[role="treeitem"]')
+                  if (first) { event.preventDefault(); first.focus(); if (!first.hasAttribute('aria-expanded')) first.click() }
+                  return
+                }
                 if (event.key === 'Enter' && matches.length > 0) {
                   event.preventDefault()
                   openPath(matches[0].path)
@@ -402,13 +408,21 @@ function TerminalFilesPanel({
           {trimmedQuery ? (
             <>
               <div className="terminal-files-matches" role="list" aria-label="Find results">
-                {matches.map((match, index) => (
+                {matches.map(match => (
                   <button
                     type="button"
                     role="listitem"
                     key={match.path}
-                    className={`terminal-files-match ${index === 0 ? 'is-first' : ''}`}
+                    className={`terminal-files-match ${filesState.openPath === match.path ? 'is-first' : ''}`}
                     onClick={() => openPath(match.path)}
+                    onKeyDown={event => {
+                      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+                      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+                      event.preventDefault()
+                      const rows = Array.from(panelRef.current?.querySelectorAll<HTMLButtonElement>('.terminal-files-match') ?? [])
+                      const next = rows[rows.indexOf(event.currentTarget) + (event.key === 'ArrowDown' ? 1 : -1)]
+                      if (next) { next.focus({ preventScroll: true }); next.scrollIntoView?.({ block: 'nearest' }); next.click() }
+                    }}
                   >
                     <PanelPath path={match.path} />
                   </button>

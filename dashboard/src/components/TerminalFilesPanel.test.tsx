@@ -166,6 +166,17 @@ describe('TerminalFilesPanel', () => {
 
     expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument()
     expect(readWorkspaceFilesState('terminal1').openPath).toBe('/srv/chrote/docs/journeys.md')
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    const rows = screen.getAllByRole('listitem')
+    expect(rows[0]).toHaveFocus()
+    fireEvent.keyDown(rows[0], { key: 'ArrowDown' })
+    expect(rows[1]).toHaveFocus()
+    expect(readWorkspaceFilesState('terminal1').openPath).toBe('/srv/chrote/docs/journal.md')
+    fireEvent.keyDown(rows[1], { key: 'ArrowDown' })
+    expect(rows[1]).toHaveFocus()
+    fireEvent.keyDown(rows[1], { key: 'ArrowUp' })
+    expect(rows[0]).toHaveFocus()
+
   })
 
   it('says when a find matched more than it will show, and clears on Escape', async () => {

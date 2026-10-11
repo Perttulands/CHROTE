@@ -1,3 +1,4 @@
+import ModelPreview from './ModelPreview'
 /**
  * Reading one file: the contents and the words for acting on them.
  *
@@ -350,6 +351,8 @@ function FilePanelViewer({
           <p className="files-panel-note">Reading {name}…</p>
         ) : error ? (
           <p className="files-panel-note">{error}</p>
+        ) : kind === 'model' ? (
+          <ModelPreview path={path} name={name} />
         ) : kind === 'image' ? (
           // The picture at the zoom level, whole in the room while that is
           // fit, with its pixels beneath it. Where the picture is not already

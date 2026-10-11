@@ -59,6 +59,8 @@
   "Menu": "dashboard/src/components/Menu.tsx",
   "MenuRows": "dashboard/src/components/Menu.tsx",
   "MenuTarget": "dashboard/src/components/MenuTarget.tsx",
+  "ModelPreview": "dashboard/src/components/ModelPreview.tsx",
+  "ModelViewer": "dashboard/src/components/ModelViewer.tsx",
   "NoInlineView": "dashboard/src/components/FilePanelViewer.tsx",
   "PanelPath": "dashboard/src/components/PanelPath.tsx",
   "Peek": "dashboard/src/components/Peek.tsx",

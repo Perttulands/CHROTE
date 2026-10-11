@@ -126,7 +126,20 @@ function FileTree({
   }, [localExpanded, onOpenDirectory, onOpenFile, updateExpanded])
 
   const handleItemKey = useCallback((event: KeyboardEvent<HTMLElement>, item: FileItem) => {
-    if (event.key === 'Enter' || event.key === ' ') {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      event.stopPropagation()
+      const rows = Array.from(treeRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])
+      const index = rows.indexOf(event.currentTarget)
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : index + (event.key === 'ArrowDown' ? 1 : -1)
+      const row = rows[next]
+      if (row) {
+        row.focus({ preventScroll: true })
+        row.scrollIntoView?.({ block: 'nearest' })
+        if (!row.hasAttribute('aria-expanded')) row.click()
+      }
+    } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
       openItem(item)
     } else if (item.isDir && event.key === 'ArrowRight') {

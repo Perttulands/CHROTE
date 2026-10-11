@@ -24,6 +24,9 @@ The host runs tmux, the CHROTE server, and the resources exposed through CHROTE.
 
 ## Files
 
+- GLB models open inline with drag-to-orbit, wheel/pinch zoom and Reset view.
+- In the file tree and sidebar search results, Up/Down moves between visible rows and opens files; Down from Find files enters the list.
+
 - The Files view and terminal sidecar browse, read, edit, compare, rename, and send files under configured roots.
 - Canonical-path checks keep file operations inside those roots after symlink resolution.
 - Unix permissions decide what the service identity can access. CHROTE reports permission failures plainly and does not add a second file-access policy.

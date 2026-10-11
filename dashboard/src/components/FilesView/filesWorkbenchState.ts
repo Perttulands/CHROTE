@@ -28,7 +28,7 @@ export interface FilesWorkbenchState {
 }
 
 const STORAGE_KEY = 'chrote.files.workbench.v1'
-const PREVIEW_KINDS = new Set<PreviewKind>(['text', 'image', 'audio', 'video', 'pdf', 'download'])
+const PREVIEW_KINDS = new Set<PreviewKind>(['text', 'image', 'audio', 'video', 'pdf', 'model', 'download'])
 
 export const DEFAULT_FILES_WORKBENCH_STATE: FilesWorkbenchState = {
   version: 1,

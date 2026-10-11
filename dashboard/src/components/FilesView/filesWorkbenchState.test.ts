@@ -47,6 +47,16 @@ describe('Files workbench persistence', () => {
     })
   })
 
+  it('restores an open GLB model', () => {
+    writeFilesWorkbenchState({ ...DEFAULT_FILES_WORKBENCH_STATE,
+      contentMode: 'file', activeFilePath: '/model.glb',
+      openFiles: [{ path: '/model.glb', name: 'model.glb', size: 100, type: '', kind: 'model' }],
+    })
+    expect(readFilesWorkbenchState()).toMatchObject({
+      activeFilePath: '/model.glb', openFiles: [{ path: '/model.glb', kind: 'model' }],
+    })
+  })
+
   it('drops malformed records and repairs an active path that is not open', () => {
     window.localStorage.setItem('chrote.files.workbench.v1', JSON.stringify({
       currentPath: 42,

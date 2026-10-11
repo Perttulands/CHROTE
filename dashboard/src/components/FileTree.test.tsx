@@ -58,6 +58,25 @@ describe('FileTree', () => {
     expect(mockedFetchDirectory).toHaveBeenCalledWith('/srv')
   })
 
+  it('walks visible rows with arrows, opens files, and stops at the ends', async () => {
+    const openFile = vi.fn()
+    render(<FileTree currentPath="/" selectedPath={null} expandedPaths={['/', '/srv']}
+      scrollTop={0} onOpenDirectory={vi.fn()} onOpenFile={openFile}
+      onExpandedPathsChange={vi.fn()} onScrollTopChange={vi.fn()} />)
+    const notes = await screen.findByRole('treeitem', { name: 'File notes.txt' })
+    const readme = screen.getByRole('treeitem', { name: 'File README.md' })
+    notes.focus()
+    fireEvent.keyDown(notes, { key: 'ArrowDown' })
+    expect(readme).toHaveFocus()
+    expect(openFile).toHaveBeenLastCalledWith(expect.objectContaining({ path: '/README.md' }))
+    fireEvent.keyDown(readme, { key: 'ArrowDown' })
+    expect(readme).toHaveFocus()
+    fireEvent.keyDown(readme, { key: 'ArrowUp' })
+    expect(notes).toHaveFocus()
+    fireEvent.keyDown(notes, { key: 'Home' })
+    expect(screen.getByRole('treeitem', { name: 'Folder srv' })).toHaveFocus()
+  })
+
   it('restores and reports tree scroll without resetting it on selection changes', async () => {
     const onScrollTopChange = vi.fn()
     const { rerender } = render(

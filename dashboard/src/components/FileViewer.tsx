@@ -1,3 +1,4 @@
+import ModelPreview from './ModelPreview'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import { MAX_TEXT_PREVIEW_BYTES, getDownloadUrl, getErrorMessage, probeTextFile, readTextFile } from './FilesView/fileService'
@@ -16,7 +17,7 @@ import {
 } from './imageZoom'
 import { useResizableWidth } from '../hooks/useResizableWidth'
 
-export type PreviewKind = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'download'
+export type PreviewKind = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'model' | 'download'
 export { MAX_TEXT_PREVIEW_BYTES } from './FilesView/fileService'
 
 const TEXT_EXTENSIONS = new Set([
@@ -75,6 +76,7 @@ export function getPreviewKind(item: FileItem): PreviewKind {
   if (IMAGE_EXTENSIONS.has(extension)) return 'image'
   if (AUDIO_EXTENSIONS.has(extension)) return 'audio'
   if (VIDEO_EXTENSIONS.has(extension)) return 'video'
+  if (extension === 'glb') return 'model'
   if (extension === 'pdf') return 'pdf'
   return 'download'
 }
@@ -440,6 +442,8 @@ function FileViewer({
               />
             </button>
           </div>
+        ) : kind === 'model' ? (
+          <ModelPreview path={item.path} name={item.name} />
         ) : kind === 'audio' ? (
           <div className="fb-media-preview"><audio src={getDownloadUrl(item.path)} controls /></div>
         ) : kind === 'video' ? (
