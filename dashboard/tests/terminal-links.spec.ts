@@ -87,7 +87,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEElEQVR
  * A terminal that prints one absolute path, and a Files API that lists its
  * parent and serves its bytes (bead: chrote-wgqp.7).
  */
-async function openTerminalWithPath(page: Page, printed = PRINTED_PATH) {
+async function openTerminalWithPath(page: Page, printed = PRINTED_PATH, output?: (columns: number) => string) {
   await mockApiRoutes(page)
   await page.route('**/api/files/raw/**', route => route.fulfill(
     new URL(route.request().url()).pathname.endsWith('.png')
@@ -108,6 +108,7 @@ async function openTerminalWithPath(page: Page, printed = PRINTED_PATH) {
         isDir: true,
         items: [
           { name: 'notes.txt', size: 17, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'text/plain' },
+          { name: 'test-abc.png', size: PNG.length, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'image/png' },
           { name: 'shot.png', size: PNG.length, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'image/png' },
         ],
       }),
@@ -124,14 +125,14 @@ async function openTerminalWithPath(page: Page, printed = PRINTED_PATH) {
       }
       if (!text.startsWith('{')) return
       grid.columns = (JSON.parse(text) as { columns: number }).columns
-      ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(`see ${printed} for the run`)]))
+      ws.send(Buffer.concat([Buffer.from([TTYD_OUTPUT]), Buffer.from(output ? output(grid.columns) : `see ${printed} for the run`)]))
     })
   })
   await page.addInitScript((state) => {
     localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
   }, seededState())
   await page.goto('/')
-  await expect(page.locator('.terminal-window-body .xterm-rows')).toContainText(printed)
+  await expect(page.locator('.terminal-window-body .xterm-rows')).toContainText(output ? 'for the run' : printed)
   return { grid, typed }
 }
 
@@ -205,3 +206,33 @@ test.describe('Terminal links', () => {
     expect(JSON.stringify(typed)).not.toContain('\\u001b')
   })
 })
+
+// Real cells and both link-provider priorities matter: the filename contains
+// a known Bead id, but clicking any part of the path must still open the file.
+for (const wrap of ['soft', 'application'] as const) {
+  for (const fragment of [0, 1]) {
+    test(`${wrap}-wrapped path opens from fragment ${fragment + 1}`, async ({ page }) => {
+      const path = '/tmp/test-abc.png'
+      const { grid, typed } = await openTerminalWithPath(page, path, columns =>
+        '  saved '.padEnd(columns - 4, 'x') + '(/tm'
+        + (wrap === 'application' ? '\r\n  ' : '') + 'p/test-abc.png) for the run',
+      )
+      const rows = page.locator('.terminal-window-body .xterm-rows > div')
+      const before = await rows.allTextContents()
+      const box = (await rows.nth(fragment).boundingBox())!
+      const cell = box.width / grid.columns
+      const column = fragment === 0 ? grid.columns - 2 : (wrap === 'application' ? 4 : 2)
+      await page.mouse.move(box.x + cell * (column + 0.5), box.y + box.height / 2)
+      await expect(page.locator('.terminal-window-body .xterm-screen.xterm-cursor-pointer')).toBeVisible()
+      expect(await rows.allTextContents()).toEqual(before)
+      await page.mouse.click(box.x + cell * (column + 0.5), box.y + box.height / 2)
+      const popout = page.getByRole('dialog', { name: 'File test-abc.png' })
+      await expect(popout).toBeVisible()
+      await expect(popout.getByRole('img', { name: 'test-abc.png' })).toBeVisible()
+      await expect(page.locator('.files-panel-viewer-path')).toHaveAttribute('title', path)
+      await page.keyboard.press('Escape')
+      await expect(popout).toHaveCount(0)
+      expect(typed).toEqual([])
+    })
+  }
+}

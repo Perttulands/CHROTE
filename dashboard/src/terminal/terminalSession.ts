@@ -206,16 +206,11 @@ export function createTerminalSession(options: TerminalSessionOptions): Terminal
   // that click also reaches tmux, where CHROTE's settings make it harmless.
   terminal.loadAddon(new WebLinksAddon())
 
-  // The other thing agents print that the operator wants to open: the Bead id
-  // of the work in hand. It is not a URL, so it gets its own provider, and
-  // activation opens the card rather than a tab. The dashboard's shared
-  // catalog learns the prefixes without making every terminal ask for them.
-  terminal.registerLinkProvider(createBeadLinkProvider(terminal))
-
-  // And the path of the file the agent changed, the test that failed, the log
-  // it wrote: activation hands it to Files, which reports plainly if it is not
-  // there. Nothing is checked or fetched to offer the link.
+  // Complete file paths take priority over Bead ids embedded in directory or
+  // file names. Standalone ids still open their card. Nothing is fetched to
+  // offer a path link; Files reports plainly if it cannot open the file.
   terminal.registerLinkProvider(createPathLinkProvider(terminal))
+  terminal.registerLinkProvider(createBeadLinkProvider(terminal))
 
   // The leader is the one keystroke a focused terminal does not own. Returning
   // false here is what keeps it out of the pty: xterm neither writes it nor
