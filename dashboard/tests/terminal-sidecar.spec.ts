@@ -144,7 +144,7 @@ test.describe('terminal workspace sidecars', () => {
     await groupHeader.click()
     await expect(groupHeader.locator('.expand-icon')).toHaveText('▶')
 
-    await page.locator('.tab-bar-tabs .tab').filter({ hasText: /^Terminal 2$/ }).click()
+    await page.getByRole('button', { name: 'Terminal 2', exact: true }).click()
 
     await expect(page.getByRole('button', { name: 'Sessions sidecar', exact: true })).toHaveAttribute('aria-pressed', 'true')
     await expect(sessions).toBeVisible()
@@ -166,10 +166,10 @@ test.describe('terminal workspace sidecars', () => {
     await page.getByRole('button', { name: 'Close Sessions sidecar' }).click()
     await expect(sessions).toHaveCount(0)
 
-    await page.locator('.tab-bar-tabs .tab').filter({ hasText: /^Terminal 2$/ }).click()
+    await page.getByRole('button', { name: 'Terminal 2', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Sessions sidecar', exact: true })).toHaveAttribute('aria-pressed', 'false')
 
-    await page.locator('.tab-bar-tabs .tab').filter({ hasText: /^Terminal$/ }).click()
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click()
 
     await expect(files).toBeVisible()
     await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()

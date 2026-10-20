@@ -60,7 +60,7 @@
   border-bottom-color: var(--accent);
 }
 
-/* The active terminal tab is its own menu. The caret says so on hover, and
+/* Each terminal tab is its own menu. The caret says so on hover, and
    keeps its space at all times so the tab bar does not shift under the mouse. */
 .tab-with-menu {
   display: inline-flex;
