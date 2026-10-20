@@ -114,12 +114,12 @@ describe('TabBar navigation', () => {
     mockState.workspaceIds = null
   })
 
-  it('shows the Library in desktop navigation', () => {
+  it('shows the Brain in desktop navigation', () => {
     mockMatchMedia(false)
     const onTabChange = vi.fn()
 
     render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Library' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Brain' }))
 
     expect(onTabChange).toHaveBeenCalledWith('library')
   })
@@ -147,12 +147,12 @@ describe('TabBar navigation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '☰' }))
 
-    for (const label of ['Terminal', 'Terminal 2', 'Terminal 3', 'Files', 'Beads', 'Library', 'Scheduled', 'Settings']) {
+    for (const label of ['Terminal', 'Terminal 2', 'Terminal 3', 'Files', 'Beads', 'Brain', 'Scheduled', 'Settings']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
     }
     expect(screen.getByRole('button', { name: 'Terminal' })).toHaveClass('active')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Library' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Brain' }))
 
     expect(onTabChange).toHaveBeenCalledWith('library')
   })

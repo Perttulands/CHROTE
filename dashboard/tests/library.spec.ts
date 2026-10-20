@@ -1,15 +1,4 @@
-/**
- * Journey 7, keep the library (beads: chrote-5grx.17, chrote-5grx.55,
- * chrote-5grx.75, chrote-5grx.76, chrote-5grx.77).
- *
- * One pass through the surface the browser is the point of: land on the map,
- * read a long name in full under the pointer, scrub the corpus back in time, take
- * the map in and put it back, open a shelf in the rail and point at one of its
- * pages to bring the map to it, dive into a page, travel to a neighbour, walk
- * the trail back, hand the page to the Librarian in the column at the right,
- * and close the dive with the map still standing. Everything narrower — a date, a
- * title, where a label sits — is a unit test.
- */
+/** Brain exploration, reading, Librarian handoff and browser geometry. */
 
 import { test, expect, type Page } from './fixtures'
 import { mockApiRoutes, mockBeadsApiRoutes, mockLibraryApiRoutes } from './mock-api'
@@ -60,149 +49,121 @@ function node(page: Page, title: string) {
   return page.locator(`.library-map button[aria-label="${title}"]`)
 }
 
-test.describe('The Library', () => {
-  test('lands on the map, dives into a page, travels to a neighbour and back, and hands it to the Librarian', async ({ page }) => {
+test.describe('The Brain', () => {
+  test('explores subjects, reads a page and its neighbour, and hands it to the Librarian', async ({ page }) => {
     const sends: { text: string; submit: string }[] = []
     await mockApiRoutes(page)
     await mockBeadsApiRoutes(page)
     await mockLibraryApiRoutes(page)
     await mockLibrarianSend(page, sends)
     await page.goto('/')
-    await page.waitForSelector('.dashboard')
+    await page.getByRole('button', { name: 'Brain', exact: true }).click()
 
-    await page.click('.tab:has-text("Library")')
-    await page.waitForSelector('.library-view')
-
-    // The library lands on the map: every shelf labelled, every link counted.
-    await expect(page.locator('.library-map-count')).toHaveText('4 pages · 2 shelves · 2 links · 1 shared tag')
-    await expect(page.locator('.library-map-cluster', { hasText: 'preferences · 2' })).toBeVisible()
-
-    // Pointing at a page lights what it touches; the lit dot is drawn by
-    // class, and the class is the only thing to read off an SVG.
-    await node(page, 'Test isolation').hover()
-    await expect(node(page, 'Workflow Preferences')).toHaveClass(/hot/)
-    await expect(node(page, 'Tool Preferences')).not.toHaveClass(/hot/)
-
-    // The light falls off with distance: the page itself and what it touches
-    // are bright, what they touch is dim, and the rest of the corpus is faded.
-    await expect(node(page, 'Test isolation')).toHaveAttribute('data-depth', '0')
-    await expect(node(page, 'Workflow Preferences')).toHaveAttribute('data-depth', '1')
-    await expect(node(page, 'Tool Preferences')).toHaveAttribute('data-depth', '2')
-    await expect(node(page, LONG_TITLE)).toHaveAttribute('data-depth', 'out')
-
-    // Pointing at a shelf asks about the shelf: its pages stay, the rest dims.
-    await page.locator('.library-map-cluster', { hasText: 'preferences · 2' }).hover()
-    await expect(node(page, 'Workflow Preferences')).not.toHaveAttribute('data-depth')
-    await expect(node(page, 'Test isolation')).toHaveAttribute('data-depth', 'out')
-
-    // A name too long for the map's labels is still readable in full under
-    // the pointer, where the label beside the dot only shortens it.
-    await node(page, LONG_TITLE).hover()
-    await expect(page.locator('[data-ui="library.map.hover"]')).toHaveText(LONG_TITLE)
-
-    // The scrubber reads the map at a moment, and dropped near one of its stops
-    // it takes it, so the four windows the map used to offer as buttons are
-    // still one movement away. A day ago, a page written two days ago is on
-    // the map but has been rewritten since, so it stands back; the page that
-    // has not moved in months was current then and does not.
-    const scrubber = page.locator('[data-ui="library.map.scrubber"]')
-    await expect(page.locator('.library-map-legend')).toHaveText('The corpus as it stands')
-    await scrubber.fill('827')
-    await expect(page.locator('.library-map-legend')).toHaveText('The corpus 1 day ago')
-    await expect(node(page, 'Test isolation')).toHaveClass(/stale/)
-    await expect(node(page, LONG_TITLE)).not.toHaveClass(/stale/)
-
-    // A week ago it had not been written at all, and is not on the map.
-    await scrubber.fill('670')
-    await expect(page.locator('.library-map-legend')).toHaveText('The corpus 7 days ago')
+    await expect(page.locator('.library-map-count')).toHaveText('4 pages · 2 subjects · 2 links')
+    const preferences = page.getByRole('button', { name: 'preferences, 2 pages' })
+    await expect(preferences).toHaveAttribute('aria-expanded', 'false')
+    await preferences.focus()
+    await page.keyboard.press('Enter')
+    await expect(preferences).toHaveAttribute('aria-expanded', 'true')
+    await expect(node(page, 'Workflow Preferences')).toBeVisible()
     await expect(node(page, 'Test isolation')).toHaveCount(0)
-    await expect(node(page, LONG_TITLE)).toBeVisible()
 
-    // Back at now the corpus is whole again.
-    await scrubber.fill('1000')
-    await expect(page.locator('.library-map-legend')).toHaveText('The corpus as it stands')
-    await expect(node(page, 'Test isolation')).toBeVisible()
-    await expect(node(page, 'Test isolation')).not.toHaveClass(/stale/)
-
-    // The map moves: the wheel takes it in, and the way back is offered only
-    // while there is one.
-    const reset = page.locator('[data-ui="library.map.reset"]')
-    await expect(reset).toHaveCount(0)
-    await page.getByRole('img', { name: 'The map' }).hover({ position: { x: 300, y: 200 } })
-    await page.mouse.wheel(0, -400)
-    await expect(reset).toBeVisible()
-    await reset.click()
-    await expect(reset).toHaveCount(0)
-
-    // The rail works the map rather than replacing it: a shelf draws open
-    // where it stands, and pointing at one of its pages takes the map to that
-    // page and lights it.
-    await page.click('.library-shelf:has-text("preferences")')
-    const row = page.locator('.library-shelves .library-row', { hasText: 'Workflow Preferences' })
-    await expect(row).toBeVisible()
-    await expect(page.locator('.library-map')).toBeVisible()
-
-    await row.locator('.library-row-head').hover()
-    await expect(node(page, 'Workflow Preferences')).toHaveClass(/hot/)
-    await expect(reset).toBeVisible()
-    await reset.click()
-
-    // Clicking the row opens it on what the page is, in place.
-    await row.locator('.library-row-head').click()
-    await expect(row.locator('.library-row-meta')).toContainText('200 words')
-
-    // A dot on the map dives into its page: the page opens beside the map,
-    // the map stays and takes the page it was asked for.
+    // Selecting a page shows its references before opening the reader.
     await node(page, 'Workflow Preferences').click()
-
+    await expect(page.locator('.brain-page-selection')).toContainText('Workflow Preferences')
+    await expect(page.locator('.brain-external').getByRole('button', { name: /^Test isolation/ })).toBeVisible()
+    await expect(page.locator('.library-dive')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Open page', exact: true }).click()
     const dive = page.locator('.library-dive')
     await expect(dive.locator('.library-page-title-row h1')).toHaveText('Workflow Preferences')
     await expect(dive.locator('.library-body')).toContainText('Prefer small, verifiable changes.')
     await expect(dive.locator('.library-history-message')).toHaveText('Record a workflow preference')
-    await expect(page.locator('.library-map')).toBeVisible()
-    await expect(page.locator('[data-ui="library.map.reset"]')).toBeVisible()
-
-    // A dive is a reading, so it takes the map near enough to read: the page it
-    // opened carries a card beside its dot saying what the page is, not only
-    // what it is called.
-    const card = page.locator('[data-ui="library.map.hover"]')
-    await expect(card).toContainText('Workflow Preferences')
-    await expect(card).toContainText('preferences ·')
-    await expect(card).toContainText('200 words')
-
-    // The trail starts at the page it started at.
     await expect(dive.locator('.library-trail-step')).toHaveText(['Workflow Preferences'])
+    await expect(page.locator('.library-map')).toBeVisible()
 
-    // A neighbour travels, and the trail grows behind the reader.
     await dive.locator('.library-links', { hasText: 'Neighbours' })
       .getByRole('button', { name: 'Tool Preferences' }).click()
     await expect(dive.locator('.library-page-title-row h1')).toHaveText('Tool Preferences')
     await expect(dive.locator('.library-trail-step')).toHaveText(['Workflow Preferences', 'Tool Preferences'])
-    await expect(node(page, 'Tool Preferences')).toHaveClass(/hot/)
-
-    // The Librarian is live in the column at the right, and Alt+S puts the
-    // page into its prompt on a line of its own, for the operator to finish.
     const column = page.getByRole('complementary', { name: 'The Librarian' })
     await expect(column.locator('.resident-header')).toContainText('hq-deacon')
     await expect(column.locator('.xterm-rows')).toContainText('mock terminal hq-deacon')
     await page.keyboard.press('Alt+s')
-
     await expect.poll(() => sends).toEqual([{ text: 'library preferences/tools.md\n', submit: 'false' }])
 
-    // A step of the trail goes back, and cuts the trail to where it went.
     await dive.locator('.library-trail-step', { hasText: 'Workflow Preferences' }).click()
     await expect(dive.locator('.library-page-title-row h1')).toHaveText('Workflow Preferences')
     await expect(dive.locator('.library-trail-step')).toHaveText(['Workflow Preferences'])
-
-    // Escape ends the dive; the map is still there, and still where it was.
     await page.keyboard.press('Escape')
     await expect(dive).toHaveCount(0)
-    await expect(node(page, 'Workflow Preferences')).toBeVisible()
+    await page.getByRole('button', { name: 'Overview', exact: true }).click()
+    await expect(preferences).toHaveAttribute('aria-expanded', 'false')
+
+    // Expanding an older subject preserves full hover labels, time and zoom.
+    await page.getByRole('button', { name: 'knowledge, 2 pages' }).click()
+    await node(page, LONG_TITLE).hover()
+    await expect(page.locator('[data-ui="library.map.hover"]')).toContainText(LONG_TITLE)
+    const scrubber = page.locator('[data-ui="library.map.scrubber"]')
+    await scrubber.fill('670')
+    await expect(page.locator('.library-map-legend')).toHaveText('The corpus 7 days ago')
+    await expect(node(page, 'Test isolation')).toHaveCount(0)
+    await expect(node(page, LONG_TITLE)).toBeVisible()
+    await scrubber.fill('1000')
+    await expect(node(page, 'Test isolation')).toBeVisible()
+    const reset = page.locator('[data-ui="library.map.reset"]')
+    await page.getByRole('img', { name: 'The map' }).hover()
+    await page.mouse.wheel(0, -400)
+    await expect(reset).toBeVisible()
+    await reset.click()
+    await expect(reset).toHaveCount(0)
   })
 
-  // Real layout is the only way to see one section painting over another;
-  // the rule these boxes prove is that every section takes a fixed or a
-  // scrolling extent (chrote-5grx.35).
+  // Layout and canvas hit targets require a real browser at a narrow width.
+  test('keeps subject selection and reader controls reachable in a narrow window', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 700 })
+    await mockApiRoutes(page)
+    await mockBeadsApiRoutes(page)
+    await mockLibraryApiRoutes(page)
+    await page.goto('/')
+    await page.getByRole('button', { name: '☰', exact: true }).click()
+    await page.getByRole('button', { name: 'Brain', exact: true }).click()
+    await page.getByRole('button', { name: 'preferences, 2 pages' }).click()
+    await node(page, 'Workflow Preferences').click()
+    const open = page.getByRole('button', { name: 'Open page', exact: true })
+    await expect(open).toBeInViewport()
+    const box = await open.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(760)
+    await open.click()
+    const dive = page.locator('.library-dive')
+    await expect(dive.locator('.library-body')).toContainText('Prefer small, verifiable changes.')
+    await expect(dive.getByRole('button', { name: /^Close/ })).toBeInViewport()
+    await page.keyboard.press('Escape')
+    await expect(dive).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeInViewport()
+  })
+
+  test('keeps collection visibility across a reload', async ({ page }) => {
+    await mockApiRoutes(page)
+    await mockBeadsApiRoutes(page)
+    await mockLibraryApiRoutes(page)
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Brain', exact: true }).click()
+    await expect(page.locator('.library-map-count')).toHaveText('4 pages · 2 subjects · 2 links')
+    await page.locator('.library-shelf-row', { hasText: 'preferences' })
+      .getByRole('button', { name: 'Hide preferences on the map' }).click()
+    await expect(page.locator('.library-map-count')).toHaveText('2 pages · 1 subject · 0 links')
+    await expect(page.getByRole('button', { name: 'preferences, 2 pages' })).toHaveCount(0)
+    await page.reload()
+    await page.getByRole('button', { name: 'Brain', exact: true }).click()
+    await expect(page.locator('.library-map-count')).toHaveText('2 pages · 1 subject · 0 links')
+    await page.locator('.library-shelf-row', { hasText: 'preferences' })
+      .getByRole('button', { name: 'Show preferences on the map' }).click()
+    await expect(page.locator('.library-map-count')).toHaveText('4 pages · 2 subjects · 2 links')
+    await expect(page.getByRole('button', { name: 'preferences, 2 pages' })).toBeVisible()
+  })
+
   test('keeps every rail section inside its own extent at a short window', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 700 })
     await mockApiRoutes(page)
@@ -211,7 +172,7 @@ test.describe('The Library', () => {
     await page.goto('/')
     await page.waitForSelector('.dashboard')
 
-    await page.click('.tab:has-text("Library")')
+    await page.getByRole('button', { name: 'Brain', exact: true }).click()
     await page.waitForSelector('.library-arrivals .library-row')
 
     const box = async (selector: string) => {
@@ -242,37 +203,5 @@ test.describe('The Library', () => {
     const arrivalsScroll = page.locator('.library-arrivals .library-scroll')
     expect(await arrivalsScroll.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
     await expect(page.locator('.library-arrivals .library-row').last()).not.toBeInViewport()
-  })
-
-  // The map is the operator's own picture of his corpus, and a shelf he is not
-  // working in today is noise on it. Hiding one is a device-local preference,
-  // so it must survive the reload that proves it was written down.
-  test('leaves a shelf off the map until it is asked back, across a reload', async ({ page }) => {
-    await mockApiRoutes(page)
-    await mockBeadsApiRoutes(page)
-    await mockLibraryApiRoutes(page)
-    await page.goto('/')
-    await page.waitForSelector('.dashboard')
-
-    await page.click('.tab:has-text("Library")')
-    await expect(page.locator('.library-map-count')).toHaveText('4 pages · 2 shelves · 2 links · 1 shared tag')
-    await expect(node(page, 'Workflow Preferences')).toBeVisible()
-
-    const row = page.locator('.library-shelf-row', { hasText: 'preferences' })
-    await row.getByRole('button', { name: 'Hide preferences on the map' }).click()
-
-    await expect(page.locator('.library-map-count')).toHaveText('2 pages · 1 shelf · 0 links · 0 shared tags')
-    await expect(node(page, 'Workflow Preferences')).toHaveCount(0)
-
-    await page.reload()
-    await page.waitForSelector('.dashboard')
-    await page.click('.tab:has-text("Library")')
-    await page.waitForSelector('.library-view')
-    await expect(page.locator('.library-map-count')).toHaveText('2 pages · 1 shelf · 0 links · 0 shared tags')
-
-    await page.locator('.library-shelf-row', { hasText: 'preferences' })
-      .getByRole('button', { name: 'Show preferences on the map' }).click()
-    await expect(page.locator('.library-map-count')).toHaveText('4 pages · 2 shelves · 2 links · 1 shared tag')
-    await expect(node(page, 'Workflow Preferences')).toBeVisible()
   })
 })

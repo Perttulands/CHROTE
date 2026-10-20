@@ -179,21 +179,20 @@ filesystem."
 
 **Steps.**
 
-1. Step into the library at its map: every page, shelves as labelled clusters,
-   wiki links and shared tags as edges, size from length, brightness from
-   recency, candidates dim. Click a page to dive into it: the map takes it to
-   the middle and closer in, and the page opens in a column beside the map with
-   its neighbours as links to travel by and a trail back through the dive.
-2. Work the map from the rail: a shelf opens inside it rather than over the
-   map, pointing at one of its pages takes the map to that page and lights it,
-   and clicking the page opens the row on what it is with a dive to take.
+1. Open Brain at its subject overview. Filter by collection, facet or kind;
+   expand a subject to see its pages and explicit links. Select a page to see
+   its summary, local references and references in other subjects. Open it in
+   the reader; follow links and the trail back. Sources can be shown on demand.
+2. Work from the collection rail or recent changes. Pointing at a page marks
+   its subject; opening a page selects its subject on the map. Refresh the map
+   after changes made by another agent.
 3. Search across everything, and read what arrived lately: the pages that
    changed, newest first, worked the same way as a shelf's.
 4. Fix an odd wording where you find it; each save is a commit attributed to the
    operator.
 5. Point the Librarian at the page or the shelf.
 
-**Surfaces.** The Library's map and the dive column beside it (1); the rail of
+**Surfaces.** Brain's map and the reader column beside it (1); the rail of
 shelves and arrivals beside the map, with its search (2, 3); the editor shared
 with Files (4); the Librarian's column (5).
 
@@ -201,6 +200,6 @@ with Files (4); the Librarian's column (5).
 the page being dived into into the Librarian's prompt, and a shelf's menu sends
 the shelf the same way.
 
-**Chords.** `Alt+L` opens the Library tab; `Escape` closes the dive and leaves
+**Chords.** `Alt+L` opens Brain; `Escape` closes the dive and leaves
 the map where it was; `Alt+S` pastes the page into the Librarian's prompt;
 `Alt+Enter` focuses the Librarian's column.

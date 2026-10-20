@@ -73,7 +73,12 @@ The build script compiles the dashboard and embeds its output into the Go server
 ## Core and components
 
 Terminal workspaces, sessions, files, server status, and settings form the core.
-Beads, Scheduled and the Library are separate first-party modules.
+Beads, Scheduled and Brain are separate first-party modules. Brain retains the
+`library` tab identifier and `/api/library` routes for compatibility. Its graph
+adapter reads page metadata and references from the configured Markdown tree;
+it owns no corpus index or classification. Context Citadel remains the owner of
+brain search, ingestion and curation. Subject groups are derived from current
+paths rather than a maintained CHROTE taxonomy.
 
 This separation is static code organization, not a marketplace or dynamic plugin loader. Components can add routes, views, and configuration. Their failure must remain contained so the terminal core still loads and works.
 
@@ -86,7 +91,7 @@ placements for that same table, so switching views preserves its drafts, loaded
 content and scroll position. A table failure is contained separately from the
 workspace and its terminals.
 
-The Files, Beads, Agents, Library and Server views, and the Beads column, start
+The Files, Beads, Agents, Brain and Server views, and the Beads column, start
 loading on first use and retain their state after that. Retained state does not
 require continuous requests: the Server view reads
 only while visible, with independent bounded status and history requests.

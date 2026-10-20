@@ -1,35 +1,40 @@
 package api
 
 import (
+	"encoding/csv"
+	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/chrote/server/internal/core"
 )
 
-// The map reads the corpus as a graph: every page is a node, every resolved
-// wiki link is an edge, and every tag two pages share is a fainter one. All of
-// it is derived on request from the tree and one git log; nothing is indexed
-// or stored, so the map can never disagree with the shelves.
-
-// libraryGraphPageLimit bounds the pages the graph reads, the way search bounds
-// the pages it walks.
-const libraryGraphPageLimit = 2000
+// The map presents the corpus pages, their brain metadata and actual references.
+// Housekeeping and internal work directories stay out of the map. Everything
+// is derived on request from the tree and one git log; nothing is indexed.
 
 // LibraryGraphPage is one page as the map draws it: where it sits, what it is
 // called, how much it says, when it arrived and when it last moved, and whether
 // it is still a candidate rather than a page the operator has accepted.
 type LibraryGraphPage struct {
-	Path    string `json:"path"`
-	Shelf   string `json:"shelf"`
-	Title   string `json:"title"`
-	Words   int    `json:"words"`
-	Updated string `json:"updated"`
+	Slug    string   `json:"slug"`
+	Kind    string   `json:"kind"`
+	Summary string   `json:"summary"`
+	Facets  []string `json:"facets"`
+	Subject string   `json:"subject"`
+	Path    string   `json:"path"`
+	Shelf   string   `json:"shelf"`
+	Title   string   `json:"title"`
+	Words   int      `json:"words"`
+	Updated string   `json:"updated"`
 	// Created is when the commit that first named this path was made, which is
 	// the corpus's own answer to when the page was written. Empty for a page
 	// git has never seen.
@@ -54,13 +59,14 @@ type LibraryGraphResponse struct {
 // business and are not what the link resolves by.
 var libraryWikiLink = regexp.MustCompile(`\[\[([^\[\]|#]+)(?:#[^\[\]|]*)?(?:\|[^\[\]]*)?\]\]`)
 
-// libraryFrontMatter is what the map reads out of a page's YAML front matter.
-// The parser reads the two forms the corpus writes for tags — `tags: [a, b]`
-// and a block list under `tags:` — and the one lifecycle value that matters,
-// because a YAML library for two keys is a dependency for nothing.
+// The brain writes flat YAML scalars and inline lists (JSON is valid YAML).
+// Legacy Library tags also support block lists.
 type libraryFrontMatter struct {
 	tags      []string
 	candidate bool
+	kind      string
+	summary   string
+	facets    []string
 }
 
 // splitLibraryFrontMatter separates a page's front matter from its body. A
@@ -83,17 +89,36 @@ func cleanLibraryTag(raw string) string {
 	return strings.ToLower(strings.Trim(strings.TrimSpace(raw), `"'`))
 }
 
+func libraryMetaScalar(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if value, err := strconv.Unquote(raw); err == nil {
+		return value
+	}
+	if strings.HasPrefix(raw, "'") && strings.HasSuffix(raw, "'") && len(raw) >= 2 {
+		return strings.ReplaceAll(raw[1:len(raw)-1], "''", "'")
+	}
+	return raw
+}
+
+func libraryMetaList(raw string) []string {
+	var values []string
+	if json.Unmarshal([]byte(raw), &values) == nil {
+		return values
+	}
+	reader := csv.NewReader(strings.NewReader(strings.Trim(raw, "[]")))
+	reader.TrimLeadingSpace = true
+	if parsed, err := reader.Read(); err == nil {
+		for _, value := range parsed {
+			if value = libraryMetaScalar(value); value != "" {
+				values = append(values, value)
+			}
+		}
+	}
+	return values
+}
+
 func parseLibraryFrontMatter(front string) libraryFrontMatter {
 	var meta libraryFrontMatter
-	seen := make(map[string]bool)
-	add := func(raw string) {
-		tag := cleanLibraryTag(raw)
-		if tag == "" || seen[tag] {
-			return
-		}
-		seen[tag] = true
-		meta.tags = append(meta.tags, tag)
-	}
 	lines := strings.Split(front, "\n")
 	for index, line := range lines {
 		if line == "" || line[0] == ' ' || line[0] == '\t' || line[0] == '-' || line[0] == '#' {
@@ -104,26 +129,77 @@ func parseLibraryFrontMatter(front string) libraryFrontMatter {
 			continue
 		}
 		value = strings.TrimSpace(value)
-		switch strings.ToLower(strings.TrimSpace(key)) {
+		key = strings.ToLower(strings.TrimSpace(key))
+		switch key {
+		case "kind":
+			meta.kind = libraryMetaScalar(value)
+		case "summary":
+			meta.summary = libraryMetaScalar(value)
 		case "lifecycle":
-			meta.candidate = strings.EqualFold(strings.Trim(value, `"'`), "candidate")
-		case "tags":
+			meta.candidate = strings.EqualFold(libraryMetaScalar(value), "candidate")
+		case "tags", "facets":
+			values := libraryMetaList(value)
 			if value == "" {
 				for _, item := range lines[index+1:] {
 					trimmed := strings.TrimSpace(item)
 					if !strings.HasPrefix(trimmed, "-") {
 						break
 					}
-					add(strings.TrimPrefix(trimmed, "-"))
+					values = append(values, libraryMetaScalar(strings.TrimPrefix(trimmed, "-")))
 				}
-				continue
 			}
-			for _, item := range strings.Split(strings.Trim(value, "[]"), ",") {
-				add(item)
+			seen := map[string]bool{}
+			for _, item := range values {
+				if key == "tags" {
+					item = cleanLibraryTag(item)
+				}
+				if item == "" || seen[item] {
+					continue
+				}
+				seen[item] = true
+				if key == "tags" {
+					meta.tags = append(meta.tags, item)
+				} else {
+					meta.facets = append(meta.facets, item)
+				}
 			}
 		}
 	}
 	return meta
+}
+
+// A brain subject is the immediate folder within a collection; deeper paths
+// stay together. Flat pages belong to the collection itself.
+func librarySubjectOf(relative string) string {
+	parts := strings.Split(relative, "/")
+	if len(parts) >= 3 {
+		return strings.Join(parts[:2], "/")
+	}
+	if len(parts) == 2 {
+		return parts[0]
+	}
+	return ""
+}
+
+func librarySlugOf(relative string) string {
+	name := strings.TrimSuffix(path.Base(relative), path.Ext(relative))
+	if name == "README" {
+		return path.Base(path.Dir(relative))
+	}
+	return name
+}
+
+func libraryMapPage(relative string) bool {
+	for _, part := range strings.Split(relative, "/") {
+		if strings.HasPrefix(part, ".") || strings.HasPrefix(part, "_") {
+			return false
+		}
+	}
+	switch strings.ToUpper(path.Base(relative)) {
+	case "AGENTS.MD", "CLAUDE.MD", "MAP.MD", "FACETS.MD":
+		return false
+	}
+	return !strings.HasPrefix(relative, "knowledge/maps/")
 }
 
 // libraryShelfOf is the shelf a page sits on: the first segment of its
@@ -155,7 +231,7 @@ func newLibraryIndex(pages []LibraryGraphPage) libraryIndex {
 	for _, page := range pages {
 		stem := strings.ToLower(strings.TrimSuffix(page.Path, path.Ext(page.Path)))
 		index.byPath[stem] = page.Path
-		name := path.Base(stem)
+		name := strings.ToLower(librarySlugOf(page.Path))
 		index.byName[name] = append(index.byName[name], page.Path)
 		title := strings.ToLower(strings.TrimSpace(page.Title))
 		index.byTitle[title] = append(index.byTitle[title], page.Path)
@@ -193,21 +269,61 @@ func (index libraryIndex) resolve(target, from string) (string, bool) {
 	return candidates[0], true
 }
 
-// libraryLinks resolves every wiki link in every page. A link to a page that is
-// not there is dropped, a page's link to itself is dropped, and a page that
-// names another twice links to it once.
+var libraryMarkdownLink = regexp.MustCompile(`\]\(<?([^)>\s]+\.md)(?:#[^)>]*)?>?\)`)
+var libraryInlineCode = regexp.MustCompile("`[^`\n]*`")
+
+// Code examples name syntax, not pages. Citadel uses this same distinction
+// when extracting wiki and relative Markdown references.
+func libraryLinkText(body string) string {
+	var out strings.Builder
+	fence := ""
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if fence != "" {
+			if strings.HasPrefix(trimmed, fence) {
+				fence = ""
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			fence = trimmed[:3]
+			continue
+		}
+		out.WriteString(libraryInlineCode.ReplaceAllString(line, ""))
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
+
+// The map keeps actual wiki and relative Markdown references, once per pair.
 func libraryLinks(pages []LibraryGraphPage, bodies map[string]string) [][2]string {
 	index := newLibraryIndex(pages)
 	links := make([][2]string, 0)
 	for _, page := range pages {
 		seen := make(map[string]bool)
-		for _, match := range libraryWikiLink.FindAllStringSubmatch(bodies[page.Path], -1) {
-			target, resolved := index.resolve(match[1], page.Path)
+		add := func(target string, resolved bool) {
 			if !resolved || target == page.Path || seen[target] {
-				continue
+				return
 			}
 			seen[target] = true
 			links = append(links, [2]string{page.Path, target})
+		}
+		text := libraryLinkText(bodies[page.Path])
+		for _, match := range libraryWikiLink.FindAllStringSubmatch(text, -1) {
+			add(index.resolve(match[1], page.Path))
+		}
+		for _, match := range libraryMarkdownLink.FindAllStringSubmatch(text, -1) {
+			reference, err := url.PathUnescape(match[1])
+			if err != nil || strings.HasPrefix(reference, "/") || strings.HasPrefix(reference, "~") {
+				continue
+			}
+			parsed, err := url.Parse(reference)
+			if err != nil || parsed.IsAbs() {
+				continue
+			}
+			relative := strings.TrimSuffix(path.Clean(path.Join(path.Dir(page.Path), reference)), libraryPageExtension)
+			target, resolved := index.byPath[strings.ToLower(relative)]
+			add(target, resolved)
 		}
 	}
 	sort.Slice(links, func(i, j int) bool {
@@ -264,15 +380,15 @@ func (h *LibraryHandler) Graph(w http.ResponseWriter, r *http.Request) {
 	pages := make([]LibraryGraphPage, 0)
 	bodies := make(map[string]string)
 	tags := make(map[string][]string)
-	_ = filepath.WalkDir(h.config.Root, func(walked string, entry fs.DirEntry, err error) error {
-		if err != nil || r.Context().Err() != nil {
-			if r.Context().Err() != nil {
-				return fs.SkipAll
-			}
-			return nil
+	walkErr := filepath.WalkDir(h.config.Root, func(walked string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := r.Context().Err(); err != nil {
+			return err
 		}
 		if entry.IsDir() {
-			if walked != h.config.Root && libraryIgnoresDirectory(entry.Name()) {
+			if walked != h.config.Root && (libraryIgnoresDirectory(entry.Name()) || strings.HasPrefix(entry.Name(), "_") || h.libraryRelative(walked) == "knowledge/maps") {
 				return fs.SkipDir
 			}
 			return nil
@@ -280,17 +396,25 @@ func (h *LibraryHandler) Graph(w http.ResponseWriter, r *http.Request) {
 		if !h.isPageEntry(walked, entry) {
 			return nil
 		}
-		if len(pages) >= libraryGraphPageLimit {
-			return fs.SkipAll
+		relative := h.libraryRelative(walked)
+		if !libraryMapPage(relative) {
+			return nil
 		}
 		content, readErr := readLibraryFile(walked)
 		if readErr != nil {
-			return nil
+			return fmt.Errorf("read %s: %w", relative, readErr)
 		}
-		relative := h.libraryRelative(walked)
 		front, body := splitLibraryFrontMatter(content)
 		meta := parseLibraryFrontMatter(front)
+		if meta.facets == nil {
+			meta.facets = []string{}
+		}
+		if meta.kind == "" && libraryShelfOf(relative) == "self" {
+			meta.kind = "self"
+		}
 		page := LibraryGraphPage{
+			Slug: librarySlugOf(relative), Kind: meta.kind, Summary: meta.summary,
+			Facets: meta.facets, Subject: librarySubjectOf(relative),
 			Path:      relative,
 			Shelf:     libraryShelfOf(relative),
 			Title:     libraryTitle(body, relative),
@@ -308,6 +432,10 @@ func (h *LibraryHandler) Graph(w http.ResponseWriter, r *http.Request) {
 		tags[relative] = meta.tags
 		return nil
 	})
+	if walkErr != nil {
+		core.WriteError(w, http.StatusInternalServerError, "LIBRARY_READ_FAILED", walkErr.Error())
+		return
+	}
 	sort.Slice(pages, func(i, j int) bool { return pages[i].Path < pages[j].Path })
 
 	response := LibraryGraphResponse{

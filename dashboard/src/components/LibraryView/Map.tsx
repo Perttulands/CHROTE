@@ -59,6 +59,8 @@ import { createCanvasRenderer, readPalette, type MapRenderer, type MapScene, typ
 
 export interface MapProps {
   graph: LibraryGraph
+  selectionScale?: number
+  selectedLinksOnly?: boolean
   /**
    * The page being dived into: taken to the middle, lit with its neighbours.
    * Null on the landing, and again once the dive is closed.
@@ -198,7 +200,7 @@ function useMapLayout(graph: LibraryGraph, width: number, height: number): { lay
   return { layout: EMPTY_LAYOUT, drawing: true }
 }
 
-export default function LibraryMap({ graph, openPath, matches, hoverPath = null, soloShelf = null, hues: given, moment = NOW, onOpen }: MapProps) {
+export default function LibraryMap({ graph, openPath, matches, hoverPath = null, soloShelf = null, hues: given, moment = NOW, selectionScale = DIVE_SCALE, selectedLinksOnly = false, onOpen }: MapProps) {
   const { ref, width, height } = useMeasuredSize()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const edgeCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -379,18 +381,18 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
   useLayoutEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    rendererRef.current = createCanvasRenderer(canvas, edgeCanvasRef.current)
+    rendererRef.current = createCanvasRenderer(canvas, graph.pages.length > 1500 ? edgeCanvasRef.current : null)
     setPalette(readPalette(ref.current))
     return () => {
       rendererRef.current?.destroy()
       rendererRef.current = null
     }
-  }, [ref])
+  }, [ref, graph.pages.length])
 
   // A frame, whenever the scene it would draw has changed and never otherwise.
   const scene: MapScene = useMemo(() => ({
     nodes: layout.nodes,
-    edges: layout.edges,
+    edges: selectedLinksOnly && openPath ? layout.edges.filter(edge => edge.from === openPath || edge.to === openPath) : layout.edges,
     text,
     transform: view.transform,
     width,
@@ -399,31 +401,25 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
     moment,
     hues,
     palette,
-  }), [height, hues, layout, lighting, moment, palette, text, view.transform, width])
+  }), [height, hues, layout, lighting, moment, palette, text, view.transform, width, selectedLinksOnly, openPath])
 
   useEffect(() => { rendererRef.current?.draw(scene) }, [scene])
 
-  // A dive takes its page to the middle and closer in, wherever it was asked
-  // for: a dot, a neighbour's link in the column, a row in the rail. It is
-  // done once per page, so a map the operator has moved since stays moved.
-  //
-  // The page is taken to the middle again if the drawing itself changed under
-  // the dive: opening the column beside the map narrows the map, which lays the
-  // corpus out afresh, and a page centred against the old width would be
-  // anywhere against the new one.
+  // Centre a newly selected page once. Resizing or returning to the tab must
+  // preserve the operator's subsequent pan and zoom.
   const { centreOn } = view
-  const dived = useRef<{ path: string; where: typeof positions } | null>(null)
+  const dived = useRef<string | null>(null)
   useEffect(() => {
     if (!openPath) {
       dived.current = null
       return
     }
-    if (dived.current?.path === openPath && dived.current.where === positions) return
+    if (dived.current === openPath) return
     const found = positions.get(openPath)
     if (!found) return
-    dived.current = { path: openPath, where: positions }
-    centreOn(found, DIVE_SCALE)
-  }, [centreOn, openPath, positions])
+    dived.current = openPath
+    centreOn(found, selectionScale)
+  }, [centreOn, openPath, positions, selectionScale])
 
   // A page pointed at in the rail is brought to the middle at the scale the
   // map is already at: the operator is looking for where it sits, not diving

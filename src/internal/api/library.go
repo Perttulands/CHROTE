@@ -59,9 +59,6 @@ const (
 	libraryHistoryLimit = 20
 	// librarySearchLimit caps the results a search returns.
 	librarySearchLimit = 50
-	// librarySearchCandidateLimit bounds the files a search reads, so the
-	// ordering rule is applied to a bounded superset of the corpus.
-	librarySearchCandidateLimit = 2000
 	// libraryChangesDefault and libraryChangesLimit bound the recent-changes list.
 	libraryChangesDefault = 30
 	libraryChangesLimit   = 200
@@ -649,7 +646,6 @@ func (h *LibraryHandler) Search(w http.ResponseWriter, r *http.Request) {
 		nameMatch bool
 	}
 	candidates := make([]candidate, 0)
-	read := 0
 	_ = filepath.WalkDir(h.config.Root, func(walked string, entry fs.DirEntry, err error) error {
 		if err != nil || r.Context().Err() != nil {
 			if r.Context().Err() != nil {
@@ -666,10 +662,6 @@ func (h *LibraryHandler) Search(w http.ResponseWriter, r *http.Request) {
 		if !h.isPageEntry(walked, entry) {
 			return nil
 		}
-		if read >= librarySearchCandidateLimit {
-			return fs.SkipAll
-		}
-		read++
 
 		relative := h.libraryRelative(walked)
 		content, readErr := readLibraryFile(walked)

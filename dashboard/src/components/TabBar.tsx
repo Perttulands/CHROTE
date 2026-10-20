@@ -72,7 +72,7 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
     ...workspaceIds.map((id): TabConfig => ({ id, label: settings.terminalLabels[id]?.trim() || getTerminalLabel(id) })),
     { id: 'files', label: 'Files' },
     { id: 'beads', label: 'Beads' },
-    { id: 'library', label: 'Library' },
+    { id: 'library', label: 'Brain' },
     { id: 'agents', label: 'Agents' },
     { id: 'scheduled', label: 'Scheduled' },
     ...(isFeatureEnabled('serverStatusTab') ? [{ id: 'server' as const, label: 'Server' }] : []),

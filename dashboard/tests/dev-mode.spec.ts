@@ -73,7 +73,7 @@ async function activateBackgroundViews(page: Page) {
   // held, then return to the terminal so completion still updates hidden views.
   for (const [tab, request] of [
     ['Agents', '**/api/agent/context**'],
-    ['Library', '**/api/library/shelves**'],
+    ['Brain', '**/api/library/shelves**'],
     ['Beads', '**/api/beads/work**'],
   ]) {
     const started = page.waitForRequest(request)

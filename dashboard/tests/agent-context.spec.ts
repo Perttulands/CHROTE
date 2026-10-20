@@ -109,7 +109,7 @@ test.describe('what an agent sees', () => {
     })
     expect(scrollTop).toBeGreaterThan(0)
 
-    for (const tab of ['Beads', 'Agents', 'Library', 'Scheduled']) {
+    for (const tab of ['Beads', 'Agents', 'Brain', 'Scheduled']) {
       await page.getByRole('button', { name: tab, exact: true }).click()
       await expect(editor).toBeVisible()
       await expect(editor).toHaveValue(draft)

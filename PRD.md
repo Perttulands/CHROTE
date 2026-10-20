@@ -54,10 +54,18 @@ The core product is terminal workspaces, sessions, files, server status, and set
 | Settings | Configure presentation and explicit terminal controls |
 | Beads | Inspect and update configured project work stores |
 | Scheduled | Send prompts to named tmux sessions on a schedule |
-| Library | Read, search, and correct the configured context corpus |
+| Brain | Understand the context corpus by subject, follow references, read and correct pages |
 | Agents | Read the context a harness would get for any folder on the host |
 
-Beads, Library and Agents each host a resident agent, the Clerk, the Librarian and the tender, as a tmux session in a column at the right of the view; the one selected object, the table, is carried from view to view.
+Beads, Brain and Agents each host a resident agent, the Clerk, the Librarian and the tender, as a tmux session in a column at the right of the view; the one selected object, the table, is carried from view to view.
+
+The Brain map groups current corpus pages by collection and subject. Selecting
+one expands its pages by kind; selecting a page shows its summary and references.
+Sources are hidden from the drawing initially and can be shown. Collection,
+facet and kind filters narrow the map; cross-subject navigation follows explicit
+links. Generated indexes and agent instructions are excluded. Refresh and tab
+entry re-read the tree, including moved pages. The existing reader, editor,
+history and Librarian remain available.
 
 Components remain separated in the codebase and fail independently. A missing Beads workspace or unconfigured context corpus must not prevent terminal work.
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -270,5 +271,111 @@ func TestParseLibraryLog(t *testing.T) {
 	}
 	if got := parseLibraryLog(""); len(got) != 0 {
 		t.Fatalf("no output parses to %d changes", len(got))
+	}
+}
+
+// The overview needs current subject membership, real brain metadata and links
+// to the evidence; a folder move must be reflected on the next refresh.
+func TestLibraryGraphBrainSubjects(t *testing.T) {
+	root := newGitRepository(t)
+	write := func(relative, content string) {
+		t.Helper()
+		absolute := filepath.Join(root, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(absolute), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(absolute, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("knowledge/learning/learning.md", "---\nkind: \"topic\"\nsummary: \"A quoted \\\"finding\\\", with evidence.\"\nfacets: [\"software\", \"agentic-work\"]\n---\n# Learning\n\n[[alpha]] and [the study](study.md#result).\n`[[example]]`\n```toml\n[[example]]\n```\n")
+	write("knowledge/learning/study.md", "---\nkind: research\nsummary: 'What we''ve learned'\nfacets: [software]\n---\n# Study\n")
+	write("knowledge/learning/example.md", "---\nkind: note\n---\n# Example\n")
+	write("projects/alpha/README.md", "# Alpha\n")
+	write("self/preferences.md", "# Preferences\n")
+	for _, relative := range []string{"AGENTS.md", "CLAUDE.md", "knowledge/MAP.md", "knowledge/FACETS.md", "knowledge/maps/software.md", "knowledge/_inbox/pending.md", "_librarian/work.md"} {
+		write(relative, "# Housekeeping\n")
+	}
+	gitCommitAllAt(t, root, "Brain pages", libraryGraphSeededAt)
+	handler := newLibraryHandlerForTest(t, LibraryConfig{Root: root})
+	graph := decodeLibrary[LibraryGraphResponse](t, libraryRequest(t, handler, http.MethodGet, "/api/library/graph", ""))
+	if len(graph.Pages) != 5 {
+		t.Fatalf("map has %d pages, want five content pages: %+v", len(graph.Pages), graph.Pages)
+	}
+	pages := map[string]LibraryGraphPage{}
+	for _, page := range graph.Pages {
+		pages[page.Path] = page
+	}
+	topic := pages["knowledge/learning/learning.md"]
+	if topic.Subject != "knowledge/learning" || topic.Kind != "topic" || topic.Slug != "learning" || topic.Summary != "A quoted \"finding\", with evidence." || !reflect.DeepEqual(topic.Facets, []string{"software", "agentic-work"}) {
+		t.Fatalf("topic metadata = %+v", topic)
+	}
+	study := pages["knowledge/learning/study.md"]
+	if study.Summary != "What we've learned" || !reflect.DeepEqual(study.Facets, []string{"software"}) {
+		t.Fatalf("study = %+v", study)
+	}
+	project := pages["projects/alpha/README.md"]
+	if project.Subject != "projects/alpha" || project.Slug != "alpha" || project.Facets == nil {
+		t.Fatalf("project = %+v", project)
+	}
+	self := pages["self/preferences.md"]
+	if self.Subject != "self" || self.Kind != "self" {
+		t.Fatalf("self = %+v", self)
+	}
+	wantLinks := [][2]string{{"knowledge/learning/learning.md", "knowledge/learning/study.md"}, {"knowledge/learning/learning.md", "projects/alpha/README.md"}}
+	if !reflect.DeepEqual(graph.Links, wantLinks) {
+		t.Fatalf("links = %v, want %v", graph.Links, wantLinks)
+	}
+	if err := os.Rename(filepath.Join(root, "knowledge/learning"), filepath.Join(root, "knowledge/discovery")); err != nil {
+		t.Fatal(err)
+	}
+	graph = decodeLibrary[LibraryGraphResponse](t, libraryRequest(t, handler, http.MethodGet, "/api/library/graph", ""))
+	moved := 0
+	for _, page := range graph.Pages {
+		if page.Shelf == "knowledge" {
+			moved++
+			if page.Subject != "knowledge/discovery" {
+				t.Fatalf("refresh returned former subject: %+v", page)
+			}
+		}
+	}
+	if moved != 3 {
+		t.Fatalf("moved knowledge pages = %d", moved)
+	}
+}
+
+// A late-sorting subject must remain discoverable when the corpus grows past
+// the former graph bound. This exercises the API, not a private cutoff value.
+func TestLibraryGraphIncludesWholeCorpus(t *testing.T) {
+	root := newGitRepository(t)
+	directory := filepath.Join(root, "knowledge", "large-subject")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 2005; index++ {
+		name := fmt.Sprintf("page-%04d.md", index)
+		if err := os.WriteFile(filepath.Join(directory, name), []byte("---\nkind: note\n---\n# Note\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	last := filepath.Join(root, "self", "values.md")
+	if err := os.MkdirAll(filepath.Dir(last), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(last, []byte("# Values\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := newLibraryHandlerForTest(t, LibraryConfig{Root: root})
+	rec := libraryRequest(t, handler, http.MethodGet, "/api/library/graph", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	graph := decodeLibrary[LibraryGraphResponse](t, rec)
+	if len(graph.Pages) != 2006 || graph.Pages[len(graph.Pages)-1].Path != "self/values.md" {
+		t.Fatalf("graph has %d pages; late subject = %+v", len(graph.Pages), graph.Pages[len(graph.Pages)-1])
+	}
+	hits := decodeLibrary[[]LibrarySearchResult](t, libraryRequest(t, handler, http.MethodGet, "/api/library/search?q=values", ""))
+	if len(hits) != 1 || hits[0].Path != "self/values.md" {
+		t.Fatalf("late subject search = %+v", hits)
 	}
 }

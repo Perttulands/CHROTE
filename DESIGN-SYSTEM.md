@@ -73,7 +73,7 @@ The interface is monochrome except where colour carries meaning. Seven uses live
 | Unix-user identity | `--identity-0` … | Which account owns this session |
 | Diffs | `--ansi-2`, `--color-error` | An addition, a removal; always beside a +/- gutter |
 | Bead type | `--ansi-1` … `--ansi-6` | What kind of work this is; always beside the type word |
-| Library shelf | `--shelf-0` … `--shelf-n` | Which shelf a page sits on, on the Library's map and in its rail |
+| Brain subject / collection | `--shelf-0` … `--shelf-n` | Subject identity on the map; collection identity in the rail |
 
 A Bead's type takes one theme ANSI token, chosen for contrast on the theme
 background, and the type word is written in it so a row reads the same without
@@ -94,16 +94,11 @@ Identity colours come from the theme, assigned to the server's `terminalUsers`
 in order so a user is the same colour on every device. A user the server does
 not list gets `--text-dim` rather than an invented colour.
 
-Shelf hues come from the theme too, assigned to the corpus's shelves in shelf
-order so a shelf is the same colour on every device and a new shelf takes the
-next hue rather than reshuffling the ones already learned. They are the map's
-answer to the one question a grey dot cannot answer — which part of the library
-am I looking at — so they sit low in chroma and all at one lightness, and the
-count in a rail's shelf row carries its shelf's hue, which makes the rail the
-map's legend. A corpus with more shelves than the theme names hues repeats from
-the start. A candidate page keeps `--text-dim`, because it is a proposal rather
-than a page on a shelf, and the accent stays out of the palette: on the map blue
-is what the operator is pointing at.
+Brain colours come from the theme's shelf palette. A subject's path selects its
+colour deterministically, so adding another subject does not recolour existing
+ones. The collection rail retains collection colours. Colours may repeat;
+labels identify the group. Circles mark topics and notes, squares research,
+and diamonds sources. The accent marks the selected or pointed-at page.
 
 ## Typeface
 
@@ -210,7 +205,7 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | --- | --- |
 | `Alt+1` … `Alt+6` | Terminal tab n, for the tabs that exist |
 | `Alt+B` | Beads column |
-| `Alt+L` | Library tab |
+| `Alt+L` | Brain tab |
 | `Alt+G` | Agents tab |
 | `Alt+W`, `Alt+Shift+W` | Next and previous window in the active tab |
 | `Alt+Plus`, `Alt+Minus` | Add a window; remove the last empty one |
@@ -306,7 +301,7 @@ drawer over it, and the resident's column beyond both.
   that a layer is beneath; no strip of cut words does. It closes after Send and
   on `Escape`, and what was beneath is there again.
 - **The resident's column** is a tmux session that lives in its tab: the
-  Librarian in the Library, the tender in Agents, the Clerk in Beads. It sits
+  Librarian in Brain, the tender in Agents, the Clerk in Beads. It sits
   at the far right of the tab, 44 columns wide by default, drag-resizable and
   remembered, under a 32px header carrying the label, the harness mark, the
   session name, its state as a word, and Send with its chord. The terminal is

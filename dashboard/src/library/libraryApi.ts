@@ -139,6 +139,11 @@ export function savePage(path: string, content: string, summary: string): Promis
 
 /** One page as the map draws it. */
 export interface LibraryGraphPage {
+  slug?: string
+  kind?: string
+  summary?: string
+  facets?: string[]
+  subject?: string
   path: string
   /** The top-level directory, or '' for a page at the root. */
   shelf: string
@@ -205,10 +210,11 @@ export function shelfOf(path: string): string {
  * in each size, makes the page look like it starts over.
  */
 export function libraryProse(content: string, title: string): string {
-  const lines = content.split('\n')
+  const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '')
+  const lines = body.split('\n')
   const first = lines.findIndex(line => line.trim() !== '')
-  if (first < 0) return content
+  if (first < 0) return body
   const heading = /^#\s+(.*)$/.exec(lines[first].trim())
-  if (!heading || heading[1].trim() !== title.trim()) return content
+  if (!heading || heading[1].trim() !== title.trim()) return body
   return lines.slice(first + 1).join('\n').replace(/^\n+/, '')
 }

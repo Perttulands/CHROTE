@@ -40,6 +40,12 @@ describe('shelfOf', () => {
 })
 
 describe('libraryProse', () => {
+  it('reads brain prose without rendering frontmatter as a heading', () => {
+    const content = '---\nkind: topic\nsummary: "Working knowledge"\nfacets: [software]\n---\n# Testing\n\nUse the real path.\n'
+    expect(libraryProse(content, 'Testing')).toBe('Use the real path.\n')
+    expect(libraryProse('---\nUnclosed text', 'Testing')).toBe('---\nUnclosed text')
+  })
+
   it('drops the opening heading the running head already carries', () => {
     expect(libraryProse('# Workflow Preferences\n\nPrefer small changes.\n', 'Workflow Preferences'))
       .toBe('Prefer small changes.\n')

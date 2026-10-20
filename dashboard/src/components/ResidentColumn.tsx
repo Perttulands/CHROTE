@@ -49,6 +49,7 @@ import './ResidentColumn.css'
 export interface ResidentColumnProps {
   /** Whether this column's tab is in front. Hidden columns keep UI state only. */
   active: boolean
+  minContentWidth?: number
   tab: ResidentTab
   /**
    * The one line Alt+S pastes into the resident's prompt: the page open in
@@ -81,7 +82,7 @@ function writeCollapsed(tab: ResidentTab, collapsed: boolean): void {
   }
 }
 
-export default function ResidentColumn({ active, tab, reference }: ResidentColumnProps) {
+export default function ResidentColumn({ active, tab, reference, minContentWidth = TABLE_CONTENT_MIN }: ResidentColumnProps) {
   const {
     sessions,
     settings,
@@ -161,8 +162,8 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
   const room = useCallback(() => {
     const parent = columnRef.current?.parentElement
     if (!parent) return Number.POSITIVE_INFINITY
-    return parent.clientWidth - TABLE_CONTENT_MIN - (tableOpen ? TABLE_WIDTH_MIN : 0)
-  }, [tableOpen])
+    return parent.clientWidth - minContentWidth - (tableOpen ? TABLE_WIDTH_MIN : 0)
+  }, [tableOpen, minContentWidth])
   const widest = useCallback(() => Math.max(RESIDENT_WIDTH_MIN, room()), [room])
   const commitWidth = useCallback((residentWidth: number) => {
     updateSettings({ residentWidth })

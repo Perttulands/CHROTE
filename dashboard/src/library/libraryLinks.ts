@@ -1,7 +1,7 @@
 import { shelfOf, type LibraryGraphPage } from './libraryApi'
 
 /** The native libraryIndex rules, using the same ordered graph page identities. */
-export function createLibraryResolver(pages: readonly Pick<LibraryGraphPage, 'path' | 'title'>[]) {
+export function createLibraryResolver(pages: readonly Pick<LibraryGraphPage, 'path' | 'title' | 'slug'>[]) {
   const byPath = new Map<string, string>()
   const byName = new Map<string, string[]>()
   const byTitle = new Map<string, string[]>()
@@ -13,7 +13,7 @@ export function createLibraryResolver(pages: readonly Pick<LibraryGraphPage, 'pa
   for (const page of pages) {
     const stem = page.path.replace(/\.[^/.]*$/, '').toLowerCase()
     byPath.set(stem, page.path)
-    add(byName, stem.slice(stem.lastIndexOf('/') + 1), page.path)
+    add(byName, (page.slug || stem.slice(stem.lastIndexOf('/') + 1)).toLowerCase(), page.path)
     add(byTitle, page.title.trim().toLowerCase(), page.path)
   }
   return (target: string, from: string): string | undefined => {

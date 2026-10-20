@@ -20,7 +20,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Editor from '../Editor'
 import Markdown from '../Markdown'
-import LibraryMap from './Map'
+import LibraryMap from './SubjectMap'
+import { subjectOf } from './brainSubjects'
 import { neighboursOf } from './mapLayout'
 import { NOW, SCRUB_STEPS, backFrom, existedAt, momentOf, snapTo, stopsOn } from './mapMoment'
 import { shelfHues } from './mapShelves'
@@ -157,15 +158,14 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     return () => { current = false }
   }, [root])
 
-  // The map is read once, and again after the operator's own save, which is
-  // the only way the corpus changes from here.
+  // Re-read on tab entry and explicit refresh; agents also change the corpus.
   const loadGraph = useCallback(() => {
     let current = true
     fetchGraph()
       .then(found => {
         if (!current) return
-        setGraph(found)
-        setGraphError('')
+        setGraph(previous => JSON.stringify(previous) === JSON.stringify(found) ? previous : found)
+        setGraphError(found.error ?? '')
       })
       .catch((cause: unknown) => {
         if (current) setGraphError(cause instanceof Error ? cause.message : 'The map did not answer')
@@ -174,9 +174,9 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   }, [])
 
   useEffect(() => {
-    if (!root) return
+    if (!root || !active) return
     return loadGraph()
-  }, [loadGraph, root])
+  }, [active, loadGraph, root])
 
   // Diving into a page puts the map back under it — a dive is read against the
   // map, not instead of it — and adds the page to the trail. A page the dive
@@ -464,9 +464,8 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   const drawnPages = (shown?.pages ?? []).filter(entry => existedAt(momentOf(entry.created), moment))
   const drawnPaths = new Set(drawnPages.map(entry => entry.path))
   const mapPages = drawnPages.filter(entry => entry.shelf !== '').length
-  const mapShelves = new Set(drawnPages.filter(entry => entry.shelf !== '').map(entry => entry.shelf)).size
+  const mapShelves = new Set(drawnPages.filter(entry => entry.shelf !== '').map(subjectOf)).size
   const mapLinks = (shown?.links ?? []).filter(([from, to]) => drawnPaths.has(from) && drawnPaths.has(to)).length
-  const mapTags = (shown?.tags ?? []).filter(([from, to]) => drawnPaths.has(from) && drawnPaths.has(to)).length
 
   const mapOrWhy = () => {
     if (shown) {
@@ -521,7 +520,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
                 {' · '}
                 {length === undefined ? 'not on the map' : count(length, 'word')}
               </span>
-              <button type="button" className="library-action" onClick={() => openPage(path)}>Dive</button>
+              <button type="button" className="library-action" onClick={() => openPage(path)}>Open</button>
             </div>
           )}
         </div>
@@ -550,7 +549,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
         <Rail
           className="library-left"
           data-ui="library.shelves"
-          label="Library"
+          label="Brain"
           width={settings.railWidth.library}
           onWidthCommit={commitRailWidth}
         >
@@ -558,8 +557,8 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
             className="library-search"
             type="search"
             value={query}
-            placeholder="Search the library…"
-            aria-label="Search the library"
+            placeholder="Search the brain…"
+            aria-label="Search the brain"
             onChange={event => {
               setQuery(event.target.value)
               // An emptied field puts the map back: with the results standing
@@ -569,7 +568,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
             onKeyDown={event => { if (event.key === 'Enter') runSearch() }}
           />
 
-          <RailSection className="library-section library-shelves" title="Shelves">
+          <RailSection className="library-section library-shelves" title="Collections">
             <RailScroll className="library-scroll">
               {shelves.shelves.map(entry => (
                 <div key={entry.path} className="library-shelf-group">
@@ -628,14 +627,16 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
           {showMap ? (
             <div className="library-map-frame">
               <div className="library-map-bar">
-                <span className="library-map-title">The map</span>
+                <span className="library-map-title">Brain</span>
                 {shown && (
                   <span className="library-map-count">
-                    {count(mapPages, 'page')} · {count(mapShelves, 'shelf', 'shelves')} · {count(mapLinks, 'link')} · {count(mapTags, 'shared tag')}
+                    {count(mapPages, 'page')} · {count(mapShelves, 'subject')} · {count(mapLinks, 'link')}
                   </span>
                 )}
+                <button type="button" className="library-action" onClick={loadGraph}>Refresh</button>
                 <span className="library-map-legend">{momentLegend}</span>
               </div>
+              {graphError && shown && <p className="library-git-error" role="alert">{graphError}</p>}
               {mapOrWhy()}
               {/* The moment the map is read at, along its bottom edge. Dragging
                   left takes pages back out of the corpus in the order they
@@ -784,7 +785,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
         )}
 
         <TableSlot active={active} />
-        <ResidentColumn active={active} tab="library" reference={libraryReference(page?.path ?? null)} />
+        <ResidentColumn active={active} minContentWidth={720} tab="library" reference={libraryReference(page?.path ?? null)} />
       </div>
     </div>
   )

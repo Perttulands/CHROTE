@@ -3,6 +3,7 @@ import { createLibraryResolver } from './libraryLinks'
 
 const pages = [
   { path: 'Goals.md', title: 'Root target' },
+  { path: 'projects/tool/README.md', title: 'Tool project', slug: 'tool' },
   { path: 'knowledge/notes.md', title: 'Shared heading' },
   { path: 'knowledge/archive/notes.md', title: 'Archived heading' },
   { path: 'knowledge/by-title.md', title: 'notes' },
@@ -18,6 +19,7 @@ describe('Library wikilink resolution', () => {
     [' /TeLoS/GOALS.MD ', 'knowledge/source.md', 'telos/goals.md'],
     ['/telos/goals/', 'knowledge/source.md', 'telos/goals.md'],
     ['goals', 'telos/source.md', 'Goals.md'],
+    ['tool', 'knowledge/source.md', 'projects/tool/README.md'],
     ['missing/shelf/NOTES.md', 'preferences/source.md', 'preferences/notes.md'],
     ['notes', 'knowledge/archive/source.md', 'knowledge/notes.md'],
     ['notes', 'unknown/source.md', 'knowledge/notes.md'],

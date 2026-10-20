@@ -48,7 +48,10 @@ async function recordResidentSends(page: Page) {
   return sends
 }
 
-test('returns to Beads, Library and Agents exactly as they were left', async ({ page }) => {
+test('returns to Beads, Brain and Agents exactly as they were left', async ({ page }) => {
+  // This journey keeps reader and map side by side; narrow overlays are
+  // exercised in library.spec.ts.
+  await page.setViewportSize({ width: 1920, height: 1080 })
   const reads = new Map<string, number>()
   page.on('request', request => {
     if (request.method() !== 'GET') return
@@ -91,18 +94,25 @@ test('returns to Beads, Library and Agents exactly as they were left', async ({ 
   await expect.poll(() => sends[sends.length - 1]).toEqual({ session: 'main', text: 'bead test-ep1.1: Fix login bug\n' })
   await expect(page.getByRole('complementary', { name: 'The Clerk' }).locator('.xterm-helper-textarea')).toBeFocused()
 
-  await page.getByRole('button', { name: 'Library', exact: true }).click()
-  await page.locator('.library-shelf', { hasText: 'preferences' }).click()
-  const shelfRow = page.locator('.library-shelves .library-row', { hasText: 'Workflow Preferences' })
-  await shelfRow.locator('.library-row-head').click()
-  await shelfRow.getByRole('button', { name: 'Dive' }).click()
+  await page.getByRole('button', { name: 'Brain', exact: true }).click()
+  await page.getByRole('button', { name: 'preferences, 2 pages' }).click()
+  await page.locator('.library-map').getByRole('button', { name: 'Workflow Preferences', exact: true }).click()
+  await page.getByRole('button', { name: 'Open page', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Workflow Preferences' })).toBeVisible()
   await page.keyboard.press('Alt+Enter')
   await expect(page.getByRole('complementary', { name: 'The Librarian' }).locator('.xterm-helper-textarea')).toBeFocused()
-  await page.getByRole('button', { name: 'Library', exact: true }).focus()
+  await page.getByRole('button', { name: 'Brain', exact: true }).focus()
   await page.keyboard.press('Alt+s')
   await expect.poll(() => sends[sends.length - 1]).toEqual({ session: 'hq-deacon', text: 'library preferences/workflow.md\n' })
   await expect(page.getByRole('complementary', { name: 'The Librarian' }).locator('.xterm-helper-textarea')).toBeFocused()
+
+  const mapNodes = page.locator('.library-map-nodes')
+  await page.getByRole('img', { name: 'The map' }).hover({ position: { x: 20, y: 20 } })
+  const transformBeforeZoom = await mapNodes.evaluate(element => (element as HTMLElement).style.transform)
+  await page.mouse.wheel(0, -400)
+  await expect.poll(() => mapNodes.evaluate(element => (element as HTMLElement).style.transform)).not.toBe(transformBeforeZoom)
+  await expect(page.locator('[data-ui="library.map.reset"]')).toBeVisible()
+  const transformBeforeLeaving = await mapNodes.evaluate(element => (element as HTMLElement).style.transform)
 
   await page.getByRole('button', { name: 'Agents', exact: true }).click()
   await page.locator('.agents-view').getByTitle('/code/test-project').click()
@@ -146,8 +156,14 @@ test('returns to Beads, Library and Agents exactly as they were left', async ({ 
   await Promise.all(returnChecks.map(response => response.finished()))
   await expect(page.getByRole('complementary', { name: 'Bead test-ep1.1' })).toContainText('Fix login bug')
 
-  await page.getByRole('button', { name: 'Library', exact: true }).click()
+  const refreshedGraph = page.waitForResponse(response => new URL(response.url()).pathname === '/api/library/graph' && response.status() === 200)
+  await page.getByRole('button', { name: 'Brain', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Workflow Preferences' })).toBeVisible()
+
+  await (await refreshedGraph).finished()
+  await expect(page.locator('.brain-breadcrumb')).toHaveText('preferences / preferences')
+  await expect(mapNodes).toHaveCSS('transform', /matrix/)
+  await expect.poll(() => mapNodes.evaluate(element => (element as HTMLElement).style.transform)).toBe(transformBeforeLeaving)
 
   await page.getByRole('button', { name: 'Agents', exact: true }).click()
   await expect(page.locator('.agents-folder')).toHaveText('/code/test-project')
@@ -156,5 +172,8 @@ test('returns to Beads, Library and Agents exactly as they were left', async ({ 
   await page.evaluate(() => new Promise<void>(resolve => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
   }))
+  // Brain refreshes the graph on entry so moved pages follow the corpus; the
+  // open reader and the other tabs keep their already loaded work.
+  readsBeforeReturn.set('/api/library/graph', (readsBeforeReturn.get('/api/library/graph') ?? 0) + 1)
   expect(reads).toEqual(readsBeforeReturn)
 })

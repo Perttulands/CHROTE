@@ -23,7 +23,7 @@ SHIPPED_VIEWS = [
     "Terminal 3",
     "Files",
     "Beads",
-    "Library",
+    "Brain",
     "Agents",
     "Scheduled",
     "Server",

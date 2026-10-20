@@ -273,9 +273,9 @@ export function createCanvasRenderer(
   // emptied rather than allowed to grow without end.
   let sprites = new Map<string, Stamp>()
 
-  const sprite = (colour: string, alpha: number, radius: number, glow: number): Stamp => {
+  const sprite = (colour: string, alpha: number, radius: number, glow: number, kind = ''): Stamp => {
     const size = Math.max(SPRITE_STEP, Math.round(radius / SPRITE_STEP) * SPRITE_STEP)
-    const key = `${colour}|${alpha}|${size}|${glow}`
+    const key = `${colour}|${alpha}|${size}|${glow}|${kind}`
     const found = sprites.get(key)
     if (found) return found
     if (sprites.size > MAX_SPRITES) sprites = new Map()
@@ -294,7 +294,14 @@ export function createCanvasRenderer(
         pen.shadowBlur = glow
       }
       pen.beginPath()
-      pen.arc(side / 2, side / 2, size, 0, Math.PI * 2)
+      if (kind === 'research') pen.rect(side / 2 - size, side / 2 - size, size * 2, size * 2)
+      else if (kind === 'source') {
+        pen.moveTo(side / 2, side / 2 - size)
+        pen.lineTo(side / 2 + size, side / 2)
+        pen.lineTo(side / 2, side / 2 + size)
+        pen.lineTo(side / 2 - size, side / 2)
+        pen.closePath()
+      } else pen.arc(side / 2, side / 2, size, 0, Math.PI * 2)
       pen.fill()
       if (glow > 0) pen.fill()
     }
@@ -450,7 +457,7 @@ export function createCanvasRenderer(
       const colour = lit
         ? scene.palette.accent
         : node.candidate ? scene.palette.dim : scene.hues.get(node.shelf) ?? scene.palette.dot
-      const stamp = sprite(colour, shadeOf(node, light, stale), dotRadius(node, scale) * ratio, lit ? GLOW * ratio : 0)
+      const stamp = sprite(colour, shadeOf(node, light, stale), dotRadius(node, scale) * ratio, lit ? GLOW * ratio : 0, node.kind)
       context.drawImage(
         stamp.image,
         Math.round((node.x * scale + offsetX) * ratio) - stamp.centre,
@@ -512,6 +519,10 @@ export function createCanvasRenderer(
       fit(scene.width, scene.height, ratio)
       context.setTransform(ratio, 0, 0, ratio, 0, 0)
       context.clearRect(0, 0, scene.width, scene.height)
+      if (!layer) {
+        context.fillStyle = scene.palette.background
+        context.fillRect(0, 0, scene.width, scene.height)
+      }
       if (indexed !== scene.nodes) {
         indexed = scene.nodes
         positions = new Map(scene.nodes.map(node => [node.path, node]))

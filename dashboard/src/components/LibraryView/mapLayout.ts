@@ -16,6 +16,7 @@ import type { LibraryGraph, LibraryGraphPage } from '../../library/libraryApi'
 import { momentOf } from './mapMoment'
 
 export interface MapNode {
+  kind?: string
   path: string
   shelf: string
   title: string
@@ -160,6 +161,7 @@ function node(page: LibraryGraphPage, x: number, y: number, now: number): MapNod
     path: page.path,
     shelf: page.shelf,
     title: page.title,
+    kind: page.kind,
     x,
     y,
     r,
