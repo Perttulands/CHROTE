@@ -18,6 +18,7 @@ const mockState = vi.hoisted(() => ({
   sessions: [] as TmuxSession[],
   residents: [] as Resident[],
   focused: [] as string[],
+  claimed: [] as string[],
   socketUrls: [] as (string | null)[],
 }))
 
@@ -50,7 +51,7 @@ vi.mock('./TerminalSurface', () => ({
   useTerminalSession: (url: string | null) => {
     mockState.socketUrls.push(url)
     return {
-      session: url ? { url, focus: () => mockState.focused.push(url), scrollToBottom: () => {} } : null,
+      session: url ? { url, claim: () => mockState.claimed.push(url), focus: () => mockState.focused.push(url), scrollToBottom: () => {} } : null,
       connectionState: url ? 'open' : 'idle',
     }
   },
@@ -94,6 +95,7 @@ beforeEach(() => {
   mockState.sessions = [session()]
   mockState.residents = [CLERK]
   mockState.focused = []
+  mockState.claimed = []
   mockState.socketUrls = []
   window.localStorage.clear()
 })
@@ -106,6 +108,23 @@ afterEach(() => {
 })
 
 describe('the resident column', () => {
+  it.each(['beads', 'library'] as const)('claims the visible %s resident terminal from its header menu', async tab => {
+    mockState.residents = [{ ...CLERK, tab }]
+    render(<ResidentColumn active tab={tab} reference={null} />)
+    await waitFor(() => expect(screen.getByTestId('terminal-surface')).toBeInTheDocument())
+    fireEvent.contextMenu(screen.getByText('Clerk'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Claim session/ }))
+    expect(mockState.claimed).toEqual([expect.stringContaining('clerk')])
+    expect(new URL(mockState.claimed[0]).searchParams.getAll('arg')).toEqual(['tile', 'clerk', 'operator'])
+  })
+
+  it('explains why a manually pinned resident cannot claim another size', async () => {
+    mockState.sessions = [session({ sizePinned: true })]
+    await renderColumn()
+    fireEvent.contextMenu(screen.getByText('Clerk'))
+    expect(await screen.findByRole('menuitem', { name: /^Claim session/ })).toBeDisabled()
+  })
+
   it('attaches its terminal only while its tab is active', async () => {
     const rendered = await renderColumn(null, false)
     expect(mockState.socketUrls[mockState.socketUrls.length - 1]).toBeNull()

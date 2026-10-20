@@ -42,7 +42,7 @@ import {
   type ResidentTab,
 } from '../residents/residentsApi'
 import { terminalSocketUrl } from '../terminal/ttydProtocol'
-import { getSessionKey } from '../types'
+import { getSessionBadges, getSessionKey } from '../types'
 import { useResizableWidth } from '../hooks/useResizableWidth'
 import './ResidentColumn.css'
 
@@ -145,6 +145,7 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
         : session.attached ? 'live' : 'idle'
   const running = state === 'live' || state === 'idle'
   const sessionKey = session ? getSessionKey(session.name, session.unixUser) : ''
+  const pinnedSize = session ? getSessionBadges(session).find(badge => badge.id === 'pinned-size') : undefined
 
   useEffect(() => {
     const harness = harnessIdForCommand(session?.currentCommand)
@@ -302,6 +303,13 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
     {
       id: 'resident',
       rows: [
+        {
+          id: 'claim',
+          label: 'Claim session',
+          disabled: !terminal || !!pinnedSize,
+          reason: pinnedSize?.detail ?? (!terminal ? 'Open the resident terminal first' : "Set the tmux window to this device's size. Other devices keep watching, at that size."),
+          onSelect: () => terminal?.claim(),
+        },
         {
           id: 'peek',
           label: 'Peek',
