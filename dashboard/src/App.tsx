@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, useSensor, useSensors, PointerSensor } from '@dnd-kit/core'
@@ -52,6 +53,9 @@ const HelpView = lazy(() => import('./components/HelpView'))
 const BeadsView = lazy(() => import('./components/BeadsView'))
 const BeadsColumn = lazy(() => import('./components/BeadsColumn'))
 const LibraryView = lazy(() => import('./components/LibraryView'))
+// Throwaway evaluation surface; the production Library remains the default.
+const brainPrototype = import.meta.env.DEV && new URLSearchParams(window.location.search).get('prototype') === 'brain'
+const BrainPrototype = import.meta.env.DEV ? lazy(() => import('./components/LibraryView/BrainPrototype')) : null
 const AgentsView = lazy(() => import('./components/AgentsView'))
 const SystemStatusView = lazy(() => import('./components/SystemStatusView'))
 const ScheduledTasksView = lazy(() => import('./components/ScheduledTasksView'))
@@ -198,7 +202,7 @@ function DraggedSessionOverlay({ drag }: { drag: ActiveDrag }) {
 }
 
 function DashboardContent() {
-  const [activeTab, setActiveTab] = useState<Tab>('terminal1')
+  const [activeTab, setActiveTab] = useState<Tab>(brainPrototype ? 'library' : 'terminal1')
   const [lastActiveWorkspaceId, setLastActiveWorkspaceId] = useState<WorkspaceId>('terminal1')
   const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
   const [openFilesWorkspaceIds, setOpenFilesWorkspaceIds] = useState<Set<WorkspaceId>>(() => new Set())
@@ -453,7 +457,7 @@ function DashboardContent() {
           <RetainedView active={activeTab === 'library'}>
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
-                <LibraryView active={activeTab === 'library'} />
+                {brainPrototype && BrainPrototype ? <BrainPrototype active={activeTab === 'library'} /> : <LibraryView active={activeTab === 'library'} />}
               </Suspense>
             </ErrorBoundary>
           </RetainedView>
