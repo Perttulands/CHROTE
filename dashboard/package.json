@@ -17,7 +17,8 @@
     "test:unit": "vitest run",
     "test:ui": "env -u NO_COLOR playwright test --ui",
     "test:headed": "env -u NO_COLOR playwright test --headed",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "prototype:send": "vite --config send-prototype.vite.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",

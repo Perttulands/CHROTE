@@ -1,0 +1,98 @@
+/* Disposable prototype, scoped so it cannot restyle the shipped drawer. */
+.sp-lab { position: fixed; inset: var(--sp-top, 0px) 0 auto; height: var(--sp-viewport, 100dvh); display: flex; flex-direction: column; background: var(--background); font-size: 13px; }
+.sp-lab button, .sp-lab input, .sp-lab textarea, .sp-lab select { font: inherit; color: var(--text-primary); }
+.sp-lab button, .sp-lab select { border: 1px solid var(--divider); background: transparent; padding: 8px 12px; cursor: pointer; }
+.sp-lab button:hover { background: var(--surface-secondary); }
+.sp-lab button:focus-visible, .sp-lab select:focus-visible, .sp-lab input:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.sp-lab button:disabled { color: var(--text-dim); border-color: var(--divider); cursor: default; }
+.sp-lab button[aria-pressed=true] { border-color: var(--text-primary); }
+.sp-lab small { font-size: 10px; letter-spacing: .06em; color: var(--text-dim); }
+.sp-lab-header { flex: none; display: flex; justify-content: space-between; gap: 20px; align-items: center; padding: 18px 28px; border-bottom: 1px solid var(--divider); }
+.sp-lab-header > div:first-child { display: flex; flex-direction: column; gap: 7px; }
+.sp-lab-header > div:first-child > span { font-size: 11px; color: var(--text-secondary); }
+.sp-lab-controls { display: flex; gap: 10px; align-items: center; }
+.sp-lab-controls label { color: var(--text-secondary); }
+.sp-lab select { background: var(--surface-primary); }
+.sp-stage { flex: 1; min-height: 0; display: flex; justify-content: center; align-items: center; gap: 64px; padding: 24px 24px 76px; overflow: auto; }
+.sp-device { flex: none; height: min(760px, 100%); width: 390px; display: flex; flex-direction: column; border: 1px solid var(--divider); background: var(--surface-primary); overflow: hidden; box-shadow: 0 12px 50px #0004; }
+.sp-device-small { width: 320px; }
+.sp-device-desktop { width: min(850px, 65vw); }
+.sp-device.sp-short { height: min(400px, 100%); }
+.sp-app-tabs { display: flex; flex: none; height: 44px; gap: 20px; padding: 0 16px; align-items: center; border-bottom: 1px solid var(--divider); font-size: 12px; }
+.sp-app-tabs > span { color: var(--text-dim); }
+.sp-app-tabs > span:last-child { margin-left: auto; }
+.sp-workspace { position: relative; flex: 1; min-height: 0; }
+.sp-tile { margin: 4px; border: 1px solid var(--divider); height: calc(100% - 8px); background: var(--terminal-background); overflow: auto; }
+.sp-tile-header { border-bottom: 1px solid var(--divider); background: var(--surface-secondary); padding: 8px; font-size: 12px; }
+.sp-tile > pre { padding: 20px 14px; line-height: 1.6; white-space: pre-wrap; color: var(--text-secondary); }
+.sp-reopen { margin: 14px; }
+.sp-drawer { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--surface-primary); }
+.sp-device-desktop .sp-drawer { left: auto; width: 380px; border-left: 1px solid var(--divider); }
+.sp-drawer-header { height: 44px; flex: none; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--divider); }
+.sp-drawer-header > span { text-transform: uppercase; color: var(--text-secondary); font-size: 11px; letter-spacing: .08em; }
+.sp-drawer-header button { border: 0; min-height: 40px; }
+.sp-composer { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.sp-target { flex: none; display: flex; align-items: center; padding: 12px; gap: 8px; border-bottom: 1px solid var(--divider); }
+.sp-target > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.sp-target strong { font-size: 14px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-target > div > span { font-size: 11px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-target button { flex: none; min-height: 44px; }
+.sp-message { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px; gap: 8px; }
+.sp-message label { flex: none; color: var(--text-secondary); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.sp-message textarea { flex: 1; min-height: 36px; width: 100%; resize: none; background: var(--background); border: 1px solid var(--divider); border-radius: 0; padding: 12px; font-size: 16px; line-height: 1.55; outline: none; }
+.sp-message textarea:focus { border-color: var(--accent); }
+.sp-input-hint { flex: none; color: var(--text-dim); font-size: 10px; }
+.sp-actions { flex: none; padding: 10px 12px; border-top: 1px solid var(--divider); background: var(--surface-primary); }
+.sp-actions > div { display: flex; align-items: center; gap: 8px; }
+.sp-actions span { flex: 1; min-width: 0; color: var(--text-dim); font-size: 10px; line-height: 1.4; }
+.sp-actions button { min-height: 44px; min-width: 65px; }
+.sp-actions .sp-primary { border-color: var(--accent); color: var(--accent); }
+.sp-actions > p { color: var(--color-error); font-size: 11px; line-height: 1.4; margin-bottom: 8px; }
+.sp-output { min-height: 0; flex: 0 1 180px; overflow: auto; margin: 0; padding: 12px; background: var(--terminal-background); border-bottom: 1px solid var(--divider); }
+.sp-output pre { white-space: pre-wrap; line-height: 1.5; margin-top: 10px; color: var(--text-secondary); }
+.sp-variant-b .sp-message { flex: 1 1 180px; }
+.sp-short .sp-output { flex-basis: 55px; padding: 8px 12px; }
+.sp-short .sp-output > small { display: none; }
+.sp-short .sp-output pre { margin: 0; font-size: 11px; }
+.sp-picker-overlay { position: absolute; inset: 44px 0 0; z-index: 1; background: var(--surface-primary); display: flex; }
+.sp-picker { padding: 12px; display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
+.sp-picker-heading { flex: none; display: flex; justify-content: space-between; align-items: center; }
+.sp-picker-heading strong { font-size: 13px; font-weight: 400; }
+.sp-picker input { width: 100%; flex: none; min-height: 44px; padding: 8px; font-size: 16px; background: var(--background); border: 1px solid var(--divider); }
+.sp-session-list { flex: 1; min-height: 0; overflow: auto; }
+.sp-session-list button { display: flex; flex-direction: column; gap: 8px; width: 100%; text-align: left; margin-bottom: 6px; padding: 12px; }
+.sp-session-list button span { overflow-wrap: anywhere; }
+.sp-session-list small { letter-spacing: 0; line-height: 1.4; }
+.sp-picker-note { font-size: 10px; line-height: 1.5; color: var(--text-secondary); }
+.sp-receipt { margin: 14px; padding: 12px; border: 1px solid var(--divider); display: flex; flex-direction: column; gap: 10px; font-size: 12px; }
+.sp-receipt strong { font-weight: 400; }
+.sp-receipt span { color: var(--text-dim); overflow-wrap: anywhere; }
+.sp-receipt pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.sp-guide { width: 305px; flex: 0 0 305px; align-self: center; }
+.sp-guide h1 { font-size: 22px; font-weight: 400; line-height: 1.4; margin: 12px 0 20px; }
+.sp-guide p, .sp-guide li { color: var(--text-secondary); font-size: 12px; line-height: 1.8; }
+.sp-guide ol { padding-left: 20px; margin: 24px 0; }
+.sp-guide li { margin-bottom: 8px; }
+.sp-state { border-top: 1px solid var(--divider); border-bottom: 1px solid var(--divider); padding: 16px 0; margin-bottom: 20px; display: grid; grid-template-columns: 65px 1fr; gap: 10px; font-size: 11px; }
+.sp-state span { color: var(--text-dim); }.sp-state strong { font-weight: 400; overflow-wrap: anywhere; }
+.sp-guide .sp-caveat { font-size: 10px; color: var(--text-dim); }
+.sp-switcher { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; border: 1px solid var(--text-secondary); background: var(--surface-secondary); box-shadow: 0 5px 20px #0008; padding: 4px; white-space: nowrap; font-size: 11px; }
+.sp-switcher button { border: 0; min-width: 40px; min-height: 36px; font-size: 18px; padding: 0; }
+.sp-switcher span { min-width: 195px; text-align: center; }.sp-switcher strong { color: var(--accent); margin-right: 8px; }
+@media (max-width: 900px) { .sp-stage { gap: 20px; }.sp-guide { flex-basis: 240px; width: 240px; }.sp-lab-header { padding: 12px; }.sp-lab-controls { gap: 6px; }.sp-lab-header > div:first-child > span { max-width: 180px; line-height: 1.5; } }
+@media (max-width: 650px) {
+  .sp-lab-header { padding: 6px 8px; gap: 6px; flex-wrap: wrap; }
+  .sp-lab-header > div:first-child { flex-direction: row; justify-content: space-between; width: 100%; align-items: center; }
+  .sp-lab-header strong { font-size: 10px; }.sp-lab-header > div:first-child > span { font-size: 9px; max-width: none; }
+  .sp-lab-controls { width: 100%; }.sp-lab-controls label { display: none; }
+  .sp-lab-controls button { font-size: 10px; padding: 5px 8px; }
+  .sp-stage { padding: 0 0 52px; align-items: stretch; overflow: hidden; }
+  .sp-device, .sp-device-small, .sp-device-desktop { width: 100%; height: 100%; border: 0; box-shadow: none; }
+  .sp-device.sp-short { height: min(400px, 100%); }
+  .sp-app-tabs { display: none; }.sp-guide { display: none; }
+  .sp-device-desktop .sp-drawer { width: 100%; }
+  .sp-switcher { bottom: 4px; max-width: calc(100% - 8px); }.sp-switcher span { min-width: 190px; }
+  .sp-target { padding: 8px 12px; }.sp-target small { display: none; }
+  .sp-message { padding: 8px 12px; gap: 6px; }
+}
+@media (max-height: 550px) { .sp-input-hint { display: none; }.sp-target small { display: none; }.sp-target { padding: 6px 12px; }.sp-message { padding: 6px 12px; gap: 4px; }.sp-output { flex-basis: 40px; padding: 6px 12px; }.sp-output small { display: none; }.sp-output pre { margin: 0; font-size: 11px; } }
