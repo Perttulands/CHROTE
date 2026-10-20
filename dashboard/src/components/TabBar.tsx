@@ -119,19 +119,19 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
   }
 
   const activeTerminalWorkspace = isTerminalWorkspaceId(activeTab, workspaceIds) ? activeTab : null
-  const openActiveTabMenu = (anchor: HTMLElement) => {
-    if (!activeTerminalWorkspace) return
+  const openTabMenu = (anchor: HTMLElement, workspaceId: WorkspaceId) => {
     const rect = anchor.getBoundingClientRect()
     setKeysMenu(null)
     setMobileMenuOpen(false)
     setPresetName(null)
-    setTabMenu({ x: rect.left, y: rect.bottom, workspaceId: activeTerminalWorkspace })
+    setTabMenu({ x: rect.left, y: rect.bottom, workspaceId })
   }
 
   // The frames this tab is showing. Both maintenance actions used to sit on the
   // workspace strip; they act on the same windows from here.
-  const visibleWindows = activeTerminalWorkspace
-    ? (workspaces[activeTerminalWorkspace]?.windows.slice(0, workspaces[activeTerminalWorkspace].windowCount) ?? [])
+  const menuWorkspace = tabMenu ? workspaces[tabMenu.workspaceId] : undefined
+  const visibleWindows = menuWorkspace
+    ? menuWorkspace.windows.slice(0, menuWorkspace.windowCount)
     : []
   const boundInView = Array.from(new Set(visibleWindows.flatMap(window => window.boundSessions)))
   const activeInView = Array.from(new Set(
@@ -247,8 +247,10 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
           label: 'Claim all',
           reason: isMobile
             ? 'One frame is on screen here; claim it from its own tag menu.'
-            : CLAIM_EXPLANATION,
-          disabled: isMobile || activeInView.length === 0,
+            : tabMenu.workspaceId !== activeTerminalWorkspace
+              ? 'Open this tab to claim its visible frames.'
+              : CLAIM_EXPLANATION,
+          disabled: isMobile || tabMenu.workspaceId !== activeTerminalWorkspace || activeInView.length === 0,
           onSelect: claimSessionsInView,
         },
       ],
@@ -285,19 +287,19 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
         />
       )
     }
-    // The active terminal tab is its own menu trigger: a caret appears on hover
-    // and the secondary button opens the same menu anywhere on the tab.
-    const carries = tab.id === activeTab && activeTerminalWorkspace !== null
+    // Every terminal tab owns its menu, including tabs off screen.
+    const carries = isTerminalWorkspaceId(tab.id, workspaceIds)
+    const menuOpen = tabMenu?.workspaceId === tab.id
     return (
       <button
         key={tab.id}
         data-ui="tabbar.tab"
-        className={`tab ${activeTab === tab.id ? 'active' : ''} ${carries ? 'tab-with-menu' : ''} ${carries && tabMenu ? 'dismissible-trigger-active' : ''}`}
+        className={`tab ${activeTab === tab.id ? 'active' : ''} ${carries ? 'tab-with-menu' : ''} ${menuOpen ? 'dismissible-trigger-active' : ''}`}
         aria-haspopup={carries ? 'menu' : undefined}
-        aria-expanded={carries ? tabMenu !== null : undefined}
+        aria-expanded={carries ? menuOpen : undefined}
         onClick={event => {
           if (carries && (event.target as HTMLElement).closest('.tab-menu-caret')) {
-            openActiveTabMenu(event.currentTarget)
+            openTabMenu(event.currentTarget, tab.id as WorkspaceId)
             return
           }
           handleClick(tab)
@@ -306,12 +308,12 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
           if (!carries) return
           if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
           event.preventDefault()
-          openActiveTabMenu(event.currentTarget)
+          openTabMenu(event.currentTarget, tab.id as WorkspaceId)
         }}
         onContextMenu={event => {
           if (!carries) return
           event.preventDefault()
-          openActiveTabMenu(event.currentTarget)
+          openTabMenu(event.currentTarget, tab.id as WorkspaceId)
         }}
       >
         {tab.label}
@@ -334,7 +336,9 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
             >
               ☰
             </button>
-            <span className="mobile-active-tab">{activeTabLabel}</span>
+            {renaming
+              ? renderTab(tabs.find(tab => tab.id === renaming.workspaceId)!)
+              : <span className="mobile-active-tab">{activeTabLabel}</span>}
           </div>
 
           {/* Mobile Menu Dropdown */}
@@ -360,7 +364,7 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
                 <button
                   className="mobile-nav-item"
                   onClick={(event) => {
-                    openActiveTabMenu(event.currentTarget)
+                    openTabMenu(event.currentTarget, activeTerminalWorkspace)
                     setMobileMenuOpen(false)
                   }}
                 >

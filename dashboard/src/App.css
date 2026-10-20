@@ -233,7 +233,10 @@
   position: absolute;
   top: 48px; /* Match tab bar height */
   left: 0;
-  width: 250px;
+  width: min(250px, 100vw);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background-color: var(--surface-primary);
   border: 1px solid var(--divider);
   border-top: none;

@@ -49,5 +49,18 @@ test.describe('Terminal Area - Mobile View Switcher', () => {
     await expect(page.locator('.mobile-nav-dropdown')).toHaveCount(0)
     await expect(page.locator('.files-view')).toBeVisible()
     await expect(page.locator('.mobile-active-tab')).toContainText('Files')
+
+    // On a short screen the last navigation action must scroll into view,
+    // without leaving the viewport below the terminal.
+    await page.setViewportSize({ width: 667, height: 375 })
+    await page.click('.hamburger-btn')
+    const navigation = page.locator('.mobile-nav-dropdown')
+    const bounds = await navigation.boundingBox()
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(375)
+    const help = page.getByRole('button', { name: 'Dashboard Help', exact: true })
+    await help.scrollIntoViewIfNeeded()
+    await expect(help).toBeInViewport({ ratio: 1 })
+    await help.click()
+    await expect(navigation).toHaveCount(0)
   })
 })
