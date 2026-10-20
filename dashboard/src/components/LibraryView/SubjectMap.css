@@ -70,3 +70,13 @@
   .brain-detail-canvas { min-height: 200px; flex-shrink: 0; }
   .library-map-legend { display: none; }
 }
+
+.brain-subject-picker { margin-right: auto; }
+@container (max-width: 600px) {
+  .brain-map-controls select { max-width: 120px; }
+  .brain-map-controls label { gap: 4px; }
+}
+
+.brain-page-selection { display: flex; flex-direction: column; overflow: hidden; }
+.brain-selection-copy { min-height: 0; overflow: auto; }
+.brain-selection-actions { flex-shrink: 0; }

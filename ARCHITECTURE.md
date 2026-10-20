@@ -78,7 +78,10 @@ Beads, Scheduled and Brain are separate first-party modules. Brain retains the
 adapter reads page metadata and references from the configured Markdown tree;
 it owns no corpus index or classification. Context Citadel remains the owner of
 brain search, ingestion and curation. Subject groups are derived from current
-paths rather than a maintained CHROTE taxonomy.
+paths rather than a maintained CHROTE taxonomy. The continuous map derives its
+layout from the complete graph before applying visibility filters. Camera and
+filter state belong to the Brain view; named view snapshots use the versioned,
+device-local `chrote.brain.views.v1` storage key and contain no corpus content.
 
 This separation is static code organization, not a marketplace or dynamic plugin loader. Components can add routes, views, and configuration. Their failure must remain contained so the terminal core still loads and works.
 

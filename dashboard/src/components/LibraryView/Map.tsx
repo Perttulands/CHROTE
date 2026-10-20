@@ -29,7 +29,7 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from 'react'
 import { libraryWhen, type LibraryGraph } from '../../library/libraryApi'
-import { useMapTransform } from '../../hooks/useMapTransform'
+import { useMapTransform, type MapTransform } from '../../hooks/useMapTransform'
 import {
   BAND_FADE,
   MID_LABELS,
@@ -59,6 +59,9 @@ import { createCanvasRenderer, readPalette, type MapRenderer, type MapScene, typ
 
 export interface MapProps {
   graph: LibraryGraph
+  camera?: MapTransform | null
+  cameraRevision?: number
+  onCameraChange?: (camera: MapTransform) => void
   selectionScale?: number
   selectedLinksOnly?: boolean
   /**
@@ -200,7 +203,7 @@ function useMapLayout(graph: LibraryGraph, width: number, height: number): { lay
   return { layout: EMPTY_LAYOUT, drawing: true }
 }
 
-export default function LibraryMap({ graph, openPath, matches, hoverPath = null, soloShelf = null, hues: given, moment = NOW, selectionScale = DIVE_SCALE, selectedLinksOnly = false, onOpen }: MapProps) {
+export default function LibraryMap({ graph, openPath, matches, hoverPath = null, soloShelf = null, hues: given, moment = NOW, selectionScale = DIVE_SCALE, selectedLinksOnly = false, camera, cameraRevision, onCameraChange, onOpen }: MapProps) {
   const { ref, width, height } = useMeasuredSize()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const edgeCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -208,7 +211,20 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
   const [hovered, setHovered] = useState<string | null>(null)
   const [shelf, setShelf] = useState<string | null>(null)
   const [palette, setPalette] = useState(() => readPalette(null))
-  const view = useMapTransform<HTMLDivElement>({ width, height })
+  const view = useMapTransform<HTMLDivElement>({ width, height, initialTransform: camera })
+  const { restore, transform } = view
+  const dived = useRef<string | null>(camera ? openPath : null)
+  const requestedCamera = useRef(camera)
+  const requestedSelection = useRef(openPath)
+  requestedCamera.current = camera
+  requestedSelection.current = openPath
+  useEffect(() => {
+    if (requestedCamera.current) {
+      dived.current = requestedSelection.current
+      restore(requestedCamera.current)
+    }
+  }, [cameraRevision, restore])
+  useEffect(() => { onCameraChange?.(transform) }, [onCameraChange, transform])
 
   // The pointer's page is forgotten when the drawing changes under it.
   useEffect(() => { setHovered(null) }, [graph])
@@ -408,7 +424,6 @@ export default function LibraryMap({ graph, openPath, matches, hoverPath = null,
   // Centre a newly selected page once. Resizing or returning to the tab must
   // preserve the operator's subsequent pan and zoom.
   const { centreOn } = view
-  const dived = useRef<string | null>(null)
   useEffect(() => {
     if (!openPath) {
       dived.current = null

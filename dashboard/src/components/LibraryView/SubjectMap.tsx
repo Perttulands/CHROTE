@@ -1,15 +1,32 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { useTheme } from '../../theme/ThemeContext'
 import type { LibraryGraph } from '../../library/libraryApi'
 import LibraryMap, { type MapProps } from './Map'
 import { existedAt, momentOf, NOW } from './mapMoment'
 import { kindOf, subjectConnections, subjectGraph, subjectHue, subjectName, subjectOf, subjectsOf } from './brainSubjects'
+import ContinuousMap from './ContinuousMap'
+import BrainViewControls from './BrainViewControls'
+import type { BrainViewSnapshot, BrainViewMode } from './brainViewState'
+import type { MapTransform } from '../../hooks/useMapTransform'
 import './SubjectMap.css'
 
-export default function SubjectMap(props: MapProps) {
+interface SubjectMapProps extends MapProps {
+  fullGraph: LibraryGraph
+  scrub: number
+  hiddenShelves: string[]
+  onRestoreFilters: (scrub: number, hiddenShelves: string[]) => void
+  timeControl: ReactNode
+}
+
+export default function SubjectMap(props: SubjectMapProps) {
   const { graph, openPath, hoverPath, matches, soloShelf, moment = NOW, onOpen } = props
   const theme = useTheme()
+  const [mode, setMode] = useState<BrainViewMode>('subjects')
+  const [cameras, setCameras] = useState<BrainViewSnapshot['cameras']>({ map: null, subjects: null })
+  const [cameraRevision, setCameraRevision] = useState(0)
+  const mapCamera = useCallback((camera: MapTransform) => setCameras(previous => ({ ...previous, map: camera })), [])
+  const subjectCamera = useCallback((camera: MapTransform) => setCameras(previous => ({ ...previous, subjects: camera })), [])
   const [subject, setSubject] = useState<string | null>(null)
   const [facet, setFacet] = useState('')
   const [collection, setCollection] = useState('')
@@ -57,15 +74,61 @@ export default function SubjectMap(props: MapProps) {
   const selectSubject = (id: string) => {
     setSubject(id)
     setPicked(null)
+    setCameras(previous => ({ ...previous, subjects: { x: 0, y: 0, scale: 1 } }))
+    if (mode === 'subjects') setCameraRevision(previous => previous + 1)
   }
-  const selectPage = (path: string) => setPicked(path)
-  const overview = () => { setSubject(null); setPicked(null) }
+  const selectPage = (path: string) => {
+    setPicked(path)
+    const page = graph.pages.find(entry => entry.path === path)
+    if (page) setSubject(subjectOf(page))
+  }
+  const overview = () => {
+    setSubject(null); setPicked(null)
+    if (mode === 'map') {
+      setCameras(previous => ({ ...previous, map: null }))
+      setCameraRevision(previous => previous + 1)
+    }
+  }
+  const fit = () => {
+    setCameras(previous => ({ ...previous, [mode]: mode === 'map' ? null : { x: 0, y: 0, scale: 1 } }))
+    setCameraRevision(previous => previous + 1)
+  }
+  const snapshot: BrainViewSnapshot = { mode, subject, picked, facet, collection, hiddenKinds: [...hiddenKinds],
+    cameras, scrub: props.scrub, hiddenShelves: props.hiddenShelves }
+  const restore = (saved: BrainViewSnapshot) => {
+    setMode(saved.mode); setSubject(saved.subject); setPicked(saved.picked)
+    setFacet(saved.facet); setCollection(saved.collection); setHiddenKinds(new Set(saved.hiddenKinds))
+    setCameras(saved.cameras); setCameraRevision(previous => previous + 1)
+    props.onRestoreFilters(saved.scrub, saved.hiddenShelves)
+  }
+
+  const selection = <>
+            <div className="brain-page-selection" aria-live="polite">
+              {selectedPage ? <>
+                <div className="brain-selection-copy"><strong>{selectedPage.title}</strong><span className="brain-count">{kindOf(selectedPage)} · {selectedPage.path}</span>
+                {selectedPage.summary && <p>{selectedPage.summary}</p>}</div>
+                <div className="brain-selection-actions">
+                <button type="button" onClick={() => onOpen(selectedPage.path)}>Open page</button>
+                <button type="button" onClick={() => setPicked(null)}>Clear selection</button></div>
+              </> : <span className="brain-count">Select a page to see its references.</span>}
+            </div>
+            {externalReferences.length > 0 && <div className="brain-external" aria-label="References in other subjects">
+              {externalReferences.map(page => <button type="button" key={page.path} onClick={() => {
+                setSubject(subjectOf(page)); setPicked(page.path); setCollection(''); setFacet('')
+                setHiddenKinds(previous => new Set([...previous].filter(kind => kind !== kindOf(page))))
+              }}><span>{page.title}</span><span className="brain-count">{subjectName(subjectOf(page))} · {kindOf(page)}</span></button>)}
+            </div>}
+  </>
 
   return (
     <section className="brain-map" aria-label="Brain map">
       <div className="brain-map-controls">
         <button type="button" onClick={overview} disabled={!current}>Overview</button>
-        {current && <span className="brain-breadcrumb">{current.collection} / {current.name}</span>}
+        {mode === 'map' ? <label className="brain-subject-picker">Subject <select aria-label="Map subject" value={subject ?? ''}
+          onChange={event => event.target.value ? selectSubject(event.target.value) : overview()}>
+          <option value="">All subjects</option>
+          {subjects.map(group => <option key={group.id} value={group.id}>{group.name} · {group.pages.length}</option>)}
+        </select></label> : current && <span className="brain-breadcrumb">{current.collection} / {current.name}</span>}
         <label>Collection <select aria-label="Map collection" value={collection} onChange={event => { setCollection(event.target.value); overview() }}>
           <option value="">All</option>
           {collections.map(name => <option key={name} value={name}>{name}</option>)}
@@ -88,31 +151,26 @@ export default function SubjectMap(props: MapProps) {
         </label>)}
         <span className="brain-count">{subjects.length} subjects · {visible.pages.length} / {filtered.length} pages shown</span>
       </div>
-      <div className={`brain-map-body${current ? ' has-subject' : ''}`}>
-        {current && focused && (
+      <div className={`brain-map-body${mode === 'map' ? ' is-continuous' : ''}${mode === 'subjects' && current ? ' has-subject' : ''}`}>
+        {mode === 'map' && <>
+          <ContinuousMap graph={props.fullGraph} visible={visible} selected={selected} subject={subject}
+            matches={matches} hoverPath={hoverPath} moment={moment} camera={cameras.map} cameraRevision={cameraRevision}
+            onCameraChange={mapCamera} onSelect={selectPage} onSubject={selectSubject} />
+          {selectedPage && selection}
+        </>}
+        {mode === 'subjects' && current && focused && (
           <div className="brain-subject-detail" style={{ '--subject-color': subjectHue(current.id, theme.shelves) } as CSSProperties}>
             <div className="brain-subject-heading">
               <span>{current.name}</span><span className="brain-count">{current.pages.length} pages</span>
             </div>
             <div className="brain-detail-canvas">
               {focused.pages.length > 0 ? <LibraryMap {...props} graph={focused} openPath={selected}
-                hoverPath={hoverPath} soloShelf={null} hues={colors} selectionScale={1} selectedLinksOnly onOpen={selectPage} />
+                hoverPath={hoverPath} soloShelf={null} hues={colors} selectionScale={1} selectedLinksOnly onOpen={selectPage}
+                camera={cameras.subjects} cameraRevision={cameraRevision} onCameraChange={subjectCamera} />
                 : <p className="library-empty">No pages match the selected kinds.</p>}
             </div>
-            <div className="brain-page-selection" aria-live="polite">
-              {selectedPage ? <>
-                <div><strong>{selectedPage.title}</strong><span className="brain-count">{kindOf(selectedPage)} · {selectedPage.path}</span></div>
-                {selectedPage.summary && <p>{selectedPage.summary}</p>}
-                <button type="button" onClick={() => onOpen(selectedPage.path)}>Open page</button>
-                <button type="button" onClick={() => setPicked(null)}>Clear selection</button>
-              </> : <span className="brain-count">Select a page to see its references.</span>}
-            </div>
-            {externalReferences.length > 0 && <div className="brain-external" aria-label="References in other subjects">
-              {externalReferences.map(page => <button type="button" key={page.path} onClick={() => {
-                setSubject(subjectOf(page)); setPicked(page.path); setCollection(''); setFacet('')
-                setHiddenKinds(previous => new Set([...previous].filter(kind => kind !== kindOf(page))))
-              }}><span>{page.title}</span><span className="brain-count">{subjectName(subjectOf(page))} · {kindOf(page)}</span></button>)}
-            </div>}
+            {selection}
+
             <div className="brain-connections">
               <span className="brain-count">{selectedPage ? 'Page connections' : 'Subject connections'}</span>
               {connections.length === 0 && <span className="brain-count">No links to other subjects</span>}
@@ -122,7 +180,7 @@ export default function SubjectMap(props: MapProps) {
             </div>
           </div>
         )}
-        <div className="brain-atlas" aria-label="Subjects">
+        {mode === 'subjects' && <div className="brain-atlas" aria-label="Subjects">
           {subjects.length === 0 && <p className="library-empty">No subjects match these filters.</p>}
           {subjects.map(group => {
             const pages = group.pages.filter(page => !hiddenKinds.has(kindOf(page)))
@@ -153,8 +211,9 @@ export default function SubjectMap(props: MapProps) {
               <span className="brain-subject-kinds">{[...group.kinds].map(([kind, count]) => `${count} ${kind}`).join(' · ')}</span>
             </button>
           })}
-        </div>
+        </div>}
       </div>
+      <BrainViewControls snapshot={snapshot} onRestore={restore} onMode={setMode} onFit={fit} timeControl={props.timeControl} />
     </section>
   )
 }

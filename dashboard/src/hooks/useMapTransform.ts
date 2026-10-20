@@ -111,6 +111,7 @@ export interface UseMapTransformOptions {
   /** Whether the gestures are live; a strip or a thumbnail passes false. */
   enabled?: boolean
   limits?: MapScaleLimits
+  initialTransform?: MapTransform | null
 }
 
 export interface MapTransformControls<T extends Element = SVGSVGElement> {
@@ -121,6 +122,7 @@ export interface MapTransformControls<T extends Element = SVGSVGElement> {
   groupTransform: string
   /** True once the operator has moved the drawing at all. */
   moved: boolean
+  restore: (transform: MapTransform) => void
   reset: () => void
   /** Bring a point of the drawing to the middle, at `scale` if given. */
   centreOn: (point: MapPoint, scale?: number) => void
@@ -161,7 +163,7 @@ export function useMapTransform<T extends Element = SVGSVGElement>(
 ): MapTransformControls<T> {
   const { width, height, enabled = true, limits = DEFAULT_LIMITS } = options
   const ref = useRef<T>(null)
-  const [transform, setTransform] = useState<MapTransform>(IDENTITY)
+  const [transform, setTransform] = useState<MapTransform>(options.initialTransform ?? IDENTITY)
   const contacts = useRef(new Map<number, Contact>())
   const pinch = useRef<number | null>(null)
   const dragged = useRef(false)
@@ -283,6 +285,7 @@ export function useMapTransform<T extends Element = SVGSVGElement>(
     groupTransform: `translate(${transform.x} ${transform.y}) scale(${transform.scale})`,
     moved: isPanned(transform),
     reset,
+    restore: setTransform,
     centreOn,
     toScreen: useCallback((point: MapPoint) => toScreen(transform, point), [transform]),
     toWorld: useCallback((point: MapPoint) => toWorld(transform, point), [transform]),

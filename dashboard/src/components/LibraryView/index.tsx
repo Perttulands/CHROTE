@@ -472,6 +472,19 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
       return (
         <LibraryMap
           graph={shown}
+          fullGraph={graph ?? shown}
+          scrub={scrub}
+          hiddenShelves={settings.libraryHiddenShelves}
+          onRestoreFilters={(at, hiddenShelves) => { setScrub(at); updateSettings({ libraryHiddenShelves: hiddenShelves }) }}
+          timeControl={<>
+            <span className="brain-count" title={momentLegend}>Time</span>
+            <input type="range" className="library-map-scrubber" data-ui="library.map.scrubber"
+              min={0} max={SCRUB_STEPS} step={1} value={scrub} list="library-map-stops"
+              aria-label="The moment the map is read at" aria-valuetext={momentLegend}
+              onChange={event => setScrub(snapTo(Number(event.target.value), span))} />
+            <datalist id="library-map-stops">{stops.map(stop => <option key={stop.id} value={stop.position} label={stop.label} />)}</datalist>
+            <span className="brain-count" title={momentLegend}>{scrub === SCRUB_STEPS ? 'Now' : libraryWhen(new Date(moment).toISOString(), now)}</span>
+          </>}
           openPath={page?.path ?? null}
           matches={matches}
           hoverPath={hoverPath}
@@ -638,28 +651,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
               </div>
               {graphError && shown && <p className="library-git-error" role="alert">{graphError}</p>}
               {mapOrWhy()}
-              {/* The moment the map is read at, along its bottom edge. Dragging
-                  left takes pages back out of the corpus in the order they
-                  arrived; dragging right grows it again. The four windows the
-                  map used to offer as buttons are stops along it. */}
-              <div className="library-map-scrub">
-                <input
-                  type="range"
-                  className="library-map-scrubber"
-                  data-ui="library.map.scrubber"
-                  min={0}
-                  max={SCRUB_STEPS}
-                  step={1}
-                  value={scrub}
-                  list="library-map-stops"
-                  aria-label="The moment the map is read at"
-                  aria-valuetext={momentLegend}
-                  onChange={event => setScrub(snapTo(Number(event.target.value), span))}
-                />
-                <datalist id="library-map-stops">
-                  {stops.map(stop => <option key={stop.id} value={stop.position} label={stop.label} />)}
-                </datalist>
-              </div>
+
             </div>
           ) : (
             <div className="library-page">

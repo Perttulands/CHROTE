@@ -59,13 +59,23 @@ The core product is terminal workspaces, sessions, files, server status, and set
 
 Beads, Brain and Agents each host a resident agent, the Clerk, the Librarian and the tender, as a tmux session in a column at the right of the view; the one selected object, the table, is carried from view to view.
 
-The Brain map groups current corpus pages by collection and subject. Selecting
-one expands its pages by kind; selecting a page shows its summary and references.
+Brain offers Subjects and Map modes over the same corpus. Subjects expands
+one group at a time; Map keeps subjects in a continuous space with pan and zoom.
+Map regions retain their positions when filters change. Subject names and page
+labels remain screen-sized, with fewer labels shown when space is limited.
+Selecting a page shows its summary and explicit references; the continuous map
+draws connections around the selected or hovered page. A subject selector gives
+direct access to regions whose labels are outside the current view.
 Sources are hidden from the drawing initially and can be shown. Collection,
 facet and kind filters narrow the map; cross-subject navigation follows explicit
 links. Generated indexes and agent instructions are excluded. Refresh and tab
 entry re-read the tree, including moved pages. The existing reader, editor,
-history and Librarian remain available.
+history and Librarian remain available. Switching modes preserves filters and
+selection, with a separate camera for each mode. Four device-local view slots
+store mode, camera, filters, selection and time setting against current content.
+Click an empty slot to save or an occupied slot to recall; its context menu offers
+Rename, Replace and Clear. The time slider filters page arrival dates; saved
+views do not store historical copies of page content.
 
 Components remain separated in the codebase and fail independently. A missing Beads workspace or unconfigured context corpus must not prevent terminal work.
 
