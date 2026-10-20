@@ -214,3 +214,35 @@ test('a session menu schedules a prompt directly or hands its setup to the agent
   // Refinement delegates creation; pre-creating would give the operator two jobs.
   expect(tasks).toHaveLength(1)
 })
+
+// Real layout and key routing: a phone-sized composer must keep its target and
+// delivery buttons reachable even when the keyboard leaves only a short view.
+test('phone composition keeps a draft through target changes and fits a short viewport', async ({ page }) => {
+  const sends: SendRecord[] = []
+  await openWorkspace(page, sends)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
+  await page.getByRole('button', { name: `Send to session ${TARGET}` }).click()
+  const drawer = page.getByRole('dialog', { name: 'Send to session' })
+  const note = drawer.getByLabel('Message to send')
+  await note.fill('pwd')
+  await note.press('Enter')
+  await expect(note).toHaveValue('pwd\n')
+  expect(sends).toEqual([])
+  await drawer.getByRole('button', { name: 'Change', exact: true }).click()
+  await expectInView(drawer.getByRole('option', { name: TARGET, exact: true }), drawer.locator('.send-drawer-target-list'))
+  await drawer.getByLabel('Search sessions').fill('gt-beads-lizzy')
+  await drawer.getByRole('option', { name: /gt-beads-lizzy/ }).click()
+  await expect(note).toHaveValue('pwd\n')
+  await expect(drawer.locator('.send-drawer-summary')).toContainText('gt-beads-lizzy')
+  await page.setViewportSize({ width: 390, height: 400 })
+  const bounds = await box(drawer)
+  expect(bounds.x).toBe(0)
+  expect(bounds.width).toBe(390)
+  await expectInView(drawer.locator('.send-drawer-summary'), drawer)
+  await expectInView(drawer.getByRole('button', { name: 'Send', exact: true }), drawer)
+  await expectInView(note, drawer)
+  await drawer.getByRole('button', { name: 'Paste', exact: true }).click()
+  await expect(drawer).toHaveCount(0)
+  expect(sends).toEqual([{ text: 'pwd\r\n', submit: 'false' }])
+})

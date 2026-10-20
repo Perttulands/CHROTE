@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures'
 import { mockApiRoutes } from './mock-api'
+import { setWorkspaceState } from './helpers'
 
 // The launcher is the only way CHROTE starts a session, and in an empty window
 // it is the window.
@@ -86,6 +87,51 @@ test.describe('Launcher', () => {
     await expect(launcher.getByRole('button', { name: 'Reset' })).toBeEnabled()
     expect(await launcher.boundingBox()).toEqual(frameBefore)
     expect(await shell.boundingBox()).toEqual(shellBefore)
+  })
+
+  test('a fourth-window launcher reflows in short wide tiles and scrolls from its first control on a phone', async ({ page }) => {
+    await mockApiRoutes(page)
+    const windows = Array.from({ length: 4 }, (_, i) => ({
+      id: `terminal1-window-${i}`, boundSessions: [], activeSession: null, colorIndex: i,
+    }))
+    await setWorkspaceState(page, {
+      workspaces: {
+        terminal1: { windowCount: 4, windows },
+        terminal2: { windowCount: 1, windows: [] },
+      },
+    })
+    await page.setViewportSize({ width: 1920, height: 1080 })
+    await page.goto('/')
+    const tile = page.locator('.terminal-window').nth(3)
+    const launcher = tile.locator('.launcher')
+    const scroller = tile.locator('.empty-window-state')
+    const harness = launcher.getByRole('button', { name: 'Claude Code' })
+    const folder = launcher.getByLabel('Folder', { exact: true })
+    const launch = launcher.getByRole('button', { name: 'Launch claude in chrote' })
+
+    // Four tiles leave plenty of width but little height: use both columns,
+    // and make every step reachable even when the window gets shorter.
+    for (const viewport of [{ width: 1920, height: 1080 }, { width: 1280, height: 800 }]) {
+      await page.setViewportSize(viewport)
+      const location = await launcher.locator('.launcher-location').boundingBox()
+      const options = await launcher.locator('.launcher-options').boundingBox()
+      expect(options!.x).toBeGreaterThan(location!.x + location!.width)
+      await scroller.evaluate(element => { element.scrollTop = 0 })
+      await expect(harness).toBeInViewport({ ratio: 1 })
+      await folder.scrollIntoViewIfNeeded()
+      await expect(folder).toBeInViewport({ ratio: 1 })
+      await launch.scrollIntoViewIfNeeded()
+      await expect(launch).toBeInViewport({ ratio: 1 })
+    }
+
+    await page.setViewportSize({ width: 390, height: 400 })
+    await page.getByRole('button', { name: 'Close Sessions sidecar', exact: true }).click()
+    await page.locator('.mobile-controls-row .layout-btn').nth(3).click()
+    await scroller.evaluate(element => { element.scrollTop = 0 })
+    await expect(harness).toBeInViewport({ ratio: 1 })
+    await folder.fill('/srv/other')
+    await launcher.getByRole('button', { name: 'Launch claude in other' }).click()
+    await expect(tile.locator('.session-tag')).toHaveCount(1)
   })
 
   test('the catalogue docks beside the launcher with room, and stacks under it without', async ({ page }) => {

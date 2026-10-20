@@ -37,6 +37,14 @@
   min-width: 0;
 }
 
+.launcher-location,
+.launcher-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
 .launcher-body {
   flex: 1 1 100%;
   display: flex;
@@ -214,4 +222,36 @@
 .launcher-launch:disabled {
   color: var(--text-dim);
   cursor: default;
+}
+
+/* Short tiles use their spare width before asking the operator to scroll.
+   The controls and fixed-height suggestions stay the same in both layouts. */
+@container empty-window (min-width: 460px) and (max-height: 640px) {
+  .launcher {
+    width: 760px;
+    max-width: 100%;
+  }
+
+  .launcher-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 20px;
+  }
+}
+
+/* Phone launch controls stay easy to tap, and focusing a field does not ask
+   the browser to zoom its text. The complete form remains scrollable. */
+@media (pointer: coarse) {
+  .launcher-row,
+  .launcher-option,
+  .launcher-quiet,
+  .launcher-name,
+  .launcher-notify {
+    min-height: 44px;
+  }
+
+  .launcher-name {
+    font-size: 16px;
+  }
 }

@@ -338,3 +338,68 @@
 .send-drawer-schedule .scheduled-field.compact { max-width: 100%; }
 .send-drawer-refine { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; font-size: 12px; color: var(--text-primary); }
 .send-drawer-refine input { accent-color: var(--accent); }
+
+.send-drawer-picker,
+.send-drawer-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+  min-width: 0;
+}
+
+.send-drawer-compose { flex: 1 0 auto; }
+
+.send-drawer-footer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--divider);
+  max-height: 45%;
+  overflow-y: auto;
+}
+
+.send-drawer.mobile {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: auto;
+  width: 100%;
+  border-left: 0;
+}
+
+.send-drawer.mobile .send-drawer-header { min-height: 44px; }
+.send-drawer.mobile .send-drawer-chord { display: none; }
+.send-drawer.mobile .send-drawer-close,
+.send-drawer.mobile .send-drawer-primary,
+.send-drawer.mobile .send-drawer-secondary,
+.send-drawer.mobile .send-drawer-target,
+.send-drawer.mobile .send-drawer-attach { min-height: 44px; }
+.send-drawer.mobile .send-drawer-note,
+.send-drawer.mobile .send-drawer-search,
+.send-drawer.mobile .send-drawer-pane { font-size: 16px; }
+.send-drawer.mobile .send-drawer-message { min-height: 80px; }
+.send-drawer.mobile .send-drawer-note { min-height: 64px; }
+.send-drawer.mobile .send-drawer-footer { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+.send-drawer.mobile .send-drawer-reference { max-height: 80px; overflow-y: auto; }
+.send-drawer.mobile .send-drawer-actions > button { flex: 1; }
+
+.send-drawer-summary {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--divider);
+}
+.send-drawer-summary > div { min-width: 0; }
+.send-drawer-summary-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.send-drawer.mobile.choosing-target .send-drawer-compose,
+.send-drawer.mobile.choosing-target .send-drawer-footer { display: none; }
+.send-drawer.mobile .send-drawer-picker { flex: 1; min-height: 0; }
+.send-drawer.mobile .send-drawer-targets { flex: 1; min-height: 0; }
+.send-drawer.mobile .send-drawer-target-list { flex: 1; max-height: none; min-height: 0; }
+.send-drawer.mobile .send-drawer-target { flex-shrink: 0; }

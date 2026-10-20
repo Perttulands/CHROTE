@@ -368,145 +368,149 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
           does not. */}
       <div className="launcher-frame">
         <div className="launcher-body">
-          <div className="launcher-title">Launch</div>
-          {options.harnesses.map(entry => {
-            const selected = entry.id === harness.id
-            return (
-              <button
-                key={entry.id}
-                type="button"
-                className={`launcher-row${selected ? ' selected' : ''}`}
-                data-ui="launcher.harness"
-                aria-pressed={selected}
-                onClick={() => setChosenHarness(entry.id)}
-              >
-                <span className="launcher-mark" aria-hidden="true">
-                  {entry.id === SHELL_HARNESS
-                    ? '>_'
-                    : KNOWN_HARNESSES.includes(entry.id) && <HarnessMark id={entry.id as HarnessId} />}
-                </span>
-                <span className="launcher-row-label">{entry.label}</span>
-              </button>
-            )
-          })}
-
-          <label className="launcher-label" htmlFor={folderFieldId}>Folder</label>
-          <div className="launcher-folder" data-ui="launcher.folder">
-            <FolderField
-              id={folderFieldId}
-              value={folder}
-              onChange={setChosenFolder}
-              onSubmit={path => { void launch(path) }}
-              recents={folderSuggestions}
-              ariaLabel="Folder"
-              inputClassName="launcher-name"
-            />
-          </div>
-
-          {/* A server with no configured Unix users has no user to choose: the
-              session runs as the one account CHROTE was given. */}
-          {terminalUsers.length > 0 && <div className="launcher-label">User</div>}
-          <div className="launcher-pick" data-ui="launcher.user">
-            {terminalUsers.map(candidate => {
-              const selected = candidate === user
+          <div className="launcher-location">
+            <div className="launcher-title">Launch</div>
+            {options.harnesses.map(entry => {
+              const selected = entry.id === harness.id
               return (
                 <button
-                  key={candidate}
+                  key={entry.id}
                   type="button"
-                  className={`launcher-option${selected ? ' selected' : ''}`}
+                  className={`launcher-row${selected ? ' selected' : ''}`}
+                  data-ui="launcher.harness"
                   aria-pressed={selected}
-                  onClick={() => setChosenUser(candidate)}
+                  onClick={() => setChosenHarness(entry.id)}
                 >
-                  <span
-                    className="launcher-badge"
-                    style={{ background: identityColorFor(candidate, terminalUsers, theme) }}
-                    aria-hidden="true"
-                  >
-                    {getTerminalUserInitial(candidate)}
+                  <span className="launcher-mark" aria-hidden="true">
+                    {entry.id === SHELL_HARNESS
+                      ? '>_'
+                      : KNOWN_HARNESSES.includes(entry.id) && <HarnessMark id={entry.id as HarnessId} />}
                   </span>
-                  {candidate}
+                  <span className="launcher-row-label">{entry.label}</span>
                 </button>
               )
             })}
-          </div>
 
-          {/* The flags line is the whole of what will be typed after the
-              binary: the catalogue writes into it, and so may the operator.
-              A shell takes none and keeps the block all the same, greyed and
-              inert, so the harness buttons above it stay where they are
-              while the operator clicks through them; Reset keeps its slot
-              for the same reason. */}
-          <label className="launcher-label" htmlFor={flagsFieldId}>Flags</label>
-          <input
-            id={flagsFieldId}
-            type="text"
-            className="launcher-name launcher-flags"
-            data-ui="launcher.flags"
-            aria-label="Launch flags"
-            value={flagsOffered ? flagLine : ''}
-            disabled={!flagsOffered}
-            onChange={event => setFlagLine(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter') void launch()
-            }}
-          />
-          <div className="launcher-preview" title={commandPreview}>{flagsOffered ? commandPreview : '\u00a0'}</div>
-          <div className="launcher-pick">
-            <button
-              type="button"
-              className="launcher-quiet"
-              aria-expanded={flagsOpen && flagsOffered}
-              disabled={!flagsOffered}
-              onClick={() => setFlagsOpen(open => !open)}
-            >
-              Flags…
-            </button>
-            <button
-              type="button"
-              className="launcher-quiet launcher-reset"
-              disabled={!flagsEdited}
-              onClick={resetFlags}
-            >
-              Reset
-            </button>
+            <label className="launcher-label" htmlFor={folderFieldId}>Folder</label>
+            <div className="launcher-folder" data-ui="launcher.folder">
+              <FolderField
+                id={folderFieldId}
+                value={folder}
+                onChange={setChosenFolder}
+                onSubmit={path => { void launch(path) }}
+                recents={folderSuggestions}
+                ariaLabel="Folder"
+                inputClassName="launcher-name"
+              />
+            </div>
+
           </div>
-          {/* The harness's own completion hooks, installed through its
-              flags by the server: the session then reports when its
-              agent finishes or waits. Off means the command runs as typed.
-              A shell keeps the row, disabled, so nothing moves. */}
-          <label className="launcher-notify">
+          <div className="launcher-options">
+            {/* A server with no configured Unix users has no user to choose: the
+                session runs as the one account CHROTE was given. */}
+            {terminalUsers.length > 0 && <div className="launcher-label">User</div>}
+            <div className="launcher-pick" data-ui="launcher.user">
+              {terminalUsers.map(candidate => {
+                const selected = candidate === user
+                return (
+                  <button
+                    key={candidate}
+                    type="button"
+                    className={`launcher-option${selected ? ' selected' : ''}`}
+                    aria-pressed={selected}
+                    onClick={() => setChosenUser(candidate)}
+                  >
+                    <span
+                      className="launcher-badge"
+                      style={{ background: identityColorFor(candidate, terminalUsers, theme) }}
+                      aria-hidden="true"
+                    >
+                      {getTerminalUserInitial(candidate)}
+                    </span>
+                    {candidate}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* The flags line is the whole of what will be typed after the
+                binary: the catalogue writes into it, and so may the operator.
+                A shell takes none and keeps the block all the same, greyed and
+                inert, so the harness buttons above it stay where they are
+                while the operator clicks through them; Reset keeps its slot
+                for the same reason. */}
+            <label className="launcher-label" htmlFor={flagsFieldId}>Flags</label>
             <input
-              type="checkbox"
-              checked={flagsOffered && notify}
+              id={flagsFieldId}
+              type="text"
+              className="launcher-name launcher-flags"
+              data-ui="launcher.flags"
+              aria-label="Launch flags"
+              value={flagsOffered ? flagLine : ''}
               disabled={!flagsOffered}
-              onChange={event => setNotifyPreference(event.target.checked)}
+              onChange={event => setFlagLine(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') void launch()
+              }}
             />
-            Notify on completion
-          </label>
+            <div className="launcher-preview" title={commandPreview}>{flagsOffered ? commandPreview : '\u00a0'}</div>
+            <div className="launcher-pick">
+              <button
+                type="button"
+                className="launcher-quiet"
+                aria-expanded={flagsOpen && flagsOffered}
+                disabled={!flagsOffered}
+                onClick={() => setFlagsOpen(open => !open)}
+              >
+                Flags…
+              </button>
+              <button
+                type="button"
+                className="launcher-quiet launcher-reset"
+                disabled={!flagsEdited}
+                onClick={resetFlags}
+              >
+                Reset
+              </button>
+            </div>
+            {/* The harness's own completion hooks, installed through its
+                flags by the server: the session then reports when its
+                agent finishes or waits. Off means the command runs as typed.
+                A shell keeps the row, disabled, so nothing moves. */}
+            <label className="launcher-notify">
+              <input
+                type="checkbox"
+                checked={flagsOffered && notify}
+                disabled={!flagsOffered}
+                onChange={event => setNotifyPreference(event.target.checked)}
+              />
+              Notify on completion
+            </label>
 
-          <label className="launcher-label" htmlFor={nameFieldId}>Name</label>
-          <input
-            id={nameFieldId}
-            type="text"
-            className="launcher-name"
-            data-ui="launcher.name"
-            aria-label="Session name"
-            value={name}
-            onChange={event => setTypedName(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter') void launch()
-            }}
-          />
+            <label className="launcher-label" htmlFor={nameFieldId}>Name</label>
+            <input
+              id={nameFieldId}
+              type="text"
+              className="launcher-name"
+              data-ui="launcher.name"
+              aria-label="Session name"
+              value={name}
+              onChange={event => setTypedName(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') void launch()
+              }}
+            />
 
-          <div className="launcher-actions">
-            <button
-              type="button"
-              className="launcher-quiet launcher-launch"
-              onClick={() => { void launch() }}
-              disabled={launching || name.trim() === '' || folder.trim() === ''}
-            >
-              {launchLabel}
-            </button>
+            <div className="launcher-actions">
+              <button
+                type="button"
+                className="launcher-quiet launcher-launch"
+                onClick={() => { void launch() }}
+                disabled={launching || name.trim() === '' || folder.trim() === ''}
+              >
+                {launchLabel}
+              </button>
+            </div>
           </div>
         </div>
 

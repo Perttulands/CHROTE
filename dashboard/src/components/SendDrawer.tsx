@@ -27,6 +27,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useSession } from '../context/SessionContext'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useResizableWidth } from '../hooks/useResizableWidth'
 import { useSurface } from '../keys/dismiss'
 import { useTerminalPool } from './TerminalPool'
@@ -148,6 +149,9 @@ export default function SendDrawer() {
   const theme = useTheme()
   const evidence = useSessionEvidence()
 
+  const mobile = useMediaQuery('(max-width: 768px)')
+  const [choosingTarget, setChoosingTarget] = useState(false)
+  const [viewport, setViewport] = useState<{ height: number; top: number } | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [note, setNote] = useState('')
@@ -192,6 +196,7 @@ export default function SendDrawer() {
     // the drawer opens on the launcher rather than on whatever tile has focus.
     const launchWanted = sendToSessionRequest.launch?.folder !== undefined
     setSelected(sendToSessionRequest.targetSessionKey ?? (launchWanted ? NEW_AGENT : focusedSessionKey) ?? null)
+    setChoosingTarget(false)
     setSearch('')
     setNote(sendToSessionRequest.note ?? '')
     setSchedule(emptyScheduleForm())
@@ -222,6 +227,21 @@ export default function SendDrawer() {
     if (!open) return
     noteRef.current?.focus()
   }, [open, sendToSessionRequestId])
+
+  useEffect(() => {
+    if (!open || !mobile) return
+    const view = window.visualViewport
+    const update = () => setViewport({ height: view?.height ?? window.innerHeight, top: view?.offsetTop ?? 0 })
+    update()
+    view?.addEventListener('resize', update)
+    view?.addEventListener('scroll', update)
+    window.addEventListener('resize', update)
+    return () => {
+      view?.removeEventListener('resize', update)
+      view?.removeEventListener('scroll', update)
+      window.removeEventListener('resize', update)
+    }
+  }, [open, mobile])
 
   // A work surface: Escape closes it while it is the topmost thing open, and
   // a click outside leaves it where it is.
@@ -317,7 +337,7 @@ export default function SendDrawer() {
       list.scrollTop += offset - (list.clientHeight - row.offsetHeight) / 2
     })
     return () => cancelAnimationFrame(frame)
-  }, [open, sendToSessionRequestId, search])
+  }, [open, sendToSessionRequestId, search, choosingTarget, mobile])
 
   const addFiles = useCallback((incoming: File[]) => {
     if (incoming.length === 0) return
@@ -428,13 +448,19 @@ export default function SendDrawer() {
   // Shift+Enter is left to the textarea, which breaks the line; Alt+Enter is
   // left to the document, where it is the resident chord.
   const handleNoteKeyDown = useCallback((event: React.KeyboardEvent) => {
-    if (scheduling) return
+    if (scheduling || mobile) return
     if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.metaKey) return
     event.preventDefault()
     send(!event.ctrlKey)
-  }, [send, scheduling])
+  }, [send, scheduling, mobile])
 
   if (!open) return null
+
+  const showPicker = !scheduling && (!mobile || choosingTarget || !selected)
+  const pickTarget = (key: string) => {
+    setSelected(key)
+    setChoosingTarget(false)
+  }
 
   const targetRow = (key: string, session: TmuxSession) => {
     const badgeColor = session.unixUser ? identityColorFor(session.unixUser, terminalUsers, theme) : undefined
@@ -448,7 +474,7 @@ export default function SendDrawer() {
         // truncation, and a reader that walks those spans says it in pieces.
         aria-label={session.unixUser ? `${session.name} · ${session.unixUser}` : session.name}
         className={`send-drawer-target${selected === key ? ' selected' : ''}`}
-        onClick={() => setSelected(key)}
+        onClick={() => pickTarget(key)}
       >
         {session.unixUser && (
           <span
@@ -469,12 +495,12 @@ export default function SendDrawer() {
   return (
     <aside
       ref={drawerRef}
-      className="send-drawer"
+      className={`send-drawer${mobile ? ' mobile' : ''}${mobile && showPicker ? ' choosing-target' : ''}`}
       role="dialog"
       aria-label={scheduling ? 'Schedule task' : 'Send to session'}
-      style={{ width: resize.width } as CSSProperties}
+      style={mobile ? { height: viewport?.height ?? '100dvh', top: viewport?.top ?? 0 } : { width: resize.width } as CSSProperties}
     >
-      <div
+      {!mobile && <div
         {...resize.handleProps}
         className={`send-drawer-handle${resize.resizing ? ' dragging' : ''}`}
         role="separator"
@@ -483,7 +509,7 @@ export default function SendDrawer() {
         aria-valuenow={Math.round(resize.width)}
         aria-valuemin={DRAWER_WIDTH_MIN}
         tabIndex={0}
-      />
+      />}
       <div className="send-drawer-header">
         <span className="send-drawer-title">{scheduling ? 'Schedule task' : 'Send to session'}</span>
         <button
@@ -497,11 +523,22 @@ export default function SendDrawer() {
           {scheduling && discardArmed ? 'Discard draft' : 'Close'}<span className="send-drawer-chord" aria-hidden="true">Esc</span>
         </button>
       </div>
+      {mobile && <div className="send-drawer-summary">
+        <div><span className="send-drawer-section">Target</span>
+          <div className="send-drawer-summary-name">{selected === NEW_AGENT ? (launch?.label ?? 'New agent…') : target?.name ?? 'Choose a session'}</div>
+          {target?.unixUser && <span className="send-drawer-section">{target.unixUser}</span>}
+        </div>
+        {!scheduling && <button type="button" className="send-drawer-secondary"
+          onClick={() => setChoosingTarget(value => !value)}>
+          {showPicker && selected ? 'Back' : 'Change'}
+        </button>}
+      </div>}
         <div className="send-drawer-body" data-ui="send.drawer">
-          <div className="send-drawer-section">Target</div>
-          {scheduling ? <div className="send-drawer-schedule-target">{target?.name}<span>{target?.unixUser}</span></div> : <>
+          {!mobile && <div className="send-drawer-section">Target</div>}
+          {scheduling && !mobile ? <div className="send-drawer-schedule-target">{target?.name}<span>{target?.unixUser}</span></div> : showPicker && <div className="send-drawer-picker">
           <input
             type="search"
+            autoFocus={mobile}
             className="send-drawer-search"
             placeholder="Search sessions"
             aria-label="Search sessions"
@@ -519,14 +556,15 @@ export default function SendDrawer() {
               role="option"
               aria-selected={selected === NEW_AGENT}
               className={`send-drawer-target${selected === NEW_AGENT ? ' selected' : ''}`}
-              onClick={() => setSelected(NEW_AGENT)}
+              onClick={() => pickTarget(NEW_AGENT)}
             >
               <span className="send-drawer-target-name">{launch?.label ?? 'New agent…'}</span>
             </button>
           </div>
 
-          </>}
+          </div>}
 
+          <div className="send-drawer-compose">
           {selected === NEW_AGENT && (
             <div className="send-drawer-launcher">
               <Launcher
@@ -613,7 +651,7 @@ export default function SendDrawer() {
             className="send-drawer-attach"
             onClick={() => fileInputRef.current?.click()}
           >
-            drop files to attach
+            {mobile ? 'Attach files' : 'drop files to attach'}
           </button>
           <input
             ref={fileInputRef}
@@ -638,6 +676,9 @@ export default function SendDrawer() {
             </fieldset>
           )}
 
+          </div>
+        </div>
+        <div className="send-drawer-footer">
           {failure !== null && (
             <p className="send-drawer-status error" role="alert">{failure}</p>
           )}
@@ -669,7 +710,7 @@ export default function SendDrawer() {
               {sending ? 'Sending…' : 'Send'}
             </button>
           </div>
-          <p className="send-drawer-hint">Enter sends · Shift+Enter new line · Ctrl+Enter pastes</p>
+          <p className="send-drawer-hint">{mobile ? 'Return adds a line · Paste does not submit' : 'Enter sends · Shift+Enter new line · Ctrl+Enter pastes'}</p>
           </>}
         </div>
     </aside>

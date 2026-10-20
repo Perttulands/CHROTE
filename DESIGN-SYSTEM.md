@@ -178,7 +178,9 @@ colour tokens and no glow tokens.
 
 An empty window is the launcher, drawn over the theme's art for that slot. It
 offers the four choices a launch needs: harness, folder, Unix user, and name.
-The Sessions panel's plus opens the same launcher.
+The Sessions panel's plus opens the same launcher. Short wide tiles arrange
+the controls in two columns; narrow tiles keep one column. Overflow scrolls
+from the first control, so both harness selection and Launch remain reachable.
 
 - Harnesses, their default flags and their flag catalogues are operator
   configuration read through `GET /api/launch`. The binary stays on the server.
@@ -267,6 +269,12 @@ Peek, a file, a diff, a Bead, a library page, an annotated element.
   and the object's Send put the table's reference into the resident's prompt
   without submitting, and the operator finishes the sentence there. The drawer
   serves every other session.
+- **Phone composition.** Below 769px the drawer fills the visible viewport,
+  including when the keyboard reduces its height. A target summary with Change
+  replaces the always-visible picker; changing targets preserves the draft.
+  Return adds a line. Send and Paste remain explicit buttons, reachable below
+  the scrolling content on every screen size. Desktop keeps its remembered
+  drawer width and keyboard shortcuts.
 - **A receipt.** The tile scrolls to the bottom and the drawer closes; a failure
   keeps the drawer open with the server's own message.
 
