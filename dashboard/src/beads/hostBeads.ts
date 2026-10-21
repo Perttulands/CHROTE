@@ -98,20 +98,25 @@ async function getJSON<T>(path: string, params: URLSearchParams, signal: AbortSi
   return envelope.data
 }
 
-/** Merge one answer into what the browser holds. Unchanged stores keep their rows. */
+/**
+ * Merge one answer into what the browser holds. Unchanged stores keep their
+ * rows, and so does a store the server holds nothing for yet, as it does
+ * after a restart: its last rows stand until the server has read it again.
+ */
 export function mergeHostAnswer(previous: HostRead, answer: { stores: WireStore[]; checkedAt?: string }): HostRead {
   const held = new Map(previous.stores.map(store => [store.path, store]))
   let rowsChanged = previous.stores.length !== answer.stores.length
   const stores = answer.stores.map(wire => {
     const prior = held.get(wire.path)
-    const kept = prior && (wire.unchanged || prior.generation === wire.generation) ? prior.rows : NO_ROWS
+    const unread = !wire.generation && !wire.rows
+    const kept = prior && (unread || wire.unchanged || prior.generation === wire.generation) ? prior.rows : NO_ROWS
     const rows = wire.rows ?? kept
     if (rows !== prior?.rows) rowsChanged = true
     return {
       path: wire.path,
-      prefix: wire.prefix,
-      generation: wire.generation,
-      readAt: wire.readAt,
+      prefix: wire.prefix ?? (unread ? prior?.prefix : undefined),
+      generation: unread ? prior?.generation : wire.generation,
+      readAt: unread ? prior?.readAt : wire.readAt,
       pending: wire.pending,
       error: wire.error,
       rows,

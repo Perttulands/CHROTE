@@ -64,7 +64,7 @@ export function readViewState(search: string): SliceViewState {
   const from = parseDayISO(params.get('from'))
   const to = parseDayISO(params.get('to')) ?? from
   const selection = params.get('sel')
-  const at = selection?.lastIndexOf('@') ?? -1
+  const at = selection?.indexOf('@') ?? -1
   const modeValue = params.get('mode')
   return {
     q: params.get('q') ?? '',

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -264,5 +266,41 @@ func TestBeadsHostCompressesLargeResponsesForClientsThatAcceptIt(t *testing.T) {
 	body, _ := io.ReadAll(reader)
 	if !strings.Contains(string(body), `"success":true`) || len(body) <= rec.Body.Len() {
 		t.Fatalf("decompressed body is not the larger success envelope")
+	}
+}
+
+// Discovery names stores by their resolved folders; a manual path that links
+// to one of them is the same store, and the table lists it once.
+func TestBeadsHostListsALinkedManualStoreOnce(t *testing.T) {
+	h, paths := readerProjects(t, 1)
+	real, err := filepath.EvalSymlinks(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.DiscoverStoresWith(func() []string { return []string{real} })
+	h.stores.read = func(context.Context, string) ([]map[string]interface{}, error) { return hostRecords("x"), nil }
+	link := filepath.Join(filepath.Dir(paths[0]), "linked")
+	if err := os.Symlink(paths[0], link); err != nil {
+		t.Fatal(err)
+	}
+	stores := hostRequest(t, h, url.Values{"path": {link}})
+	if _, ok := stores[real]; len(stores) != 1 || !ok {
+		t.Fatalf("stores = %v, want only the discovered %s", stores, real)
+	}
+}
+
+// A zero time is a missing date: it must not stretch the strip back to 1970
+// or to year one.
+func TestBeadsHostReadsAZeroTimeAsNoTime(t *testing.T) {
+	for value, want := range map[string]int64{
+		"":                     0,
+		"not a time":           0,
+		"0001-01-01T00:00:00Z": 0,
+		"1970-01-01T00:00:00Z": 0,
+		"2026-10-20T10:00:00Z": time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC).Unix(),
+	} {
+		if got := unixSeconds(value); got != want {
+			t.Errorf("unixSeconds(%q) = %d, want %d", value, got, want)
+		}
 	}
 }

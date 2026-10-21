@@ -8,6 +8,7 @@ import {
   orderedRows,
   parseDayISO,
   projectIdentities,
+  rowReference,
   searchTerms,
   storeRowsForCard,
   textMatchMask,
@@ -83,6 +84,32 @@ describe('links across stores', () => {
     expect(shared.find('home-1', 1)).toBe(2)
   })
 
+  it('waits on every store\'s Bead of a blocker id two other stores hold, until all are finished', () => {
+    const moved = (bStatus: string) => buildSliceIndex([
+      store('/a', 'a', [bead('a-1', { blockedBy: ['x-1'] })]),
+      store('/b', 'b', [bead('x-1', { status: 'closed' })]),
+      store('/c', 'c', [bead('x-1', { status: bStatus })]),
+    ], NOW)
+    expect(status(moved('closed'), 'a-1')).toBe('open')
+    const waiting = moved('open')
+    expect(status(waiting, 'a-1')).toBe('blocked')
+    expect(waiting.blockers[0]).toEqual([1, 2])
+    expect(waiting.unresolvedBlockers.size).toBe(0)
+    expect(storeRowsForCard(waiting, 0)[0].blockedBy).toEqual(['x-1'])
+  })
+
+  it('names a Bead to an agent with its store\'s folder when the id alone could mean two stores', () => {
+    const shared = buildSliceIndex([
+      store('/home/alice', 'home', [bead('home-1', { title: 'Mine' })]),
+      store('/home/bob', 'home', [bead('home-2', { title: 'Theirs' })]),
+      store('/srv', 'srv', [bead('srv-1', { title: 'Ours' }), bead('ctx-9', { title: 'Moved' })]),
+      store('/srv/context-citadel', 'ctx', [bead('ctx-9', { title: 'Moved' })]),
+    ], NOW)
+    expect(rowReference(shared, 0)).toBe('bead home-1 (/home/alice): Mine')
+    expect(rowReference(shared, 2)).toBe('bead srv-1: Ours')
+    expect(rowReference(shared, 3)).toBe('bead ctx-9 (/srv): Moved')
+  })
+
   it('seeds a card from its own store with unfinished blockers only', () => {
     const rows = storeRowsForCard(index, 0)
     expect(rows.map(row => row.id)).toEqual(['library-zvi', 'library-zvi.1', 'library-zvi.2'])
@@ -145,6 +172,15 @@ describe('the strip', () => {
     expect(result.closed[d]).toBe(1)
     expect(result.open[d]).toBe(1)
     expect(Math.min(...result.open)).toBeGreaterThanOrEqual(0)
+  })
+
+  it('leaves a date written as zero or before 2000 off the strip', () => {
+    const odd = buildSliceIndex([store('/a', 'a', [
+      bead('a-1', { created: at('2026-10-01') }),
+      bead('a-2', { created: 0, updated: -62135596800, closed: 1 }),
+    ])], NOW)
+    expect(odd.firstDay).toBe(localDay(at('2026-10-01')))
+    expect([odd.createdDay[1], odd.updatedDay[1], odd.closedDay[1], odd.idle[1]]).toEqual([-1, -1, -1, -1])
   })
 
   it('closes a finished Bead with no close time on its last update', () => {

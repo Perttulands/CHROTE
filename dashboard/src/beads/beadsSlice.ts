@@ -14,6 +14,7 @@
 import type { BeadRow } from './beadsApi'
 import type { HostBead, HostStore } from './hostBeads'
 import { isBeadClosed } from './beadStatus'
+import { beadReference } from './beadReference'
 
 export type SliceStatus = 'open' | 'in_progress' | 'blocked' | 'deferred' | 'closed'
 
@@ -86,6 +87,12 @@ export interface SliceIndex {
 }
 
 const DAY_MS = 86400000
+/** 2000-01-01. A time before it is a missing date written as zero, not a day to draw. */
+const EARLIEST = 946684800
+
+function dated(seconds: number | undefined): seconds is number {
+  return seconds !== undefined && seconds >= EARLIEST
+}
 
 /** The local calendar day of a Unix time, as days since 1970-01-01 of that calendar. */
 export function localDay(seconds: number): number {
@@ -145,6 +152,9 @@ export function buildSliceIndex(stores: readonly HostStore[], now: number = Date
   const project = new Uint16Array(size)
   const byStore = new Map<string, number>()
   const byId = new Map<string, number>()
+  // Every row of an id more than one store holds, as a Bead moved between
+  // stores leaves it.
+  const shared = new Map<string, number[]>()
   const storeIndex = new Map<string, number>()
   let at = 0
   stores.forEach((store, p) => {
@@ -153,7 +163,13 @@ export function buildSliceIndex(stores: readonly HostStore[], now: number = Date
       rows[at] = row
       project[at] = p
       byStore.set(`${p}\u0000${row.id}`, at)
-      byId.set(row.id, byId.has(row.id) ? -2 : at)
+      const first = byId.get(row.id)
+      if (first === undefined) byId.set(row.id, at)
+      else {
+        if (first >= 0) shared.set(row.id, [first])
+        shared.get(row.id)!.push(at)
+        byId.set(row.id, -2)
+      }
       at += 1
     })
   })
@@ -188,22 +204,22 @@ export function buildSliceIndex(stores: readonly HostStore[], now: number = Date
   for (let i = 0; i < size; i += 1) {
     const row = rows[i]
     haystack[i] = `${row.id} ${row.title}`.toLowerCase()
-    if (row.created) {
+    if (dated(row.created)) {
       const day = localDay(row.created)
       createdDay[i] = day
       if (day < firstDay) firstDay = day
       const p = project[i]
       if (firstOfProject[p] < 0 || day < firstOfProject[p]) firstOfProject[p] = day
     }
-    if (row.updated) {
+    if (dated(row.updated)) {
       updatedDay[i] = localDay(row.updated)
       idle[i] = Math.max(0, Math.floor((now / 1000 - row.updated) / 86400))
       if (idle[i] > maxIdle) maxIdle = idle[i]
     }
-    if (row.closed) closedDay[i] = localDay(row.closed)
+    if (dated(row.closed)) closedDay[i] = localDay(row.closed)
     // A finished Bead with no close time finished at its last update, or the
     // open area would carry it forever.
-    else if (isBeadClosed(row.status) && row.updated) closedDay[i] = localDay(row.updated)
+    else if (isBeadClosed(row.status) && dated(row.updated)) closedDay[i] = localDay(row.updated)
     if ((row.size ?? 0) > maxSize) maxSize = row.size ?? 0
     if (row.parent) {
       const j = find(row.parent, project[i])
@@ -214,10 +230,16 @@ export function buildSliceIndex(stores: readonly HostStore[], now: number = Date
     }
     row.blockedBy?.forEach(id => {
       const j = find(id, project[i])
-      if (j >= 0 && j !== i) {
-        blockers[i].push(j)
-        dependents[j].push(i)
-      } else if (j < 0) {
+      // An id two other stores hold could name either: it waits on both, so
+      // it is finished only when both are.
+      const named = j >= 0 ? [j] : shared.get(id)
+      if (named) {
+        named.forEach(k => {
+          if (k === i) return
+          blockers[i].push(k)
+          dependents[k].push(i)
+        })
+      } else {
         const missing = unresolvedBlockers.get(i) ?? []
         missing.push(id)
         unresolvedBlockers.set(i, missing)
@@ -413,10 +435,10 @@ export function storeRowsForCard(index: SliceIndex, project: number): BeadRow[] 
   for (let i = 0; i < index.size; i += 1) {
     if (index.project[i] !== project) continue
     const bead = index.rows[i]
-    const blockedBy = [
+    const blockedBy = [...new Set([
       ...index.blockers[i].filter(j => index.status[j] !== CLOSED).map(j => index.rows[j].id),
       ...(index.unresolvedBlockers.get(i) ?? []),
-    ]
+    ])]
     rows.push({
       id: bead.id,
       title: bead.title,
@@ -432,4 +454,16 @@ export function storeRowsForCard(index: SliceIndex, project: number): BeadRow[] 
     })
   }
   return rows
+}
+
+/**
+ * The line that names a row's Bead to an agent. A store whose prefix another
+ * store shares, or an id another store also holds, adds the store's folder:
+ * the receiver runs bd from that folder, and the id alone would not say which.
+ */
+export function rowReference(index: SliceIndex, row: number): string {
+  const bead = index.rows[row]
+  const project = index.projects[index.project[row]]
+  const ambiguous = project.key.includes(':') || index.find(bead.id) !== row
+  return beadReference(bead, ambiguous ? project.path : undefined)
 }

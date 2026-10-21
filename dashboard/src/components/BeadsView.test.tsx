@@ -126,6 +126,30 @@ describe('the Beads tab', () => {
     expect(rowIds()).toEqual(['library-zvi.2'])
     await waitFor(() => expect(rowIds()).toContain('ctx-old'))
     expect(mockState.searchRequests).toContain('project')
+    // A longer query keeps the last answer until its own arrives, so a row
+    // found by its text does not blink out on the keystroke.
+    fireEvent.change(screen.getByLabelText('Search Beads'), { target: { value: 'project h' } })
+    expect(rowIds()).toContain('ctx-old')
+    await waitFor(() => expect(mockState.searchRequests).toContain('project h'))
+  })
+
+  it('says it is still reading while no store has answered, rather than that there are none', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(respond({
+      stores: [{ path: '/srv', pending: true }, { path: '/srv/chrote', pending: true }],
+    }))))
+    render(<BeadsView />)
+    expect(await screen.findByText('Reading 2 stores…')).toBeInTheDocument()
+  })
+
+  it('moves between Split, Table and Graph with the arrows', async () => {
+    render(<BeadsView />)
+    const split = screen.getByRole('tab', { name: 'Split' })
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', split.id)
+    fireEvent.keyDown(split, { key: 'ArrowRight' })
+    expect(screen.getByRole('tab', { name: 'Table', selected: true })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Table' }), { key: 'ArrowLeft' })
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Split' }), { key: 'ArrowLeft' })
+    expect(screen.getByRole('tab', { name: 'Graph', selected: true })).toHaveFocus()
   })
 
   it('keeps one project by its name, and sorts by size', async () => {

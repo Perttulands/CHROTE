@@ -23,13 +23,19 @@ import {
 const LIMITS: MapScaleLimits = { min: 0.25, max: 2 }
 const TITLE_CHARS = Math.floor((NODE_WIDTH - 16) / 6.6)
 
-/** However many shelf colours the theme wrote; the theme decides, not this file. */
+/**
+ * However many shelf colours the theme wrote; the theme decides, not this file.
+ * The theme is written once a page, so the count is read once, not per selection.
+ */
+let shelves = 0
 function shelfCount(): number {
+  if (shelves) return shelves
   if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return 10
   const style = getComputedStyle(document.documentElement)
   let count = 0
   while (count < 64 && style.getPropertyValue(`--shelf-${count}`).trim()) count += 1
-  return count || 10
+  shelves = count || 10
+  return shelves
 }
 
 function clip(text: string, chars: number): string {

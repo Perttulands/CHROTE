@@ -43,6 +43,17 @@ describe('merging a host answer', () => {
     expect(next.rowStores).not.toBe(first.rowStores)
   })
 
+  it('keeps a store\'s last rows while a restarted server has not read it yet', () => {
+    const next = mergeHostAnswer(first, {
+      stores: [
+        { path: '/a', pending: true },
+        { path: '/b', generation: 'g1', pending: false, unchanged: true },
+      ],
+    })
+    expect(next.stores[0]).toMatchObject({ path: '/a', prefix: 'a', generation: 'g1', pending: true, rows })
+    expect(next.rowStores).toBe(first.rowStores)
+  })
+
   it('keeps a failed store\'s last rows beside its error, and drops a store that went away', () => {
     const next = mergeHostAnswer(first, {
       stores: [{ path: '/a', generation: 'g1', pending: false, error: 'bd timed out', unchanged: true }],

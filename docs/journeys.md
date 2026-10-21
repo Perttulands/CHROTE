@@ -95,7 +95,9 @@ output (6); the Clerk's column (7); the Send drawer, for any other session (7).
 
 **End action.** Paste into the Clerk: `Alt+S` puts the Bead's reference into the
 Clerk's prompt, and the operator writes the rest and presses `Enter` there.
-Send to Session carries the same reference to any other session. Writing Beads
+When two stores share the Bead's prefix, the reference names its store's
+folder too, so the receiver runs `bd` in the right one. Send to Session carries
+the same reference to any other session. Writing Beads
 stays with `bd` and the agents, the Clerk among them.
 
 **Chords.** `Alt+B` toggles the Beads column from any tab; leader then

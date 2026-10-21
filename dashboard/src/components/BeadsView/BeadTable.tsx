@@ -13,7 +13,6 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import MenuTarget from '../MenuTarget'
 import type { MenuGroup } from '../Menu'
 import { beadGlyph, formatBeadTime } from '../../beads/beadStatus'
-import { beadReference } from '../../beads/beadReference'
 import {
   NATURAL_DIRECTION,
   SLICE_STATUSES,
@@ -50,7 +49,8 @@ interface BeadTableProps {
   onSort: (key: SliceSortKey, dir: SortDirection) => void
   onSelect: (row: number) => void
   onOpen: (row: number) => void
-  onSend: (reference: string) => void
+  /** Hand the row's Bead to a session. */
+  onSend: (row: number) => void
   onCopy: (text: string, what: string) => void
 }
 
@@ -133,7 +133,7 @@ function BeadTable({ index, ordered, selected, sort, dir, reveal, onSort, onSele
         id: 'work',
         rows: [
           { id: 'open', label: 'Open', chord: 'Enter', onSelect: () => onOpen(row) },
-          { id: 'send', label: 'Send', chord: 'Alt+S', onSelect: () => onSend(beadReference(bead)) },
+          { id: 'send', label: 'Send', chord: 'Alt+S', onSelect: () => onSend(row) },
         ],
       },
       {

@@ -11,7 +11,7 @@
  * Nothing here writes; creating and closing Beads stays with bd and the agents.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import BeadTable from './BeadTable'
 import FacetRail from './FacetRail'
 import TimeStrip from './TimeStrip'
@@ -22,7 +22,6 @@ import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { tableReference, useTableObject } from '../../context/TableContext'
 import { openBeadCard } from '../../beads/beadCard'
-import { beadReference } from '../../beads/beadReference'
 import { searchHostBeads, useHostBeads } from '../../beads/hostBeads'
 import { rememberBeadRows } from '../../beads/knownBeads'
 import {
@@ -31,6 +30,7 @@ import {
   dayLabel,
   filterSlice,
   orderedRows,
+  rowReference,
   searchTerms,
   storeRowsForCard,
   textMatchMask,
@@ -151,9 +151,13 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
     }, SEARCH_DELAY_MS)
     return () => { clearTimeout(timer); controller.abort() }
   }, [active, termKey, host.rowStores])
+  // While the answer for a longer or shorter query is on its way, the last
+  // answer stands: its rows narrow or widen once, rather than vanishing on
+  // every keystroke and coming back.
+  const related = !!found && !!termKey && (termKey.startsWith(found.key) || found.key.startsWith(termKey))
   const textMatches = useMemo(
-    () => found && found.key === termKey ? textMatchMask(index, found.matches) : null,
-    [found, index, termKey],
+    () => found && related ? textMatchMask(index, found.matches) : null,
+    [found, index, related],
   )
 
   const result = useMemo(() => filterSlice(index, {
@@ -189,7 +193,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
     rememberBeadRows(path, storeRowsForCard(index, index.project[row]))
     openBeadCard(bead.id, path, bead.title)
   }, [index])
-  const send = useCallback((reference: string) => openSendToSession({ reference }), [openSendToSession])
+  const send = useCallback((row: number) => openSendToSession({ reference: rowReference(index, row) }), [index, openSendToSession])
   const copy = useCallback((text: string, what: string) => { void copyAndAnnounce(text, what, announce) }, [announce])
   const sortBy = useCallback((sort: SliceSortKey, dir: SortDirection) => patch({ sort, dir }), [patch])
   const setRange = useCallback((range: SliceViewState['range']) => patch({ range }), [patch])
@@ -256,8 +260,17 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
 
   const clearSlice = () => patch({ q: '', projects: null, statuses: null, range: null })
 
-  const selectedBead = selectedRow >= 0 ? index.rows[selectedRow] : null
-  const reference = selectedBead ? beadReference(selectedBead) : table ? tableReference(table) : null
+  // The layout switch is one tab stop; the arrows move between its choices.
+  const moveMode = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+    if (!step) return
+    event.preventDefault()
+    const next = BEADS_MODES[(BEADS_MODES.indexOf(view.mode) + step + BEADS_MODES.length) % BEADS_MODES.length]
+    patch({ mode: next })
+    document.getElementById(`beads-mode-${next}`)?.focus()
+  }
+
+  const reference = selectedRow >= 0 ? rowReference(index, selectedRow) : table ? tableReference(table) : null
   const readStores = host.stores.filter(store => store.generation)
   const pendingStores = host.stores.filter(store => store.pending)
   const failedStores = host.stores.filter(store => store.error)
@@ -266,7 +279,9 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
   const empty = host.loading
     ? 'Reading every Beads store on this host…'
     : index.size === 0
-      ? 'No Beads in any store this host can read.'
+      ? pendingStores.length > 0
+        ? `Reading ${pendingStores.length} ${pendingStores.length === 1 ? 'store' : 'stores'}…`
+        : 'No Beads in any store this host can read.'
       : result.count === 0 ? 'No Beads in this slice.' : null
 
   return (
@@ -285,7 +300,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
                 if (event.key !== 'ArrowDown' && event.key !== 'Enter') return
                 event.preventDefault()
                 if (selectedRow < 0 && ordered.length > 0) selectInTable(ordered[0])
-                document.querySelector<HTMLElement>('.beads-table-body')?.focus()
+                if (showTable) document.querySelector<HTMLElement>('.beads-table-body')?.focus()
               }}
             />
             <span className="beads-chord" aria-hidden="true">/</span>
@@ -319,13 +334,16 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
               <span className="beads-count" role="status">
                 {`${NUMBER.format(result.count)} of ${NUMBER.format(index.size)} Beads`}
               </span>
-              <div className="beads-modes" role="tablist" aria-label="Beads layout">
+              <div className="beads-modes" role="tablist" aria-label="Beads layout" onKeyDown={moveMode}>
                 {BEADS_MODES.map(mode => (
                   <button
                     key={mode}
+                    id={`beads-mode-${mode}`}
                     type="button"
                     role="tab"
                     aria-selected={view.mode === mode}
+                    aria-controls="beads-panes"
+                    tabIndex={view.mode === mode ? 0 : -1}
                     className={`beads-mode${view.mode === mode ? ' active' : ''}`}
                     onClick={() => patch({ mode })}
                   >
@@ -334,7 +352,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
                 ))}
               </div>
             </div>
-            <div className={`beads-panes beads-panes-${view.mode}`}>
+            <div id="beads-panes" role="tabpanel" aria-labelledby={`beads-mode-${view.mode}`} className={`beads-panes beads-panes-${view.mode}`}>
               {showTable && (
                 <div className="beads-pane beads-pane-table">
                   <BeadTable

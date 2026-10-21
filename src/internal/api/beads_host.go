@@ -10,7 +10,8 @@ package api
 // the operator looked. A store whose manifest moved is re-read through the
 // shared reader in the background, and its previous projection is served,
 // marked pending, until the new one is published. Projections outlive the
-// reader's idle eviction, because they are a small fraction of a snapshot.
+// reader's idle eviction, because they are a small fraction of a snapshot; one
+// nobody has read for an hour is dropped at the next discovery walk.
 //
 // Search runs here too, over the text the table does not carry: matching ids
 // are the answer, so the browser never holds every description on the host.
@@ -21,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -35,6 +37,8 @@ import (
 const hostDiscoveryTTL = 30 * time.Second
 
 // How long a store's projection is kept after the last request that read it.
+// Eviction runs with discovery, so with no requests at all nothing is dropped
+// until the next one.
 const hostViewIdle = time.Hour
 
 // Responses above this size are compressed for clients that accept it.
@@ -178,6 +182,8 @@ func (x *beadsHostIndex) store(ctx context.Context, path string) (*hostStoreView
 		reader.touch(path)
 		return view, result
 	}
+	// A manifest that cannot be fingerprinted fails the read too, so the
+	// reader's backoff, not this poll, decides when bd runs for it again.
 	snapshot, state, _ := reader.get(ctx, path, storeReadDemand{})
 	if snapshot != nil && (view == nil || view.generation != snapshot.generation) {
 		view = x.publish(path, snapshot)
@@ -279,7 +285,8 @@ func unixSeconds(value string) int64 {
 		return 0
 	}
 	at, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
+	if err != nil || at.Unix() <= 0 {
+		// A zero time is a missing date, not a day in 1970 or year one.
 		return 0
 	}
 	return at.Unix()
@@ -289,6 +296,8 @@ func unixSeconds(value string) int64 {
 // the same way every Beads route validates a path.
 func (x *beadsHostIndex) hostPaths(r *http.Request) ([]string, []hostStoreResult) {
 	paths := append([]string{}, x.storePaths()...)
+	// Discovery names stores by their resolved folders; a manual path that is
+	// a link to one of them is the same store, and is not listed twice.
 	seen := make(map[string]bool, len(paths))
 	for _, path := range paths {
 		seen[path] = true
@@ -300,10 +309,14 @@ func (x *beadsHostIndex) hostPaths(r *http.Request) ([]string, []hostStoreResult
 			refused = append(refused, hostStoreResult{Path: requested, Error: message})
 			continue
 		}
-		if seen[path] {
+		real := path
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			real = resolved
+		}
+		if seen[path] || seen[real] {
 			continue
 		}
-		seen[path] = true
+		seen[path], seen[real] = true, true
 		if _, err := x.beads.checkBeadsDirectory(path); err != nil {
 			refused = append(refused, hostStoreResult{Path: path, Error: err.Error()})
 			continue
