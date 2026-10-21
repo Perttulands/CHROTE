@@ -21,6 +21,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import Editor from '../Editor'
 import Markdown from '../Markdown'
 import LibraryMap from './SubjectMap'
+import SearchResults from './SearchResults'
 import { subjectOf } from './brainSubjects'
 import { neighboursOf } from './mapLayout'
 import { NOW, SCRUB_STEPS, backFrom, existedAt, momentOf, snapTo, stopsOn } from './mapMoment'
@@ -55,6 +56,7 @@ import {
   type LibraryPage,
   type LibraryPageContent,
   type LibrarySearchResult,
+  type LibrarySearchScope,
   type LibraryShelves,
 } from '../../library/libraryApi'
 import './LibraryView.css'
@@ -77,6 +79,7 @@ function count(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
 
+
 /** What a page is opened for: reading, editing, or its history unfolded. */
 type OpenIntent = 'read' | 'edit' | 'history'
 
@@ -95,7 +98,13 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   const [gitError, setGitError] = useState('')
 
   const [query, setQuery] = useState('')
+  const [scope, setScope] = useState<LibrarySearchScope>('')
+  // The brain's ranked answer to the query; null while there is no query, so
+  // the map is the room. It stands while a page is read beside it.
   const [results, setResults] = useState<LibrarySearchResult[] | null>(null)
+  // The result the keyboard is on.
+  const [selected, setSelected] = useState(0)
+  const resultsRef = useRef<HTMLDivElement>(null)
   // The shelf drawn open in the rail, and its pages; null while they are
   // still being read, so an empty shelf and an unread one do not look alike.
   const [shelf, setShelf] = useState<string | null>(null)
@@ -186,7 +195,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   // A row's menu can ask for the page already in the editor or with its whole
   // history unfolded; the page arrives in that state rather than a step short.
   const openPage = useCallback((path: string, intent: OpenIntent = 'read') => {
-    setResults(null)
     setDraft(null)
     fetchPage(path)
       .then(found => {
@@ -245,22 +253,42 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     return () => { current = false }
   }, [shelf])
 
-  const runSearch = useCallback(() => {
+  // The brain answers as the operator types; a later answer replaces an
+  // earlier one only if it is still the question being asked.
+  useEffect(() => {
     const asked = query.trim()
     if (!asked) {
       setResults(null)
       return
     }
-    searchLibrary(asked)
-      .then(found => {
-        setResults(found)
-        closeDive()
-        announce(`${found.length} ${found.length === 1 ? 'page mentions' : 'pages mention'} "${asked}"`, 'info')
-      })
-      .catch((cause: unknown) => {
-        announce(cause instanceof Error ? cause.message : 'The search failed', 'error')
-      })
-  }, [announce, closeDive, query])
+    let current = true
+    const timer = window.setTimeout(() => {
+      searchLibrary(asked, scope)
+        .then(found => {
+          if (!current) return
+          setResults(found)
+          setSelected(0)
+        })
+        .catch((cause: unknown) => {
+          if (current) announce(cause instanceof Error ? cause.message : 'The search failed', 'error')
+        })
+    }, 200)
+    return () => { current = false; window.clearTimeout(timer) }
+  }, [announce, query, scope])
+
+  // Up and Down move through the results and open what they land on; Enter
+  // opens the one the keyboard is on.
+  const searchKey = useCallback((key: string) => {
+    if (!results || results.length === 0) return false
+    const at = key === 'ArrowDown' ? Math.min(selected + 1, results.length - 1)
+      : key === 'ArrowUp' ? Math.max(selected - 1, 0)
+      : key === 'Enter' ? selected : -1
+    if (at < 0) return false
+    setSelected(at)
+    openPage(results[at].path)
+    resultsRef.current?.querySelector(`[data-result="${at}"]`)?.scrollIntoView?.({ block: 'nearest' })
+    return true
+  }, [openPage, results, selected])
 
   // The page's Send is the drawer, for any other session; Alt+S is the
   // Librarian's, and pastes the same reference into the column at the right.
@@ -383,16 +411,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     setDiscarding(false)
   }, [discarding])
 
-  // What the map lights: the pages a search found, or, while the operator is
-  // still typing, the pages whose name holds what he has typed so far.
-  const matches = useMemo(() => {
-    if (results !== null) return new Set(results.map(result => result.path))
-    const asked = query.trim().toLowerCase()
-    if (!asked || !graph) return null
-    return new Set(graph.pages
-      .filter(entry => entry.title.toLowerCase().includes(asked) || entry.path.toLowerCase().includes(asked))
-      .map(entry => entry.path))
-  }, [graph, query, results])
 
   /** What the map calls a page, for the trail and the two link lists. */
   const titles = useMemo(
@@ -400,6 +418,11 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     [graph],
   )
   const titleOf = useCallback((path: string) => titles.get(path) ?? path, [titles])
+  const summaries = useMemo(
+    () => new Map(graph?.pages.map(entry => [entry.path, entry.summary ?? '']) ?? []),
+    [graph],
+  )
+  const summaryOf = useCallback((path: string) => summaries.get(path) ?? '', [summaries])
 
   /** How long a page is, as the map measures it, for a row opened on it. */
   const words = useMemo(
@@ -486,7 +509,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
             <span className="brain-count" title={momentLegend}>{scrub === SCRUB_STEPS ? 'Now' : libraryWhen(new Date(moment).toISOString(), now)}</span>
           </>}
           openPath={page?.path ?? null}
-          matches={matches}
+          matches={null}
           hoverPath={hoverPath}
           soloShelf={hoverShelf}
           hues={hues}
@@ -558,7 +581,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
 
   return (
     <div className="library-view">
-      <div className="library-columns">
+      <div className={`library-columns${!showMap && page ? ' library-reading-results' : ''}`}>
         <Rail
           className="library-left"
           data-ui="library.shelves"
@@ -578,7 +601,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
               // in the room, there is otherwise no way out of them.
               if (!event.target.value.trim()) setResults(null)
             }}
-            onKeyDown={event => { if (event.key === 'Enter') runSearch() }}
+            onKeyDown={event => { if (searchKey(event.key)) event.preventDefault() }}
           />
 
           <RailSection className="library-section library-shelves" title="Collections">
@@ -654,28 +677,16 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
 
             </div>
           ) : (
-            <div className="library-page">
-              <div className="library-page-head">
-                <div className="library-page-title-row">
-                  <h1>Search</h1>
-                </div>
-                <p className="library-page-meta">
-                  {results.length} {results.length === 1 ? 'page mentions' : 'pages mention'} “{query.trim()}”
-                </p>
-                <div className="library-rule" />
-              </div>
-              <div className="library-results">
-                {results.map(result => (
-                  <MenuTarget key={result.path} label={`Actions for ${result.path}`} groups={pageMenu(result.path)}>
-                    <button type="button" className="library-result" onClick={() => openPage(result.path)}>
-                      <span className="library-result-title">{result.title}</span>
-                      <span className="library-result-path">{result.path}{result.line > 0 ? `:${result.line}` : ''}</span>
-                      {result.snippet && <span className="library-result-snippet">{result.snippet}</span>}
-                    </button>
-                  </MenuTarget>
-                ))}
-              </div>
-            </div>
+            <SearchResults
+              results={results}
+              selected={selected}
+              openPath={page?.path ?? null}
+              scope={scope}
+              listRef={resultsRef}
+              menu={pageMenu}
+              onScope={setScope}
+              onOpen={(index, path) => { setSelected(index); openPage(path) }}
+            />
           )}
         </div>
 
@@ -721,6 +732,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
                     </button>
                   </div>
                 </div>
+                {summaryOf(page.path) && <p className="library-page-summary">{summaryOf(page.path)}</p>}
                 <p className="library-page-meta">
                   {page.path}
                   {page.updated ? ` · changed ${libraryWhen(page.updated)} by ${page.author}` : ' · never committed'}

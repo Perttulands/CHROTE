@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -43,6 +45,9 @@ type LibraryConfig struct {
 	// BeadsProject is the Librarian's own Beads store, named to the resident
 	// column by /api/residents. The Library tab itself reads no Beads.
 	BeadsProject string
+	// SearchURL is the brain service whose ranked search the search route
+	// asks (Context Citadel's POST /v1/library/search). Empty means no search.
+	SearchURL string
 	// LinkRoots bounds where a linked page under the projects shelf may point.
 	// Empty means any regular Markdown file outside the corpus: the Librarian
 	// placed the link, and the corpus is his to point from.
@@ -57,8 +62,12 @@ var libraryAuthorPattern = regexp.MustCompile(`^[^<>]+\s+<[^<>\s]+>$`)
 const (
 	// libraryHistoryLimit caps the commits a page carries.
 	libraryHistoryLimit = 20
-	// librarySearchLimit caps the results a search returns.
-	librarySearchLimit = 50
+	// librarySearchResults is how many ranked results a search asks for.
+	librarySearchResults = 50
+	// librarySearchTimeout bounds one request to the brain's search.
+	librarySearchTimeout = 10 * time.Second
+	// librarySearchBodyLimit bounds the bytes read from one search answer.
+	librarySearchBodyLimit = 2 << 20
 	// libraryChangesDefault and libraryChangesLimit bound the recent-changes list.
 	libraryChangesDefault = 30
 	libraryChangesLimit   = 200
@@ -74,8 +83,6 @@ const (
 	// Markdown elsewhere on the host: the projects shelf holds each project's
 	// own README under a Library path, never a copy of it.
 	libraryLinkedShelf = "projects"
-	// librarySnippetLimit bounds one search snippet.
-	librarySnippetLimit = 200
 )
 
 // libraryRecordSeparator and libraryFieldSeparator are the ASCII separators git
@@ -151,12 +158,16 @@ type LibraryPageResponse struct {
 	Error   string          `json:"error,omitempty"`
 }
 
-// LibrarySearchResult is one hit of GET /api/library/search.
+// LibrarySearchResult is one hit of GET /api/library/search, ranked by the
+// brain: topics first, then by relevance. The snippet marks matched words
+// between » and «.
 type LibrarySearchResult struct {
-	Path    string `json:"path"`
-	Title   string `json:"title"`
-	Line    int    `json:"line"`
-	Snippet string `json:"snippet"`
+	Path       string `json:"path"`
+	Title      string `json:"title"`
+	Kind       string `json:"kind"`
+	Collection string `json:"collection"`
+	Summary    string `json:"summary"`
+	Snippet    string `json:"snippet"`
 }
 
 // LibrarySaveRequest is the body of PUT /api/library/page.
@@ -182,6 +193,13 @@ func LoadLibraryConfig() (LibraryConfig, error) {
 		Author:           strings.TrimSpace(os.Getenv("CHROTE_LIBRARY_AUTHOR")),
 		LibrarianSession: strings.TrimSpace(os.Getenv("CHROTE_LIBRARIAN_SESSION")),
 		BeadsProject:     strings.TrimSpace(os.Getenv("CHROTE_LIBRARY_BEADS")),
+		SearchURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("CHROTE_LIBRARY_SEARCH_URL")), "/"),
+	}
+	if config.SearchURL != "" {
+		parsed, err := url.Parse(config.SearchURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return LibraryConfig{}, fmt.Errorf("CHROTE_LIBRARY_SEARCH_URL %q must be an http(s) URL", config.SearchURL)
+		}
 	}
 	if config.Root != "" {
 		resolved, err := filepath.Abs(config.Root)
@@ -627,9 +645,9 @@ func (h *LibraryHandler) pageHistory(ctx context.Context, relative string) ([]Li
 	return history, err
 }
 
-// Search handles GET /api/library/search?q= - a case-insensitive walk of every
-// page, name matches first. There is no index: the corpus is prose the operator
-// wrote, and a walk of it is cheaper than a store that can go stale.
+// Search handles GET /api/library/search?q=&collection= by asking the brain's
+// own ranked search, which owns the index, ranking and collection defaults.
+// CHROTE keeps no search of its own.
 func (h *LibraryHandler) Search(w http.ResponseWriter, r *http.Request) {
 	if !h.configured(w) {
 		return
@@ -639,82 +657,46 @@ func (h *LibraryHandler) Search(w http.ResponseWriter, r *http.Request) {
 		core.WriteJSON(w, http.StatusOK, []LibrarySearchResult{})
 		return
 	}
-	needle := strings.ToLower(query)
-
-	type candidate struct {
-		result    LibrarySearchResult
-		nameMatch bool
+	if h.config.SearchURL == "" {
+		core.WriteError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "Brain search is not configured (CHROTE_LIBRARY_SEARCH_URL)")
+		return
 	}
-	candidates := make([]candidate, 0)
-	_ = filepath.WalkDir(h.config.Root, func(walked string, entry fs.DirEntry, err error) error {
-		if err != nil || r.Context().Err() != nil {
-			if r.Context().Err() != nil {
-				return fs.SkipAll
-			}
-			return nil
-		}
-		if entry.IsDir() {
-			if walked != h.config.Root && libraryIgnoresDirectory(entry.Name()) {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !h.isPageEntry(walked, entry) {
-			return nil
-		}
-
-		relative := h.libraryRelative(walked)
-		content, readErr := readLibraryFile(walked)
-		if readErr != nil {
-			return nil
-		}
-		nameMatch := strings.Contains(strings.ToLower(relative), needle)
-		line, snippet := firstLibraryMatch(content, needle)
-		if !nameMatch && line == 0 {
-			return nil
-		}
-		candidates = append(candidates, candidate{
-			result: LibrarySearchResult{
-				Path:    relative,
-				Title:   libraryTitle(content, relative),
-				Line:    line,
-				Snippet: snippet,
-			},
-			nameMatch: nameMatch,
-		})
-		return nil
-	})
-
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].nameMatch != candidates[j].nameMatch {
-			return candidates[i].nameMatch
-		}
-		return candidates[i].result.Path < candidates[j].result.Path
-	})
-	results := make([]LibrarySearchResult, 0, len(candidates))
-	for _, found := range candidates {
-		if len(results) >= librarySearchLimit {
-			break
-		}
-		results = append(results, found.result)
+	// The brain returns twelve unless asked; fifty is its most.
+	asked := map[string]any{"query": query, "limit": librarySearchResults}
+	if collection := strings.TrimSpace(r.URL.Query().Get("collection")); collection != "" {
+		asked["collection"] = collection
 	}
-	core.WriteJSON(w, http.StatusOK, results)
-}
-
-// firstLibraryMatch returns the 1-based line holding the first match and that
-// line as a snippet, or zero and the empty string when the text has none.
-func firstLibraryMatch(content, needle string) (int, string) {
-	for index, line := range strings.Split(content, "\n") {
-		if !strings.Contains(strings.ToLower(line), needle) {
-			continue
-		}
-		snippet := strings.TrimSpace(line)
-		if len(snippet) > librarySnippetLimit {
-			snippet = snippet[:librarySnippetLimit]
-		}
-		return index + 1, snippet
+	body, _ := json.Marshal(asked)
+	ctx, cancel := context.WithTimeout(r.Context(), librarySearchTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, h.config.SearchURL+"/v1/library/search", bytes.NewReader(body))
+	if err != nil {
+		core.WriteError(w, http.StatusInternalServerError, "SEARCH_FAILED", err.Error())
+		return
 	}
-	return 0, ""
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "SEARCH_FAILED", "The brain search did not answer: "+err.Error())
+		return
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, librarySearchBodyLimit))
+	if err != nil || response.StatusCode != http.StatusOK {
+		core.WriteError(w, http.StatusBadGateway, "SEARCH_FAILED", fmt.Sprintf("The brain search refused the query (%d)", response.StatusCode))
+		return
+	}
+	var answer struct {
+		Results []LibrarySearchResult `json:"results"`
+	}
+	if err := json.Unmarshal(raw, &answer); err != nil {
+		core.WriteError(w, http.StatusBadGateway, "SEARCH_FAILED", "The brain search answered with something that is not JSON")
+		return
+	}
+	if answer.Results == nil {
+		answer.Results = []LibrarySearchResult{}
+	}
+	core.WriteJSON(w, http.StatusOK, answer.Results)
 }
 
 // Changes handles GET /api/library/changes?limit= - what has arrived lately,

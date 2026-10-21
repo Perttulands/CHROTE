@@ -59,7 +59,12 @@ The core product is terminal workspaces, sessions, files, server status, and set
 
 Beads, Brain and Agents each host a resident agent, the Clerk, the Librarian and the tender, as a tmux session in a column at the right of the view; the one selected object, the table, is carried from view to view.
 
-Brain offers Subjects and Map modes over the same corpus. Subjects expands
+Brain is search first. The search asks the brain service's ranked search as
+the operator types and lists each page by title, kind, summary, matched words
+and path, topics first; a scope control widens it to Self or every collection.
+Opening a result reads the page wide beside the list, which stays; Up and Down
+move through the results and Escape closes the page, not the list. Without a
+query, Brain offers Subjects and Map modes over the same corpus. Subjects expands
 one group at a time; Map keeps subjects in a continuous space with pan and zoom.
 Map regions retain their positions when filters change. Subject names and page
 labels remain screen-sized, with fewer labels shown when space is limited.

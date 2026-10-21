@@ -374,8 +374,4 @@ func TestLibraryGraphIncludesWholeCorpus(t *testing.T) {
 	if len(graph.Pages) != 2006 || graph.Pages[len(graph.Pages)-1].Path != "self/values.md" {
 		t.Fatalf("graph has %d pages; late subject = %+v", len(graph.Pages), graph.Pages[len(graph.Pages)-1])
 	}
-	hits := decodeLibrary[[]LibrarySearchResult](t, libraryRequest(t, handler, http.MethodGet, "/api/library/search?q=values", ""))
-	if len(hits) != 1 || hits[0].Path != "self/values.md" {
-		t.Fatalf("late subject search = %+v", hits)
-	}
 }

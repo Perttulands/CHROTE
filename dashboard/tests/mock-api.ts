@@ -975,7 +975,7 @@ export async function mockLibraryApiRoutes(page: Page, options?: { shelves?: obj
     const query = (new URL(route.request().url()).searchParams.get('q') ?? '').toLowerCase()
     const hits = Object.values(mockLibraryPageContents)
       .filter(entry => entry.content.toLowerCase().includes(query) || entry.path.toLowerCase().includes(query))
-      .map(entry => ({ path: entry.path, title: entry.title, line: 3, snippet: 'Prefer small, verifiable changes.' }))
+      .map(entry => ({ path: entry.path, title: entry.title, kind: 'note', collection: entry.path.split('/')[0], summary: '', snippet: 'Prefer small, »verifiable« changes.' }))
     return flat(route, hits)
   })
 

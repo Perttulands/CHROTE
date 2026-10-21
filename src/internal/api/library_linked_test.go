@@ -117,12 +117,8 @@ func TestLibraryFollowsLinkedProjectPages(t *testing.T) {
 		}
 	})
 
-	t.Run("search and the graph see the linked page", func(t *testing.T) {
-		rec := libraryRequest(t, handler, http.MethodGet, "/api/library/search?q=project+README", "")
-		if !strings.Contains(rec.Body.String(), "projects/alpha/README.md") {
-			t.Fatalf("search missed the linked page: %s", rec.Body.String())
-		}
-		rec = libraryRequest(t, handler, http.MethodGet, "/api/library/graph", "")
+	t.Run("the graph sees the linked page", func(t *testing.T) {
+		rec := libraryRequest(t, handler, http.MethodGet, "/api/library/graph", "")
 		graph := decodeLibrary[LibraryGraphResponse](t, rec)
 		found := false
 		for _, page := range graph.Pages {

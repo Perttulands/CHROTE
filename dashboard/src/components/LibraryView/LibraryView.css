@@ -784,3 +784,137 @@
 .library-error {
   color: var(--color-error);
 }
+
+/* ---- search first: the brain's ranked results, read beside the page ---- */
+
+.library-search-results {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 88ch;
+  padding: 10px 14px 0;
+}
+
+.library-reading-results .library-room {
+  flex: 0 1 56ch;
+  min-width: 36ch;
+}
+
+.library-reading-results .library-dive {
+  flex: 1 1 auto;
+  width: auto;
+  max-width: none;
+}
+
+.library-reading-results .library-dive .library-page {
+  max-width: 96ch;
+  padding: 16px 24px 0;
+}
+
+.library-search-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.library-search-count {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.library-search-scope {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.library-scope {
+  padding: 2px 8px;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.library-scope[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.library-result {
+  gap: 3px;
+  padding: 10px 8px;
+  text-align: left;
+  border-left: 2px solid transparent;
+}
+
+.library-result.selected {
+  background: var(--surface-secondary);
+}
+
+.library-result.open {
+  border-left-color: var(--accent);
+}
+
+.library-result-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.library-result-head .library-result-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.library-result-kind {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.library-result-kind.kind-topic {
+  color: var(--accent);
+}
+
+.library-result-summary {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.library-result .library-result-snippet {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.library-result-snippet mark {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.library-result .library-result-path {
+  font-size: 11px;
+}
+
+.library-page-summary {
+  margin: 4px 0 6px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}

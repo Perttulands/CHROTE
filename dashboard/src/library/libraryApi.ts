@@ -83,12 +83,19 @@ export interface LibraryChanges {
   error?: string
 }
 
+/** One hit of the brain's ranked search: topics first, then by relevance. */
 export interface LibrarySearchResult {
   path: string
   title: string
-  line: number
+  kind: string
+  collection: string
+  summary: string
+  /** Matched words sit between » and «. */
   snippet: string
 }
+
+/** Which collections a search covers: the brain's default, Self alone, or all. */
+export type LibrarySearchScope = '' | 'self' | 'all'
 
 const API_BASE = '/api/library'
 
@@ -121,8 +128,8 @@ export function fetchPage(path: string): Promise<LibraryPageContent> {
   return request<LibraryPageContent>('/page', { path })
 }
 
-export function searchLibrary(query: string): Promise<LibrarySearchResult[]> {
-  return request<LibrarySearchResult[]>('/search', { q: query })
+export function searchLibrary(query: string, scope: LibrarySearchScope = ''): Promise<LibrarySearchResult[]> {
+  return request<LibrarySearchResult[]>('/search', scope ? { q: query, collection: scope } : { q: query })
 }
 
 export function fetchChanges(limit = 30): Promise<LibraryChanges> {

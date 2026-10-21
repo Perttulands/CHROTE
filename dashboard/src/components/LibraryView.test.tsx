@@ -156,7 +156,8 @@ beforeEach(() => {
     tags: [['preferences/tools.md', 'preferences/workflow.md', 'tooling']],
   }
   mockState.results = [
-    { path: 'knowledge/testing.md', title: 'Test isolation', line: 3, snippet: 'A serious lab gets a durable path.' },
+    { path: 'knowledge/testing.md', title: 'Test isolation', kind: 'topic', collection: 'knowledge', summary: 'Isolate tests from live data.', snippet: 'A serious lab gets a »durable« path.' },
+    { path: 'preferences/workflow.md', title: 'Workflow Preferences', kind: 'note', collection: 'self', summary: 'Small, verifiable changes.', snippet: '' },
   ]
 })
 
@@ -333,12 +334,6 @@ describe('LibraryView', () => {
     expect(mapNode('Workflow Preferences')).toBeInTheDocument()
   })
 
-  it('marks matching subjects while a search is being typed', async () => {
-    await openLibrary()
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Search the brain' }), { target: { value: 'isolation' } })
-    expect(screen.getByRole('button', { name: 'knowledge, 1 page' })).toHaveTextContent('1 matches')
-    expect(screen.getByRole('button', { name: 'preferences, 2 pages' })).toHaveTextContent('0 matches')
-  })
 
   // A shelf is worked inside the rail: it draws open where it stands, the map
   // is still the room behind it, and the dive is a step the row offers.
@@ -459,16 +454,25 @@ describe('LibraryView', () => {
     expect(screen.getByRole('button', { name: 'knowledge, 1 page' })).toBeInTheDocument()
   })
 
-  it('searches the whole corpus and opens a result', async () => {
+  // The brain ranks; the tab lists its answer as the operator types and keeps
+  // the list while a page is read beside it.
+  it('lists the brain search as you type and reads results beside it', async () => {
     await openLibrary()
 
     const search = screen.getByRole('searchbox', { name: 'Search the brain' })
     fireEvent.change(search, { target: { value: 'durable' } })
-    fireEvent.keyDown(search, { key: 'Enter' })
 
-    expect(await screen.findByText('A serious lab gets a durable path.')).toBeInTheDocument()
+    expect(await screen.findByText('Isolate tests from live data.')).toBeInTheDocument()
+    expect(screen.getByText('durable').tagName).toBe('MARK')
     expect(region('library-room').getByText('Test isolation')).toBeInTheDocument()
-    await waitFor(() => expect(mockState.announce).toHaveBeenCalledWith('1 page mentions "durable"', 'info'))
+
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
+    expect(region('library-room').getByText('Test isolation')).toBeInTheDocument()
+
+    fireEvent.keyDown(document.activeElement ?? search, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByText('Prefer small, verifiable changes.')).not.toBeInTheDocument())
+    expect(region('library-room').getByText('Workflow Preferences')).toBeInTheDocument()
   })
 
   it('edits a page in place and commits it with a summary', async () => {

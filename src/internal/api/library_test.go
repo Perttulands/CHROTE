@@ -310,65 +310,66 @@ func TestLibraryPageCarriesItsHistory(t *testing.T) {
 
 func TestLibrarySearch(t *testing.T) {
 	root := newLibraryCorpus(t)
-	handler := newLibraryHandlerForTest(t, LibraryConfig{Root: root})
+	var asked map[string]any
+	brainSearch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/library/search" {
+			http.NotFound(w, r)
+			return
+		}
+		asked = nil
+		_ = json.NewDecoder(r.Body).Decode(&asked)
+		if asked["query"] == "refuse" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"id":"workflow","slug":"workflow","title":"Workflow","kind":"topic","collection":"knowledge","summary":"How we work","path":"knowledge/workflow/workflow.md","snippet":"a »verifiable« result"}],"truncated":false}`))
+	}))
+	t.Cleanup(brainSearch.Close)
+	handler := newLibraryHandlerForTest(t, LibraryConfig{Root: root, SearchURL: brainSearch.URL})
 
-	tests := []struct {
-		name      string
-		query     string
-		wantFirst string
-		wantCount int
-		wantLine  int
-	}{
-		{name: "an empty query asks nothing", query: "", wantCount: 0},
-		{
-			name:      "a word in the prose",
-			query:     "verifiable",
-			wantFirst: "preferences/workflow.md",
-			wantCount: 1,
-			wantLine:  3,
-		},
-		{
-			name:      "the search is case-insensitive",
-			query:     "VERIFIABLE",
-			wantFirst: "preferences/workflow.md",
-			wantCount: 1,
-			wantLine:  3,
-		},
-		{
-			name:      "a name match comes before a prose match",
-			query:     "workflow",
-			wantFirst: "preferences/workflow.md",
-			wantCount: 1,
-		},
-		{
-			name:      "a dot-directory is not searched",
-			query:     "Hidden",
-			wantCount: 0,
-		},
+	search := func(params url.Values) *httptest.ResponseRecorder {
+		return libraryRequest(t, handler, http.MethodGet, "/api/library/search?"+params.Encode(), "")
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			target := "/api/library/search?" + url.Values{"q": {tt.query}}.Encode()
-			rec := libraryRequest(t, handler, http.MethodGet, target, "")
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
-			}
-			results := decodeLibrary[[]LibrarySearchResult](t, rec)
-			if len(results) != tt.wantCount {
-				t.Fatalf("results = %d, want %d: %#v", len(results), tt.wantCount, results)
-			}
-			if tt.wantCount == 0 {
-				return
-			}
-			if results[0].Path != tt.wantFirst {
-				t.Fatalf("first result = %q, want %q", results[0].Path, tt.wantFirst)
-			}
-			if tt.wantLine != 0 && results[0].Line != tt.wantLine {
-				t.Fatalf("line = %d, want %d (snippet %q)", results[0].Line, tt.wantLine, results[0].Snippet)
-			}
-		})
-	}
+	t.Run("an empty query asks nothing", func(t *testing.T) {
+		asked = nil
+		rec := search(url.Values{"q": {"  "}})
+		if rec.Code != http.StatusOK || len(decodeLibrary[[]LibrarySearchResult](t, rec)) != 0 || asked != nil {
+			t.Fatalf("status = %d, asked = %v: %s", rec.Code, asked, rec.Body.String())
+		}
+	})
+	t.Run("the brain's ranked results pass through", func(t *testing.T) {
+		rec := search(url.Values{"q": {"verifiable work"}, "collection": {"all"}})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if asked["query"] != "verifiable work" || asked["collection"] != "all" || asked["limit"] != float64(50) {
+			t.Fatalf("asked = %v", asked)
+		}
+		results := decodeLibrary[[]LibrarySearchResult](t, rec)
+		want := LibrarySearchResult{Path: "knowledge/workflow/workflow.md", Title: "Workflow", Kind: "topic", Collection: "knowledge", Summary: "How we work", Snippet: "a »verifiable« result"}
+		if len(results) != 1 || results[0] != want {
+			t.Fatalf("results = %#v", results)
+		}
+	})
+	t.Run("no collection leaves the brain's default", func(t *testing.T) {
+		search(url.Values{"q": {"x"}})
+		if _, named := asked["collection"]; named {
+			t.Fatalf("asked = %v", asked)
+		}
+	})
+	t.Run("a refusal is a bad gateway", func(t *testing.T) {
+		if rec := search(url.Values{"q": {"refuse"}}); rec.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d", rec.Code)
+		}
+	})
+	t.Run("without a search service the route says so", func(t *testing.T) {
+		bare := newLibraryHandlerForTest(t, LibraryConfig{Root: root})
+		rec := libraryRequest(t, bare, http.MethodGet, "/api/library/search?q=x", "")
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "CHROTE_LIBRARY_SEARCH_URL") {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 func TestLibraryChanges(t *testing.T) {

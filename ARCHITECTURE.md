@@ -77,7 +77,9 @@ Beads, Scheduled and Brain are separate first-party modules. Brain retains the
 `library` tab identifier and `/api/library` routes for compatibility. Its graph
 adapter reads page metadata and references from the configured Markdown tree;
 it owns no corpus index or classification. Context Citadel remains the owner of
-brain search, ingestion and curation. Subject groups are derived from current
+brain search, ingestion and curation: `/api/library/search` forwards the query
+to the configured search service (`CHROTE_LIBRARY_SEARCH_URL`) and keeps no
+search of its own. Subject groups are derived from current
 paths rather than a maintained CHROTE taxonomy. The continuous map derives its
 layout from the complete graph before applying visibility filters. Camera and
 filter state belong to the Brain view; named view snapshots use the versioned,
