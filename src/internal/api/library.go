@@ -570,19 +570,31 @@ func (h *LibraryHandler) Pages(w http.ResponseWriter, r *http.Request) {
 // page arrived in — which is the only date the corpus has for when a page was
 // written, since the Librarian's rules leave front matter optional.
 func (h *LibraryHandler) changeSpanByPath(ctx context.Context, scope string) (last, first map[string]LibraryCommit, err error) {
-	args := []string{"log", libraryLogFormat, "--name-only"}
+	args := []string{"log", libraryLogFormat, "--name-status", "-M", "-l0"}
 	if scope != "" && scope != "." {
 		args = append(args, "--", scope)
 	}
 	output, err := h.git(ctx, args...)
 	last = make(map[string]LibraryCommit)
 	first = make(map[string]LibraryCommit)
+	// A moved page keeps its age. The log runs newest first, so a rename hands
+	// the page's present path back to the name it had before, and the commits
+	// under that older name count for the page as it is now.
+	present := make(map[string]string)
 	for _, change := range parseLibraryLog(output) {
-		for _, file := range change.Files {
+		for _, status := range change.Files {
+			fields := strings.Split(status, "\t")
+			file := fields[len(fields)-1]
+			if moved, known := present[file]; known {
+				file = moved
+			}
 			if _, seen := last[file]; !seen {
 				last[file] = change.LibraryCommit
 			}
 			first[file] = change.LibraryCommit
+			if len(fields) == 3 && strings.HasPrefix(fields[0], "R") {
+				present[fields[1]] = file
+			}
 		}
 	}
 	return last, first, err
@@ -636,7 +648,7 @@ func (h *LibraryHandler) Page(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *LibraryHandler) pageHistory(ctx context.Context, relative string) ([]LibraryCommit, error) {
-	output, err := h.git(ctx, "log", "-n", strconv.Itoa(libraryHistoryLimit), libraryLogFormat, "--", relative)
+	output, err := h.git(ctx, "log", "--follow", "-n", strconv.Itoa(libraryHistoryLimit), libraryLogFormat, "--", relative)
 	changes := parseLibraryLog(output)
 	history := make([]LibraryCommit, 0, len(changes))
 	for _, change := range changes {

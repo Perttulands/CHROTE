@@ -37,9 +37,11 @@ interface SearchResultsProps {
   menu: (path: string) => () => MenuGroup[]
   onScope: (scope: LibrarySearchScope) => void
   onOpen: (index: number, path: string) => void
+  /** Show the answer as lit stars on the map. */
+  onMap: () => void
 }
 
-export default function SearchResults({ results, selected, openPath, scope, listRef, menu, onScope, onOpen }: SearchResultsProps) {
+export default function SearchResults({ results, selected, openPath, scope, listRef, menu, onScope, onOpen, onMap }: SearchResultsProps) {
   return (
     <div className="library-search-results" data-ui="library.results">
       <div className="library-search-head">
@@ -47,6 +49,7 @@ export default function SearchResults({ results, selected, openPath, scope, list
           {results.length === 0 ? 'Nothing found' : `${results.length} ${results.length === 1 ? 'page' : 'pages'}`}
           {results.length >= BRAIN_LIMIT ? ', best first' : ''}
         </span>
+        {results.length > 0 && <button type="button" className="library-scope" onClick={onMap}>On the map</button>}
         <div className="library-search-scope" role="group" aria-label="Collections searched">
           {SCOPES.map(entry => (
             <button

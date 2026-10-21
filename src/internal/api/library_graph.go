@@ -35,9 +35,9 @@ type LibraryGraphPage struct {
 	Title   string   `json:"title"`
 	Words   int      `json:"words"`
 	Updated string   `json:"updated"`
-	// Created is when the commit that first named this path was made, which is
-	// the corpus's own answer to when the page was written. Empty for a page
-	// git has never seen.
+	// Created is when the commit that first named this page was made, under
+	// this path or one it was moved from, which is the corpus's own answer to
+	// when the page was written. Empty for a page git has never seen.
 	Created   string `json:"created"`
 	Candidate bool   `json:"candidate"`
 }

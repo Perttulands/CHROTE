@@ -175,6 +175,37 @@ func TestLibraryGraph(t *testing.T) {
 	})
 }
 
+// Reorganising the corpus moves pages without writing them. A moved page
+// keeps the day it arrived and its history, or the map's scrubber would show
+// the whole corpus born on the day it was tidied.
+func TestLibraryGraphPageKeepsItsAgeWhenMoved(t *testing.T) {
+	root := newGitRepository(t)
+	if err := os.MkdirAll(filepath.Join(root, "knowledge", "moved"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "knowledge", "page.md"), []byte("# Page\n\nWritten once, then moved.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommitAllAt(t, root, "Write the page", libraryGraphSeededAt)
+	runGit(t, root, "mv", "knowledge/page.md", "knowledge/moved/page.md")
+	gitCommitAllAt(t, root, "Move the page", libraryGraphRevisedAt)
+
+	handler := newLibraryHandlerForTest(t, LibraryConfig{Root: root})
+	graph := decodeLibrary[LibraryGraphResponse](t, libraryRequest(t, handler, http.MethodGet, "/api/library/graph", ""))
+	if len(graph.Pages) != 1 {
+		t.Fatalf("pages = %#v, want the moved page alone", graph.Pages)
+	}
+	moved := graph.Pages[0]
+	if !strings.HasPrefix(moved.Created, "2026-01-02") || !strings.HasPrefix(moved.Updated, "2026-02-03") {
+		t.Fatalf("moved page reads created %q updated %q, want its first commit and the move", moved.Created, moved.Updated)
+	}
+
+	page := decodeLibrary[LibraryPageResponse](t, libraryRequest(t, handler, http.MethodGet, "/api/library/page?path=knowledge/moved/page.md", ""))
+	if len(page.History) != 2 || page.History[1].Message != "Write the page" {
+		t.Fatalf("history = %#v, want the move and the commit before it", page.History)
+	}
+}
+
 func TestParseLibraryFrontMatter(t *testing.T) {
 	tests := []struct {
 		name          string
