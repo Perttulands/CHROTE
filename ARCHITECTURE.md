@@ -80,8 +80,12 @@ it owns no corpus index or classification. Context Citadel remains the owner of
 brain search, ingestion and curation: `/api/library/search` forwards the query
 to the configured search service (`CHROTE_LIBRARY_SEARCH_URL`) and keeps no
 search of its own. Subject groups are derived from current
-paths rather than a maintained CHROTE taxonomy. The continuous map derives its
-layout from the complete graph before applying visibility filters. Camera and
+paths rather than a maintained CHROTE taxonomy; a record under
+`<collection>/<producer>/<subject>/` joins the subject of that name. A page's
+arrival date follows git renames, so reorganising the tree does not make pages
+new. The map derives its layout from the complete graph before applying
+visibility filters, starting from its previous placement (device-local
+`chrote.brain.sky.placement`) so systems keep their places as the corpus grows. Camera and
 filter state belong to the Brain view; named view snapshots use the versioned,
 device-local `chrote.brain.views.v1` storage key and contain no corpus content.
 

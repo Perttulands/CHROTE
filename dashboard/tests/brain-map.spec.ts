@@ -35,6 +35,8 @@ async function setup(page: Page, fresh: () => boolean = () => false) {
 const modes = (page: Page) => page.getByRole('group', { name: 'Brain view mode' })
 const continuous = (page: Page) => page.locator('.brain-continuous')
 const selected = (page: Page) => page.locator('.brain-page-selection')
+/** On the sky a selection is the star its label marks as current. */
+const star = (page: Page) => continuous(page).locator('[aria-current="true"]')
 const time = (page: Page) => page.getByRole('slider', { name: 'The moment the map is read at' })
 
 /** These are rendered label coordinates and the visible scale, not component state. */
@@ -62,6 +64,12 @@ async function moveMap(page: Page) {
   await expect.poll(() => cameraGeometry(page)).not.toEqual(beforePan)
   await page.keyboard.press('+')
   await expect(page.locator('.brain-map-scale')).not.toHaveText(before ?? '')
+  // The sky glides to a zoom; the camera worth keeping is the one it rests at.
+  await expect.poll(async () => {
+    const first = JSON.stringify(await cameraGeometry(page))
+    await page.waitForTimeout(150)
+    return JSON.stringify(await cameraGeometry(page)) === first
+  }).toBe(true)
 }
 
 test('keeps selection, filters and the map camera across modes and a tab return', async ({ page }) => {
@@ -70,7 +78,7 @@ test('keeps selection, filters and the map camera across modes and a tab return'
   await page.getByRole('combobox', { name: 'Map facet' }).selectOption('software')
   await chooseWorkflow(page)
   await modes(page).getByRole('button', { name: 'Map', exact: true }).click()
-  await expect(selected(page)).toContainText(OLD_SUMMARY)
+  await expect(star(page)).toHaveText(TITLE)
   await expect(page.getByRole('combobox', { name: 'Map facet' })).toHaveValue('software')
   await moveMap(page)
   const camera = await cameraGeometry(page)
@@ -83,8 +91,12 @@ test('keeps selection, filters and the map camera across modes and a tab return'
   const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/library/graph')
   await page.getByRole('button', { name: 'Brain', exact: true }).click()
   await (await refreshed).finished()
-  await expect(selected(page)).toContainText(TITLE)
+  await expect(star(page)).toHaveText(TITLE)
   await expect.poll(() => cameraGeometry(page)).toEqual(camera)
+
+  // On the sky, choosing a star reads its page beside it.
+  await star(page).click()
+  await expect(page.locator('.library-dive .library-body')).toContainText('Prefer small, verifiable changes.')
 })
 
 test('recalls a saved camera, selection, filters and time against fresh content after reload', async ({ page }) => {
@@ -95,6 +107,7 @@ test('recalls a saved camera, selection, filters and time against fresh content 
   await page.getByRole('combobox', { name: 'Map facet' }).selectOption('software')
   await time(page).fill('827')
   const savedTime = await time(page).inputValue()
+  await page.getByRole('checkbox', { name: /^source/ }).uncheck()
   await page.getByRole('button', { name: 'Hide knowledge on the map' }).click()
   await chooseWorkflow(page)
   await modes(page).getByRole('button', { name: 'Map', exact: true }).click()
@@ -111,7 +124,7 @@ test('recalls a saved camera, selection, filters and time against fresh content 
   await page.getByRole('button', { name: 'Show knowledge on the map' }).click()
   await page.getByRole('button', { name: 'Restore View 1' }).click()
   await expect(modes(page).getByRole('button', { name: 'Map', exact: true })).toHaveAttribute('aria-pressed', 'true')
-  await expect(selected(page)).toContainText(TITLE)
+  await expect(star(page)).toHaveText(TITLE)
   await expect(page.getByRole('combobox', { name: 'Map collection' })).toHaveValue('preferences')
   await expect(page.getByRole('combobox', { name: 'Map facet' })).toHaveValue('software')
   await expect(time(page)).toHaveValue(savedTime)
@@ -123,10 +136,12 @@ test('recalls a saved camera, selection, filters and time against fresh content 
   await page.reload()
   await page.getByRole('button', { name: 'Brain', exact: true }).click()
   await page.getByRole('button', { name: 'Restore View 1' }).click()
-  await expect(selected(page)).toContainText(NEW_SUMMARY)
-  await expect(selected(page)).not.toContainText(OLD_SUMMARY)
+  await expect(star(page)).toHaveText(TITLE)
   await expect(time(page)).toHaveValue(savedTime)
   await expect.poll(() => cameraGeometry(page)).toEqual(camera)
+  await modes(page).getByRole('button', { name: 'Subjects', exact: true }).click()
+  await expect(selected(page)).toContainText(NEW_SUMMARY)
+  await expect(selected(page)).not.toContainText(OLD_SUMMARY)
 })
 
 test('restores a saved Subjects camera after another subject and page were selected', async ({ page }) => {
@@ -177,8 +192,8 @@ test('keeps mode, time and all four view slots reachable on a phone', async ({ p
   const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/library/graph')
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
   await (await refreshed).finished()
-  await page.getByRole('combobox', { name: 'Map subject' }).selectOption('preferences')
-  await continuous(page).getByRole('button', { name: TITLE, exact: true }).click()
+  await modes(page).getByRole('button', { name: 'Subjects', exact: true }).click()
+  await chooseWorkflow(page)
   const copy = selected(page).locator('.brain-selection-copy')
   await expect.poll(() => copy.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
   expect(await copy.evaluate(element => element.scrollTop)).toBe(0)

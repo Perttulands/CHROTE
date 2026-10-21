@@ -5,7 +5,7 @@ import type { LibraryGraph } from '../../library/libraryApi'
 import LibraryMap, { type MapProps } from './Map'
 import { existedAt, momentOf, NOW } from './mapMoment'
 import { kindOf, subjectConnections, subjectGraph, subjectHue, subjectName, subjectOf, subjectsOf } from './brainSubjects'
-import ContinuousMap from './ContinuousMap'
+import SkyMap from './SkyMap'
 import BrainViewControls from './BrainViewControls'
 import type { BrainViewSnapshot, BrainViewMode } from './brainViewState'
 import type { MapTransform } from '../../hooks/useMapTransform'
@@ -30,7 +30,8 @@ export default function SubjectMap(props: SubjectMapProps) {
   const [subject, setSubject] = useState<string | null>(null)
   const [facet, setFacet] = useState('')
   const [collection, setCollection] = useState('')
-  const [hiddenKinds, setHiddenKinds] = useState<ReadonlySet<string>>(new Set(['source']))
+  // Evidence is shown from the start: in the sky it is each subject's nebula.
+  const [hiddenKinds, setHiddenKinds] = useState<ReadonlySet<string>>(new Set())
   const [picked, setPicked] = useState<string | null>(null)
   const facets = useMemo(() => [...new Set(graph.pages.flatMap(page => page.facets ?? []))].sort(), [graph])
   const collections = useMemo(() => [...new Set(graph.pages.map(page => page.shelf))].filter(Boolean).sort(), [graph])
@@ -60,15 +61,20 @@ export default function SubjectMap(props: SubjectMapProps) {
       .sort((a, b) => a.title.localeCompare(b.title))
   }, [graph, selected, current])
 
-  // A page opened from search or the reader's links selects its current subject.
+  // A page opened from search or the reader's links selects its current
+  // subject, and the filters make way for it only if they were hiding it.
+  const openedShown = openPath ? visible.pages.some(page => page.path === openPath) : false
   useEffect(() => {
     if (!openPath) return
     if (!openedSubject || !openedKind) return
     setSubject(openedSubject)
     setPicked(openPath)
+    if (openedShown) return
     setCollection('')
     setFacet('')
     setHiddenKinds(previous => new Set([...previous].filter(kind => kind !== openedKind)))
+    // Only a newly opened page moves the filters, not a filter change after it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openPath, openedSubject, openedKind])
 
   const selectSubject = (id: string) => {
@@ -153,10 +159,9 @@ export default function SubjectMap(props: SubjectMapProps) {
       </div>
       <div className={`brain-map-body${mode === 'map' ? ' is-continuous' : ''}${mode === 'subjects' && current ? ' has-subject' : ''}`}>
         {mode === 'map' && <>
-          <ContinuousMap graph={props.fullGraph} visible={visible} selected={selected} subject={subject}
+          <SkyMap graph={props.fullGraph} visible={visible} selected={selected} subject={subject}
             matches={matches} hoverPath={hoverPath} moment={moment} camera={cameras.map} cameraRevision={cameraRevision}
-            onCameraChange={mapCamera} onSelect={selectPage} onSubject={selectSubject} />
-          {selectedPage && selection}
+            onCameraChange={mapCamera} onSelect={path => { selectPage(path); onOpen(path) }} onSubject={selectSubject} />
         </>}
         {mode === 'subjects' && current && focused && (
           <div className="brain-subject-detail" style={{ '--subject-color': subjectHue(current.id, theme.shelves) } as CSSProperties}>

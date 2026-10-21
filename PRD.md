@@ -65,13 +65,18 @@ and path, topics first; a scope control widens it to Self or every collection.
 Opening a result reads the page wide beside the list, which stays; Up and Down
 move through the results and Escape closes the page, not the list. Without a
 query, Brain offers Subjects and Map modes over the same corpus. Subjects expands
-one group at a time; Map keeps subjects in a continuous space with pan and zoom.
-Map regions retain their positions when filters change. Subject names and page
-labels remain screen-sized, with fewer labels shown when space is limited.
-Selecting a page shows its summary and explicit references; the continuous map
-draws connections around the selected or hovered page. A subject selector gives
-direct access to regions whose labels are outside the current view.
-Sources are hidden from the drawing initially and can be shown. Collection,
+one group at a time. Map is a night sky for getting a feel of what the brain
+knows and whether it looks in order: each subject is a star system with its
+topic at the centre, linked pages in orbit, its evidence as nebula and unlinked
+pages drifting past its edge; subjects that cite each other form
+constellations. Records are drawn with the subject they were filed for. Systems
+keep their places as the corpus grows and when filters change. Pointing at
+empty sky names the pages nearby; selecting a page reads it beside the sky,
+traces its links and signposts those that leave the screen. A search can be
+shown on the map, lighting what it found. Played, the time scrubber replays the
+brain's growth, new pages flaring as they arrive. Motion is reduced when the
+system asks for it. A subject selector gives direct access to regions whose
+labels are outside the current view. Collection,
 facet and kind filters narrow the map; cross-subject navigation follows explicit
 links. Generated indexes and agent instructions are excluded. Refresh and tab
 entry re-read the tree, including moved pages. The existing reader, editor,

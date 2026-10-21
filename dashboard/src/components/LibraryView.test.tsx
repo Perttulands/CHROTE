@@ -165,7 +165,7 @@ beforeEach(() => {
  * A page's name appears in more than one place on purpose — in the rail, on
  * the map, in a listing — so every query says which region it means.
  */
-function region(name: 'library-left' | 'library-shelves' | 'library-arrivals' | 'library-room' | 'library-map' | 'library-dive') {
+function region(name: 'library-left' | 'library-shelves' | 'library-arrivals' | 'library-room' | 'library-map' | 'library-dive' | 'library-search-results') {
   const found = document.querySelector<HTMLElement>(`.${name}`)
   if (!found) throw new Error(`the ${name} region is not on screen`)
   return within(found)
@@ -337,7 +337,7 @@ describe('LibraryView', () => {
 
   // A shelf is worked inside the rail: it draws open where it stands, the map
   // is still the room behind it, and the dive is a step the row offers.
-  it('filters by facets and reveals source pages when their kind is enabled', async () => {
+  it('filters by facets and hides source pages with their kind', async () => {
     mockState.graph!.pages[0] = { ...mockState.graph!.pages[0], kind: 'topic', facets: ['software'] }
     mockState.graph!.pages[1] = { ...mockState.graph!.pages[1], kind: 'source', facets: ['tooling'], summary: 'Preserved tool evidence.' }
     mockState.graph!.pages[2] = { ...mockState.graph!.pages[2], kind: 'research', facets: ['software'] }
@@ -346,6 +346,7 @@ describe('LibraryView', () => {
     expect(screen.getByRole('button', { name: 'preferences, 1 page' })).toHaveTextContent('1 research')
     fireEvent.change(screen.getByRole('combobox', { name: 'Map facet' }), { target: { value: '' } })
     fireEvent.click(screen.getByRole('button', { name: 'preferences, 2 pages' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /^source/ }))
     expect(region('library-map').queryByRole('button', { name: 'Tool Preferences' })).toBeNull()
     fireEvent.click(screen.getByRole('checkbox', { name: /^source/ }))
     fireEvent.click(mapNode('Tool Preferences'))
@@ -464,15 +465,22 @@ describe('LibraryView', () => {
 
     expect(await screen.findByText('Isolate tests from live data.')).toBeInTheDocument()
     expect(screen.getByText('durable').tagName).toBe('MARK')
-    expect(region('library-room').getByText('Test isolation')).toBeInTheDocument()
+    expect(region('library-search-results').getByText('Test isolation')).toBeInTheDocument()
 
     fireEvent.keyDown(search, { key: 'ArrowDown' })
     expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
-    expect(region('library-room').getByText('Test isolation')).toBeInTheDocument()
+    expect(region('library-search-results').getByText('Test isolation')).toBeInTheDocument()
+
+    // The answer can be seen on the map instead, and the list taken back.
+    fireEvent.click(screen.getByRole('button', { name: 'On the map' }))
+    expect(document.querySelector('.library-search-results')).toBeNull()
+    expect(document.querySelector('.library-map-search')).toHaveTextContent(/results? for “durable”/)
+    fireEvent.click(screen.getByRole('button', { name: 'List' }))
+    expect(region('library-search-results').getByText('Test isolation')).toBeInTheDocument()
 
     fireEvent.keyDown(document.activeElement ?? search, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByText('Prefer small, verifiable changes.')).not.toBeInTheDocument())
-    expect(region('library-room').getByText('Workflow Preferences')).toBeInTheDocument()
+    expect(region('library-search-results').getByText('Workflow Preferences')).toBeInTheDocument()
   })
 
   it('edits a page in place and commits it with a summary', async () => {

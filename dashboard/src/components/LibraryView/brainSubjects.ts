@@ -6,6 +6,41 @@ export function subjectOf(page: LibraryGraphPage): string {
   return parts.length > 2 ? parts.slice(0, 2).join('/') : page.shelf
 }
 
+/**
+ * The graph with each record placed in the subject it was filed for.
+ *
+ * Records are kept by who produced them (`evidence/sources/image-to-3d/…`,
+ * `evidence/desk/korpi/…`), so the folder under the producer names the
+ * subject the record supports. Where another collection has a subject of that
+ * name, the record is drawn and counted with it; a record filed under a name
+ * no subject has stays with its producer, where it shows as unfiled.
+ */
+export function withHomes(graph: LibraryGraph): LibraryGraph {
+  const subjects = new Map<string, string>()
+  for (const page of graph.pages) {
+    const id = subjectOf(page)
+    const [collection, name] = id.split('/')
+    if (!name) continue
+    const held = subjects.get(name)
+    if (!held || HOME_ORDER(collection) < HOME_ORDER(held.split('/')[0])) subjects.set(name, id)
+  }
+  let moved = false
+  const pages = graph.pages.map(page => {
+    const parts = page.path.split('/')
+    const home = parts.length >= 4 ? subjects.get(parts[2]) : undefined
+    if (!home || home.split('/')[0] === parts[0]) return page
+    moved = true
+    return { ...page, subject: home }
+  })
+  return moved ? { ...graph, pages } : graph
+}
+
+/** Which collection a filed record joins when several share the name. */
+const HOME_ORDER = (collection: string) => {
+  const at = ['knowledge', 'projects', 'self'].indexOf(collection)
+  return at === -1 ? 3 : at
+}
+
 export function subjectName(subject: string): string {
   const parts = subject.split('/')
   const name = parts[parts.length - 1] ?? subject
@@ -31,7 +66,7 @@ export function subjectsOf(pages: LibraryGraphPage[]): BrainSubject[] {
     if (!id) continue
     let group = groups.get(id)
     if (!group) {
-      group = { id, name: subjectName(id), collection: page.shelf, pages: [], kinds: new Map() }
+      group = { id, name: subjectName(id), collection: id.includes('/') ? id.split('/')[0] : page.shelf, pages: [], kinds: new Map() }
       groups.set(id, group)
     }
     group.pages.push(page)

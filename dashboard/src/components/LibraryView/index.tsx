@@ -17,14 +17,14 @@
  * correction, and it is a commit signed as him.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Editor from '../Editor'
-import Markdown from '../Markdown'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import LibraryMap from './SubjectMap'
 import SearchResults from './SearchResults'
-import { subjectOf } from './brainSubjects'
+import PageReader, { usePageReader } from './PageReader'
+import { useBrainSearch } from './useBrainSearch'
+import { subjectOf, withHomes } from './brainSubjects'
 import { neighboursOf } from './mapLayout'
-import { NOW, SCRUB_STEPS, backFrom, existedAt, momentOf, snapTo, stopsOn } from './mapMoment'
+import { NOW, SCRUB_STEPS, backFrom, existedAt, momentOf, positionOf, snapTo, stopsOn } from './mapMoment'
 import { shelfHues } from './mapShelves'
 import { useTheme } from '../../theme/ThemeContext'
 import { useSession } from '../../context/SessionContext'
@@ -44,28 +44,18 @@ import {
   arrivalPages,
   fetchChanges,
   fetchGraph,
-  fetchPage,
   fetchShelfPages,
   fetchShelves,
-  libraryProse,
   libraryWhen,
-  savePage,
-  searchLibrary,
   type LibraryGraph,
   type LibraryArrival,
   type LibraryPage,
-  type LibraryPageContent,
-  type LibrarySearchResult,
-  type LibrarySearchScope,
   type LibraryShelves,
 } from '../../library/libraryApi'
 import './LibraryView.css'
 
 /** How many commits the New arrivals column reads. */
 const ARRIVALS = 30
-
-/** How many commits the history strip shows before "… n more". */
-const HISTORY_STRIP = 3
 
 /** The one line the Librarian and the drawer are handed: the dived-into page. */
 export function libraryReference(path: string | null): string {
@@ -75,13 +65,12 @@ export function libraryReference(path: string | null): string {
 /** How far back the scrubber reaches when the corpus is younger than that. */
 const LEAST_SPAN = 30 * 86_400_000
 
+/** How long playing the brain's whole history takes. */
+const PLAY_MS = 9000
+
 function count(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
-
-
-/** What a page is opened for: reading, editing, or its history unfolded. */
-type OpenIntent = 'read' | 'edit' | 'history'
 
 export default function LibraryView({ active = true }: { active?: boolean } = {}) {
   const { openSendToSession, sessions, settings, updateSettings } = useSession()
@@ -90,21 +79,15 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
 
   const [shelves, setShelves] = useState<LibraryShelves | null>(null)
   const [arrivals, setArrivals] = useState<LibraryArrival[]>([])
-  const [graph, setGraph] = useState<LibraryGraph | null>(null)
+  const [rawGraph, setGraph] = useState<LibraryGraph | null>(null)
+  // Records drawn and counted with the subject they were filed for.
+  const graph = useMemo(() => rawGraph && withHomes(rawGraph), [rawGraph])
   const [graphError, setGraphError] = useState('')
   const [error, setError] = useState<string | null>(null)
   // What git said when it would not read the corpus. Without it a refused
   // repository looks exactly like a library nobody has written in.
   const [gitError, setGitError] = useState('')
 
-  const [query, setQuery] = useState('')
-  const [scope, setScope] = useState<LibrarySearchScope>('')
-  // The brain's ranked answer to the query; null while there is no query, so
-  // the map is the room. It stands while a page is read beside it.
-  const [results, setResults] = useState<LibrarySearchResult[] | null>(null)
-  // The result the keyboard is on.
-  const [selected, setSelected] = useState(0)
-  const resultsRef = useRef<HTMLDivElement>(null)
   // The shelf drawn open in the rail, and its pages; null while they are
   // still being read, so an empty shelf and an unread one do not look alike.
   const [shelf, setShelf] = useState<string | null>(null)
@@ -116,19 +99,10 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   // The shelf the pointer is on in the rail, which the map lights alone.
   const [hoverShelf, setHoverShelf] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [page, setPage] = useState<LibraryPageContent | null>(null)
-  // Every page this dive has passed through, oldest first; the last of them is
-  // the page being read. Empty means no dive is open.
-  const [trail, setTrail] = useState<string[]>([])
   // Where the scrubber stands, as a place along it rather than as a time, so
   // the control and the reading cannot drift apart. The right end is now.
   const [scrub, setScrub] = useState(SCRUB_STEPS)
-  const [historyOpen, setHistoryOpen] = useState(false)
   const diveRef = useRef<HTMLElement>(null)
-
-  const [draft, setDraft] = useState<string | null>(null)
-  const [summary, setSummary] = useState('')
-  const [discarding, setDiscarding] = useState(false)
 
   useEffect(() => {
     let current = true
@@ -148,11 +122,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   }, [announce])
 
   const root = shelves?.root ?? ''
-  const resolveTarget = useMemo(() => createLibraryResolver(graph?.pages ?? []), [graph])
-  const resolveWikiLink = useCallback((target: string) => {
-    const path = resolveTarget(target, page?.path ?? '')
-    return path === undefined ? undefined : `/${path}`
-  }, [resolveTarget, page?.path])
 
   useEffect(() => {
     if (!root) return
@@ -187,44 +156,16 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     return loadGraph()
   }, [active, loadGraph, root])
 
-  // Diving into a page puts the map back under it — a dive is read against the
-  // map, not instead of it — and adds the page to the trail. A page the dive
-  // has already passed through is not visited twice: the trail is cut back to
-  // it, which is what a step back means.
-  //
-  // A row's menu can ask for the page already in the editor or with its whole
-  // history unfolded; the page arrives in that state rather than a step short.
-  const openPage = useCallback((path: string, intent: OpenIntent = 'read') => {
-    setDraft(null)
-    fetchPage(path)
-      .then(found => {
-        setPage(found)
-        setTrail(current => {
-          const at = current.indexOf(found.path)
-          return at === -1 ? [...current, found.path] : current.slice(0, at + 1)
-        })
-        setHistoryOpen(intent === 'history')
-        setGitError(found.error ?? '')
-        if (intent === 'edit') {
-          setDraft(found.content)
-          setSummary(`Edit ${found.title}`)
-          setDiscarding(false)
-        }
-      })
-      .catch((cause: unknown) => {
-        announce(cause instanceof Error ? cause.message : `Could not open ${path}`, 'error')
-      })
-  }, [announce])
-
-  // A dive ends where it was opened: the page and its trail go, the map stays
-  // exactly where the operator left it.
-  const closeDive = useCallback(() => {
-    setPage(null)
-    setTrail([])
-    setDraft(null)
-    setHistoryOpen(false)
-    setDiscarding(false)
-  }, [])
+  // Diving into a page puts the map back under it: a dive is read against the
+  // map, not instead of it.
+  const reader = usePageReader(announce, loadGraph, setGitError)
+  const { page, open: openPage, close: closeDive } = reader
+  const search = useBrainSearch(announce, openPage)
+  const resolveTarget = useMemo(() => createLibraryResolver(graph?.pages ?? []), [graph])
+  const resolveWikiLink = useCallback((target: string) => {
+    const path = resolveTarget(target, page?.path ?? '')
+    return path === undefined ? undefined : `/${path}`
+  }, [resolveTarget, page?.path])
 
   useSurface({ open: page !== null, kind: 'work', onClose: closeDive, ref: diveRef })
 
@@ -252,43 +193,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
       .catch(() => { if (current) setShelfPages([]) })
     return () => { current = false }
   }, [shelf])
-
-  // The brain answers as the operator types; a later answer replaces an
-  // earlier one only if it is still the question being asked.
-  useEffect(() => {
-    const asked = query.trim()
-    if (!asked) {
-      setResults(null)
-      return
-    }
-    let current = true
-    const timer = window.setTimeout(() => {
-      searchLibrary(asked, scope)
-        .then(found => {
-          if (!current) return
-          setResults(found)
-          setSelected(0)
-        })
-        .catch((cause: unknown) => {
-          if (current) announce(cause instanceof Error ? cause.message : 'The search failed', 'error')
-        })
-    }, 200)
-    return () => { current = false; window.clearTimeout(timer) }
-  }, [announce, query, scope])
-
-  // Up and Down move through the results and open what they land on; Enter
-  // opens the one the keyboard is on.
-  const searchKey = useCallback((key: string) => {
-    if (!results || results.length === 0) return false
-    const at = key === 'ArrowDown' ? Math.min(selected + 1, results.length - 1)
-      : key === 'ArrowUp' ? Math.max(selected - 1, 0)
-      : key === 'Enter' ? selected : -1
-    if (at < 0) return false
-    setSelected(at)
-    openPage(results[at].path)
-    resultsRef.current?.querySelector(`[data-result="${at}"]`)?.scrollIntoView?.({ block: 'nearest' })
-    return true
-  }, [openPage, results, selected])
 
   // The page's Send is the drawer, for any other session; Alt+S is the
   // Librarian's, and pastes the same reference into the column at the right.
@@ -359,8 +263,15 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   ]
 
   // The map is the room, unless a search is standing in it. Neither a dive
-  // nor an open shelf displaces it.
-  const showMap = results === null
+  // nor an open shelf displaces it. A search can be put on the map, where its
+  // answer is lit among everything else.
+  const [searchOnMap, setSearchOnMap] = useState(false)
+  const { results } = search
+  const showMap = results === null || searchOnMap
+  const matches = useMemo(
+    () => (searchOnMap && results ? new Set(results.map(result => result.path)) : null),
+    [results, searchOnMap],
+  )
 
   // The corpus the map draws: the whole of it, less the shelves the operator
   // has hidden. They are taken out before the layout rather than left out of
@@ -377,40 +288,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
       tags: graph.tags.filter(([from, to]) => kept.has(from) && kept.has(to)),
     }
   }, [graph, hidden])
-
-  const save = useCallback(async () => {
-    if (!page || draft === null) return
-    const message = summary.trim() || `Edit ${page.title}`
-    try {
-      const commit = await savePage(page.path, draft, message)
-      setDraft(null)
-      setPage({ ...page, content: draft, updated: commit.time, author: commit.author, history: [commit, ...page.history] })
-      announce(`Shelved ${page.path} · ${commit.message}`, 'success')
-      loadGraph()
-    } catch (cause: unknown) {
-      announce(cause instanceof Error ? cause.message : 'The library refused the save', 'error')
-    }
-  }, [announce, draft, loadGraph, page, summary])
-
-  const startEdit = useCallback(() => {
-    if (!page) return
-    setDraft(page.content)
-    setSummary(`Edit ${page.title}`)
-    setDiscarding(false)
-  }, [page])
-
-  // Discarding an edit asks in the control that does it: a second press within
-  // the operator's own attention span throws the draft away.
-  const discard = useCallback(() => {
-    if (!discarding) {
-      setDiscarding(true)
-      window.setTimeout(() => setDiscarding(false), 3000)
-      return
-    }
-    setDraft(null)
-    setDiscarding(false)
-  }, [discarding])
-
 
   /** What the map calls a page, for the trail and the two link lists. */
   const titles = useMemo(
@@ -462,15 +339,34 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   // the corpus's own first page, or a month, whichever is longer. One reading
   // of the clock per graph, so nothing moves because time passed.
   const now = useMemo(() => Date.now(), [graph])
-  const span = useMemo(() => {
-    const arrivals = (graph?.pages ?? []).map(entry => momentOf(entry.created)).filter(at => at > 0)
-    return Math.max(LEAST_SPAN, arrivals.length > 0 ? now - Math.min(...arrivals) : 0)
-  }, [graph, now])
+  // Every moment a page arrived at, oldest first, each once.
+  const births = useMemo(
+    () => [...new Set((graph?.pages ?? []).map(entry => momentOf(entry.created)).filter(at => at > 0))].sort((a, b) => a - b),
+    [graph],
+  )
+  const span = Math.max(LEAST_SPAN, births.length > 0 ? now - births[0] : 0)
   const moment = scrub >= SCRUB_STEPS ? NOW : now - backFrom(scrub, span)
   const stops = useMemo(() => stopsOn(span), [span])
   const momentLegend = moment === NOW
     ? 'The corpus as it stands'
     : `The corpus ${libraryWhen(new Date(moment).toISOString(), now)}`
+
+  // Played, the scrubber steps through the moments pages arrived at, each
+  // given the same time, so a quiet month and a busy day both show their
+  // arrivals instead of the busy day being a blink at the end.
+  const [playing, setPlaying] = useState(false)
+  useEffect(() => {
+    if (!playing) return
+    const start = performance.now()
+    let frame = requestAnimationFrame(function step(at) {
+      const t = Math.min(1, (at - start) / PLAY_MS)
+      const born = births[Math.floor(t * (births.length - 1))] ?? now
+      setScrub(t >= 1 ? SCRUB_STEPS : positionOf(now - born, span))
+      if (t < 1) frame = requestAnimationFrame(step)
+      else setPlaying(false)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [births, now, playing, span])
 
   const commitRailWidth = useCallback((library: number) => {
     updateSettings({ railWidth: { ...settings.railWidth, library } })
@@ -500,16 +396,20 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
           hiddenShelves={settings.libraryHiddenShelves}
           onRestoreFilters={(at, hiddenShelves) => { setScrub(at); updateSettings({ libraryHiddenShelves: hiddenShelves }) }}
           timeControl={<>
+            <button type="button" className="library-map-play" aria-pressed={playing}
+              aria-label={playing ? 'Stop playing the brain\'s growth' : 'Play the brain\'s growth'}
+              title={playing ? 'Stop' : 'Watch the brain grow'}
+              onClick={() => setPlaying(current => !current)}>{playing ? '■' : '▶'}</button>
             <span className="brain-count" title={momentLegend}>Time</span>
             <input type="range" className="library-map-scrubber" data-ui="library.map.scrubber"
               min={0} max={SCRUB_STEPS} step={1} value={scrub} list="library-map-stops"
               aria-label="The moment the map is read at" aria-valuetext={momentLegend}
-              onChange={event => setScrub(snapTo(Number(event.target.value), span))} />
+              onChange={event => { setPlaying(false); setScrub(snapTo(Number(event.target.value), span)) }} />
             <datalist id="library-map-stops">{stops.map(stop => <option key={stop.id} value={stop.position} label={stop.label} />)}</datalist>
             <span className="brain-count" title={momentLegend}>{scrub === SCRUB_STEPS ? 'Now' : libraryWhen(new Date(moment).toISOString(), now)}</span>
           </>}
           openPath={page?.path ?? null}
-          matches={null}
+          matches={matches}
           hoverPath={hoverPath}
           soloShelf={hoverShelf}
           hues={hues}
@@ -564,21 +464,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     )
   }
 
-  /** A list of pages as links that travel, the way both link lists read. */
-  const linkList = (heading: string, links: { path: string; title: string }[]) => (
-    <div className="library-links">
-      <h2>{heading}</h2>
-      <p>
-        {links.map((link, index) => (
-          <Fragment key={link.path}>
-            {index > 0 && <span className="library-linked-sep"> · </span>}
-            <button type="button" className="library-link" onClick={() => openPage(link.path)}>{link.title}</button>
-          </Fragment>
-        ))}
-      </p>
-    </div>
-  )
-
   return (
     <div className="library-view">
       <div className={`library-columns${!showMap && page ? ' library-reading-results' : ''}`}>
@@ -592,16 +477,11 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
           <input
             className="library-search"
             type="search"
-            value={query}
+            value={search.query}
             placeholder="Search the brain…"
             aria-label="Search the brain"
-            onChange={event => {
-              setQuery(event.target.value)
-              // An emptied field puts the map back: with the results standing
-              // in the room, there is otherwise no way out of them.
-              if (!event.target.value.trim()) setResults(null)
-            }}
-            onKeyDown={event => { if (searchKey(event.key)) event.preventDefault() }}
+            onChange={event => { setSearchOnMap(false); search.ask(event.target.value) }}
+            onKeyDown={event => { if (search.key(event.key)) event.preventDefault() }}
           />
 
           <RailSection className="library-section library-shelves" title="Collections">
@@ -660,132 +540,54 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
         </Rail>
 
         <div className="library-room" data-ui="library.room">
-          {showMap ? (
-            <div className="library-map-frame">
-              <div className="library-map-bar">
-                <span className="library-map-title">Brain</span>
-                {shown && (
-                  <span className="library-map-count">
-                    {count(mapPages, 'page')} · {count(mapShelves, 'subject')} · {count(mapLinks, 'link')}
-                  </span>
-                )}
-                <button type="button" className="library-action" onClick={loadGraph}>Refresh</button>
-                <span className="library-map-legend">{momentLegend}</span>
-              </div>
-              {graphError && shown && <p className="library-git-error" role="alert">{graphError}</p>}
-              {mapOrWhy()}
-
+          {/* The map stays mounted under a search, so its mode, filters and
+              camera are where they were when the list is put away. */}
+          <div className="library-map-frame" style={showMap ? undefined : { display: 'none' }}>
+            <div className="library-map-bar">
+              <span className="library-map-title">Brain</span>
+              {shown && (
+                <span className="library-map-count">
+                  {count(mapPages, 'page')} · {count(mapShelves, 'subject')} · {count(mapLinks, 'link')}
+                </span>
+              )}
+              {matches && results && (
+                <span className="library-map-search">
+                  {count(results.length, 'result')} for “{search.query.trim()}”
+                  <button type="button" className="library-action" onClick={() => setSearchOnMap(false)}>List</button>
+                </span>
+              )}
+              <button type="button" className="library-action" onClick={loadGraph}>Refresh</button>
+              <span className="library-map-legend">{momentLegend}</span>
             </div>
-          ) : (
+            {graphError && shown && <p className="library-git-error" role="alert">{graphError}</p>}
+            {mapOrWhy()}
+          </div>
+          {!showMap && (
             <SearchResults
-              results={results}
-              selected={selected}
+              results={results ?? []}
+              selected={search.selected}
               openPath={page?.path ?? null}
-              scope={scope}
-              listRef={resultsRef}
+              scope={search.scope}
+              listRef={search.listRef}
               menu={pageMenu}
-              onScope={setScope}
-              onOpen={(index, path) => { setSelected(index); openPage(path) }}
+              onScope={search.setScope}
+              onOpen={search.choose}
+              onMap={() => setSearchOnMap(true)}
             />
           )}
         </div>
 
         {page && (
-          <aside className="library-dive" data-ui="library.dive" ref={diveRef} aria-label={`Reading ${page.title}`}>
-            {/* Where this dive has been. The last step is the page in hand;
-                every earlier one is the way back to it. */}
-            <nav className="library-trail" aria-label="This dive">
-              {trail.map((path, index) => (
-                <Fragment key={path}>
-                  {index > 0 && <span className="library-trail-sep">›</span>}
-                  <button
-                    type="button"
-                    className="library-trail-step"
-                    aria-current={path === page.path ? 'page' : undefined}
-                    onClick={() => openPage(path)}
-                  >
-                    {titleOf(path)}
-                  </button>
-                </Fragment>
-              ))}
-              <button type="button" className="library-action library-dive-close" onClick={closeDive}>
-                Close<span className="library-chord">Esc</span>
-              </button>
-            </nav>
-            <div className="library-page">
-              <div className="library-page-head">
-                <div className="library-page-title-row">
-                  <h1>{page.title}</h1>
-                  <div className="library-page-actions">
-                    {draft === null ? (
-                      <button type="button" className="library-action" onClick={startEdit}>Edit</button>
-                    ) : (
-                      <>
-                        <button type="button" className="library-action library-action-primary" onClick={() => void save()}>Save</button>
-                        <button type="button" className="library-action" onClick={discard}>
-                          {discarding ? 'Confirm' : 'Discard'}
-                        </button>
-                      </>
-                    )}
-                    <button type="button" className="library-action" onClick={send}>
-                      Send
-                    </button>
-                  </div>
-                </div>
-                {summaryOf(page.path) && <p className="library-page-summary">{summaryOf(page.path)}</p>}
-                <p className="library-page-meta">
-                  {page.path}
-                  {page.updated ? ` · changed ${libraryWhen(page.updated)} by ${page.author}` : ' · never committed'}
-                </p>
-                <div className="library-history-strip">
-                  {page.history.length === 0 && <span className="library-history-none">This page is not committed yet.</span>}
-                  {(historyOpen ? page.history : page.history.slice(0, HISTORY_STRIP)).map(entry => (
-                    <span key={entry.hash} className="library-history">
-                      <span className="library-history-hash">{entry.hash.slice(0, 7)}</span>
-                      <span className="library-history-when">{libraryWhen(entry.time)}</span>
-                      <span className="library-history-message">{entry.message}</span>
-                    </span>
-                  ))}
-                  {!historyOpen && page.history.length > HISTORY_STRIP && (
-                    <button type="button" className="library-history-more" onClick={() => setHistoryOpen(true)}>
-                      … {page.history.length - HISTORY_STRIP} more
-                    </button>
-                  )}
-                </div>
-                <div className="library-rule" />
-              </div>
-              {draft === null ? (
-                <div className="library-body">
-                  <Markdown
-                    content={libraryProse(page.content, page.title)}
-                    basePath={`/${page.path}`}
-                    onOpenPath={path => openPage(path.replace(/^\//, ''))}
-                    resolveWikiLink={resolveWikiLink}
-                  />
-                  {neighbours.length > 0 && linkList('Neighbours', neighbours)}
-                  {backlinks.length > 0 && linkList('Linked from', backlinks)}
-                </div>
-              ) : (
-                <div className="library-editor">
-                  <input
-                    className="library-summary"
-                    type="text"
-                    value={summary}
-                    aria-label="What this edit changes"
-                    onChange={event => setSummary(event.target.value)}
-                  />
-                  <Editor
-                    value={draft}
-                    onChange={setDraft}
-                    onSave={() => void save()}
-                    onCancel={discard}
-                    label={`Editing ${page.path}`}
-                    autoFocus
-                  />
-                </div>
-              )}
-            </div>
-          </aside>
+          <PageReader
+            reader={{ ...reader, page }}
+            diveRef={diveRef}
+            titleOf={titleOf}
+            summaryOf={summaryOf}
+            neighbours={neighbours}
+            backlinks={backlinks}
+            resolveWikiLink={resolveWikiLink}
+            onSend={send}
+          />
         )}
 
         <TableSlot active={active} />
