@@ -109,8 +109,11 @@ export function mergeHostAnswer(previous: HostRead, answer: { stores: WireStore[
   const stores = answer.stores.map(wire => {
     const prior = held.get(wire.path)
     const unread = !wire.generation && !wire.rows
-    const kept = prior && (unread || wire.unchanged || prior.generation === wire.generation) ? prior.rows : NO_ROWS
-    const rows = wire.rows ?? kept
+    // A generation names its rows: the same generation sent again is the same
+    // rows, and the index is not rebuilt for it.
+    const same = !!prior && !!wire.generation && prior.generation === wire.generation
+    const kept = prior && (unread || wire.unchanged || same) ? prior.rows : NO_ROWS
+    const rows = same ? kept : wire.rows ?? kept
     if (rows !== prior?.rows) rowsChanged = true
     return {
       path: wire.path,

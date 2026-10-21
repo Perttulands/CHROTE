@@ -31,6 +31,17 @@ describe('merging a host answer', () => {
     expect(next.rowStores).toBe(first.rowStores)
   })
 
+  it('keeps the rows it holds when the same generation is sent again', () => {
+    const next = mergeHostAnswer(first, {
+      stores: [
+        { path: '/a', generation: 'g1', pending: false, rows: [...rows] },
+        { path: '/b', generation: 'g1', pending: false, rows: [] },
+      ],
+    })
+    expect(next.stores[0].rows).toBe(rows)
+    expect(next.rowStores).toBe(first.rowStores)
+  })
+
   it('takes new rows when a store moved to a new generation', () => {
     const fresh = [{ id: 'a-2', title: 'Two', status: 'open', priority: 2 }]
     const next = mergeHostAnswer(first, {
