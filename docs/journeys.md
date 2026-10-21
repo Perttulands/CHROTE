@@ -74,24 +74,24 @@ a Bead to the Clerk, the agent that keeps the register.
 
 **Steps.**
 
-1. Open Beads and choose the project store from the rail.
-2. Read open work as a map. A click on a row puts its Bead on the table and,
-   where the row has children, folds or unfolds them.
-3. Read an epic, its goals and its definitions of done.
-4. Read the same epic as a flow: waves of work from left to right, the Beads
-   that can run at once stacked in one column, the blocking edges drawn
-   between them. The arrow keys travel it wave by wave and down a column. An
-   ordinary click puts a Bead on the table without moving the flow; Open in
-   Flow from a row menu explicitly centers that Bead.
-5. Find stale work to clear out.
+1. Open Beads: every Bead of every store on the host is in one table, and the
+   footer says which stores were read and which failed.
+2. Slice it. Search finds ids, titles and the text of each Bead; the rail keeps
+   projects and statuses; a drag across the daily strip keeps the days a run of
+   work happened in. The columns sort, so the oldest idle or the largest open
+   Beads come first.
+3. Read a Bead's family without leaving the view: in Split, the work graph
+   beside the table follows the selected row, with its parent, its children
+   and the blocking edges to and from other stores.
+4. Open a Bead's card on the table with `Enter` or a double-click.
+5. Copy the view's link; it opens the same slice in a fresh tab.
 6. Open a Bead id printed in terminal output and read it on the table beside
    the session that named it.
-7. Annotate the Bead and hand it to the Clerk, whose column is at the right of
-   the tab.
+7. Hand the Bead to the Clerk, whose column is at the right of the tab.
 
-**Surfaces.** Beads tab, its map, its flow and the table (1, 2, 3, 4, 5, 7);
-terminal workspace with the table at its right, for ids in output (6); the
-Clerk's column (7); the Send drawer, for any other session (7).
+**Surfaces.** Beads tab, its strip, its table and its graph (1, 2, 3, 5); the
+table (4, 6); terminal workspace with the table at its right, for ids in
+output (6); the Clerk's column (7); the Send drawer, for any other session (7).
 
 **End action.** Paste into the Clerk: `Alt+S` puts the Bead's reference into the
 Clerk's prompt, and the operator writes the rest and presses `Enter` there.
@@ -99,8 +99,8 @@ Send to Session carries the same reference to any other session. Writing Beads
 stays with `bd` and the agents, the Clerk among them.
 
 **Chords.** `Alt+B` toggles the Beads column from any tab; leader then
-`B` opens the Beads tab; `Alt+S` pastes the Bead on the table into the Clerk's
-prompt; `Alt+Enter` focuses the Clerk's column; `Alt+I` closes the table.
+`B` opens the Beads tab; `/` searches it; `Alt+S` pastes the selected Bead, or
+the Bead on the table, into the Clerk's prompt; `Alt+Enter` focuses the Clerk's column; `Alt+I` closes the table.
 
 ## 4. Understand what an agent sees
 

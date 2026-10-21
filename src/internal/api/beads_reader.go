@@ -136,6 +136,20 @@ func (s *beadsStoreReader) retainedPrefix(path string) string {
 	return ""
 }
 
+// touch keeps a retained snapshot from idling out without checking or reading
+// the store: the caller has just matched the store's generation itself.
+func (s *beadsStoreReader) touch(path string) {
+	key, err := filepath.EvalSymlinks(filepath.Join(path, ".beads"))
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entry := s.entries[key]; entry != nil {
+		entry.accessedAt = s.now()
+	}
+}
+
 func (s *beadsStoreReader) sweepLocked(now time.Time) {
 	for key, entry := range s.entries {
 		if entry.job == nil && now.Sub(entry.accessedAt) >= s.idle {

@@ -1,41 +1,23 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import BeadsView from './BeadsView'
-import { rememberBeadProjects, resetBeadsReadForTest } from '../beads/beadsRead'
 import { DEFAULT_SETTINGS } from '../types'
 import { resetBeadCardForTest, useBeadCardRequest } from '../beads/beadCard'
-import { beadProjectPath, resetBeadProjectsForTest, setBeadProjects } from '../beads/beadIds'
-import type { BeadRow, BeadProject } from '../beads/beadsApi'
+import { resetHostBeadsForTest, type HostBead } from '../beads/hostBeads'
+import { knownBead, resetKnownBeadsForTest } from '../beads/knownBeads'
 
 const mockState = vi.hoisted(() => ({
   openSendToSession: vi.fn(),
   announce: vi.fn(),
   updateSettings: vi.fn(),
-  settings: null as unknown as typeof DEFAULT_SETTINGS,
-  projectList: null as unknown[] | null,
-  projectListRequest: null as Promise<unknown[]> | null,
-  projects: [] as unknown[],
-  fetchBeadProjects: vi.fn(),
-  fetchBeadProjectIdentities: vi.fn(),
-  work: new Map<string, unknown>(),
-  closed: new Map<string, unknown>(),
-  formulas: new Map<string, unknown>(),
-  molecules: new Map<string, unknown>(),
-  formulaDetails: new Map<string, unknown>(),
-  moleculeDetails: new Map<string, unknown>(),
-  beadDetails: new Map<string, unknown>(),
-  fetchBead: vi.fn(),
-  fetchBeadWork: vi.fn(),
-  fetchClosedBeadWork: vi.fn(),
-  fetchFormulas: vi.fn(),
-  fetchMolecules: vi.fn(),
-  fetchFormula: vi.fn(),
-  fetchMolecule: vi.fn(),
+  hostRequests: [] as string[],
+  searchRequests: [] as string[],
+  matches: {} as Record<string, string[]>,
 }))
 
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
-    settings: mockState.settings,
+    settings: DEFAULT_SETTINGS,
     updateSettings: mockState.updateSettings,
     openSendToSession: mockState.openSendToSession,
   }),
@@ -45,632 +27,180 @@ vi.mock('../context/StatusContext', () => ({
   useStatus: () => ({ announce: mockState.announce }),
 }))
 
-vi.mock('../beads/beadsApi', () => ({
-  fetchBeadProjectList: () => mockState.projectListRequest ?? Promise.resolve(mockState.projectList ?? mockState.projects),
-  fetchBeadStates: (paths: string[]) => Promise.resolve(paths.map(path => {
-    const project = (mockState.projects as BeadProject[]).find(item => item.path === path)
-    return { path, pending: false, availableGeneration: project?.error ? undefined : 'v1', ...project }
-  })),
-  fetchBeadSnapshot: async (path: string, id: string) => ({ bead: await mockState.fetchBead(path, id), projectPath: path }),
-  fetchBeadProjects: () => mockState.fetchBeadProjects(),
-  fetchBeadProjectIdentities: () => mockState.fetchBeadProjectIdentities(),
-  fetchBeadWork: (path: string) => mockState.fetchBeadWork(path),
-  fetchClosedBeadWork: (path: string) => mockState.fetchClosedBeadWork(path),
-  fetchFormulas: (path: string) => mockState.fetchFormulas(path),
-  fetchMolecules: (path: string) => mockState.fetchMolecules(path),
-  fetchFormula: (path: string, name: string) => mockState.fetchFormula(path, name),
-  fetchMolecule: (path: string, id: string) => mockState.fetchMolecule(path, id),
-  fetchBead: (path: string, id: string) => mockState.fetchBead(path, id),
-}))
-
 vi.mock('./ResidentColumn', () => ({
   default: ({ reference }: { reference: string | null }) => (
     <div data-testid="resident" data-reference={reference ?? ''} />
   ),
 }))
 
-function bead(overrides: Partial<BeadRow> & { id: string }): BeadRow {
-  return { title: `Title of ${overrides.id}`, status: 'open', priority: 1, blocked: false, linked: false, ...overrides }
+const NOW = Math.floor(Date.now() / 1000)
+const DAY = 86400
+
+function bead(id: string, overrides: Partial<HostBead> = {}): HostBead {
+  return { id, title: `Title of ${id}`, status: 'open', priority: 2, created: NOW - 10 * DAY, updated: NOW - 2 * DAY, ...overrides }
 }
 
-const OLD = new Date(Date.now() - 40 * 86400000).toISOString()
-const FRESH = new Date(Date.now() - 1 * 86400000).toISOString()
+const STORES = [
+  {
+    path: '/srv/data/context',
+    prefix: 'library',
+    generation: 'g1',
+    pending: false,
+    rows: [
+      bead('library-zvi', { title: 'Grill brain ownership', type: 'epic', size: 6400 }),
+      bead('library-zvi.1', { title: 'Move the remaining records', parent: 'library-zvi', blockedBy: ['ctx-xvl'], size: 7900 }),
+      bead('library-zvi.2', { title: 'Project homes for every project', parent: 'library-zvi', blockedBy: ['library-zvi.1'], size: 300 }),
+    ],
+  },
+  {
+    path: '/srv/context-citadel',
+    prefix: 'ctx',
+    generation: 'g1',
+    pending: false,
+    rows: [
+      bead('ctx-xvl', { title: 'Connector and Ask cite the evidence', status: 'closed', closed: NOW - DAY, size: 2800 }),
+      bead('ctx-old', { title: 'An old question', updated: NOW - 40 * DAY, size: 120 }),
+    ],
+  },
+  { path: '/srv/broken', pending: false, error: 'bd list timed out after 60s', rows: [] },
+]
+
+function respond(data: unknown): Response {
+  return { json: () => Promise.resolve({ success: true, data }) } as unknown as Response
+}
 
 function CardProbe() {
   const request = useBeadCardRequest()
-  return <span data-testid="card-request">{request?.id ?? 'none'}</span>
+  return <span data-testid="card-request">{request ? `${request.id}@${request.projectPath}` : 'none'}</span>
 }
 
+const rowIds = () => screen.queryAllByRole('row').slice(1).map(row => row.querySelector('.beads-cell-id')?.textContent)
+
 beforeEach(() => {
-  resetBeadsReadForTest()
+  window.history.replaceState(null, '', '/')
+  resetHostBeadsForTest()
+  resetBeadCardForTest()
+  resetKnownBeadsForTest()
+  mockState.hostRequests = []
+  mockState.searchRequests = []
+  mockState.matches = {}
   mockState.openSendToSession.mockReset()
-  mockState.announce.mockReset()
-  mockState.updateSettings.mockReset()
-  mockState.settings = DEFAULT_SETTINGS
-  mockState.projectList = null
-  mockState.projectListRequest = null
-  mockState.projects = [
-    { name: 'chrote', path: '/srv/chrote', beadsPath: '/srv/chrote/.beads', prefix: 'chrote', openBeads: 3 },
-    { name: 'srv', path: '/srv', beadsPath: '/srv/.beads', prefix: 'ctx', openBeads: 1 },
-    { name: 'quiet', path: '/srv/quiet', beadsPath: '/srv/quiet/.beads', prefix: 'qt', openBeads: 0 },
-    { name: 'silent', path: '/srv/silent', beadsPath: '/srv/silent/.beads', prefix: 'sl', openBeads: 0 },
-  ]
-  mockState.fetchBeadProjects.mockReset().mockImplementation(() => Promise.resolve(mockState.projects))
-  mockState.fetchBeadProjectIdentities.mockReset().mockImplementation(() => Promise.resolve(mockState.projects))
-  mockState.work = new Map<string, unknown>([
-    ['/srv/chrote', {
-      prefix: 'chrote',
-      projectPath: '/srv/chrote',
-      beads: [
-        bead({ id: 'chrote-ep', type: 'epic', acceptance: 'Everything under it lands', updated: FRESH, linked: true }),
-        bead({ id: 'chrote-ep.1', parent: 'chrote-ep', type: 'task', updated: FRESH, linked: true }),
-        bead({
-          id: 'chrote-ep.2',
-          parent: 'chrote-ep',
-          type: 'task',
-          priority: 2,
-          blocked: true,
-          blockedBy: ['chrote-ep.1'],
-          linked: true,
-          updated: OLD,
-        }),
-      ],
-    }],
-    ['/srv', { prefix: 'ctx', projectPath: '/srv', beads: [bead({ id: 'ctx-t4ak', type: 'task', updated: OLD })] }],
-    ['/srv/quiet', { prefix: 'qt', projectPath: '/srv/quiet', beads: [] }],
-    ['/srv/silent', { prefix: 'sl', projectPath: '/srv/silent', beads: [] }],
-  ])
-  mockState.closed = new Map<string, unknown>([
-    ['/srv/chrote', {
-      prefix: 'chrote', projectPath: '/srv/chrote',
-      beads: [bead({ id: 'chrote-done', title: 'Finished dashboard pass', status: 'closed', type: 'task', parent: 'chrote-ep', linked: true, updated: FRESH })],
-    }],
-    ['/srv', {
-      prefix: 'ctx', projectPath: '/srv',
-      beads: [bead({ id: 'ctx-dup', title: 'Superseded note', status: 'duplicate', type: 'task', updated: OLD })],
-    }],
-    ['/srv/quiet', {
-      prefix: 'qt', projectPath: '/srv/quiet',
-      beads: [bead({ id: 'qt-done', title: 'Quiet store history', status: 'closed', type: 'task', updated: OLD })],
-    }],
-    ['/srv/silent', { prefix: 'sl', projectPath: '/srv/silent', beads: [] }],
-  ])
-  mockState.formulas = new Map<string, unknown>([
-    ['/srv/chrote', {
-      projectPath: '/srv/chrote',
-      formulas: [{ name: 'release', type: 'workflow', description: 'Ship the dashboard', source: '/srv/chrote/.beads/formulas/release.formula.toml' }],
-    }],
-  ])
-  mockState.molecules = new Map<string, unknown>([
-    ['/srv/chrote', {
-      projectPath: '/srv/chrote',
-      molecules: [
-        { id: 'chrote-proto', title: 'Release template', status: 'open', is_template: true },
-        { id: 'chrote-run', title: 'September release', status: 'in_progress', is_template: false, source_formula: 'release' },
-      ],
-    }],
-  ])
-  mockState.formulaDetails = new Map<string, unknown>([
-    ['/srv/chrote\u0000release', {
-      formula: 'release', description: 'Ship the dashboard', source: '/srv/chrote/.beads/formulas/release.formula.toml',
-      vars: { target: { required: true } },
-      steps: [{ id: 'build', title: 'Build' }, { id: 'ship', title: 'Ship', depends_on: ['build'] }],
-    }],
-  ])
-  mockState.moleculeDetails = new Map<string, unknown>([
-    ['/srv/chrote\u0000chrote-run', {
-      root: { id: 'chrote-run', title: 'September release', status: 'in_progress', source_formula: 'release' },
-      issues: [{ id: 'chrote-run.1', title: 'Build', status: 'closed' }, { id: 'chrote-run.2', title: 'Ship', status: 'open' }],
-      dependencies: [{ issue_id: 'chrote-run.2', depends_on_id: 'chrote-run.1', type: 'blocks' }],
-      variables: { target: 'prod' },
-    }],
-  ])
-  mockState.beadDetails = new Map<string, unknown>([
-    ['/srv/chrote\u0000chrote-ep.1', {
-      id: 'chrote-ep.1', title: 'Title of chrote-ep.1', status: 'open', type: 'task', priority: 1,
-      parents: [{ id: 'chrote-ep', title: 'Title of chrote-ep', status: 'open', type: 'epic', priority: 1 }],
-      children: [], blockedBy: [], blocks: [],
-    }],
-    ['/srv/chrote\u0000chrote-done', {
-      id: 'chrote-done', title: 'Finished dashboard pass', status: 'closed', type: 'task', priority: 1,
-      parents: [{ id: 'chrote-ep', title: 'Title of chrote-ep', status: 'open', type: 'epic', priority: 1 }],
-      children: [], blockedBy: [], blocks: [],
-    }],
-  ])
-  mockState.fetchBeadWork.mockReset()
-  mockState.fetchBeadWork.mockImplementation((path: string) => {
-    const answer = mockState.work.get(path)
-    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer)
-  })
-  mockState.fetchClosedBeadWork.mockReset()
-  mockState.fetchClosedBeadWork.mockImplementation((path: string) => {
-    const answer = mockState.closed.get(path) ?? { prefix: '', projectPath: path, beads: [] }
-    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer)
-  })
-  mockState.fetchFormulas.mockReset()
-  mockState.fetchFormulas.mockImplementation((path: string) => {
-    const answer = mockState.formulas.get(path) ?? { projectPath: path, formulas: [] }
-    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer)
-  })
-  mockState.fetchMolecules.mockReset()
-  mockState.fetchMolecules.mockImplementation((path: string) => {
-    const answer = mockState.molecules.get(path) ?? { projectPath: path, molecules: [] }
-    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer)
-  })
-  mockState.fetchFormula.mockReset()
-  mockState.fetchFormula.mockImplementation((path: string, name: string) => {
-    const answer = mockState.formulaDetails.get(`${path}\u0000${name}`)
-    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer)
-  })
-  mockState.fetchMolecule.mockReset()
-  mockState.fetchMolecule.mockImplementation((path: string, id: string) => {
-    const answer = mockState.moleculeDetails.get(`${path}\u0000${id}`)
-    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer)
-  })
-  mockState.fetchBead.mockReset()
-  mockState.fetchBead.mockImplementation((path: string, id: string) => {
-    const answer = mockState.beadDetails.get(`${path}\u0000${id}`)
-    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer)
-  })
+  vi.stubGlobal('fetch', vi.fn((input: string) => {
+    const url = new URL(input, 'http://chrote.test')
+    if (url.pathname === '/api/beads/host') {
+      mockState.hostRequests.push(url.search)
+      return Promise.resolve(respond({ stores: STORES, checkedAt: new Date().toISOString() }))
+    }
+    if (url.pathname === '/api/beads/search') {
+      mockState.searchRequests.push(url.searchParams.get('q') ?? '')
+      return Promise.resolve(respond({ matches: mockState.matches }))
+    }
+    return Promise.reject(new Error(`unexpected ${url.pathname}`))
+  }))
 })
 
 afterEach(() => {
-  resetBeadCardForTest()
-  resetBeadProjectsForTest()
+  resetHostBeadsForTest()
+  vi.unstubAllGlobals()
+  window.history.replaceState(null, '', '/')
 })
 
 describe('the Beads tab', () => {
-  it('applies sorting within groups and keeps it across search and lazy closed reads', async () => {
-    mockState.work.set('/srv/chrote', {
-      prefix: 'chrote', projectPath: '/srv/chrote', beads: [
-        bead({ id: 'chrote-z', title: 'Zebra', priority: 0, updated: OLD }),
-        bead({ id: 'chrote-a', title: 'Alpha', priority: 3, updated: FRESH }),
-      ],
-    })
+  it('draws every Bead of every store in one table, and says what it read and what failed', async () => {
     render(<BeadsView />)
-    await screen.findByText('Zebra')
-    fireEvent.click(screen.getByRole('button', { name: 'chrote' }))
-    fireEvent.click(screen.getByRole('tab', { name: 'Open' }))
-    const ids = () => [...document.querySelectorAll('.bead-row-id')].map(item => item.textContent)
-    await waitFor(() => expect(ids()).toEqual(['chrote-a', 'chrote-z']))
-    fireEvent.change(screen.getByLabelText('Sort Beads'), { target: { value: 'updated-oldest' } })
-    expect(ids()).toEqual(['chrote-z', 'chrote-a'])
-    fireEvent.change(screen.getByLabelText('Sort Beads'), { target: { value: 'priority' } })
-    expect(ids()).toEqual(['chrote-z', 'chrote-a'])
-    fireEvent.change(screen.getByLabelText('Sort Beads'), { target: { value: 'title' } })
-    expect(ids()).toEqual(['chrote-a', 'chrote-z'])
-    fireEvent.change(screen.getByLabelText('Search Beads'), { target: { value: 'zebra' } })
-    expect(ids()).toEqual(['chrote-z'])
-    fireEvent.change(screen.getByLabelText('Search Beads'), { target: { value: '' } })
-    expect(ids()).toEqual(['chrote-a', 'chrote-z'])
-    expect(mockState.fetchClosedBeadWork).not.toHaveBeenCalled()
-    mockState.closed.set('/srv/chrote', {
-      prefix: 'chrote', projectPath: '/srv/chrote', beads: [
-        bead({ id: 'chrote-done-z', title: 'Zulu closed', status: 'closed' }),
-        bead({ id: 'chrote-done-a', title: 'Alpha closed', status: 'closed' }),
-      ],
-    })
-    fireEvent.click(screen.getByRole('tab', { name: 'Closed' }))
-    await screen.findByText('Alpha closed')
-    expect(ids()).toEqual(['chrote-done-a', 'chrote-done-z'])
-    expect(screen.getByLabelText('Sort Beads')).toHaveValue('title')
+    await waitFor(() => expect(rowIds()).toHaveLength(5))
+    expect(screen.getByText('5 of 5 Beads')).toBeInTheDocument()
+    const footer = document.querySelector('.beads-footer') as HTMLElement
+    expect(footer).toHaveTextContent('2 stores read')
+    expect(footer).toHaveTextContent('/srv/broken: bd list timed out after 60s')
+    // A blocker in another store that is finished does not block.
+    const row = screen.getAllByRole('row').find(item => item.textContent?.includes('library-zvi.1'))!
+    expect(row).toHaveTextContent('open')
   })
 
-  it('refreshes discovered projects without changing the selected project or query', async () => {
+  it('searches ids and titles as the operator types, and adds the Beads the server matched by their text', async () => {
+    mockState.matches = { '/srv/context-citadel': ['ctx-old'] }
     render(<BeadsView />)
-    fireEvent.click(await screen.findByRole('button', { name: 'chrote' }))
-    const query = screen.getByLabelText('Search Beads')
-    fireEvent.change(query, { target: { value: 'keep this filter' } })
-    mockState.projects = [...mockState.projects, {
-      name: 'new-project', path: '/srv/new-project', beadsPath: '/srv/new-project/.beads', prefix: 'new', openBeads: 1,
-    }]
-
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh projects' }))
-
-    await screen.findByRole('button', { name: 'new' })
-    expect(screen.getByRole('button', { name: 'chrote' })).toHaveClass('active')
-    expect(query).toHaveValue('keep this filter')
-    expect(mockState.fetchBeadProjectIdentities).toHaveBeenCalledTimes(2)
-    expect(beadProjectPath('new-abc')).toBe('/srv/new-project')
+    await waitFor(() => expect(rowIds()).toHaveLength(5))
+    fireEvent.change(screen.getByLabelText('Search Beads'), { target: { value: 'project' } })
+    expect(rowIds()).toEqual(['library-zvi.2'])
+    await waitFor(() => expect(rowIds()).toContain('ctx-old'))
+    expect(mockState.searchRequests).toContain('project')
   })
 
-  it('retains known manual links when project counts and identity refresh fail', async () => {
-    setBeadProjects([{ name: 'manual', path: '/work/manual', beadsPath: '/work/manual/.beads', prefix: 'manual' }])
-    mockState.projectList = [{ name: 'discovered', path: '/work/discovered', beadsPath: '/work/discovered/.beads' }]
-    mockState.work.set('/work/discovered', { projectPath: '/work/discovered', prefix: '', beads: [] })
-    mockState.fetchBeadProjects.mockRejectedValue(new Error('counts unavailable'))
-    mockState.fetchBeadProjectIdentities.mockRejectedValue(new Error('identity unavailable'))
+  it('keeps one project by its name, and sorts by size', async () => {
     render(<BeadsView />)
-
-    await waitFor(() => expect(mockState.announce).toHaveBeenCalledWith('Bead links unavailable · identity unavailable', 'error'))
-    expect(beadProjectPath('manual-abc')).toBe('/work/manual')
+    await waitFor(() => expect(rowIds()).toHaveLength(5))
+    const projects = screen.getByRole('group', { name: 'Projects' })
+    fireEvent.click(within(projects).getByRole('button', { name: 'library' }))
+    expect(rowIds().sort()).toEqual(['library-zvi', 'library-zvi.1', 'library-zvi.2'])
+    expect(screen.getByText('3 of 5 Beads')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Size/ }))
+    expect(rowIds()).toEqual(['library-zvi.1', 'library-zvi', 'library-zvi.2'])
+    fireEvent.click(within(projects).getByRole('button', { name: 'library' }))
+    expect(rowIds()).toHaveLength(5)
   })
 
-  it('keeps identity warnings separate from healthy work through late discovery and clears them on explicit refresh without resetting the reading context', async () => {
-    mockState.settings = { ...DEFAULT_SETTINGS, beadsSelectedProject: '/srv/chrote' }
-    const healthy = mockState.projects.map(project => ({ ...(project as BeadProject),
-      ...((project as BeadProject).path === '/srv/chrote' ? { name: 'checkout' } : {}),
-    }))
-    rememberBeadProjects(healthy)
-    const failed = healthy.map(project => ({ ...(project as BeadProject),
-      ...((project as BeadProject).path === '/srv/chrote' ? { prefix: undefined, prefixError: 'identity lookup refused' } : {}),
-    }))
-    mockState.fetchBeadProjectIdentities.mockResolvedValue(failed)
-    let release: (projects: unknown[]) => void = () => {}
-    mockState.projectListRequest = new Promise(resolve => { release = resolve })
+  it('follows the selected row in the graph and hands it to the Clerk', async () => {
+    render(<BeadsView />)
+    await waitFor(() => expect(rowIds()).toHaveLength(5))
+    fireEvent.click(screen.getAllByRole('row').find(item => item.textContent?.includes('library-zvi.2'))!)
+    const graph = document.querySelector('.beads-graph') as HTMLElement
+    expect(within(graph).getByRole('button', { name: 'library-zvi: Grill brain ownership, open' })).toBeInTheDocument()
+    expect(within(graph).getByRole('button', { name: 'library-zvi.2: Project homes for every project', pressed: true })).toBeInTheDocument()
+    expect(within(graph).getByRole('button', { name: 'ctx-xvl: Connector and Ask cite the evidence' })).toBeInTheDocument()
+    expect(screen.getByTestId('resident')).toHaveAttribute('data-reference', 'bead library-zvi.2: Project homes for every project')
+  })
+
+  it('opens the card from the keyboard, already drawn from what the table knows', async () => {
     render(<><BeadsView /><CardProbe /></>)
-
-    const warning = 'Bead link lookup failed · /srv/chrote: identity lookup refused'
-    await screen.findByText(warning)
-    expect(screen.getByRole('button', { name: 'chrote' })).toHaveClass('active')
-    expect(await screen.findByText('Title of chrote-ep.1')).toBeVisible()
-    expect(screen.queryByRole('button', { name: /unreadable/ })).toBeNull()
-    await act(async () => { release(healthy) })
-    expect(screen.getByText(warning)).toBeVisible()
-    const query = screen.getByLabelText('Search Beads')
-    fireEvent.change(query, { target: { value: 'chrote-ep.1' } })
-    fireEvent.click(screen.getByText('Title of chrote-ep.1'))
-    expect(screen.getByTestId('card-request')).toHaveTextContent('chrote-ep.1')
-
-    let releaseRefresh: (projects: unknown[]) => void = () => {}
-    mockState.projectListRequest = new Promise(resolve => { releaseRefresh = resolve })
-    mockState.fetchBeadProjectIdentities.mockResolvedValue(healthy)
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh projects' }))
-    await waitFor(() => expect(screen.queryByText(warning)).toBeNull())
-    await act(async () => { releaseRefresh(healthy) })
-    expect(screen.queryByText(warning)).toBeNull()
-    expect(screen.getByRole('button', { name: 'chrote' })).toHaveClass('active')
-    expect(query).toHaveValue('chrote-ep.1')
-    expect(screen.getByTestId('card-request')).toHaveTextContent('chrote-ep.1')
-    expect(beadProjectPath('chrote-abc')).toBe('/srv/chrote')
+    await waitFor(() => expect(rowIds()).toHaveLength(5))
+    fireEvent.click(screen.getAllByRole('row').find(item => item.textContent?.includes('library-zvi.1'))!)
+    fireEvent.keyDown(document.querySelector('.beads-table-body')!, { key: 'Enter' })
+    expect(screen.getByTestId('card-request')).toHaveTextContent('library-zvi.1@/srv/data/context')
+    expect(knownBead('/srv/data/context', 'library-zvi.1')?.bead.parents.map(link => link.id)).toEqual(['library-zvi'])
   })
 
-  it('renders a saved manual store before a slow host identity catalog completes', async () => {
-    mockState.settings = { ...DEFAULT_SETTINGS, beadsSelectedProject: '/work/manual', beadsProjectPaths: ['/work/manual'] }
-    mockState.fetchBeadProjectIdentities.mockImplementation(() => new Promise(() => {}))
-    mockState.work.set('/work/manual', { prefix: 'manual', projectPath: '/work/manual', beads: [bead({ id: 'manual-now', title: 'Saved manual work' })] })
+  it('opens the slice a link names, and writes the slice back into the link', async () => {
+    window.history.replaceState(null, '', '/?tab=beads&q=zvi&sort=size&sel=library-zvi.1&mode=table')
     render(<BeadsView />)
-    expect(await screen.findByText('Saved manual work')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'manual' })).toHaveClass('active')
-    expect(mockState.fetchBeadWork).toHaveBeenCalledWith('/work/manual')
+    expect(screen.getByLabelText('Search Beads')).toHaveValue('zvi')
+    await waitFor(() => expect(rowIds()).toEqual(['library-zvi.1', 'library-zvi', 'library-zvi.2']))
+    expect(screen.getAllByRole('row').find(item => item.getAttribute('aria-selected') === 'true')).toHaveTextContent('library-zvi.1')
+    expect(document.querySelector('.beads-graph')).toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: 'Split' }))
+    await waitFor(() => expect(window.location.search).toBe('?tab=beads&q=zvi&sort=size&sel=library-zvi.1'))
   })
 
-  it('preserves an enriched manual identity when the cheap discovered list arrives later', async () => {
-    mockState.settings = { ...DEFAULT_SETTINGS, beadsSelectedProject: '/work/manual', beadsProjectPaths: ['/work/manual'] }
-    const discovered = [...mockState.projects]
-    mockState.projects = [...mockState.projects, { name: 'manual', path: '/work/manual', beadsPath: '/work/manual/.beads', prefix: 'external' }]
-    mockState.work.set('/work/manual', { prefix: 'external', projectPath: '/work/manual', beads: [bead({ id: 'external-now', title: 'Saved manual work' })] })
-    let release: (projects: unknown[]) => void = () => {}
-    mockState.projectListRequest = new Promise(resolve => { release = resolve })
-    render(<BeadsView />)
-    expect(await screen.findByRole('button', { name: 'external' })).toHaveClass('active')
-    await act(async () => { release(discovered) })
-    expect(screen.getByRole('button', { name: 'external' })).toHaveClass('active')
-    expect(screen.getByText('Saved manual work')).toBeVisible()
+  it('takes its keys out of the link when the tab is left', async () => {
+    const { rerender } = render(<BeadsView />)
+    fireEvent.change(screen.getByLabelText('Search Beads'), { target: { value: 'brain' } })
+    await waitFor(() => expect(window.location.search).toBe('?tab=beads&q=brain'))
+    rerender(<BeadsView active={false} />)
+    expect(window.location.search).toBe('')
   })
 
-  it('keeps cold incomplete views from claiming that unknown work is empty', async () => {
-    mockState.fetchBeadWork.mockImplementation(() => new Promise(() => {}))
-    mockState.fetchClosedBeadWork.mockImplementation(() => new Promise(() => {}))
-    render(<BeadsView />)
-    await screen.findByRole('button', { name: 'chrote' })
-    expect(screen.queryByText('No open work here.')).toBeNull()
-    fireEvent.click(screen.getByRole('tab', { name: 'Open' }))
-    expect(screen.queryByText('Nothing here.')).toBeNull()
-    fireEvent.click(screen.getByRole('tab', { name: 'Flow' }))
-    expect(screen.queryByText('No epic here to flow.')).toBeNull()
-    fireEvent.click(screen.getByRole('tab', { name: 'Stale' }))
-    expect(screen.queryByText('Nothing has gone stale.')).toBeNull()
-    fireEvent.click(screen.getByRole('tab', { name: 'Closed' }))
-    expect(screen.queryByText('No closed Beads in this scope.')).toBeNull()
+  it('shows a Bead the card asked for, clearing only a slice that hides it', async () => {
+    const { rerender } = render(<BeadsView />)
+    await waitFor(() => expect(rowIds()).toHaveLength(5))
+    fireEvent.change(screen.getByLabelText('Search Beads'), { target: { value: 'grill' } })
+    expect(rowIds()).toEqual(['library-zvi'])
+    rerender(<BeadsView reveal={{ projectPath: '/srv/context-citadel', id: 'ctx-old', nonce: 1 }} />)
+    await waitFor(() => expect(screen.getByLabelText('Search Beads')).toHaveValue(''))
+    expect(screen.getAllByRole('row').find(item => item.getAttribute('aria-selected') === 'true')).toHaveTextContent('ctx-old')
   })
 
-  it('draws every configured store as a map of open work', async () => {
-    render(<BeadsView />)
-
-    expect(await screen.findByText('Title of chrote-ep')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'All' })).toHaveClass('active')
-    expect(screen.getByRole('button', { name: 'ctx' })).toBeInTheDocument()
-    expect(screen.getByText('Acceptance criteria')).toBeInTheDocument()
-    expect(screen.getByText('Everything under it lands')).toBeInTheDocument()
-    expect(screen.getByText(/blocked by/)).toBeInTheDocument()
-    expect(screen.getByText('Title of ctx-t4ak')).toBeInTheDocument()
-  })
-
-  it('says what it loaded on the status line, and asks nothing of a quiet store', async () => {
-    render(<BeadsView />)
-    await screen.findByText('Title of chrote-ep')
-    await screen.findByText('Title of ctx-t4ak')
-    expect(mockState.fetchBeadWork).not.toHaveBeenCalledWith('/srv/quiet')
-  })
-
-  it('keeps readable stores visible when another store refuses the work request', async () => {
-    mockState.projects.splice(2, 0, {
-      name: 'broken', path: '/srv/broken', beadsPath: '/srv/broken/.beads', prefix: 'bad', openBeads: 2,
-    })
-    mockState.work.set('/srv/broken', new Error('permission denied'))
-
-    render(<BeadsView />)
-
-    expect(await screen.findByText('Title of chrote-ep')).toBeInTheDocument()
-    expect(screen.getByText('Title of ctx-t4ak')).toBeInTheDocument()
-    await waitFor(() => expect(mockState.announce).toHaveBeenCalledWith(
-      'Beads unavailable · bad: permission denied',
-      'error',
-    ))
-  })
-
-  it('lists a known unreadable store instead of loading it through All', async () => {
-    mockState.projects.splice(2, 0, {
-      name: 'broken', path: '/srv/broken', beadsPath: '/srv/broken/.beads', error: 'permission denied',
-    })
-
-    render(<BeadsView />)
-
-    expect(await screen.findByRole('button', { name: 'broken · unreadable' })).toBeInTheDocument()
-    expect(mockState.fetchBeadWork).not.toHaveBeenCalledWith('/srv/broken')
-  })
-
-  it('folds the stores with nothing open under one row that expands in place', async () => {
-    render(<BeadsView />)
-    await screen.findByText('Title of ctx-t4ak')
-
-    const rail = screen.getByRole('navigation', { name: 'Beads projects' })
-    const rows = () => [...rail.querySelectorAll('.beads-rail-item')].map(row => row.textContent)
-    expect(rows()).toEqual(['All', 'chrote', 'ctx', 'More (2 quiet)'])
-
-    const more = screen.getByRole('button', { name: 'More (2 quiet)' })
-    expect(more).toHaveAttribute('aria-expanded', 'false')
-    fireEvent.click(more)
-    expect(rows()).toEqual(['All', 'chrote', 'ctx', 'Fewer', 'qt', 'sl'])
-    expect(screen.getByRole('button', { name: 'Fewer' })).toHaveAttribute('aria-expanded', 'true')
-
-    fireEvent.click(screen.getByRole('button', { name: 'qt' }))
-    await waitFor(() => expect(screen.queryByText('Title of ctx-t4ak')).toBeNull())
-    expect(screen.getByRole('button', { name: 'qt' })).toHaveClass('active')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Fewer' }))
-    expect(rows()).toEqual(['All', 'chrote', 'ctx', 'More (2 quiet)', 'qt'])
-    expect(screen.getByRole('button', { name: 'More (2 quiet)' })).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.getByRole('button', { name: 'qt' })).toBeVisible()
-    expect(screen.queryByRole('button', { name: 'sl' })).toBeNull()
-  })
-
-  it('narrows every view by id and title', async () => {
-    render(<BeadsView />)
-    await screen.findByText('Title of ctx-t4ak')
-
-    fireEvent.change(screen.getByLabelText('Search Beads'), { target: { value: 'ctx-t4ak' } })
-
-    expect(screen.getByText('Title of ctx-t4ak')).toBeInTheDocument()
-    expect(screen.queryByText('Title of chrote-ep.1')).toBeNull()
-  })
-
-  it('shows one store at a time from the rail', async () => {
-    render(<BeadsView />)
-    await screen.findByText('Title of ctx-t4ak')
-
-    fireEvent.click(screen.getByRole('button', { name: 'ctx' }))
-
-    await waitFor(() => expect(screen.queryByText('Title of chrote-ep')).toBeNull())
-    expect(screen.getByText('Title of ctx-t4ak')).toBeInTheDocument()
-  })
-
-  it('opens the card from a row, and hands the Clerk the Bead by id and title', async () => {
-    render(<><BeadsView /><CardProbe /></>)
-    const row = await screen.findByText('Title of chrote-ep.1')
-    expect(screen.getByTestId('resident')).toHaveAttribute('data-reference', '')
-
-    fireEvent.click(row)
-
-    expect(screen.getByTestId('card-request')).toHaveTextContent('chrote-ep.1')
-    expect(screen.getByTestId('resident')).toHaveAttribute('data-reference', 'bead chrote-ep.1: Title of chrote-ep.1')
-  })
-
-  it('hands a stale Bead over with the question already asked', async () => {
-    render(<BeadsView />)
-    await screen.findByText('Title of ctx-t4ak')
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Stale' }))
-
-    expect(screen.getByText('Title of chrote-ep.2')).toBeInTheDocument()
-    expect(screen.queryByText('Title of chrote-ep.1')).toBeNull()
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Send' })[0])
-    expect(mockState.openSendToSession).toHaveBeenCalledWith({
-      reference: 'bead chrote-ep.2 looks stale: close it or revive it',
-    })
-  })
-
-  it('splits ready from what is already claimed', async () => {
-    mockState.work.set('/srv', {
-      prefix: 'ctx',
-      projectPath: '/srv',
-      beads: [bead({ id: 'ctx-t4ak', type: 'task', status: 'in_progress', updated: FRESH })],
-    })
-    render(<BeadsView />)
-    await screen.findByText('Title of ctx-t4ak')
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Open' }))
-
-    expect(screen.getByRole('heading', { name: 'Ready to start' })).toBeInTheDocument()
-    const inProgress = screen.getByRole('heading', { name: 'In progress' }).parentElement as HTMLElement
-    expect(inProgress).toHaveTextContent('ctx-t4ak')
-    expect(inProgress).not.toHaveTextContent('chrote-ep.1')
-  })
-
-  it('restores the selected store and Open view before fetching work', async () => {
-    mockState.settings = {
-      ...DEFAULT_SETTINGS,
-      beadsSelectedProject: '/srv',
-      beadsView: 'ready',
+  it('asks the server only for what changed after the first read', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      render(<BeadsView />)
+      await waitFor(() => expect(rowIds()).toHaveLength(5))
+      await act(async () => { await vi.advanceTimersByTimeAsync(3100) })
+      await waitFor(() => expect(mockState.hostRequests.length).toBeGreaterThan(1))
+      const known = new URLSearchParams(mockState.hostRequests[1]).getAll('known')
+      expect(known.sort()).toEqual(['g1:/srv/context-citadel', 'g1:/srv/data/context'])
+    } finally {
+      vi.useRealTimers()
     }
-
-    render(<BeadsView />)
-
-    expect(await screen.findByRole('button', { name: 'ctx' })).toHaveClass('active')
-    expect(screen.getByRole('tab', { name: 'Open' })).toHaveAttribute('aria-selected', 'true')
-    await waitFor(() => expect(mockState.fetchBeadWork).toHaveBeenCalled())
-    expect(mockState.fetchBeadWork.mock.calls[0][0]).toBe('/srv')
-    expect(mockState.fetchBeadWork).not.toHaveBeenCalledWith('/srv/chrote')
-  })
-
-  it('fills counts after the first store list without another click', async () => {
-    mockState.projectList = mockState.projects.map(project => {
-      const { openBeads: _openBeads, ...listed } = project as { openBeads?: number }
-      return { ...listed, summaryPending: true }
-    })
-
-    render(<BeadsView />)
-
-    expect(await screen.findByRole('button', { name: 'More (2 quiet)' })).toBeInTheDocument()
-  })
-
-  it('does not ask for closed work until Closed is selected, then caches each scope', async () => {
-    render(<BeadsView />)
-    await screen.findByText('Title of ctx-t4ak')
-
-    expect(mockState.fetchClosedBeadWork).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('tab', { name: 'Closed' }))
-
-    expect(await screen.findByText('Finished dashboard pass')).toBeInTheDocument()
-    expect(screen.getByText('Quiet store history')).toBeInTheDocument()
-    expect(mockState.fetchClosedBeadWork.mock.calls.map(call => call[0])).toEqual([
-      '/srv/chrote', '/srv', '/srv/quiet', '/srv/silent',
-    ])
-
-    fireEvent.change(screen.getByLabelText('Search closed Beads'), { target: { value: 'quiet store' } })
-    expect(screen.getByText('Quiet store history')).toBeInTheDocument()
-    expect(screen.queryByText('Finished dashboard pass')).toBeNull()
-    fireEvent.change(screen.getByLabelText('Search closed Beads'), { target: { value: 'nothing matches' } })
-    expect(screen.getByText('No closed Beads match "nothing matches".')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Map' }))
-    fireEvent.click(screen.getByRole('tab', { name: 'Closed' }))
-    expect(screen.getByText('No closed Beads match "nothing matches".')).toBeInTheDocument()
-    expect(mockState.fetchClosedBeadWork).toHaveBeenCalledTimes(4)
-
-    fireEvent.change(screen.getByLabelText('Search closed Beads'), { target: { value: '' } })
-    fireEvent.click(screen.getByRole('button', { name: 'ctx' }))
-    expect(await screen.findByText('Superseded note')).toBeInTheDocument()
-    expect(mockState.fetchClosedBeadWork.mock.calls.filter(call => call[0] === '/srv')).toHaveLength(1)
-  })
-
-  it('keeps loaded closed stores visible when another store fails', async () => {
-    mockState.closed.set('/srv/quiet', new Error('permission denied'))
-    render(<BeadsView />)
-    await screen.findByText('Title of ctx-t4ak')
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Closed' }))
-
-    expect(await screen.findByText('Finished dashboard pass')).toBeInTheDocument()
-    expect(screen.getByText('qt: permission denied')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Search closed Beads'), { target: { value: 'nothing' } })
-    expect(screen.getByText('qt: permission denied')).toBeInTheDocument()
-    expect(screen.queryByText('No closed Beads match "nothing".')).toBeNull()
-  })
-
-  it('hydrates a linked row before revealing neighbours omitted from the work snapshot', async () => {
-    const target = bead({ id: 'chrote-external', title: 'Cross-snapshot task', type: 'task', linked: true, updated: FRESH })
-    const neighbour = { id: 'chrote-hidden', title: 'Hidden blocker', status: 'closed', type: 'task', priority: 1 }
-    const work = mockState.work.get('/srv/chrote') as { beads: BeadRow[] }
-    work.beads.push(target)
-    mockState.beadDetails.set('/srv/chrote\u0000chrote-external', {
-      ...target, parents: [], children: [], blockedBy: [neighbour], blocks: [],
-    })
-    render(<BeadsView />)
-
-    fireEvent.contextMenu(await screen.findByText('Cross-snapshot task'))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Open in Flow' }))
-
-    await waitFor(() => expect(mockState.fetchBead).toHaveBeenCalledWith('/srv/chrote', 'chrote-external'))
-    expect(await screen.findByText('Hidden blocker')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Flow' })).toHaveAttribute('aria-selected', 'true')
-  })
-
-  it('links a loaded closed row back to unfinished work in Flow', async () => {
-    render(<BeadsView />)
-    await screen.findByText('Title of ctx-t4ak')
-    fireEvent.click(screen.getByRole('button', { name: 'chrote' }))
-    fireEvent.click(screen.getByRole('tab', { name: 'Closed' }))
-    fireEvent.contextMenu(await screen.findByText('Finished dashboard pass'))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Open in Flow' }))
-
-    expect(await screen.findByText('Title of chrote-ep')).toBeInTheDocument()
-    expect(screen.getByText('Finished dashboard pass')).toBeInTheDocument()
-  })
-
-  it('reports when a linked row cannot be hydrated for Flow', async () => {
-    mockState.beadDetails.set('/srv/chrote\u0000chrote-ep.1', new Error('detail unavailable'))
-    render(<BeadsView />)
-    fireEvent.contextMenu(await screen.findByText('Title of chrote-ep.1'))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Open in Flow' }))
-
-    await waitFor(() => expect(mockState.announce).toHaveBeenCalledWith(
-      'Flow unavailable · chrote-ep.1: detail unavailable',
-      'error',
-    ))
-    expect(screen.getByRole('tab', { name: 'Map' })).toHaveAttribute('aria-selected', 'true')
-  })
-
-  it('keeps the Closed loading state visible until the selected store answers', async () => {
-    let answer!: (value: unknown) => void
-    mockState.fetchClosedBeadWork.mockImplementation((path: string) => new Promise(resolve => {
-      if (path === '/srv/chrote') answer = resolve
-      else resolve({ prefix: '', projectPath: path, beads: [] })
-    }))
-    render(<BeadsView />)
-    await screen.findByText('Title of ctx-t4ak')
-    fireEvent.click(screen.getByRole('button', { name: 'chrote' }))
-    fireEvent.click(screen.getByRole('tab', { name: 'Closed' }))
-
-    expect(screen.getByText('Reading closed Beads…')).toBeInTheDocument()
-    await act(async () => answer(mockState.closed.get('/srv/chrote')))
-    expect(await screen.findByText('Finished dashboard pass')).toBeInTheDocument()
-  })
-
-  it('groups formulas, template protos and molecules and exposes their full structure', async () => {
-    render(<BeadsView />)
-    await screen.findByText('Title of ctx-t4ak')
-    fireEvent.click(screen.getByRole('button', { name: 'chrote' }))
-
-    const release = await screen.findByRole('button', { name: 'release' })
-    expect(screen.getByText('Template protos')).toBeInTheDocument()
-    expect(screen.getByText('Molecules')).toBeInTheDocument()
-    expect(screen.getByText('Release template')).toBeInTheDocument()
-    expect(screen.getByText('September release')).toBeInTheDocument()
-
-    fireEvent.click(release)
-    expect(await screen.findByRole('heading', { name: 'release', level: 1 })).toBeInTheDocument()
-    expect(screen.getByText('/srv/chrote/.beads/formulas/release.formula.toml')).toBeInTheDocument()
-    expect(screen.getByText('Target')).toBeInTheDocument()
-    expect(screen.getByText('Depends on')).toBeInTheDocument()
-    expect(document.querySelector('.beads-template-detail button')).toBeNull()
-
-    fireEvent.click(screen.getByText('September release'))
-    expect(await screen.findByRole('heading', { name: 'September release', level: 1 })).toBeInTheDocument()
-    expect(screen.getByText('Dependencies')).toBeInTheDocument()
-    expect(screen.getByText('in progress')).toBeInTheDocument()
-    expect(screen.getByText('prod')).toBeInTheDocument()
-  })
-
-  it('states when a store has no formulas or molecules', async () => {
-    render(<BeadsView />)
-    await screen.findByText('Title of ctx-t4ak')
-    fireEvent.click(screen.getByRole('button', { name: 'ctx' }))
-    expect(await screen.findByText('No formulas or molecules in this store.')).toBeInTheDocument()
-    expect(screen.getByText('Title of ctx-t4ak')).toBeInTheDocument()
-  })
-
-  it('reports template catalog failures without replacing open work', async () => {
-    mockState.formulas.set('/srv/chrote', new Error('formula directory unreadable'))
-    mockState.molecules.set('/srv/chrote', new Error('molecule query failed'))
-    render(<BeadsView />)
-    await screen.findByText('Title of ctx-t4ak')
-    fireEvent.click(screen.getByRole('button', { name: 'chrote' }))
-
-    expect(await screen.findByText('Formulas: formula directory unreadable')).toBeInTheDocument()
-    expect(screen.getByText('Molecules: molecule query failed')).toBeInTheDocument()
-    expect(screen.getByText('Title of chrote-ep')).toBeInTheDocument()
   })
 })

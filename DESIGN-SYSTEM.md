@@ -63,7 +63,7 @@ of them is the wall of buttons the doctrine exists to prevent.
 
 ## The colour rule
 
-The interface is monochrome except where colour carries meaning. Seven uses live:
+The interface is monochrome except where colour carries meaning. Nine uses live:
 
 | Use | Token | What the colour means |
 | --- | --- | --- |
@@ -74,6 +74,8 @@ The interface is monochrome except where colour carries meaning. Seven uses live
 | Diffs | `--ansi-2`, `--color-error` | An addition, a removal; always beside a +/- gutter |
 | Bead type | `--ansi-1` … `--ansi-6` | What kind of work this is; always beside the type word |
 | Brain subject / collection | `--shelf-0` … `--shelf-n` | Subject identity on the map; collection identity in the rail |
+| Beads closed per day | `--ansi-2` | Work finished, in the Beads strip; always beside its Created and Closed legend |
+| Beads project in the work graph | `--shelf-0` … `--shelf-n` | Which store a card's Bead lives in; always named in the graph's legend |
 
 A Bead's type takes one theme ANSI token, chosen for contrast on the theme
 background, and the type word is written in it so a row reads the same without
@@ -83,7 +85,23 @@ keeps its word in `--text-dim` rather than an invented hue. A Bead that is
 closed, wont_fix or duplicate is finished arguing: its row is `--text-dim` end
 to end, type, id and title alike, wherever a Bead row is drawn. An epic row is
 heavier and carries a hairline beneath it, because it is the roof its children
-hang from. Status stays the glyph `bd` prints, with the word on hover.
+hang from. Status stays the glyph `bd` prints, with the word on hover; in the
+Beads table, where status is a column to sort and scan, the word stands beside
+the glyph.
+
+The Beads tab is one table of every Bead on the host. The strip above it counts
+the Beads created (`--text-dim`) and closed (`--ansi-2`) each day, with the
+Beads open at each day's end as a faint area behind the bars, never a line
+competing with them; a tick on the axis marks the day a store was first seen,
+so its arrival reads as a new store rather than a backlog. A drag across the
+strip brushes the days the table keeps. The rail keeps two filters, project and
+status, each row a box that toggles it and a name that keeps it alone. Numeric
+columns are right-aligned with a faint bar beside the number. The work graph
+draws the selected Bead's family: its cards' borders carry their project's
+shelf colour, finished cards are dimmed and blocked cards dashed. Split keeps
+every column of the table and puts the graph beside it, or beneath it when the
+two no longer fit side by side. The target it was built to is in
+[`docs/assets/beads-slicer/`](docs/assets/beads-slicer/final-target.png).
 
 Everything else is gone: per-window accent colours, hashed per-user hues, the
 tmux status bar hue, theme-button glows, and per-severity notification colours.
@@ -291,7 +309,7 @@ drawer over it, and the resident's column beyond both.
 - **The table** holds the one selected object: a Bead, a page, what an agent
   sees. It is global, so the object chosen in one tab is on the table in every
   tab, and each tab shows it where it fits: the Beads tab as the detail column
-  beside its map, a terminal tab as a column at the right of the grid that
+  beside its table, a terminal tab as a column at the right of the grid that
   stays through tab switches. The column is drag-resizable at its left edge,
   400px by default and never narrower than 320px, and the width is remembered
   on the device. It narrows the content beside it and never overlays it.
@@ -306,7 +324,8 @@ drawer over it, and the resident's column beyond both.
   remembered, under a 32px header carrying the label, the harness mark, the
   session name, its state as a word, and Send with its chord. The terminal is
   the input; there is no ask line. `Alt+S` in the tab pastes the table's
-  reference into the resident's prompt without submitting it, and the operator
+  reference into the resident's prompt (in Beads, the selected row's Bead
+  when there is one) without submitting it, and the operator
   types the rest and presses `Enter` there; the drawer serves every other
   session. `Alt+Enter` or a click focuses the column. When the session is
   absent, the column shows Launch with the resident's folder. The column

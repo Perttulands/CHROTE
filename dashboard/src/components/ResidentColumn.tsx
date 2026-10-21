@@ -53,8 +53,8 @@ export interface ResidentColumnProps {
   tab: ResidentTab
   /**
    * The one line Alt+S pastes into the resident's prompt: the page open in
-   * the Library, the workspace and harness chosen in Agents, what is on the
-   * table in Beads. Null when the tab has nothing in hand.
+   * the Library, the workspace and harness chosen in Agents, the selected
+   * Bead in Beads, or what is on the table. Null when the tab has nothing in hand.
    */
   reference: string | null
 }

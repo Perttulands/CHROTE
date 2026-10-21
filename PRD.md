@@ -84,11 +84,12 @@ views do not store historical copies of page content.
 
 Components remain separated in the codebase and fail independently. A missing Beads workspace or unconfigured context corpus must not prevent terminal work.
 
-Beads browsing shows remembered successful work immediately and fills a first
-host overview project by project. Visible work updates automatically while
+Beads browsing is one table of every Bead on the host, sliced by search,
+project, status and days, with the selected Bead's work graph beside it, and the
+whole slice carried in the view's link. Visible work updates automatically while
 preserving query, selection, graph position, table trail and drafts. Each store
-reports whether its data is current, refreshing, stale or unavailable; incomplete
-host data must not imply there is no work. Closed work loads when requested.
+reports whether it was read, is being read or failed; incomplete host data must
+not imply there is no work. Slicing never waits on `bd`.
 
 CHROTE exposes terminal sessions and delivers operator input. The programs
 running in those sessions own their work, coordination and completion rules.

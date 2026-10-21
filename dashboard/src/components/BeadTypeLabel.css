@@ -14,8 +14,7 @@
 .bead-type[data-type='epic'] { color: var(--ansi-5); }
 .bead-type[data-type='task'] { color: var(--ansi-6); }
 
-/* A closed Bead is done arguing: the row is grey end to end, type included. */
-.bead-row-closed .bead-type,
+/* A closed Bead is done arguing: the card is grey end to end, type included. */
 .bead-card-closed .bead-type {
   color: var(--text-dim);
 }

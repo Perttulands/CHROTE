@@ -110,8 +110,6 @@ export function getTerminalUserInitial(user: LaunchUser): string {
 }
 
 // User settings for persistent configuration
-export type BeadsViewSetting = 'map' | 'ready' | 'flow' | 'stale' | 'closed'
-
 export interface UserSettings {
   terminalTabCount: number           // Visible terminal tabs (1-6); shrinking hides, never deletes
   fontSize: number                   // Terminal font size (12-20)
@@ -137,8 +135,6 @@ export interface UserSettings {
   agentEventNotifications: boolean   // A browser notification for the same while this tab is hidden; device-local, off
   residentWidth: number              // A resident's column, in px; 0 means 44 terminal columns at the tile font
   libraryHiddenShelves: string[]     // Library shelves left off the map; device-local
-  beadsSelectedProject: string       // Last selected Beads store, or "all"; device-local
-  beadsView: BeadsViewSetting        // Last selected Beads reading; device-local
   beadsProjectPaths?: string[]       // Manually added beads project paths
 }
 
@@ -167,8 +163,6 @@ export const DEFAULT_SETTINGS: UserSettings = {
   agentEventNotifications: false,
   residentWidth: 0,
   libraryHiddenShelves: [],
-  beadsSelectedProject: 'all',
-  beadsView: 'map',
 }
 
 export interface TmuxSession {

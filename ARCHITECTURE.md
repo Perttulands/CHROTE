@@ -103,7 +103,7 @@ only while visible, with independent bounded status and history requests.
 Concurrent metadata reads share in-flight work. Beads additionally retains
 disposable successful reads so host and project navigation can show useful work
 immediately. One reader per owning store shares a verified full snapshot across
-counts, unfinished work, requested Closed work and card relationships. Source
+counts, unfinished work, the host index and card relationships. Source
 fingerprints must agree before and after a read; a changing or unavailable store
 keeps its previous snapshot with explicit pending or error state. Checking the
 source and reading its records have separate timestamps. Unknown counts remain
@@ -125,7 +125,7 @@ pending stores keep the ordinary cadence. Successful projections retain
 their own applied generation; a failed request can retry that same generation.
 Refresh keeps loaded views and the table mounted, preserving reading context
 and drafts. Hidden surfaces retain their data without continuing refresh traffic.
-Closed remains a lazy presentation demand. A lightweight Bead catalog supplies
+A lightweight Bead catalog supplies
 terminal links independently of counts and work reads. Its projects response
 distinguishes a successful empty store from a failed identity lookup with an
 optional per-project `prefixError`. Known positive prefixes remain useful;
@@ -133,6 +133,22 @@ identity warnings do not make a healthy snapshot unreadable. Explicit project
 refresh replaces those warnings on successful identity discovery, while cheap
 workspace discovery preserves the latest identity result. Session discovery and
 completion notifications retain their own background lifetime.
+
+The Beads tab reads every store in one request, `GET /api/beads/host`. The
+server keeps one projection per store generation, the manifest fingerprint the
+shared reader already keys its snapshots by: the rows the table, strip and graph
+draw, with times in Unix seconds and each Bead's text size, and the lowercased
+text search runs over. A request fingerprints the stores and copies retained
+bytes. A store whose manifest moved is re-read through the shared reader in the
+background and served from its previous projection, marked pending, until the
+new one is published. The browser names the generations it holds
+(`known=<generation>:<path>`), so a poll over unchanged stores carries no rows;
+answers above 32 KiB are gzipped, and the discovered store list is reused for
+thirty seconds. `GET /api/beads/search?q=` answers with the ids whose text holds
+every term, so the browser never holds the host's descriptions. The browser
+builds one index over typed arrays when rows change; filtering, faceted counts,
+the strip's daily buckets, sorting and the work graph are computed there, and no
+interaction starts a `bd` process.
 
 The snapshot log separates the reader queue from command admission, wrapped
 process time, JSON decoding and snapshot construction, and counts actual source

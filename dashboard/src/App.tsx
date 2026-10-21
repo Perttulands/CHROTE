@@ -199,7 +199,10 @@ function DraggedSessionOverlay({ drag }: { drag: ActiveDrag }) {
 }
 
 function DashboardContent() {
-  const [activeTab, setActiveTab] = useState<Tab>('terminal1')
+  // A Beads view link (`?tab=beads&…`, written by the Beads tab) opens on that tab.
+  const [activeTab, setActiveTab] = useState<Tab>(() => (
+    new URLSearchParams(window.location.search).get('tab') === 'beads' ? 'beads' : 'terminal1'
+  ))
   const [lastActiveWorkspaceId, setLastActiveWorkspaceId] = useState<WorkspaceId>('terminal1')
   const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
   const [openFilesWorkspaceIds, setOpenFilesWorkspaceIds] = useState<Set<WorkspaceId>>(() => new Set())
@@ -278,7 +281,7 @@ function DashboardContent() {
     if (isTerminalWorkspaceId(tab, mountedWorkspaceIds)) setLastActiveWorkspaceId(tab)
   }, [mountedWorkspaceIds])
   // A Bead read in the card is a Bead in a project: Open in Beads puts the tab
-  // on that project with the id already searched for.
+  // on it, selected, with its work graph beside the table.
   const handleOpenInBeads = useCallback((projectPath: string, id: string) => {
     setBeadsRevealRequest({ projectPath, id, nonce: Date.now() })
     setActiveTab('beads')

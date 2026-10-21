@@ -92,35 +92,6 @@ export interface BeadWork {
   state?: BeadStoreState
 }
 
-/** The formula registry and molecule commands intentionally return their full
- * bd objects. These small named fields let the rail identify entries while the
- * detail view keeps every additional field available to the operator. */
-export type BeadsStructure = Record<string, unknown>
-
-export interface FormulaSummary extends BeadsStructure {
-  name?: string
-  formula?: string
-  description?: string
-  source?: string
-}
-
-export interface MoleculeSummary extends BeadsStructure {
-  id?: string
-  title?: string
-  status?: string
-  is_template?: boolean
-}
-
-export interface FormulaCatalog {
-  formulas: FormulaSummary[]
-  projectPath: string
-}
-
-export interface MoleculeCatalog {
-  molecules: MoleculeSummary[]
-  projectPath: string
-}
-
 interface ApiEnvelope<T> {
   success?: boolean
   data?: T
@@ -216,29 +187,6 @@ export async function fetchBeadStates(paths: readonly string[], foreground: read
 /** The unfinished work of one project. */
 export async function fetchBeadWork(projectPath: string): Promise<BeadWork> {
   return get<BeadWork>('/work', { path: projectPath })
-}
-
-/** Finished work is deliberately a separate, lazy request. */
-export async function fetchClosedBeadWork(projectPath: string): Promise<BeadWork> {
-  return get<BeadWork>('/closed', { path: projectPath })
-}
-
-export async function fetchFormulas(projectPath: string): Promise<FormulaCatalog> {
-  return get<FormulaCatalog>('/formulas', { path: projectPath })
-}
-
-export async function fetchFormula(projectPath: string, name: string): Promise<BeadsStructure> {
-  const data = await get<{ formula: BeadsStructure }>('/formula', { path: projectPath, name })
-  return data.formula
-}
-
-export async function fetchMolecules(projectPath: string): Promise<MoleculeCatalog> {
-  return get<MoleculeCatalog>('/molecules', { path: projectPath })
-}
-
-export async function fetchMolecule(projectPath: string, id: string): Promise<BeadsStructure> {
-  const data = await get<{ molecule: BeadsStructure }>('/molecule', { path: projectPath, id })
-  return data.molecule
 }
 
 export async function fetchBead(projectPath: string, id: string): Promise<BeadDetail> {

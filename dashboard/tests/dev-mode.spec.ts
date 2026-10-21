@@ -61,11 +61,11 @@ async function toggleDevMode(page: Page) {
 
 async function expectBackgroundContent(page: Page) {
   // These hidden views render their loaded data in the same update that emits
-  // their announcement. Both Beads stores must finish before that update.
+  // their announcement. Every Beads store arrives in the one host read.
   await expect(page.locator('.agents-view .agent-path')).toHaveText(/\/CLAUDE\.md$/)
   await expect(page.locator('.library-shelf-name')).toHaveText(['knowledge', 'preferences'])
-  await expect(page.locator('.beads-view .bead-row', { hasText: 'One interaction language' })).toHaveCount(1)
-  await expect(page.locator('.beads-view .bead-row', { hasText: 'Prepare loose work' })).toHaveCount(1)
+  await expect(page.locator('.beads-view .beads-row', { hasText: 'One interaction language' })).toHaveCount(1)
+  await expect(page.locator('.beads-view .beads-row', { hasText: 'Prepare loose work' })).toHaveCount(1)
 }
 
 async function activateBackgroundViews(page: Page) {
@@ -74,7 +74,7 @@ async function activateBackgroundViews(page: Page) {
   for (const [tab, request] of [
     ['Agents', '**/api/agent/context**'],
     ['Brain', '**/api/library/shelves**'],
-    ['Beads', '**/api/beads/work**'],
+    ['Beads', '**/api/beads/host**'],
   ]) {
     const started = page.waitForRequest(request)
     await page.getByRole('button', { name: tab, exact: true }).click()
@@ -91,7 +91,7 @@ for (const completion of ['before enabling', 'while enabled'] as const) {
   test(`dev mode identifies and hands off with background reads completing ${completion}`, async ({ page }) => {
     let release!: () => void
     const held = new Promise<void>(resolve => { release = resolve })
-    const backgroundReads = ['**/api/agent/context**', '**/api/beads/work**', '**/api/library/shelves**']
+    const backgroundReads = ['**/api/agent/context**', '**/api/beads/host**', '**/api/library/shelves**']
     await openWorkspace(page, async page => {
       for (const pattern of backgroundReads) {
         await page.route(pattern, async route => {

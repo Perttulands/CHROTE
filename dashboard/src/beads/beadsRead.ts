@@ -1,11 +1,9 @@
 /** One visible-demand owner for disposable Beads projections. Source truth stays in bd. */
 import { useEffect, useSyncExternalStore } from 'react'
 import {
-  fetchBeadStates, fetchBeadWork, fetchClosedBeadWork, fetchBeadSnapshot,
+  fetchBeadStates, fetchBeadWork, fetchBeadSnapshot,
   type BeadDetail, type BeadProject, type BeadStoreState, type BeadWork,
 } from './beadsApi'
-import { currentBead } from './beadStatus'
-import type { WorkRow } from './beadsTree'
 import { forgetBeadDetail, invalidateKnownBeads, rememberBeadDetail, rememberBeadRows } from './knownBeads'
 
 export interface Projection<T> {
@@ -21,18 +19,15 @@ export interface Projection<T> {
 export interface StoreRead {
   state?: BeadStoreState
   work: Projection<BeadWork>
-  closed: Projection<BeadWork>
   cards: Map<string, Projection<BeadDetail>>
   touched: number
   waitForRefresh?: boolean
-  rowCache?: Partial<Record<'work' | 'closed', { source: BeadWork; label: string; expired: number; rows: WorkRow[] }>>
 }
 interface Demand {
   paths: readonly string[]
   foreground?: readonly string[]
   work?: boolean
   workPaths?: readonly string[]
-  closed?: boolean
   card?: { path: string; id: string }
 }
 const POLL_MS = 2000
@@ -60,27 +55,13 @@ function publish() {
 function entry(path: string): StoreRead {
   let result = stores.get(path)
   if (!result) {
-    result = { work: freshProjection(), closed: freshProjection(), cards: new Map(), touched: Date.now() }
+    result = { work: freshProjection(), cards: new Map(), touched: Date.now() }
     stores.set(path, result)
   }
   result.touched = Date.now()
   return result
 }
 export function beadStoreRead(path: string): StoreRead | undefined { return stores.get(path) }
-const EMPTY_ROWS: WorkRow[] = []
-/** State-only polls do not change row/graph identity; dated expiry still does. */
-export function beadRows(path: string, label: string, kind: 'work' | 'closed'): WorkRow[] {
-  const store = stores.get(path)
-  const source = store?.[kind].data
-  if (!store || !source) return EMPTY_ROWS
-  const expired = source.beads.filter(row => row.status === 'deferred' && currentBead(row).status === 'open').length
-  const prior = store.rowCache?.[kind]
-  if (prior?.source === source && prior.label === label && prior.expired === expired) return prior.rows
-  const rows = source.beads.map(row => ({ ...currentBead(row), projectPath: path, projectName: label }))
-  store.rowCache ??= {}
-  store.rowCache[kind] = { source, label, expired, rows }
-  return rows
-}
 /** Saved owning-store paths need no host catalog before they can be demanded. */
 export function beadProjectSkeletons(known: readonly BeadProject[], manualPaths: readonly string[]): BeadProject[] {
   const result = [...known]
@@ -102,13 +83,11 @@ function currentDemand() {
   const paths = new Set<string>()
   const foreground = new Set<string>()
   const work = new Set<string>()
-  const closed = new Set<string>()
   const cards = new Map<string, Set<string>>()
   demands.forEach(demand => {
     demand.paths.forEach(path => paths.add(path))
     demand.foreground?.forEach(path => foreground.add(path))
     if (demand.work) (demand.workPaths ?? demand.paths).forEach(path => work.add(path))
-    if (demand.closed) demand.paths.forEach(path => closed.add(path))
     if (demand.card) {
       const { path, id } = demand.card
       paths.add(path)
@@ -118,7 +97,7 @@ function currentDemand() {
       cards.set(path, ids)
     }
   })
-  return { paths, foreground, work, closed, cards }
+  return { paths, foreground, work, cards }
 }
 function acceptState(state: BeadStoreState) {
   const store = entry(state.path)
@@ -178,17 +157,13 @@ function readWanted() {
         store.work.generation = store.state.availableGeneration
         store.work.appliedVersion = (store.work.appliedVersion ?? 0) + 1
         store.work.error = undefined
-        rememberBeadRows(path, [], store.work.generation, 'work')
+        rememberBeadRows(path, [], store.work.generation)
         publish()
       }
     } else if (wanted.work.has(path)) read(path, store.work, async () => {
       const data = await fetchBeadWork(path)
       return { data, state: data.state }
-    }, (data, generation) => rememberBeadRows(path, data.beads, generation, 'work'))
-    if (wanted.closed.has(path)) read(path, store.closed, async () => {
-      const data = await fetchClosedBeadWork(path)
-      return { data, state: data.state }
-    }, (data, generation) => rememberBeadRows(path, data.beads, generation, 'closed'))
+    }, (data, generation) => rememberBeadRows(path, data.beads, generation))
     wanted.cards.get(path)?.forEach(id => {
       let card = store.cards.get(id)
       if (!card) { card = freshProjection(); store.cards.set(id, card) }
@@ -202,7 +177,7 @@ function readWanted() {
 function evict() {
   const wanted = currentDemand()
   const candidates = [...stores.entries()].filter(([path, store]) =>
-    !wanted.paths.has(path) && !store.work.loading && !store.closed.loading && ![...store.cards.values()].some(card => card.loading),
+    !wanted.paths.has(path) && !store.work.loading && ![...store.cards.values()].some(card => card.loading),
   ).sort((a, b) => a[1].touched - b[1].touched)
   candidates.forEach(([path, store]) => {
     if (stores.size > MAX_STORES || Date.now() - store.touched > IDLE_MS) {
@@ -284,24 +259,6 @@ export function demandBeads(demand: Demand): () => void {
   poke()
   return () => { demands.delete(key); schedule() }
 }
-/** An explicit relationship navigation shares the same retained card read. */
-export function readBeadDetail(path: string, id: string): Promise<BeadDetail> {
-  const store = entry(path)
-  let projection = store.cards.get(id)
-  if (!projection) { projection = freshProjection(); store.cards.set(id, projection) }
-  const stop = demandBeads({ paths: [path], card: { path, id } })
-  const current = projection
-  return new Promise((resolve, reject) => {
-    const finish = () => {
-      if (current.loading) return
-      if (current.data && !current.error) { listeners.delete(finish); stop(); resolve(current.data) }
-      else if (current.error) { listeners.delete(finish); stop(); reject(new Error(current.error)) }
-    }
-    listeners.add(finish)
-    finish()
-  })
-}
-
 export function refreshBeads(paths: readonly string[]) {
   paths.forEach(path => {
     const store = entry(path)
@@ -311,9 +268,8 @@ export function refreshBeads(paths: readonly string[]) {
       projection.refreshVersion = (projection.refreshVersion ?? 0) + 1
     }
     mark(store.work)
-    mark(store.closed)
     store.cards.forEach(mark)
-    store.work.retryAt = store.closed.retryAt = 0
+    store.work.retryAt = 0
     store.cards.forEach(card => { card.retryAt = 0 })
   })
   // Coalesce repeated clicks without a second loop or a lost force request.

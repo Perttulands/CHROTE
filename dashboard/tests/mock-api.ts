@@ -196,6 +196,8 @@ function mockBeadDetailFor(path: string, id: string) {
     timestamp: new Date().toISOString(),
     data: {
       projectPath: path,
+      // The server names the snapshot a card was read from, as every Beads read does.
+      state: { path, availableGeneration: 'mock-one', observedGeneration: 'mock-one', pending: false },
       bead: {
         ...row,
         ...cardCopy,
@@ -208,62 +210,51 @@ function mockBeadDetailFor(path: string, id: string) {
   }
 }
 
-export const mockFormulaList = {
-  success: true,
-  timestamp: new Date().toISOString(),
-  data: {
-    projectPath: '/code/test-project',
-    formulas: [{
-      name: 'release', type: 'workflow', description: 'Build and ship a release',
-      source: '/code/test-project/.beads/formulas/release.formula.toml', steps: 2, vars: 1,
-    }],
-  },
+const DAY_SECONDS = 86400
+
+function unixSeconds(iso: string): number {
+  return Math.floor(Date.parse(iso) / 1000)
 }
 
-export const mockFormulaDetail = {
-  success: true,
-  timestamp: new Date().toISOString(),
-  data: {
-    projectPath: '/code/test-project',
-    formula: {
-      formula: 'release', type: 'workflow', description: 'Build and ship a release',
-      source: '/code/test-project/.beads/formulas/release.formula.toml',
-      vars: { target: { required: true, description: 'Release target' } },
-      steps: [
-        { id: 'build', title: 'Build the dashboard' },
-        { id: 'ship', title: 'Ship the dashboard', depends_on: ['build'] },
-      ],
-    },
+/** The mocked stores as the host index serves them: times in Unix seconds,
+ * finished Beads beside open ones, and a size from the text a card would hold. */
+const MOCK_HOST_STORES: { path: string; prefix: string; rows: (MockBead & { description?: string })[] }[] = [
+  {
+    path: '/code/test-project',
+    prefix: 'test',
+    rows: [
+      ...mockBeadsWork.data.beads,
+      ...mockClosedBeadsWork.data.beads,
+    ].map(row => row.id === 'test-ep1.1' ? { ...row, description: mockBeadsDetail.data.bead.description } : row) as MockBead[],
   },
-}
+  { path: '/code/another-project', prefix: 'other', rows: mockOtherBeadsWork.data.beads as MockBead[] },
+  { path: '/code/quiet-project', prefix: 'quiet', rows: mockQuietClosedBeadsWork.data.beads as MockBead[] },
+]
 
-export const mockMoleculeList = {
-  success: true,
-  timestamp: new Date().toISOString(),
-  data: {
-    projectPath: '/code/test-project',
-    molecules: [
-      { id: 'test-proto', title: 'Release template', status: 'open', issue_type: 'molecule', is_template: true },
-      { id: 'test-release', title: 'September release', status: 'in_progress', issue_type: 'molecule', is_template: false, source_formula: 'release' },
-    ],
-  },
-}
-
-export const mockMoleculeDetail = {
-  success: true,
-  timestamp: new Date().toISOString(),
-  data: {
-    projectPath: '/code/test-project',
-    molecule: {
-      root: { id: 'test-release', title: 'September release', status: 'in_progress', source_formula: 'release' },
-      issues: [
-        { id: 'test-release.1', title: 'Build the dashboard', status: 'closed' },
-        { id: 'test-release.2', title: 'Ship the dashboard', status: 'open' },
-      ],
-      dependencies: [{ issue_id: 'test-release.2', depends_on_id: 'test-release.1', type: 'blocks' }],
-      variables: { target: 'production' },
-    },
-  },
+export function mockHostStores() {
+  return MOCK_HOST_STORES.map(store => ({
+    path: store.path,
+    prefix: store.prefix,
+    generation: 'mock-one',
+    readAt: new Date().toISOString(),
+    pending: false,
+    rows: store.rows.map((row, i) => {
+      const updated = unixSeconds(String(row.updated))
+      return {
+        id: row.id,
+        title: row.title,
+        status: row.status,
+        type: row.type,
+        priority: row.priority,
+        created: updated - (3 + i) * DAY_SECONDS,
+        updated,
+        ...(row.status === 'closed' ? { closed: updated } : {}),
+        size: 200 * (i + 1) + (row.description?.length ?? 0),
+        parent: row.parent,
+        blockedBy: row.blockedBy,
+      }
+    }),
+  }))
 }
 
 export const mockSystemStatus = {
@@ -693,7 +684,8 @@ export async function mockBeadsApiRoutes(page: Page, options?: {
   projectsResponse?: object
   workResponse?: object
   beadResponse?: object
-  onClosedRequest?: (path: string) => void
+  hostStores?: object[]
+  onHostRequest?: (url: URL) => void
 }) {
   // mockApiRoutes already serves the project map, because every terminal asks
   // for it to link the ids in its output. Playwright answers with the most
@@ -751,39 +743,25 @@ export async function mockBeadsApiRoutes(page: Page, options?: {
     })
   })
 
-  await page.route(/\/api\/beads\/closed(?:\?.*)?$/, async route => {
-    const path = new URL(route.request().url()).searchParams.get('path') ?? ''
-    options?.onClosedRequest?.(path)
-    const empty = { success: true, timestamp: new Date().toISOString(), data: { prefix: '', projectPath: path, beads: [] } }
-    const answer = path === '/code/test-project'
-      ? mockClosedBeadsWork
-      : path === '/code/quiet-project' ? mockQuietClosedBeadsWork : empty
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(answer) })
+  // The Beads tab reads every store in one request, and asks the server
+  // only to search the text the rows do not carry.
+  await page.route('**/api/beads/host**', async route => {
+    options?.onHostRequest?.(new URL(route.request().url()))
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(envelope({
+      stores: options?.hostStores ?? mockHostStores(),
+      checkedAt: new Date().toISOString(),
+    })) })
   })
-
-  await page.route(/\/api\/beads\/formula(?:\?.*)?$/, async route => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mockFormulaDetail) })
-  })
-  await page.route(/\/api\/beads\/formulas(?:\?.*)?$/, async route => {
-    const path = new URL(route.request().url()).searchParams.get('path')
-    const empty = { success: true, timestamp: new Date().toISOString(), data: { projectPath: path, formulas: [] } }
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(path === '/code/test-project' ? mockFormulaList : empty),
+  await page.route('**/api/beads/search**', async route => {
+    const terms = (new URL(route.request().url()).searchParams.get('q') ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+    const matches: Record<string, string[]> = {}
+    MOCK_HOST_STORES.forEach(store => {
+      const found = store.rows
+        .filter(row => terms.length > 0 && terms.every(term => [row.id, row.title, row.description ?? ''].join('\n').toLowerCase().includes(term)))
+        .map(row => row.id)
+      if (found.length > 0) matches[store.path] = found
     })
-  })
-  await page.route(/\/api\/beads\/molecule(?:\?.*)?$/, async route => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mockMoleculeDetail) })
-  })
-  await page.route(/\/api\/beads\/molecules(?:\?.*)?$/, async route => {
-    const path = new URL(route.request().url()).searchParams.get('path')
-    const empty = { success: true, timestamp: new Date().toISOString(), data: { projectPath: path, molecules: [] } }
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(path === '/code/test-project' ? mockMoleculeList : empty),
-    })
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(envelope({ matches })) })
   })
 }
 
@@ -839,9 +817,17 @@ export async function mockSystemStatusApiRoutes(page: Page, onRequest?: () => vo
 
 // Beads API error mock - simulates bd not installed.
 // The project map still answers, from the registration mockApiRoutes made:
-// what fails is the two routes that carry the Beads themselves, which is the
+// what fails is the routes that carry the Beads themselves, which is the
 // shape of a host that has the stores configured but no `bd` on its PATH.
 export async function mockBeadsApiError(page: Page) {
+  await page.route('**/api/beads/host**', async route => {
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify(mockBeadsError),
+    })
+  })
+
   await page.route('**/api/beads/work**', async route => {
     await route.fulfill({
       status: 503,

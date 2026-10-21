@@ -222,6 +222,30 @@ func (h *WorkspacesHandler) list(probeStores bool, waitForStores ...bool) []Work
 	return found
 }
 
+// StoreFolders is every folder holding a Beads store, by the same rules as the
+// list: the configured Beads projects and every store under the roots. It skips
+// the session inventory and the instruction counts, which a store list does
+// not need. The Beads tab's host read consumes it.
+func (h *WorkspacesHandler) StoreFolders() []string {
+	list := &workspaceList{handler: h, entries: map[string]*workspaceEntry{}}
+	for _, project := range h.beadsWorkspaces() {
+		if entry := list.add(project, workspaceSourceBeads); entry != nil && h.holdsStore(entry.Path) {
+			entry.sources[workspaceSourceStore] = true
+		}
+	}
+	for _, root := range h.walkRoots() {
+		h.walk(list, root, 0)
+	}
+	paths := make([]string, 0)
+	for path, entry := range list.entries {
+		if entry.sources[workspaceSourceStore] {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
 // walkRoots is every configured root and every launchable user's home, each
 // resolved and unique. Nested roots retain their own depth budget: removing a
 // home beneath a broad root would hide its projects before a session runs there.

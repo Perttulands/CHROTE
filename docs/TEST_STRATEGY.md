@@ -66,9 +66,12 @@ tile geometry, container queries measured by bounding boxes, focus surviving
 mount, and key routing between the document listener and the terminal's hidden
 textarea. Everything else is cheaper one layer down.
 
-Beads map contents, ready/stale grouping, template details and lazy loading of
-closed work belong to `BeadsView.test.tsx`. The browser suite covers its keyboard
-entrypoints, menus, table placement and Flow geometry. Library's unconfigured
+Beads slicing, sorting, the strip's counts, the graph's family and layout, and
+the view's link belong to `beadsSlice.test.ts`, `workGraph.test.ts`,
+`sliceUrl.test.ts` and `BeadsView.test.tsx`. The browser suite covers the
+brush and the menus on real pointers, a copied link reopened in a fresh tab,
+table placement, and the geometry of the table beside, beneath or scrolled
+under the graph and the Clerk. Library's unconfigured
 state belongs to `LibraryView.test.tsx`; canvas interaction and scroll extents
 remain browser checks. Preset limits belong to `useWorkspaceLayouts.test.ts`;
 the browser saves, restores and deletes a real bound layout across a reload.

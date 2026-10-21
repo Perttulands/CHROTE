@@ -92,7 +92,7 @@ test.describe('The resident column', () => {
     // A Bead on the table, then Alt+S: the reference lands in the Clerk's
     // prompt on a line of its own, nothing is submitted, no drawer opens, and
     // the keyboard is in the Clerk's terminal.
-    await page.click('.bead-row:has-text("Fix login bug") .bead-row-open')
+    await page.locator('.beads-row[data-ui="beads.row"]', { hasText: 'Fix login bug' }).dblclick()
     await expect(page.getByRole('complementary', { name: 'Bead test-ep1.1' })).toBeVisible()
     await page.keyboard.press('Alt+s')
     await expect.poll(() => sends).toEqual([{ text: 'bead test-ep1.1: Fix login bug\n', submit: 'false' }])
@@ -125,7 +125,7 @@ test.describe('The resident column', () => {
     // A narrow workspace squeezes the column to its header. Once the room is
     // back, the terminal opens against the restored frame and fits it at once.
     await page.setViewportSize({ width: 1000, height: 900 })
-    await page.click('.bead-row:has-text("Fix login bug") .bead-row-open')
+    await page.locator('.beads-row[data-ui="beads.row"]', { hasText: 'Fix login bug' }).dblclick()
     await expect(reopened).toHaveClass(/collapsed/)
     await expect(reopened.locator('.xterm')).toHaveCount(0)
     await page.keyboard.press('Alt+i')
@@ -145,7 +145,7 @@ test.describe('The resident column', () => {
     const column = page.getByRole('complementary', { name: 'The Clerk' })
     await expect(column.locator('.xterm-rows')).toContainText('mock terminal hq-deacon')
     const open = Math.round((await box(column)).width)
-    const content = page.locator('.beads-content')
+    const content = page.locator('.beads-slicer')
     const contentOpen = Math.round((await box(content)).width)
     expect(contentOpen).toBeGreaterThanOrEqual(480)
 

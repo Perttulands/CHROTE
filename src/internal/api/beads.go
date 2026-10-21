@@ -33,6 +33,7 @@ type BeadsHandler struct {
 	optionalSlots chan struct{}
 
 	stores *beadsStoreReader
+	host   *beadsHostIndex
 }
 
 // NewBeadsHandler creates a new BeadsHandler
@@ -50,6 +51,7 @@ func NewBeadsHandler() *BeadsHandler {
 		optionalSlots: make(chan struct{}, 2),
 	}
 	h.stores = newBeadsStoreReader(h)
+	h.host = newBeadsHostIndex(h)
 	return h
 }
 
@@ -59,13 +61,10 @@ func (h *BeadsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/beads/projects", h.ListProjects)
 	mux.HandleFunc("GET /api/beads/work", h.Work)
 	mux.HandleFunc("GET /api/beads/state", h.State)
-	mux.HandleFunc("GET /api/beads/closed", h.ClosedWork)
+	mux.HandleFunc("GET /api/beads/host", h.Host)
+	mux.HandleFunc("GET /api/beads/search", h.Search)
 	mux.HandleFunc("GET /api/beads/issue", h.IssueDetail)
 	mux.HandleFunc("POST /api/beads/issues", h.CreateIssue)
-	mux.HandleFunc("GET /api/beads/formulas", h.Formulas)
-	mux.HandleFunc("GET /api/beads/formula", h.FormulaDetail)
-	mux.HandleFunc("GET /api/beads/molecules", h.Molecules)
-	mux.HandleFunc("GET /api/beads/molecule", h.MoleculeDetail)
 }
 
 // getBdVersion returns the bd version or error.
@@ -359,27 +358,8 @@ func requiredIssueID(r *http.Request) (string, string, string) {
 	return id, "", ""
 }
 
-// requiredQueryValue reads a value that becomes a positional argument to bd.
-// A leading dash is refused here rather than handed over: exec.Command runs no
-// shell, but bd's own flag parser would read "--file=/tmp/x" as an option
-// instead of as the name or id it was asked for.
-func requiredQueryValue(r *http.Request, key string) (string, string, string) {
-	value := strings.TrimSpace(r.URL.Query().Get(key))
-	if value == "" {
-		return "", "BAD_REQUEST", "Missing required parameter: " + key
-	}
-	if strings.HasPrefix(value, "-") {
-		return "", "BAD_REQUEST", key + " must not start with a dash: " + value
-	}
-	return value, "", ""
-}
-
-func (h *BeadsHandler) requestProject(w http.ResponseWriter, r *http.Request) (string, bool) {
-	return h.checkedProject(w, r.URL.Query().Get("path"))
-}
-
-// checkedProject applies the same path and store checks to query parameters
-// on read routes and the named destination in a creation request.
+// checkedProject applies the Beads path and store checks to the named
+// destination in a creation request.
 func (h *BeadsHandler) checkedProject(w http.ResponseWriter, path string) (string, bool) {
 	projectPath, code, msg := validateBeadsProjectPath(path)
 	if code != "" {
@@ -950,198 +930,6 @@ func (h *BeadsHandler) Work(w http.ResponseWriter, r *http.Request) {
 		"prefix":      prefix,
 		"projectPath": projectPath,
 		"state":       state,
-	})
-}
-
-// ClosedWork handles GET /api/beads/closed. The dashboard calls this route
-// only when the operator opens Closed. Finished records share the reader,
-// while this projection and its browser rendering remain lazy.
-func (h *BeadsHandler) ClosedWork(w http.ResponseWriter, r *http.Request) {
-	projectPath, ok := h.requestProject(w, r)
-	if !ok {
-		return
-	}
-
-	snapshot, state, err := h.stores.get(r.Context(), projectPath, storeReadDemand{foreground: true, waitCold: true})
-	if err != nil && snapshot == nil {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
-		return
-	}
-
-	issues := snapshot.issues
-	beads := make([]beadRow, 0)
-	prefix := snapshot.prefix
-	for _, issue := range issues {
-		if !isClosedBead(issue) {
-			continue
-		}
-		id := beadString(issue, "id")
-		if id == "" {
-			continue
-		}
-		if prefix == "" {
-			prefix = beadPrefix(id)
-		}
-		row := beadRow{
-			beadBrief: beadBriefOf(issue),
-			Updated:   firstString(issue["updated_at"], issue["updated"]),
-			Parent:    beadString(issue, "parent"),
-			Linked:    beadIsLinked(issue),
-		}
-		if isEpic(issue) {
-			row.Acceptance = beadString(issue, "acceptance_criteria")
-		}
-		beads = append(beads, row)
-	}
-	sort.Slice(beads, func(i, j int) bool {
-		if beads[i].Updated != beads[j].Updated {
-			return beads[i].Updated > beads[j].Updated
-		}
-		return beads[i].ID < beads[j].ID
-	})
-
-	core.WriteSuccess(w, map[string]interface{}{
-		"beads":       beads,
-		"prefix":      prefix,
-		"projectPath": projectPath,
-		"state":       state,
-	})
-}
-
-// Formulas handles GET /api/beads/formulas. Formula list records already
-// carry the resolved source path, so returning the CLI objects preserves the
-// winning file's provenance when search paths shadow a name.
-func (h *BeadsHandler) Formulas(w http.ResponseWriter, r *http.Request) {
-	projectPath, ok := h.requestProject(w, r)
-	if !ok {
-		return
-	}
-
-	result, err := h.execBdJSON(r.Context(), projectPath, "formula", "list")
-	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
-		return
-	}
-	if result == nil {
-		formulaDir := filepath.Join(projectPath, ".beads", "formulas")
-		if err := checkFormulaRegistry(formulaDir); err != nil {
-			if errors.Is(err, fs.ErrPermission) {
-				core.WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
-			} else {
-				core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
-			}
-			return
-		}
-		result = []interface{}{}
-	}
-	formulas, ok := result.([]interface{})
-	if !ok {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", fmt.Sprintf("bd formula list returned %T, expected JSON array", result))
-		return
-	}
-
-	core.WriteSuccess(w, map[string]interface{}{
-		"formulas":    formulas,
-		"projectPath": projectPath,
-	})
-}
-
-// checkFormulaRegistry distinguishes an absent project registry from one that
-// bd silently skipped because the server user cannot read or search it.
-func checkFormulaRegistry(formulaDir string) error {
-	info, err := os.Stat(formulaDir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("cannot access formula registry %s as user %s: %w", formulaDir, effectiveUsername(), err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("formula registry %s is not a directory", formulaDir)
-	}
-	if _, err := os.ReadDir(formulaDir); err != nil {
-		return fmt.Errorf("cannot read formula registry %s as user %s: %w", formulaDir, effectiveUsername(), err)
-	}
-	if _, err := os.Stat(filepath.Join(formulaDir, ".")); err != nil {
-		return fmt.Errorf("cannot search formula registry %s as user %s: %w", formulaDir, effectiveUsername(), err)
-	}
-	return nil
-}
-
-// FormulaDetail handles GET /api/beads/formula: the complete resolved formula,
-// including variables, steps, dependencies, composition rules, and source.
-func (h *BeadsHandler) FormulaDetail(w http.ResponseWriter, r *http.Request) {
-	projectPath, ok := h.requestProject(w, r)
-	if !ok {
-		return
-	}
-	name, code, msg := requiredQueryValue(r, "name")
-	if code != "" {
-		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
-		return
-	}
-
-	formula, err := h.execBdJSON(r.Context(), projectPath, "formula", "show", name)
-	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
-		return
-	}
-	if _, ok := formula.(map[string]interface{}); !ok {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", fmt.Sprintf("bd formula show %s returned %T, expected JSON object", name, formula))
-		return
-	}
-
-	core.WriteSuccess(w, map[string]interface{}{
-		"formula":     formula,
-		"projectPath": projectPath,
-	})
-}
-
-// Molecules handles GET /api/beads/molecules: template protos and instantiated
-// molecule roots, with their current issue fields left intact.
-func (h *BeadsHandler) Molecules(w http.ResponseWriter, r *http.Request) {
-	projectPath, ok := h.requestProject(w, r)
-	if !ok {
-		return
-	}
-
-	molecules, err := h.execBdIssues(r.Context(), projectPath, "list", "--type", "molecule", "--all", "--include-templates")
-	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
-		return
-	}
-	core.WriteSuccess(w, map[string]interface{}{
-		"molecules":   molecules,
-		"projectPath": projectPath,
-	})
-}
-
-// MoleculeDetail handles GET /api/beads/molecule: bd's full graph projection,
-// including root, issues, dependencies, variables, and origin metadata.
-func (h *BeadsHandler) MoleculeDetail(w http.ResponseWriter, r *http.Request) {
-	projectPath, ok := h.requestProject(w, r)
-	if !ok {
-		return
-	}
-	id, code, msg := requiredQueryValue(r, "id")
-	if code != "" {
-		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
-		return
-	}
-
-	molecule, err := h.execBdJSON(r.Context(), projectPath, "mol", "show", id)
-	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
-		return
-	}
-	if _, ok := molecule.(map[string]interface{}); !ok {
-		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", fmt.Sprintf("bd mol show %s returned %T, expected JSON object", id, molecule))
-		return
-	}
-
-	core.WriteSuccess(w, map[string]interface{}{
-		"molecule":    molecule,
-		"projectPath": projectPath,
 	})
 }
 

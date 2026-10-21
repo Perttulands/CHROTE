@@ -3,7 +3,7 @@
  *
  * The browser is the point here. Three real tab switches prove that local
  * selection survives, the front resident alone owns the keyboard, and loaded
- * content is retained while Beads checks discovery and freshness on return.
+ * content is retained while Beads asks the host what changed on return.
  */
 
 import { test, expect, type Page } from './fixtures'
@@ -83,7 +83,8 @@ test('returns to Beads, Brain and Agents exactly as they were left', async ({ pa
   await page.waitForSelector('.dashboard')
 
   await page.getByRole('button', { name: 'Beads', exact: true }).click()
-  await page.locator('.bead-row', { hasText: 'Fix login bug' }).getByRole('button').click()
+  const bead = page.locator('.beads-row[data-ui="beads.row"]', { hasText: 'Fix login bug' })
+  await bead.dblclick()
   await expect(page.getByRole('complementary', { name: 'Bead test-ep1.1' })).toContainText('Fix login bug')
   await page.keyboard.press('Alt+Enter')
   await expect(page.getByRole('complementary', { name: 'The Clerk' }).locator('.xterm-helper-textarea')).toBeFocused()
@@ -140,21 +141,18 @@ test('returns to Beads, Brain and Agents exactly as they were left', async ({ pa
 
   const readsBeforeReturn = new Map(reads)
 
-  // Returning to Beads rechecks host discovery and source state. Complete those
-  // checks before proving that unchanged work and the open card were not read again.
-  const resumedDiscovery = page.waitForResponse(response => {
+  // Returning to Beads asks the host what changed, naming the generation of
+  // every store it holds, so unchanged stores come back without their rows.
+  // Complete that check before proving the open card was not read again.
+  const resumedHost = page.waitForResponse(response => {
     const url = new URL(response.url())
-    return response.status() === 200 && url.pathname === '/api/workspaces' && url.searchParams.get('beads') === '1'
-  })
-  const resumedState = page.waitForResponse(response => {
-    const url = new URL(response.url())
-    return response.status() === 200 && url.pathname === '/api/beads/state' &&
-      url.searchParams.getAll('path').includes('/code/another-project')
+    return response.status() === 200 && url.pathname === '/api/beads/host' &&
+      url.searchParams.getAll('known').includes('mock-one:/code/another-project')
   })
   await page.getByRole('button', { name: 'Beads', exact: true }).click()
-  const returnChecks = await Promise.all([resumedDiscovery, resumedState])
-  await Promise.all(returnChecks.map(response => response.finished()))
+  await (await resumedHost).finished()
   await expect(page.getByRole('complementary', { name: 'Bead test-ep1.1' })).toContainText('Fix login bug')
+  await expect(bead).toHaveAttribute('aria-selected', 'true')
 
   const refreshedGraph = page.waitForResponse(response => new URL(response.url()).pathname === '/api/library/graph' && response.status() === 200)
   await page.getByRole('button', { name: 'Brain', exact: true }).click()

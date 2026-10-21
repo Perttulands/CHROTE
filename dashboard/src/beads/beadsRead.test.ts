@@ -3,11 +3,10 @@ import { beadStoreRead, demandBeads, refreshBeads, resetBeadsReadForTest } from 
 import { knownBead, resetKnownBeadsForTest } from './knownBeads'
 import type { BeadDetail, BeadRow, BeadStoreState, BeadWork } from './beadsApi'
 
-const api = vi.hoisted(() => ({ state: vi.fn(), work: vi.fn(), closed: vi.fn(), card: vi.fn() }))
+const api = vi.hoisted(() => ({ state: vi.fn(), work: vi.fn(), card: vi.fn() }))
 vi.mock('./beadsApi', () => ({
   fetchBeadStates: (...args: unknown[]) => api.state(...args),
   fetchBeadWork: (...args: unknown[]) => api.work(...args),
-  fetchClosedBeadWork: (...args: unknown[]) => api.closed(...args),
   fetchBeadSnapshot: (...args: unknown[]) => api.card(...args),
 }))
 let generation = 'one'
@@ -25,7 +24,6 @@ beforeEach(() => {
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
   api.state.mockImplementation((paths: string[]) => Promise.resolve(paths.map(state)))
   api.work.mockImplementation((path: string) => Promise.resolve({ beads: [row], prefix: 'test', projectPath: path, state: state(path) }))
-  api.closed.mockImplementation((path: string) => Promise.resolve({ beads: [], prefix: 'test', projectPath: path, state: state(path) }))
   api.card.mockImplementation((path: string) => Promise.resolve({ bead: detail, projectPath: path, state: state(path) }))
 })
 afterEach(() => { resetBeadsReadForTest(); vi.useRealTimers() })
@@ -228,24 +226,6 @@ it('never rolls the desired generation back when an older projection finishes la
   expect(beadStoreRead('/one')?.work.generation).toBe('one')
   await tick()
   expect(beadStoreRead('/one')?.work.generation).toBe('two')
-})
-
-it('keeps projected row identity through unchanged state checks but updates dated deferral expiry', async () => {
-  const { beadRows } = await import('./beadsRead')
-  const until = new Date(Date.now() + 3000).toISOString()
-  api.work.mockImplementation((path: string) => Promise.resolve({ beads: [{ ...row, status: 'deferred', deferUntil: until }],
-    prefix: 'test', projectPath: path, state: state(path) }))
-  demandBeads({ paths: ['/one'], work: true })
-  await settle()
-  const before = beadRows('/one', 'test', 'work')
-  expect(before[0].status).toBe('deferred')
-  await tick()
-  expect(beadRows('/one', 'test', 'work')).toBe(before)
-  await tick()
-  const after = beadRows('/one', 'test', 'work')
-  expect(after).not.toBe(before)
-  expect(after[0].status).toBe('open')
-  expect(api.work).toHaveBeenCalledTimes(1)
 })
 
 it('waits for a queued forced verification before starting projections after an older state check', async () => {

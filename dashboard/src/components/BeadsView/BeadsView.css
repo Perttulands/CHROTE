@@ -1,10 +1,15 @@
-/* The Beads tab: a rail, a segmented control, and rows of text. */
+/* The Beads tab: a search line, the day strip, the filter rail, and a work area
+   holding the table, the graph or both. Monochrome but for the strip's closed
+   bars and the graph's project borders, which the colour rule names. */
 
 .beads-view {
+  /* Every column of the table at its least, and the body's scrollbar beside them. */
+  --beads-row-width: 708px;
+  --beads-table-width: calc(var(--beads-row-width) + 6px);
   display: flex;
   flex: 1;
   /* The row shrinks to the workspace rather than to the sum of its columns:
-     with the table and the Clerk beside the map, the map is what gives. */
+     with the table and the Clerk beside the slicer, the slicer is what gives. */
   min-width: 0;
   min-height: 0;
   background-color: var(--background);
@@ -12,906 +17,795 @@
   font-size: 12px;
 }
 
-.beads-rail-item,
-.beads-refresh {
-  padding: 4px 12px;
-  border: none;
-  border-left: 2px solid transparent;
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.beads-rail-item:hover,
-.beads-refresh:hover {
-  color: var(--text-primary);
-}
-
-.beads-rail-item.active {
-  border-left-color: var(--accent);
-  background-color: var(--surface-secondary);
-  color: var(--text-primary);
-}
-
-/* Stores with nothing open fold under an inline divider. The two equal line
-   slots keep More and Fewer in the same place while making this read as
-   structure rather than another store. */
-.beads-rail-more {
-  display: grid;
-  grid-template-columns: minmax(8px, 1fr) auto minmax(8px, 1fr);
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 25px;
-  white-space: nowrap;
-}
-
-.beads-rail-more::before,
-.beads-rail-more::after {
-  height: 1px;
-  background-color: var(--divider);
-  content: '';
-}
-
-.beads-rail-more,
-.beads-rail-quiet,
-.beads-rail-unreadable {
-  color: var(--text-dim);
-}
-
-.beads-rail-note,
-.beads-rail-error {
-  margin: 0;
-  padding: 2px 6px;
-  color: var(--text-dim);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.beads-rail-error {
-  color: var(--color-error);
-}
-
-.beads-rail-templates {
-  padding-top: 10px;
-  border-top: 1px solid var(--divider);
-}
-
-.beads-template-group-label {
-  margin: 7px 0 2px;
-  padding: 0 6px;
-  color: var(--text-dim);
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.beads-template-group-label:first-child {
-  margin-top: 0;
-}
-
-.beads-template-item {
+.beads-slicer {
   display: flex;
-  flex: none;
-  flex-direction: column;
-  min-width: 0;
-  padding: 4px 6px;
-  border: none;
-  border-left: 2px solid transparent;
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.beads-template-item:hover,
-.beads-template-item.active {
-  background-color: var(--surface-secondary);
-  color: var(--text-primary);
-}
-
-.beads-template-item.active {
-  border-left-color: var(--accent);
-}
-
-.beads-template-item > span,
-.beads-template-item > small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.beads-template-item > small {
-  color: var(--text-dim);
-  font-size: 10px;
-}
-
-.beads-main {
-  container-type: inline-size;
-  display: flex;
-  flex-direction: column;
   flex: 1;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
 
-.beads-controls {
+/* The search line. The range slot keeps its width whether a range is set or
+   not, so the search box never resizes under the pointer. */
+.beads-top {
   display: flex;
-  flex-wrap: wrap;
+  flex: none;
   align-items: center;
-  gap: 12px;
-  flex: none;
-  padding: 8px 12px;
-}
-
-.beads-views {
-  display: flex;
-  flex: none;
-}
-
-.beads-view-tab {
-  padding: 3px 10px;
-  border: none;
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.beads-view-tab:hover {
-  color: var(--text-primary);
-}
-
-.beads-view-tab.active {
-  background-color: var(--surface-secondary);
-  color: var(--text-primary);
+  gap: 8px;
+  padding: 8px 12px 4px;
 }
 
 .beads-search {
-  min-width: 120px;
-  flex: 0 1 380px;
-  padding: 4px 10px;
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.beads-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 28px 6px 10px;
   border: 1px solid var(--divider);
   background-color: var(--surface-primary);
   color: var(--text-primary);
   font: inherit;
+  font-size: 13px;
 }
 
-.beads-search:focus {
+.beads-search input:focus {
   outline: none;
   border-color: var(--accent);
 }
 
-/* Keep Flow's origin fixed when its table opens; list controls can wrap. */
-.beads-controls-flow {
-  flex-wrap: nowrap;
-}
-
-.beads-controls-flow .beads-search {
-  min-width: 0;
-}
-
-.beads-stale-days {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-  color: var(--text-secondary);
-}
-
-.beads-stale-days input {
-  width: 48px;
-  padding: 3px 6px;
-  border: 1px solid var(--divider);
-  background-color: var(--surface-primary);
-  color: var(--text-primary);
-  font: inherit;
-  text-align: center;
-}
-
-.beads-template-mode {
-  color: var(--text-dim);
-}
-
-.beads-content {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow-y: auto;
-  padding-bottom: 16px;
-}
-
-.beads-empty,
-.beads-error {
-  margin: 0;
-  padding: 8px 12px;
-  color: var(--text-secondary);
-}
-
-.beads-error {
-  color: var(--color-error);
-}
-
-.beads-partial-errors {
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--divider);
-  color: var(--color-error);
-}
-
-.beads-partial-errors p {
-  margin: 2px 0;
-}
-
-.beads-closed-project {
-  padding-bottom: 12px;
-}
-
-.beads-closed-project h2 {
-  margin: 0;
-  padding: 8px 12px 4px;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.beads-template-detail {
-  width: min(900px, 100%);
-  padding: 18px 20px 40px;
-}
-
-.beads-template-header {
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--divider);
-}
-
-.beads-template-header > span {
-  color: var(--text-dim);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.beads-template-header h1 {
-  margin: 4px 0 0;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.beads-template-header p {
-  max-width: 72ch;
-  margin: 8px 0 0;
-  color: var(--text-secondary);
-  line-height: 1.55;
-}
-
-.beads-template-provenance,
-.beads-template-section {
-  padding: 14px 0;
-  border-bottom: 1px solid var(--divider);
-}
-
-.beads-template-provenance h2,
-.beads-template-section h2 {
-  margin: 0 0 8px;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.beads-template-provenance dl,
-.beads-template-fields {
-  margin: 0;
-}
-
-.beads-template-provenance dl > div,
-.beads-template-field {
-  display: grid;
-  grid-template-columns: minmax(110px, 22%) minmax(0, 1fr);
-  gap: 12px;
-  padding: 4px 0;
-}
-
-.beads-template-provenance dt,
-.beads-template-field > dt {
-  color: var(--text-dim);
-}
-
-.beads-template-provenance dd,
-.beads-template-field > dd {
-  min-width: 0;
-  margin: 0;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
-
-.beads-template-list {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding-left: 24px;
-}
-
-.beads-template-list > li {
-  padding-left: 4px;
-}
-
-.beads-template-list .beads-template-fields {
-  padding: 6px 10px;
-  border-left: 1px solid var(--divider);
-  background-color: var(--surface-primary);
-}
-
-.beads-template-empty-value {
-  color: var(--text-dim);
-}
-
-/* ==================== ROWS ==================== */
-
-.bead-row {
-  display: flex;
-  align-items: flex-start;
-  min-width: 0;
-  gap: 8px;
-  padding-top: 8px;
-  padding-bottom: 8px;
-  padding-right: 12px;
-  line-height: 1.5;
-  border-bottom: 1px solid var(--divider);
-}
-
-.bead-row:hover {
-  background-color: var(--surface-secondary);
-}
-
-/* The fold slot: a chevron and the child count, or the same width of nothing. */
-.bead-row-fold {
-  grid-row: 1 / 3;
-  width: 28px;
-  color: var(--text-dim);
-}
-
-.bead-row-count {
-  margin-left: 4px;
-}
-
-.bead-row-glyph {
-  flex: none;
-  width: 14px;
-  color: var(--text-secondary);
-}
-
-.bead-row-open {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  align-items: start;
-  gap: 3px 8px;
-  flex: 1;
-  min-width: 0;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.bead-row-type {
-  flex: none;
-  font-size: 10px;
-}
-
-.bead-row-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 8px;
-  min-width: 0;
-  color: var(--text-dim);
-  font-size: 11px;
-}
-
-.bead-row-updated {
-  margin-left: auto;
-}
-
-.bead-row-trailing {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 4px 8px;
-  max-width: 90px;
-}
-
-.bead-row-open:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* An epic is the roof the rows beneath it hang from: heavier, and closed off
-   by a hairline so the branch reads as one thing. */
-.bead-row-epic {
-  font-weight: 600;
-  border-bottom: 1px solid var(--divider);
-}
-
-/* Closed, wont_fix and duplicate: the argument is over, so the whole row
-   recedes, id and title with it. */
-.bead-row-closed .bead-row-id,
-.bead-row-closed .bead-row-title,
-.bead-row-closed .bead-row-glyph,
-.bead-row-closed .bead-row-open:hover .bead-row-id,
-.bead-row-closed .bead-row-open:hover .bead-row-title {
-  color: var(--text-dim);
-}
-
-.bead-row-id {
-  overflow-wrap: anywhere;
-  min-width: 0;
-  color: var(--text-primary);
-}
-
-.bead-row-title {
-  grid-column: 2;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  white-space: normal;
-  color: var(--text-primary);
-}
-
-.bead-row-open:hover .bead-row-title,
-.bead-row-open:hover .bead-row-id {
-  color: var(--text-primary);
-}
-
-.bead-row-blocked {
-  padding-right: 12px;
-  overflow-wrap: anywhere;
-  color: var(--text-dim);
-  line-height: 1.6;
-}
-
-.bead-row-blocked-link {
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--text-dim);
-  font: inherit;
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-.bead-row-blocked-link:hover {
-  color: var(--text-primary);
-}
-
-.bead-map-acceptance {
-  overflow-wrap: anywhere;
-  padding-right: 12px;
-  padding-bottom: 6px;
-  max-width: 1200px;
-}
-
-.bead-map-acceptance h3 {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-.bead-map-acceptance p {
-  margin: 0;
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-
-.bead-row-age {
-  flex: none;
-  color: var(--text-dim);
-}
-
-.bead-row-send {
-  flex: none;
-  width: 44px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  text-align: right;
-  cursor: pointer;
-}
-
-.bead-row-send:hover {
-  color: var(--accent);
-}
-
-/* ==================== READY AND IN PROGRESS ==================== */
-
-.beads-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 24px;
-  padding: 4px 0;
-}
-
-.beads-column {
-  min-width: 0;
-}
-
-.beads-sort {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-secondary);
-}
-
-.beads-sort select {
-  min-width: 0;
-  max-width: 100%;
-  padding: 4px 6px;
-  border: 1px solid var(--divider);
-  background-color: var(--surface-primary);
-  color: var(--text-primary);
-  font: inherit;
-}
-
-/* Respond to the space left by the table and Clerk, not the window width. */
-@container (max-width: 900px) {
-  .beads-columns {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 20px;
-  }
-}
-
-@container (max-width: 480px) {
-  .beads-controls {
-    gap: 8px;
-  }
-
-  .beads-views {
-    flex-wrap: wrap;
-  }
-
-  .beads-search {
-    flex: 1 1 100%;
-  }
-
-  .beads-stale-days {
-    margin-left: 0;
-  }
-
-  .bead-row-updated {
-    margin-left: 0;
-  }
-}
-
-.beads-column h2 {
-  margin: 0 0 4px;
-  padding: 0 12px;
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-.beads-column .bead-row-id {
-  width: 150px;
-}
-
-.beads-column .bead-row-type {
-  width: 60px;
-}
-
-/* ==================== THE FLOW OF AN EPIC ==================== */
-
-.bead-flow-view {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.bead-flow-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: none;
-  padding: 0 12px 8px;
-  color: var(--text-secondary);
-}
-
-.bead-flow-picker {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.bead-flow-picker select {
-  max-width: 420px;
-  padding: 3px 6px;
-  border: 1px solid var(--divider);
-  background-color: var(--surface-primary);
-  color: var(--text-primary);
-  font: inherit;
-}
-
-.bead-flow-epic-name,
-.bead-flow-tally {
-  color: var(--text-dim);
-}
-
-.bead-flow-reset {
-  margin-left: auto;
-  padding: 3px 10px;
-  border: 1px solid var(--divider);
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
-}
-
-/* The box the drawing is moved through: it clips, and it never scrolls, so a
-   wheel over it zooms rather than taking the page with it. */
-.bead-flow {
-  position: relative;
-  flex: 1;
-  min-height: 360px;
-  margin: 0 12px 12px;
-  border: 1px solid var(--divider);
-  overflow: hidden;
-}
-
-.bead-flow-surface {
+/* The chord is shown where the action is. */
+.beads-chord {
   position: absolute;
-  inset: 0;
-  touch-action: none;
-}
-
-.bead-flow-canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: 0 0;
-}
-
-.bead-flow-lines {
-  position: absolute;
-  top: 0;
-  left: 0;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  color: var(--text-dim);
   pointer-events: none;
-  overflow: visible;
 }
 
-/* A blocking edge. One that closes a loop is dashed and takes the error token:
-   the store contradicts itself, and the drawing says so rather than obeying. */
-.bead-flow-edge {
-  fill: none;
+.beads-range {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 168px;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--divider);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.beads-range.set {
+  color: var(--text-primary);
+}
+
+.beads-range button,
+.beads-copy-link,
+.beads-clear,
+.beads-facet-all,
+.beads-graph-up,
+.beads-graph-title {
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.beads-range button {
+  padding: 2px 6px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.beads-copy-link {
+  flex: none;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--divider);
+}
+
+.beads-range button:hover,
+.beads-copy-link:hover,
+.beads-clear:hover,
+.beads-facet-all:hover:not(:disabled),
+.beads-graph-up:hover,
+.beads-graph-title:hover {
+  color: var(--text-primary);
+}
+
+/* The day strip. Created is neutral, closed is the theme's addition green,
+   and the open count is a faint area behind both, on its own scale. */
+.beads-strip {
+  position: relative;
+  flex: none;
+  height: 128px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--divider);
+  user-select: none;
+}
+
+.beads-strip svg {
+  display: block;
+}
+
+.beads-strip-open {
+  fill: var(--text-dim);
+  opacity: 0.14;
+}
+
+.beads-strip-grid {
   stroke: var(--divider);
   stroke-width: 1;
 }
 
-.bead-flow-edge.broken {
-  stroke: var(--color-error);
-  stroke-dasharray: 3 3;
-}
-
-/* A parent inside the epic, behind its children. */
-.bead-flow-band {
-  fill: var(--surface-secondary);
-  stroke: var(--divider);
+.beads-strip-axis {
+  stroke: var(--text-dim);
   stroke-width: 1;
 }
 
-.bead-flow-band-name {
+.beads-strip-tick {
   fill: var(--text-dim);
   font-size: 10px;
 }
 
-.bead-flow-node {
+.beads-strip-created {
+  fill: var(--text-dim);
+}
+
+.beads-strip-closed {
+  fill: var(--ansi-2);
+}
+
+.beads-strip-brush {
+  fill: var(--text-primary);
+  opacity: 0.09;
+}
+
+/* A store's first day: a short mark beneath the axis, so the step it adds to
+   the open area reads as a new store rather than as a backlog. */
+.beads-strip-arrival {
+  stroke: var(--text-secondary);
+  stroke-width: 1.5;
+}
+
+.beads-strip-hit {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+.beads-strip-legend {
   position: absolute;
+  top: 0;
+  right: 52px;
+  left: 46px;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  padding: 0 8px;
-  border: 1px solid var(--divider);
-  background-color: var(--surface-primary);
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  line-height: 1.4;
-  cursor: pointer;
-  overflow: hidden;
-}
-
-.bead-flow-node:hover {
-  background-color: var(--surface-secondary);
-}
-
-.bead-flow-node:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 1px;
-}
-
-/* Claimed work carries a heavier left edge, so a column says at a glance how
-   much of it is already in hand. */
-.bead-flow-node.in-progress {
-  border-left: 3px solid var(--text-primary);
-}
-
-/* Closed, wont_fix and duplicate: the node greys end to end, glyph, id and
-   title alike, on the marker class every Bead row uses. */
-.bead-flow-node.bead-row-closed,
-.bead-flow-node.bead-row-closed .bead-flow-node-glyph,
-.bead-flow-node.bead-row-closed .bead-flow-node-id,
-.bead-flow-node.bead-row-closed .bead-flow-node-title {
+  align-items: center;
+  gap: 14px;
+  height: 14px;
   color: var(--text-dim);
+  font-size: 10px;
+  pointer-events: none;
 }
 
-.bead-flow-node-line {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-}
-
-.bead-flow-node-glyph {
-  flex: none;
+.beads-strip-reading {
   color: var(--text-secondary);
 }
 
-.bead-flow-node-type {
-  flex: none;
-  font-size: 10px;
+.beads-strip-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
-.bead-flow-node-id {
+.beads-strip-key-created {
+  margin-left: auto;
+}
+
+.beads-strip-key::before {
+  width: 8px;
+  height: 8px;
+  content: '';
+}
+
+.beads-strip-key-created::before {
+  background-color: var(--text-dim);
+}
+
+.beads-strip-key-closed::before {
+  background-color: var(--ansi-2);
+}
+
+.beads-strip-key-open::before {
+  background-color: color-mix(in srgb, var(--text-dim) 30%, transparent);
+}
+
+.beads-body {
+  display: flex;
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-size: 10px;
-  color: var(--text-dim);
+  min-height: 0;
 }
 
-.bead-flow-node-title {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+/* The rail. Rows keep their places; a row whose count fell to nothing is dim. */
+.beads-facet-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
 }
 
-/* The rail's lower half: the selected store's state, under a hairline. Its
-   only colour is the type words' own tokens; everything else is text. */
-.beads-rail-state {
+.beads-facet-all {
+  padding: 0;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.beads-facet-all:disabled {
+  visibility: hidden;
+}
+
+.beads-facet-find {
+  flex: none;
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--divider);
+  background-color: var(--background);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.beads-facet-find:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.beads-facet-status {
   padding-top: 10px;
   border-top: 1px solid var(--divider);
 }
 
-.beads-store-note,
-.beads-store {
-  padding: 0 6px;
-}
-
-.beads-store-note {
-  color: var(--text-dim);
-  line-height: 1.5;
-}
-
-.beads-store-head {
+.beads-facet-row {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 6px;
+  font-size: 12px;
 }
 
-.beads-store-prefix {
-  color: var(--text-primary);
-  letter-spacing: 0.04em;
+.beads-facet-row input {
+  flex: none;
+  margin: 0;
+  accent-color: var(--text-secondary);
+}
+
+.beads-facet-name {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 0;
   overflow: hidden;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
 }
 
-.beads-store-total,
-.beads-store-count {
-  flex: none;
+.beads-facet-name:hover {
   color: var(--text-primary);
+}
+
+.beads-facet-count {
+  flex: none;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.beads-facet-row.empty .beads-facet-name {
+  color: var(--text-dim);
+}
+
+.beads-facet-note {
+  margin: 0;
+  padding: 2px 6px;
+  color: var(--text-dim);
+}
+
+/* The work area: its count and the layout switch, then the panes. */
+.beads-work {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  container: beads-work / inline-size;
+}
+
+.beads-work-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  padding: 6px 12px;
+}
+
+.beads-count {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.beads-modes {
+  display: flex;
+  flex: none;
+  border: 1px solid var(--divider);
+}
+
+.beads-mode {
+  padding: 3px 14px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.beads-mode + .beads-mode {
+  border-left: 1px solid var(--divider);
+}
+
+.beads-mode:hover {
+  color: var(--text-primary);
+}
+
+.beads-mode.active {
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.beads-panes {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  border-top: 1px solid var(--divider);
+}
+
+/* Split keeps every column of the table and gives the graph the rest, down to
+   a width a family can still be read at. Narrower than both, the graph goes
+   beneath the table rather than squeezing either. */
+.beads-panes-split {
+  grid-template-columns: minmax(var(--beads-table-width), 11fr) minmax(320px, 9fr);
+}
+
+@container beads-work (width < 1040px) {
+  .beads-panes-split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 11fr) minmax(0, 9fr);
+  }
+
+  .beads-panes-split .beads-pane-graph {
+    border-top: 1px solid var(--divider);
+    border-left: none;
+  }
+}
+
+.beads-panes-table,
+.beads-panes-graph {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.beads-pane {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.beads-pane-graph {
+  background-color: var(--surface-primary);
+}
+
+.beads-panes-split .beads-pane-graph {
+  border-left: 1px solid var(--divider);
+}
+
+.beads-empty {
+  position: absolute;
+  top: 52px;
+  right: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.beads-empty p {
+  margin: 0;
+}
+
+.beads-clear {
+  border: 1px solid var(--divider);
+  padding: 3px 10px;
+  pointer-events: auto;
+}
+
+/* The table. Rows are absolutely placed inside a box as tall as every row,
+   so only the rows in view exist. The columns are one grid for the header and
+   every row, and the table scrolls sideways before it squeezes a column. */
+.beads-table {
+  --beads-columns: 104px minmax(140px, 1fr) 108px 112px 60px 58px 72px 52px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.beads-row {
+  display: grid;
+  grid-template-columns: var(--beads-columns);
+  align-items: center;
+  box-sizing: border-box;
+  min-width: var(--beads-row-width);
+  height: 36px;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--divider);
+}
+
+/* The header stands clear of the body's scrollbar, whose room the body always
+   keeps, so the columns line up whether the body scrolls or not. */
+.beads-head {
+  flex: none;
+  height: 30px;
+  margin-right: 6px;
+  color: var(--text-dim);
+}
+
+.beads-table-body {
+  position: relative;
+  flex: 1;
+  min-width: var(--beads-table-width);
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  outline: none;
+}
+
+.beads-table-space {
+  position: relative;
+}
+
+.beads-table-space .beads-row {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  cursor: default;
+}
+
+.beads-table-space .beads-row:hover {
+  background-color: var(--surface-primary);
+}
+
+.beads-row.selected,
+.beads-table-space .beads-row.selected:hover {
+  background-color: var(--surface-secondary);
+}
+
+.beads-table-body:focus-visible .beads-row.selected {
+  border-left-color: var(--accent);
+}
+
+.beads-row.closed {
+  color: var(--text-dim);
+}
+
+.beads-row.epic .beads-cell-title {
+  font-weight: 600;
+}
+
+.beads-cell {
+  min-width: 0;
+  padding: 0 7px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.beads-cell-id {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Two lines of title fit the row; a longer one ends in an ellipsis. */
+.beads-cell-title {
+  display: -webkit-box;
+  line-height: 15px;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.beads-cell-project,
+.beads-cell-status {
+  color: var(--text-secondary);
+}
+
+.beads-row.closed .beads-cell-project,
+.beads-row.closed .beads-cell-status {
+  color: var(--text-dim);
+}
+
+.beads-glyph {
+  display: inline-block;
+  width: 1.4em;
+}
+
+.beads-cell-number {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 0 6px;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
-.beads-store-path {
-  margin-top: 2px;
-  color: var(--text-dim);
-  /* The tail of a path is the folder: clip the head and keep the order. */
-  direction: rtl;
-  unicode-bidi: plaintext;
-  overflow: hidden;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* A faint bar against the largest value on the host, beside the number. */
+.beads-cell-bar {
+  flex: none;
+  width: 14px;
+  height: 4px;
+  background-color: color-mix(in srgb, var(--text-dim) 18%, transparent);
 }
 
-.beads-store-block {
-  display: grid;
-  /* Both blocks share one template so the bars and the numbers line up
-     between them; 11ch is the widest state word, "in progress". */
-  grid-template-columns: 11ch minmax(16px, 1fr) 3ch;
-  align-items: center;
-  gap: 3px 8px;
-  margin-top: 12px;
-  list-style: none;
-}
-
-.beads-store-row {
-  display: contents;
-}
-
-.beads-store-row-label {
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.beads-store-block-types .beads-store-row-label {
-  font-size: 11px;
-}
-
-.beads-store-track {
-  height: 3px;
-  background-color: var(--surface-secondary);
-}
-
-.beads-store-fill {
+.beads-cell-bar > span {
   display: block;
   height: 100%;
   background-color: var(--text-dim);
 }
 
-.beads-store-facts {
-  margin-top: 12px;
-  padding-top: 8px;
-  border-top: 1px solid var(--divider);
-}
-
-.beads-store-facts dt {
-  color: var(--text-dim);
-  font-size: 11px;
-  letter-spacing: 0.08em;
+.beads-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
+  cursor: pointer;
 }
 
-.beads-store-facts dd {
-  margin-top: 2px;
+.beads-sort:hover,
+.beads-sort.active {
   color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
+}
+
+.beads-sort-arrow {
+  display: inline-block;
+  width: 1ch;
+}
+
+/* The graph pane: the family's head as its title, the drawing, and a legend
+   naming each project's colour. */
+.beads-graph {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.beads-graph-empty {
+  position: absolute;
+  top: 52px;
+  right: 0;
+  left: 0;
+  margin: 0;
+  color: var(--text-dim);
+  text-align: center;
+  pointer-events: none;
+}
+
+.beads-graph-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.beads-graph-up {
+  flex: none;
+  padding: 2px 4px;
+}
+
+.beads-graph-title {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  padding: 2px 4px;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.beads-graph-title.selected .beads-graph-id {
+  color: var(--accent);
+}
+
+.beads-graph-id {
+  flex: none;
+}
+
+.beads-graph-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.beads-store-warnings {
-  margin-top: 10px;
-  list-style: none;
+.beads-graph-state {
+  flex: none;
+  color: var(--text-secondary);
 }
 
-.beads-store-warning {
-  margin-top: 4px;
-  padding-left: 8px;
-  border-left: 2px solid var(--text-dim);
-  color: var(--text-primary);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
+.beads-graph-canvas {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.beads-graph-canvas svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  touch-action: none;
+}
+
+.beads-graph-canvas svg.drawn {
+  cursor: grab;
+}
+
+.beads-graph-edge {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1.25;
+}
+
+.beads-graph-arrowhead {
+  fill: var(--text-dim);
+}
+
+.beads-node {
+  cursor: pointer;
+}
+
+.beads-node rect {
+  fill: var(--background);
+  stroke-width: 1.5;
+  rx: 3px;
+}
+
+.beads-node text {
+  fill: var(--text-primary);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.beads-node .beads-node-title {
+  fill: var(--text-secondary);
+}
+
+.beads-node.outside rect {
+  fill: var(--surface-primary);
+}
+
+.beads-node.blocked rect {
+  stroke-dasharray: 5 3;
+}
+
+.beads-node.closed {
+  opacity: 0.45;
+}
+
+.beads-node:hover rect {
+  fill: var(--surface-secondary);
+}
+
+.beads-node.selected rect {
+  fill: var(--accent-light);
+  stroke-width: 2.5;
+}
+
+.beads-graph-legend {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--divider);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.beads-graph-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.beads-graph-swatch {
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid;
+}
+
+.beads-graph-omitted {
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
+/* What was read, what failed and when: muted, and red only for a failure. */
+.beads-footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 14px;
+  height: 24px;
+  padding: 0 12px;
+  overflow: hidden;
+  border-top: 1px solid var(--divider);
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.beads-footer > span {
+  flex: none;
+}
+
+.beads-footer > .beads-footer-error {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-error);
+  text-overflow: ellipsis;
 }

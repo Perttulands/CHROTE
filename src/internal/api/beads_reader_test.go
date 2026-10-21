@@ -106,12 +106,7 @@ func TestBeadsStatePromotesColdStoreWithoutWaitingAndProjectionsShareTheRead(t *
 		t.Fatalf("cold state = %#v, want pending with unknown counts", state)
 	}
 	work := readerWork(h, path, context.Background())
-	closed, card := make(chan *httptest.ResponseRecorder, 1), make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		rec := httptest.NewRecorder()
-		h.ClosedWork(rec, httptest.NewRequest(http.MethodGet, "/api/beads/closed?path="+path, nil))
-		closed <- rec
-	}()
+	card := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		rec := httptest.NewRecorder()
 		h.IssueDetail(rec, httptest.NewRequest(http.MethodGet, "/api/beads/issue?path="+path+"&id=test-aaa", nil))
@@ -119,7 +114,7 @@ func TestBeadsStatePromotesColdStoreWithoutWaitingAndProjectionsShareTheRead(t *
 	}()
 	release <- struct{}{}
 	var generation, readAt string
-	for name, result := range map[string]<-chan *httptest.ResponseRecorder{"work": work, "closed": closed, "card": card} {
+	for name, result := range map[string]<-chan *httptest.ResponseRecorder{"work": work, "card": card} {
 		rec := awaitReaderEvent(t, result)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s status=%d: %s", name, rec.Code, rec.Body.String())
