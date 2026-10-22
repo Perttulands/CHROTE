@@ -83,33 +83,22 @@ export function subjectHue(id: string, palette: readonly string[]): string {
   return palette[hash % palette.length] ?? 'var(--accent)'
 }
 
-/** Counts explicit cross-subject references; shared facets are not links. */
-export function subjectConnections(graph: LibraryGraph, subject: string, selected: string | null) {
-  const pages = new Map(graph.pages.map(page => [page.path, page]))
-  const counts = new Map<string, number>()
-  for (const [from, to] of graph.links) {
-    if (selected && from !== selected && to !== selected) continue
-    const a = pages.get(from)
-    const b = pages.get(to)
-    if (!a || !b) continue
-    const own = subjectOf(a)
-    const other = subjectOf(b)
-    if (own === other) continue
-    const id = own === subject ? other : other === subject ? own : null
-    if (id) counts.set(id, (counts.get(id) ?? 0) + 1)
+/** Every page one link or one shared tag away, in the order the graph names them. */
+export function neighboursOf(graph: LibraryGraph, path: string): string[] {
+  const found: string[] = []
+  const seen = new Set<string>([path])
+  const add = (other: string) => {
+    if (seen.has(other)) return
+    seen.add(other)
+    found.push(other)
   }
-  return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-}
-
-/** Local pages and their real links; cross-subject references stay in the connection list. */
-export function subjectGraph(graph: LibraryGraph, subject: string): LibraryGraph {
-  const included = new Set(graph.pages.filter(page => subjectOf(page) === subject).map(page => page.path))
-  return {
-    pages: graph.pages.filter(page => included.has(page.path)).map(page => ({
-      ...page,
-      shelf: kindOf(page),
-    })),
-    links: graph.links.filter(([from, to]) => included.has(from) && included.has(to)),
-    tags: [],
-  }
+  graph.links.forEach(([from, to]) => {
+    if (from === path) add(to)
+    else if (to === path) add(from)
+  })
+  graph.tags.forEach(([from, to]) => {
+    if (from === path) add(to)
+    else if (to === path) add(from)
+  })
+  return found
 }

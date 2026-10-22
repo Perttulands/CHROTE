@@ -364,7 +364,12 @@ drawer over it, and the resident's column beyond both.
   types the rest and presses `Enter` there; the drawer serves every other
   session. `Alt+Enter` or a click focuses the column. When the session is
   absent, the column shows Launch with the resident's folder. The column
-  persists per tab, so leaving and returning finds the agent mid-answer. The
+  persists per tab, so leaving and returning finds the agent mid-answer. In
+  Brain, where the sky and the reader need the width, the column is a drawer:
+  closed it is a 28px spine carrying the harness mark, the label and the
+  state, with an accent dot when the Librarian has news; a click, `Alt+S` or
+  `Alt+Enter` slides it in over the reader as the same terminal, and Close
+  puts it back. The
   header's menu offers Peek, Send, Launch and Restart. Which session and folder
   each resident uses is operator configuration, and each resident's charter
   lives on the host outside this repository.

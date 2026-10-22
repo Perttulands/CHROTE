@@ -1,0 +1,31 @@
+.brain-map { flex: 1; min-height: 0; display: flex; flex-direction: column; font: inherit; }
+.brain-map button { font: inherit; color: var(--text-primary); }
+.brain-map-body { flex: 1; min-height: 0; display: flex; }
+.brain-count { color: var(--text-dim); font-weight: normal; font-size: 11px; }
+
+/* The foot: the time line across the sky, and Fit at its end. */
+.brain-foot { container-type: inline-size; flex: none; display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 14px; border-top: 1px solid var(--divider); }
+.brain-map .brain-fit { flex: none; min-width: 44px; height: 28px; padding: 0 8px; font-size: 12px; border: none; background: transparent; color: var(--text-dim); cursor: pointer; }
+.brain-map .brain-fit:hover, .brain-map .brain-fit:focus-visible { color: var(--text-primary); outline: none; }
+
+/* On a phone: the subjects as a list, whole rows to tap. */
+.brain-list { flex: 1; overflow: auto; padding: 6px 0; }
+.brain-list-subject > button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 40px; padding: 0 14px; border: none; background: transparent; text-align: left; cursor: pointer; }
+.brain-list-subject > button[aria-expanded='true'] { color: var(--accent); }
+.brain-map .brain-list-page { display: block; width: 100%; min-height: 36px; padding: 6px 14px 6px 28px; border: none; background: transparent; color: var(--text-secondary); text-align: left; line-height: 1.4; cursor: pointer; }
+.brain-map .brain-list-page[aria-current='true'] { color: var(--text-primary); box-shadow: inset 2px 0 var(--accent); }
+
+/* The time line: a hairline with the days it reaches written under it. */
+.brain-time { position: relative; flex: 1; min-width: 0; height: 44px; display: flex; align-items: flex-start; padding-top: 2px; }
+.brain-time-dates { position: absolute; left: 0; right: 0; bottom: 2px; height: 14px; pointer-events: none; }
+.brain-time-dates span { position: absolute; transform: translateX(-50%); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+.brain-time-dates span::before { content: ''; position: absolute; left: 50%; top: -12px; width: 1px; height: 6px; background: var(--divider); }
+.brain-time-dates span:first-child { transform: none; }
+.brain-time-dates span:first-child::before { left: 0; }
+.brain-time-dates span.is-here { color: var(--text-primary); }
+.brain-time-at { flex: none; min-width: 9ch; font-size: 11px; color: var(--text-secondary); }
+.brain-map .library-map-play { flex: none; width: 28px; height: 28px; padding: 0; border: 1px solid var(--divider); border-radius: 50%; background: transparent; color: var(--text-secondary); font-size: 9px; cursor: pointer; }
+.brain-map .library-map-play:hover, .brain-map .library-map-play:focus-visible { color: var(--text-primary); border-color: var(--text-secondary); outline: none; }
+.brain-map .library-map-play[aria-pressed='true'] { color: var(--accent); border-color: var(--accent); }
+/* Too narrow for every date: the line keeps its first. */
+@container (max-width: 520px) { .brain-time-dates span + span { display: none; } }

@@ -1,6 +1,7 @@
 /**
- * The page being read beside the map: the dive's trail, the page with its
- * history, and the operator's own edit of it.
+ * The page being read beside the sky: a one-line head, the prose at a reading
+ * measure, and where to go from it. The trail, the history and the edit are
+ * there when asked for.
  *
  * Diving into a page adds it to the trail; a page the dive has already passed
  * through is not visited twice: the trail is cut back to it, which is what a
@@ -13,9 +14,6 @@ import type { RefObject } from 'react'
 import Editor from '../Editor'
 import Markdown from '../Markdown'
 import { fetchPage, libraryProse, libraryWhen, savePage, type LibraryPageContent } from '../../library/libraryApi'
-
-/** How many commits the history strip shows before "… n more". */
-const HISTORY_STRIP = 3
 
 /** What a page is opened for: reading, editing, or its history unfolded. */
 export type OpenIntent = 'read' | 'edit' | 'history'
@@ -99,7 +97,7 @@ export function usePageReader(announce: Announce, onSaved: () => void, onGitErro
 
   return {
     page, trail, historyOpen, draft, summary, discarding,
-    open, close, save, startEdit, discard, setDraft, setSummary, unfoldHistory: () => setHistoryOpen(true),
+    open, close, save, startEdit, discard, setDraft, setSummary, toggleHistory: () => setHistoryOpen(current => !current),
   }
 }
 
@@ -110,125 +108,123 @@ interface PageReaderProps {
   diveRef: RefObject<HTMLElement>
   titleOf: (path: string) => string
   summaryOf: (path: string) => string
-  neighbours: { path: string; title: string }[]
-  backlinks: { path: string; title: string }[]
+  /** Where a page sits, in words: its subject. */
+  whereOf: (path: string) => string
+  /** Every page one hop away, by title. */
+  related: { path: string; title: string }[]
   resolveWikiLink: (target: string) => string | undefined
   onSend: () => void
 }
 
-export default function PageReader({ reader, diveRef, titleOf, summaryOf, neighbours, backlinks, resolveWikiLink, onSend }: PageReaderProps) {
+export default function PageReader({ reader, diveRef, titleOf, summaryOf, whereOf, related, resolveWikiLink, onSend }: PageReaderProps) {
   const { page, trail, draft, historyOpen, discarding, summary } = reader
-
-  /** A list of pages as links that travel, the way both link lists read. */
-  const linkList = (heading: string, links: { path: string; title: string }[]) => (
-    <div className="library-links">
-      <h2>{heading}</h2>
-      <p>
-        {links.map((link, index) => (
-          <Fragment key={link.path}>
-            {index > 0 && <span className="library-linked-sep"> · </span>}
-            <button type="button" className="library-link" onClick={() => reader.open(link.path)}>{link.title}</button>
-          </Fragment>
-        ))}
-      </p>
-    </div>
-  )
+  const where = whereOf(page.path)
 
   return (
     <aside className="library-dive" data-ui="library.dive" ref={diveRef} aria-label={`Reading ${page.title}`}>
-      {/* Where this dive has been. The last step is the page in hand;
-          every earlier one is the way back to it. */}
-      <nav className="library-trail" aria-label="This dive">
-        {trail.map((path, index) => (
-          <Fragment key={path}>
-            {index > 0 && <span className="library-trail-sep">›</span>}
-            <button
-              type="button"
-              className="library-trail-step"
-              aria-current={path === page.path ? 'page' : undefined}
-              onClick={() => reader.open(path)}
-            >
-              {titleOf(path)}
-            </button>
-          </Fragment>
-        ))}
-        <button type="button" className="library-action library-dive-close" onClick={reader.close}>
-          Close<span className="library-chord">Esc</span>
-        </button>
-      </nav>
-      <div className="library-page">
-        <div className="library-page-head">
-          <div className="library-page-title-row">
-            <h1>{page.title}</h1>
-            <div className="library-page-actions">
-              {draft === null ? (
-                <button type="button" className="library-action" onClick={reader.startEdit}>Edit</button>
-              ) : (
-                <>
-                  <button type="button" className="library-action library-action-primary" onClick={() => void reader.save()}>Save</button>
-                  <button type="button" className="library-action" onClick={reader.discard}>
-                    {discarding ? 'Confirm' : 'Discard'}
-                  </button>
-                </>
-              )}
-              <button type="button" className="library-action" onClick={onSend}>
-                Send
-              </button>
-            </div>
-          </div>
-          {summaryOf(page.path) && <p className="library-page-summary">{summaryOf(page.path)}</p>}
-          <p className="library-page-meta">
-            {page.path}
-            {page.updated ? ` · changed ${libraryWhen(page.updated)} by ${page.author}` : ' · never committed'}
-          </p>
-          <div className="library-history-strip">
-            {page.history.length === 0 && <span className="library-history-none">This page is not committed yet.</span>}
-            {(historyOpen ? page.history : page.history.slice(0, HISTORY_STRIP)).map(entry => (
-              <span key={entry.hash} className="library-history">
-                <span className="library-history-hash">{entry.hash.slice(0, 7)}</span>
-                <span className="library-history-when">{libraryWhen(entry.time)}</span>
-                <span className="library-history-message">{entry.message}</span>
-              </span>
-            ))}
-            {!historyOpen && page.history.length > HISTORY_STRIP && (
-              <button type="button" className="library-history-more" onClick={reader.unfoldHistory}>
-                … {page.history.length - HISTORY_STRIP} more
-              </button>
+      <header className="library-dive-head">
+        <div className="library-page-title-row">
+          <h1 title={page.title}>{page.title}</h1>
+          <div className="library-page-actions">
+            {draft === null ? (
+              <button type="button" className="library-action" onClick={reader.startEdit}>Edit</button>
+            ) : (
+              <>
+                <button type="button" className="library-action library-action-primary" onClick={() => void reader.save()}>Save</button>
+                <button type="button" className="library-action" onClick={reader.discard}>
+                  {discarding ? 'Confirm' : 'Discard'}
+                </button>
+              </>
             )}
+            <button type="button" className="library-action" onClick={onSend}>Send</button>
+            <button type="button" className="library-action library-dive-close" onClick={reader.close}>
+              Close<span className="library-chord">Esc</span>
+            </button>
           </div>
-          <div className="library-rule" />
         </div>
-        {draft === null ? (
+        <p className="library-page-meta">
+          {where && <span>{where}</span>}
+          <span>{page.updated ? `changed ${libraryWhen(page.updated)} by ${page.author}` : 'never committed'}</span>
+          {page.history.length > 0 && (
+            <button type="button" className="library-history-more" aria-expanded={historyOpen} onClick={reader.toggleHistory}>
+              History
+            </button>
+          )}
+        </p>
+        {/* Where this dive has been, once it has been anywhere. The last step
+            is the page in hand; every earlier one is the way back to it. */}
+        {trail.length > 1 && (
+          <nav className="library-trail" aria-label="This dive">
+            {trail.map((path, index) => (
+              <Fragment key={path}>
+                {index > 0 && <span className="library-trail-sep">›</span>}
+                <button
+                  type="button"
+                  className="library-trail-step"
+                  aria-current={path === page.path ? 'page' : undefined}
+                  onClick={() => reader.open(path)}
+                >
+                  {titleOf(path)}
+                </button>
+              </Fragment>
+            ))}
+          </nav>
+        )}
+      </header>
+      {historyOpen && (
+        <div className="library-history-strip">
+          {page.history.map(entry => (
+            <span key={entry.hash} className="library-history">
+              <span className="library-history-when">{libraryWhen(entry.time)}</span>
+              <span className="library-history-message">{entry.message}</span>
+              <span className="library-history-hash">{entry.hash.slice(0, 7)}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {draft === null ? (
+        <div className="library-page">
           <div className="library-body">
+            {summaryOf(page.path) && <p className="library-page-summary">{summaryOf(page.path)}</p>}
             <Markdown
               content={libraryProse(page.content, page.title)}
               basePath={`/${page.path}`}
               onOpenPath={path => reader.open(path.replace(/^\//, ''))}
               resolveWikiLink={resolveWikiLink}
             />
-            {neighbours.length > 0 && linkList('Neighbours', neighbours)}
-            {backlinks.length > 0 && linkList('Linked from', backlinks)}
+            {related.length > 0 && (
+              <div className="library-links">
+                <h2>Related</h2>
+                <ul>
+                  {related.map(link => (
+                    <li key={link.path}>
+                      <button type="button" className="library-link" onClick={() => reader.open(link.path)}>{link.title}</button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="library-editor">
-            <input
-              className="library-summary"
-              type="text"
-              value={summary}
-              aria-label="What this edit changes"
-              onChange={event => reader.setSummary(event.target.value)}
-            />
-            <Editor
-              value={draft}
-              onChange={reader.setDraft}
-              onSave={() => void reader.save()}
-              onCancel={reader.discard}
-              label={`Editing ${page.path}`}
-              autoFocus
-            />
-          </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div className="library-editor">
+          <input
+            className="library-summary"
+            type="text"
+            value={summary}
+            aria-label="What this edit changes"
+            onChange={event => reader.setSummary(event.target.value)}
+          />
+          <Editor
+            value={draft}
+            onChange={reader.setDraft}
+            onSave={() => void reader.save()}
+            onCancel={reader.discard}
+            label={`Editing ${page.path}`}
+            autoFocus
+          />
+        </div>
+      )}
     </aside>
   )
 }

@@ -18,12 +18,11 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import LibraryMap from './SubjectMap'
+import BrainSky from './BrainSky'
 import SearchResults from './SearchResults'
 import PageReader, { usePageReader } from './PageReader'
 import { useBrainSearch } from './useBrainSearch'
-import { subjectOf, withHomes } from './brainSubjects'
-import { neighboursOf } from './mapLayout'
+import { neighboursOf, subjectName, subjectOf, withHomes } from './brainSubjects'
 import { NOW, SCRUB_STEPS, backFrom, existedAt, momentOf, positionOf, snapTo, stopsOn } from './mapMoment'
 import { shelfHues } from './mapShelves'
 import { useTheme } from '../../theme/ThemeContext'
@@ -68,6 +67,14 @@ const LEAST_SPAN = 30 * 86_400_000
 /** How long playing the brain's whole history takes. */
 const PLAY_MS = 9000
 
+/** A day as the time line names it: 22 Oct. */
+function dayOf(at: number): string {
+  const day = new Date(at)
+  return `${day.getDate()} ${MONTHS[day.getMonth()]}`
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
 function count(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
@@ -96,8 +103,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   // and the one row opened on what it is. Both are the rail's, not a list's,
   // so a shelf and an arrival behave the same way.
   const [hoverPath, setHoverPath] = useState<string | null>(null)
-  // The shelf the pointer is on in the rail, which the map lights alone.
-  const [hoverShelf, setHoverShelf] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
   // Where the scrubber stands, as a place along it rather than as a time, so
   // the control and the reading cannot drift apart. The right end is now.
@@ -300,6 +305,11 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     [graph],
   )
   const summaryOf = useCallback((path: string) => summaries.get(path) ?? '', [summaries])
+  const subjects = useMemo(
+    () => new Map(graph?.pages.map(entry => [entry.path, subjectName(subjectOf(entry))]) ?? []),
+    [graph],
+  )
+  const whereOf = useCallback((path: string) => subjects.get(path) ?? '', [subjects])
 
   /** How long a page is, as the map measures it, for a row opened on it. */
   const words = useMemo(
@@ -313,16 +323,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     if (!graph || !page) return []
     return neighboursOf(graph, page.path)
       .map(path => ({ path, title: titleOf(path) }))
-      .sort((a, b) => a.title.localeCompare(b.title))
-  }, [graph, page, titleOf])
-
-  // The pages that link to the open one, by title, from the same graph the
-  // map draws; a backlink is a written link, not a shared tag.
-  const backlinks = useMemo(() => {
-    if (!graph || !page) return []
-    return graph.links
-      .filter(([, to]) => to === page.path)
-      .map(([from]) => ({ path: from, title: titleOf(from) }))
       .sort((a, b) => a.title.localeCompare(b.title))
   }, [graph, page, titleOf])
 
@@ -347,6 +347,12 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   const span = Math.max(LEAST_SPAN, births.length > 0 ? now - births[0] : 0)
   const moment = scrub >= SCRUB_STEPS ? NOW : now - backFrom(scrub, span)
   const stops = useMemo(() => stopsOn(span), [span])
+  // The time line is read in dates: where the corpus began, and the day each
+  // stop falls on.
+  const dates = useMemo(() => [
+    { position: 0, label: dayOf(now - span) },
+    ...stops.filter(stop => stop.back > 0).map(stop => ({ position: stop.position, label: dayOf(now - stop.back) })),
+  ], [now, span, stops])
   const momentLegend = moment === NOW
     ? 'The corpus as it stands'
     : `The corpus ${libraryWhen(new Date(moment).toISOString(), now)}`
@@ -389,30 +395,30 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   const mapOrWhy = () => {
     if (shown) {
       return (
-        <LibraryMap
+        <BrainSky
           graph={shown}
           fullGraph={graph ?? shown}
-          scrub={scrub}
-          hiddenShelves={settings.libraryHiddenShelves}
-          onRestoreFilters={(at, hiddenShelves) => { setScrub(at); updateSettings({ libraryHiddenShelves: hiddenShelves }) }}
           timeControl={<>
             <button type="button" className="library-map-play" aria-pressed={playing}
               aria-label={playing ? 'Stop playing the brain\'s growth' : 'Play the brain\'s growth'}
               title={playing ? 'Stop' : 'Watch the brain grow'}
               onClick={() => setPlaying(current => !current)}>{playing ? '■' : '▶'}</button>
-            <span className="brain-count" title={momentLegend}>Time</span>
-            <input type="range" className="library-map-scrubber" data-ui="library.map.scrubber"
-              min={0} max={SCRUB_STEPS} step={1} value={scrub} list="library-map-stops"
-              aria-label="The moment the map is read at" aria-valuetext={momentLegend}
-              onChange={event => { setPlaying(false); setScrub(snapTo(Number(event.target.value), span)) }} />
-            <datalist id="library-map-stops">{stops.map(stop => <option key={stop.id} value={stop.position} label={stop.label} />)}</datalist>
-            <span className="brain-count" title={momentLegend}>{scrub === SCRUB_STEPS ? 'Now' : libraryWhen(new Date(moment).toISOString(), now)}</span>
+            <div className="brain-time" title={momentLegend}>
+              <input type="range" className="library-map-scrubber" data-ui="library.map.scrubber"
+                min={0} max={SCRUB_STEPS} step={1} value={scrub} list="library-map-stops"
+                aria-label="The moment the map is read at" aria-valuetext={momentLegend}
+                onChange={event => { setPlaying(false); setScrub(snapTo(Number(event.target.value), span)) }} />
+              <datalist id="library-map-stops">{stops.map(stop => <option key={stop.id} value={stop.position} label={stop.label} />)}</datalist>
+              <div className="brain-time-dates" aria-hidden="true">
+                {dates.map(date => <span key={date.position} style={{ left: `${date.position / SCRUB_STEPS * 100}%` }}
+                  className={scrub === date.position ? 'is-here' : undefined}>{date.label}</span>)}
+              </div>
+            </div>
+            <span className="brain-time-at">{scrub === SCRUB_STEPS ? 'Now' : libraryWhen(new Date(moment).toISOString(), now)}</span>
           </>}
           openPath={page?.path ?? null}
           matches={matches}
           hoverPath={hoverPath}
-          soloShelf={hoverShelf}
-          hues={hues}
           moment={moment}
           onOpen={openPage}
         />
@@ -474,29 +480,14 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
           width={settings.railWidth.library}
           onWidthCommit={commitRailWidth}
         >
-          <input
-            className="library-search"
-            type="search"
-            value={search.query}
-            placeholder="Search the brain…"
-            aria-label="Search the brain"
-            onChange={event => { setSearchOnMap(false); search.ask(event.target.value) }}
-            onKeyDown={event => { if (search.key(event.key)) event.preventDefault() }}
-          />
 
           <RailSection className="library-section library-shelves" title="Collections">
             <RailScroll className="library-scroll">
               {shelves.shelves.map(entry => (
                 <div key={entry.path} className="library-shelf-group">
                   <MenuTarget label={`Actions for shelf ${entry.name}`} groups={shelfMenu(entry.name)}>
-                    {/* The row is the shelf and what to do with it on the map.
-                        Pointing anywhere in it lights that shelf alone, so the
-                        rail is read against the map rather than instead of it. */}
-                    <div
-                      className={`library-shelf-row${hidden.has(entry.name) ? ' off' : ''}`}
-                      onMouseEnter={() => setHoverShelf(entry.name)}
-                      onMouseLeave={() => setHoverShelf(current => (current === entry.name ? null : current))}
-                    >
+                    {/* The row is the shelf and what to do with it on the map. */}
+                    <div className={`library-shelf-row${hidden.has(entry.name) ? ' off' : ''}`}>
                       <button
                         type="button"
                         className={`library-shelf ${shelf === entry.name ? 'active' : ''}`}
@@ -540,25 +531,32 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
         </Rail>
 
         <div className="library-room" data-ui="library.room">
+          {/* Search along the sky's top edge; what it finds is listed in the
+              sky's place, or lit on the sky. */}
+          <div className="library-map-bar">
+            <input
+              className="library-search"
+              type="search"
+              value={search.query}
+              placeholder="Search the brain…"
+              aria-label="Search the brain"
+              onChange={event => { setSearchOnMap(false); search.ask(event.target.value) }}
+              onKeyDown={event => { if (search.key(event.key)) event.preventDefault() }}
+            />
+            {matches && results ? (
+              <span className="library-map-search">
+                {count(results.length, 'result')} for “{search.query.trim()}”
+                <button type="button" className="library-action" onClick={() => setSearchOnMap(false)}>List</button>
+              </span>
+            ) : shown && (
+              <span className="library-map-count">
+                {count(mapPages, 'page')} · {count(mapShelves, 'subject')} · {count(mapLinks, 'link')}
+              </span>
+            )}
+          </div>
           {/* The map stays mounted under a search, so its mode, filters and
               camera are where they were when the list is put away. */}
           <div className="library-map-frame" style={showMap ? undefined : { display: 'none' }}>
-            <div className="library-map-bar">
-              <span className="library-map-title">Brain</span>
-              {shown && (
-                <span className="library-map-count">
-                  {count(mapPages, 'page')} · {count(mapShelves, 'subject')} · {count(mapLinks, 'link')}
-                </span>
-              )}
-              {matches && results && (
-                <span className="library-map-search">
-                  {count(results.length, 'result')} for “{search.query.trim()}”
-                  <button type="button" className="library-action" onClick={() => setSearchOnMap(false)}>List</button>
-                </span>
-              )}
-              <button type="button" className="library-action" onClick={loadGraph}>Refresh</button>
-              <span className="library-map-legend">{momentLegend}</span>
-            </div>
             {graphError && shown && <p className="library-git-error" role="alert">{graphError}</p>}
             {mapOrWhy()}
           </div>
@@ -583,15 +581,15 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
             diveRef={diveRef}
             titleOf={titleOf}
             summaryOf={summaryOf}
-            neighbours={neighbours}
-            backlinks={backlinks}
+            whereOf={whereOf}
+            related={neighbours}
             resolveWikiLink={resolveWikiLink}
             onSend={send}
           />
         )}
 
         <TableSlot active={active} />
-        <ResidentColumn active={active} minContentWidth={720} tab="library" reference={libraryReference(page?.path ?? null)} />
+        <ResidentColumn active={active} drawer tab="library" reference={libraryReference(page?.path ?? null)} />
       </div>
     </div>
   )

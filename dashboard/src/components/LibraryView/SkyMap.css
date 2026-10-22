@@ -32,8 +32,6 @@
 .brain-sky .brain-signpost i { display: inline-block; width: 0; height: 0; border-left: 6px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transform: rotate(var(--angle)); }
 .brain-sky .brain-signpost small { color: var(--text-dim); font-size: 10px; }
 .brain-sky .brain-signpost:hover, .brain-sky .brain-signpost:focus-visible { background: color-mix(in srgb, var(--subject-color) 18%, var(--background)); outline: none; }
-.library-map-play { width: 22px; height: 20px; padding: 0; border: 1px solid var(--divider); border-radius: 3px; background: transparent; color: var(--text-secondary); font-size: 9px; cursor: pointer; }
-.library-map-play[aria-pressed='true'] { color: var(--accent); border-color: var(--accent); }
 .library-map-search { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-size: 11px; }
 @keyframes brain-sky-appear { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {

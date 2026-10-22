@@ -96,9 +96,7 @@ test('returns to Beads, Brain and Agents exactly as they were left', async ({ pa
   await expect(page.getByRole('complementary', { name: 'The Clerk' }).locator('.xterm-helper-textarea')).toBeFocused()
 
   await page.getByRole('button', { name: 'Brain', exact: true }).click()
-  await page.getByRole('button', { name: 'preferences, 2 pages' }).click()
-  await page.locator('.library-map').getByRole('button', { name: 'Workflow Preferences', exact: true }).click()
-  await page.getByRole('button', { name: 'Open page', exact: true }).click()
+  await page.locator('.brain-continuous').getByRole('button', { name: 'Workflow Preferences', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Workflow Preferences' })).toBeVisible()
   await page.keyboard.press('Alt+Enter')
   await expect(page.getByRole('complementary', { name: 'The Librarian' }).locator('.xterm-helper-textarea')).toBeFocused()
@@ -107,13 +105,18 @@ test('returns to Beads, Brain and Agents exactly as they were left', async ({ pa
   await expect.poll(() => sends[sends.length - 1]).toEqual({ session: 'hq-deacon', text: 'library preferences/workflow.md\n' })
   await expect(page.getByRole('complementary', { name: 'The Librarian' }).locator('.xterm-helper-textarea')).toBeFocused()
 
-  const mapNodes = page.locator('.library-map-nodes')
-  await page.getByRole('img', { name: 'The map' }).hover({ position: { x: 20, y: 20 } })
-  const transformBeforeZoom = await mapNodes.evaluate(element => (element as HTMLElement).style.transform)
+  const scale = page.locator('.brain-map-scale')
+  await page.locator('.brain-continuous').hover({ position: { x: 20, y: 20 } })
+  const scaleBeforeZoom = await scale.textContent()
   await page.mouse.wheel(0, -400)
-  await expect.poll(() => mapNodes.evaluate(element => (element as HTMLElement).style.transform)).not.toBe(transformBeforeZoom)
-  await expect(page.locator('[data-ui="library.map.reset"]')).toBeVisible()
-  const transformBeforeLeaving = await mapNodes.evaluate(element => (element as HTMLElement).style.transform)
+  await expect(scale).not.toHaveText(scaleBeforeZoom ?? '')
+  // The sky glides to a zoom; the scale worth keeping is the one it rests at.
+  await expect.poll(async () => {
+    const first = await scale.textContent()
+    await page.waitForTimeout(150)
+    return (await scale.textContent()) === first
+  }).toBe(true)
+  const scaleBeforeLeaving = await scale.textContent()
 
   await page.getByRole('button', { name: 'Agents', exact: true }).click()
   await page.locator('.agents-view').getByTitle('/code/test-project').click()
@@ -159,9 +162,7 @@ test('returns to Beads, Brain and Agents exactly as they were left', async ({ pa
   await expect(page.getByRole('heading', { name: 'Workflow Preferences' })).toBeVisible()
 
   await (await refreshedGraph).finished()
-  await expect(page.locator('.brain-breadcrumb')).toHaveText('preferences / preferences')
-  await expect(mapNodes).toHaveCSS('transform', /matrix/)
-  await expect.poll(() => mapNodes.evaluate(element => (element as HTMLElement).style.transform)).toBe(transformBeforeLeaving)
+  await expect(scale).toHaveText(scaleBeforeLeaving ?? '')
 
   await page.getByRole('button', { name: 'Agents', exact: true }).click()
   await expect(page.locator('.agents-folder')).toHaveText('/code/test-project')

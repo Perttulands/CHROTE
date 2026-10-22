@@ -85,9 +85,9 @@ paths rather than a maintained CHROTE taxonomy; a record under
 arrival date follows git renames, so reorganising the tree does not make pages
 new. The map derives its layout from the complete graph before applying
 visibility filters, starting from its previous placement (device-local
-`chrote.brain.sky.placement`) so systems keep their places as the corpus grows. Camera and
-filter state belong to the Brain view; named view snapshots use the versioned,
-device-local `chrote.brain.views.v1` storage key and contain no corpus content.
+`chrote.brain.sky.placement`) so systems keep their places as the corpus grows. The
+camera belongs to the Brain view for as long as the tab is open; hidden
+collections are a device-local setting.
 
 This separation is static code organization, not a marketplace or dynamic plugin loader. Components can add routes, views, and configuration. Their failure must remain contained so the terminal core still loads and works.
 

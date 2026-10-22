@@ -54,38 +54,38 @@ The core product is terminal workspaces, sessions, files, server status, and set
 | Settings | Configure presentation and explicit terminal controls |
 | Beads | Inspect and update configured project work stores |
 | Scheduled | Send prompts to named tmux sessions on a schedule |
-| Brain | Understand the context corpus by subject, follow references, read and correct pages |
+| Brain | See the context corpus as a sky of subjects, follow references, read and correct pages |
 | Agents | Read the context a harness would get for any folder on the host |
 
-Beads, Brain and Agents each host a resident agent, the Clerk, the Librarian and the tender, as a tmux session in a column at the right of the view; the one selected object, the table, is carried from view to view.
+Beads, Brain and Agents each host a resident agent, the Clerk, the Librarian and the tender, as a tmux session at the right of the view (in Brain, a drawer behind a spine); the one selected object, the table, is carried from view to view.
 
-Brain is search first. The search asks the brain service's ranked search as
-the operator types and lists each page by title, kind, summary, matched words
-and path, topics first; a scope control widens it to Self or every collection.
-Opening a result reads the page wide beside the list, which stays; Up and Down
-move through the results and Escape closes the page, not the list. Without a
-query, Brain offers Subjects and Map modes over the same corpus. Subjects expands
-one group at a time. Map is a night sky for getting a feel of what the brain
-knows and whether it looks in order: each subject is a star system with its
-topic at the centre, linked pages in orbit, its evidence as nebula and unlinked
-pages drifting past its edge; subjects that cite each other form
-constellations. Records are drawn with the subject they were filed for. Systems
-keep their places as the corpus grows and when filters change. Pointing at
-empty sky names the pages nearby; selecting a page reads it beside the sky,
-traces its links and signposts those that leave the screen. A search can be
-shown on the map, lighting what it found. Played, the time scrubber replays the
-brain's growth, new pages flaring as they arrive. Motion is reduced when the
-system asks for it. A subject selector gives direct access to regions whose
-labels are outside the current view. Collection,
-facet and kind filters narrow the map; cross-subject navigation follows explicit
-links. Generated indexes and agent instructions are excluded. Refresh and tab
-entry re-read the tree, including moved pages. The existing reader, editor,
-history and Librarian remain available. Switching modes preserves filters and
-selection, with a separate camera for each mode. Four device-local view slots
-store mode, camera, filters, selection and time setting against current content.
-Click an empty slot to save or an occupied slot to recall; its context menu offers
-Rename, Replace and Clear. The time slider filters page arrival dates; saved
-views do not store historical copies of page content.
+Brain is one view: the brain as a night sky, with search along its top edge.
+The sky is for getting a feel of what the brain knows and whether it looks in
+order: each subject is a star system with its topic at the centre, linked pages
+in orbit, its evidence as nebula and unlinked pages drifting past its edge;
+subjects that cite each other form constellations. Records are drawn with the
+subject they were filed for. Systems keep their places as the corpus grows and
+when a collection is hidden. A star opens its page in a reader beside the sky,
+and the sky traces its links and signposts those that leave the screen; a
+system's name takes the camera to it and Fit takes in the whole. Hiding a
+collection in the rail takes it off the sky. Played, the time line along the
+foot replays the brain's growth, new pages flaring as they arrive; dragged, it
+shows the brain as it stood on a day. Motion is reduced when the system asks
+for it. On a phone the same subjects and pages are a list. Generated indexes
+and agent instructions are excluded, and tab entry re-reads the tree, including
+moved pages.
+
+The search asks the brain service's ranked search as the operator types and
+lists each page by title, kind, summary, matched words and path, topics first,
+in the sky's place; a scope control widens it to Self or every collection, and
+the list can be put away to see what it found lit on the sky. Up and Down move
+through the results and Escape closes the page, not the list.
+
+The reader gives prose room: a one-line head with the page's subject, when and
+by whom it changed, and History folded until asked for; the way back appears
+once a dive has travelled; the page ends with what it is related to, linking
+or linked from. Edit, Send and Close stay on the head. The Librarian sits
+behind a spine at the tab's right edge and opens as a drawer over the reader.
 
 Components remain separated in the codebase and fail independently. A missing Beads workspace or unconfigured context corpus must not prevent terminal work.
 

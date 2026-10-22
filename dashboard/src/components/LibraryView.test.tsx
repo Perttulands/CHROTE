@@ -89,6 +89,12 @@ vi.mock('../library/libraryApi', async () => {
 const NOW = new Date(Date.now() - 3_600_000).toISOString()
 
 beforeEach(() => {
+  // The sky draws itself at the size it is given; jsdom gives none.
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private readonly report: ResizeObserverCallback) {}
+    observe() { this.report([{ contentRect: { width: 1200, height: 800 } } as ResizeObserverEntry], this as unknown as ResizeObserver) }
+    disconnect() {}
+  })
   resetChordsForTest()
   resetResidentForTest()
   resetSurfacesForTest()
@@ -165,7 +171,7 @@ beforeEach(() => {
  * A page's name appears in more than one place on purpose — in the rail, on
  * the map, in a listing — so every query says which region it means.
  */
-function region(name: 'library-left' | 'library-shelves' | 'library-arrivals' | 'library-room' | 'library-map' | 'library-dive' | 'library-search-results') {
+function region(name: 'library-left' | 'library-shelves' | 'library-arrivals' | 'library-room' | 'brain-map' | 'library-dive' | 'library-search-results') {
   const found = document.querySelector<HTMLElement>(`.${name}`)
   if (!found) throw new Error(`the ${name} region is not on screen`)
   return within(found)
@@ -174,23 +180,23 @@ function region(name: 'library-left' | 'library-shelves' | 'library-arrivals' | 
 /** The rows of the menu that is open, in the order they are offered. */
 const menuItems = () => screen.getAllByRole('menuitem').map(item => item.querySelector('.menu-row-label')?.textContent)
 
-/** The Neighbours list of the dive, whose links also name pages elsewhere. */
-function neighbours() {
+/** The Related list of the reader, whose links also name pages elsewhere. */
+function related() {
   const found = document.querySelector<HTMLElement>('.library-links')
-  if (!found) throw new Error('the dive lists no neighbours')
+  if (!found) throw new Error('the reader lists nothing related')
   return within(found)
 }
 
-/** A page on the map, by the name it carries. */
-function mapNode(title: string) {
-  return region('library-map').getByRole('button', { name: title })
+/** A star on the sky, by the name it carries. */
+function star(title: string) {
+  return region('brain-map').getByRole('button', { name: title })
 }
 
-/** The Brain, landed on its subject overview. */
+/** The Brain, landed on its sky. */
 async function openLibrary() {
   render(<LibraryView />)
   await screen.findByRole('region', { name: 'Brain map' })
-  await screen.findByRole('button', { name: 'preferences, 2 pages' })
+  await screen.findByText(/^\d+ pages · \d+ subjects · \d+ links$/)
 }
 
 /** Draw a shelf open in the rail. */
@@ -203,11 +209,9 @@ function railRow(where: 'library-shelves' | 'library-arrivals', title: string) {
   return region(where).getByRole('button', { name: new RegExp(`^${title}`) })
 }
 
-/** Expand a subject, select its page, then open the reader. */
+/** Open the workflow page from its star. */
 async function openWorkflowPage() {
-  fireEvent.click(screen.getByRole('button', { name: 'preferences, 2 pages' }))
-  fireEvent.click(mapNode('Workflow Preferences'))
-  fireEvent.click(screen.getByRole('button', { name: 'Open page' }))
+  fireEvent.click(await region('brain-map').findByRole('button', { name: 'Workflow Preferences' }))
   await screen.findByText('Prefer small, verifiable changes.')
 }
 
@@ -232,61 +236,51 @@ describe('LibraryView', () => {
     expect(await screen.findByText('The corpus is not readable')).toBeInTheDocument()
   })
 
-  it('lands on the subject overview with page and link counts', async () => {
+  it('lands on the sky with its counts and every page a star', async () => {
     await openLibrary()
     expect(screen.getByText('3 pages · 2 subjects · 2 links')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'knowledge, 1 page' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'preferences, 2 pages' })).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.getByRole('button', { name: 'Overview' })).toBeDisabled()
+    for (const title of ['Test isolation', 'Tool Preferences', 'Workflow Preferences']) {
+      expect(star(title)).toBeInTheDocument()
+    }
+    expect(region('brain-map').getByRole('button', { name: 'Explore preferences, 2 pages' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Overview' })).toBeNull()
   })
 
-  it('expands one subject, selects a page and reveals its cross-subject references', async () => {
-    await openLibrary()
-    fireEvent.click(screen.getByRole('button', { name: 'preferences, 2 pages' }))
-    expect(mapNode('Workflow Preferences')).toBeInTheDocument()
-    expect(region('library-map').queryByRole('button', { name: 'Test isolation' })).toBeNull()
-    fireEvent.click(mapNode('Workflow Preferences'))
-    const references = within(document.querySelector<HTMLElement>('.brain-external')!)
-    const reference = references.getByRole('button', { name: /^Test isolation/ })
-    expect(reference).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Open page' })).toBeInTheDocument()
-    expect(screen.queryByText('Prefer small, verifiable changes.')).toBeNull()
-    fireEvent.click(reference)
-    expect(mapNode('Test isolation')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'knowledge, 1 page' })).toHaveAttribute('aria-expanded', 'true')
-    fireEvent.click(screen.getByRole('button', { name: 'Overview' }))
-    expect(screen.getByRole('button', { name: 'preferences, 2 pages' })).toHaveAttribute('aria-expanded', 'false')
-  })
-
-  it('opens the selected page in the reader, keeping its subject beside it', async () => {
+  it('opens a page from its star and marks the star as the one in hand', async () => {
     await openLibrary()
     await openWorkflowPage()
-    expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
-    expect(mapNode('Workflow Preferences')).toHaveClass('hot')
-    expect(neighbours().getByRole('button', { name: 'Test isolation' })).toBeInTheDocument()
-    expect(neighbours().getByRole('button', { name: 'Tool Preferences' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'knowledge, 1 page' }))
-    expect(screen.getByText('Prefer small, verifiable changes.')).toBeInTheDocument()
-    expect(screen.getByText('Select a page to see its references.')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Open page' })).toBeNull()
+    expect(star('Workflow Preferences')).toHaveAttribute('aria-current', 'true')
+    expect(star('Test isolation')).not.toHaveAttribute('aria-current')
   })
 
-  it('travels to a neighbour, grows the trail, and goes back along it', async () => {
+  it('reads a page under a one-line head: where it lives, when it changed, and what it is related to', async () => {
+    await openLibrary()
+    await openWorkflowPage()
+    expect(document.querySelector('.library-page-meta')).toHaveTextContent('preferences')
+    expect(document.querySelector('.library-page-meta')).toHaveTextContent('changed 1 hour ago by The Operator')
+    expect(document.querySelector('.library-trail')).toBeNull()
+    expect(document.querySelector('.library-history-strip')).toBeNull()
+    expect(related().getByRole('button', { name: 'Test isolation' })).toBeInTheDocument()
+    expect(related().getByRole('button', { name: 'Tool Preferences' })).toBeInTheDocument()
+  })
+
+  it('travels to a related page, shows the trail, and goes back along it', async () => {
     await openLibrary()
     await openWorkflowPage()
 
     const trail = () => within(document.querySelector<HTMLElement>('.library-trail')!)
     const steps = () => Array.from(document.querySelectorAll('.library-trail-step')).map(step => step.textContent)
-    expect(steps()).toEqual(['Workflow Preferences'])
+    // One page is not yet a dive: the trail appears once there is a way back.
+    expect(steps()).toEqual([])
 
-    fireEvent.click(neighbours().getByRole('button', { name: 'Tool Preferences' }))
+    fireEvent.click(related().getByRole('button', { name: 'Tool Preferences' }))
     expect(await screen.findByText('Tools the operator reaches for.')).toBeInTheDocument()
     expect(steps()).toEqual(['Workflow Preferences', 'Tool Preferences'])
 
     // A step back is a step back: the trail is cut to it, not extended.
     fireEvent.click(trail().getByRole('button', { name: 'Workflow Preferences' }))
     expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
-    expect(steps()).toEqual(['Workflow Preferences'])
+    expect(steps()).toEqual([])
   })
 
   it('follows prose wikilinks through the dive trail and leaves unknown targets as text', async () => {
@@ -315,12 +309,11 @@ describe('LibraryView', () => {
 
     const trail = () => within(screen.getByRole('navigation', { name: 'This dive' }))
     expect(trail().getAllByRole('button').map(button => button.textContent))
-      .toEqual(['Workflow Preferences', 'Chiron', 'CloseEsc'])
+      .toEqual(['Workflow Preferences', 'Chiron'])
     fireEvent.click(trail().getByRole('button', { name: 'Workflow Preferences' }))
     const self = await region('library-dive').findByRole('link', { name: 'This page' })
     fireEvent.click(self)
-    await waitFor(() => expect(trail().queryByRole('button', { name: 'Chiron' })).toBeNull())
-    expect(trail().getAllByRole('button', { name: 'Workflow Preferences' })).toHaveLength(1)
+    await waitFor(() => expect(screen.queryByRole('navigation', { name: 'This dive' })).toBeNull())
   })
 
   it('closes the dive with Escape and leaves the map standing', async () => {
@@ -330,29 +323,10 @@ describe('LibraryView', () => {
     pressEscape()
 
     await waitFor(() => expect(screen.queryByText('Prefer small, verifiable changes.')).not.toBeInTheDocument())
-    expect(document.querySelector('.library-trail')).toBeNull()
-    expect(mapNode('Workflow Preferences')).toBeInTheDocument()
+    expect(star('Workflow Preferences')).not.toHaveAttribute('aria-current')
   })
 
 
-  // A shelf is worked inside the rail: it draws open where it stands, the map
-  // is still the room behind it, and the dive is a step the row offers.
-  it('filters by facets and hides source pages with their kind', async () => {
-    mockState.graph!.pages[0] = { ...mockState.graph!.pages[0], kind: 'topic', facets: ['software'] }
-    mockState.graph!.pages[1] = { ...mockState.graph!.pages[1], kind: 'source', facets: ['tooling'], summary: 'Preserved tool evidence.' }
-    mockState.graph!.pages[2] = { ...mockState.graph!.pages[2], kind: 'research', facets: ['software'] }
-    await openLibrary()
-    fireEvent.change(screen.getByRole('combobox', { name: 'Map facet' }), { target: { value: 'software' } })
-    expect(screen.getByRole('button', { name: 'preferences, 1 page' })).toHaveTextContent('1 research')
-    fireEvent.change(screen.getByRole('combobox', { name: 'Map facet' }), { target: { value: '' } })
-    fireEvent.click(screen.getByRole('button', { name: 'preferences, 2 pages' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: /^source/ }))
-    expect(region('library-map').queryByRole('button', { name: 'Tool Preferences' })).toBeNull()
-    fireEvent.click(screen.getByRole('checkbox', { name: /^source/ }))
-    fireEvent.click(mapNode('Tool Preferences'))
-    expect(screen.getByText('Preserved tool evidence.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Open page' })).toBeInTheDocument()
-  })
 
   it('opens a shelf in the rail, opens one of its pages, and dives from it', async () => {
     await openLibrary()
@@ -368,13 +342,10 @@ describe('LibraryView', () => {
     fireEvent.click(region('library-shelves').getByRole('button', { name: 'Open' }))
 
     expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
-    expect(screen.getByText('preferences/workflow.md · changed 1 hour ago by The Operator')).toBeInTheDocument()
-    const history = document.querySelector<HTMLElement>('.library-history-strip')
-    expect(history).toHaveTextContent('aaaaaaa')
-    expect(history).toHaveTextContent('Record a workflow preference')
+    expect(star('Workflow Preferences')).toHaveAttribute('aria-current', 'true')
   })
 
-  it('shows three commits and expands to the rest', async () => {
+  it('folds the history away until it is asked for, then shows every commit', async () => {
     const workflow = mockState.page.get('preferences/workflow.md')!
     mockState.page.set('preferences/workflow.md', {
       ...workflow,
@@ -385,23 +356,25 @@ describe('LibraryView', () => {
     await openLibrary()
     await openWorkflowPage()
 
-    expect(screen.getByText('3333333')).toBeInTheDocument()
-    expect(screen.queryByText('4444444')).not.toBeInTheDocument()
+    expect(screen.queryByText('1111111')).not.toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: 'History' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
 
-    fireEvent.click(screen.getByRole('button', { name: '… 2 more' }))
-
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('1111111')).toBeInTheDocument()
     expect(screen.getByText('5555555')).toBeInTheDocument()
   })
 
-  it('lists what this page touches and what touches it, and follows one back', async () => {
+  it('counts what links to a page as related, and follows one back', async () => {
     await openLibrary()
-    await openWorkflowPage()
+    fireEvent.click(star('Tool Preferences'))
+    await screen.findByText('Tools the operator reaches for.')
 
-    const lists = Array.from(document.querySelectorAll<HTMLElement>('.library-links'))
-    expect(lists.map(list => list.querySelector('h2')?.textContent)).toEqual(['Neighbours', 'Linked from'])
-    fireEvent.click(within(lists[1]).getByRole('button', { name: 'Test isolation' }))
+    // Workflow links to Tools; nothing in Tools links back, yet it is related.
+    fireEvent.click(related().getByRole('button', { name: 'Workflow Preferences' }))
 
-    expect(await screen.findByText('A serious lab gets a durable path.')).toBeInTheDocument()
+    expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
   })
 
   it('carries the open page as the reference to the Librarian and the drawer', async () => {
@@ -434,26 +407,15 @@ describe('LibraryView', () => {
     expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
   })
 
-  // Rail hover points back to the subject that contains the page.
-  it('highlights the subject of the page under the pointer in the rail', async () => {
+  it('lights the star of the page under the pointer in the rail', async () => {
     await openLibrary()
     openShelf('preferences')
     fireEvent.mouseEnter(await region('library-shelves').findByRole('button', { name: /^Workflow Preferences/ }))
-    // The tile border is the visible response to the shared hover state.
-    expect(screen.getByRole('button', { name: 'preferences, 2 pages' })).toHaveClass('highlighted')
+    expect(star('Workflow Preferences')).toHaveClass('is-hot')
     fireEvent.mouseLeave(railRow('library-shelves', 'Workflow Preferences'))
-    expect(screen.getByRole('button', { name: 'preferences, 2 pages' })).not.toHaveClass('highlighted')
+    expect(star('Workflow Preferences')).not.toHaveClass('is-hot')
   })
 
-  // Collections narrow discovery without changing the underlying corpus.
-  it('filters subject discovery by collection', async () => {
-    await openLibrary()
-    fireEvent.change(screen.getByRole('combobox', { name: 'Map collection' }), { target: { value: 'preferences' } })
-    expect(screen.getByRole('button', { name: 'preferences, 2 pages' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'knowledge, 1 page' })).toBeNull()
-    fireEvent.change(screen.getByRole('combobox', { name: 'Map collection' }), { target: { value: '' } })
-    expect(screen.getByRole('button', { name: 'knowledge, 1 page' })).toBeInTheDocument()
-  })
 
   // The brain ranks; the tab lists its answer as the operator types and keeps
   // the list while a page is read beside it.
