@@ -35,8 +35,8 @@ with the terminal.
    kit, never from the browser's defaults.
 6. **Plain words, not storage.** Surfaces show titles, subjects and names.
    Paths, kinds and ids appear only where the id is the point.
-7. **Reading gets a reading face.** Prose is set for reading (see Typeface);
-   monospace stays for terminals, code, ids and figures that align.
+7. **Reading gets room.** Prose is set a notch larger than the chrome, at a
+   comfortable measure, with space between its paragraphs (see Typeface).
 8. **Host-state first.** Make clear what is durable host state and what is
    browser preference.
 9. **Failure visibility.** Empty, degraded, blocked, and errored states are
@@ -152,13 +152,14 @@ and diamonds sources. The accent marks the selected or pointed-at page.
 
 ## Typeface
 
-Two faces, each for its work, and both served as `woff2` from CHROTE's own
-origin. Prose (a brain page, a Bead's description, a Markdown file) is set in
-a proportional reading face at a measure of about 70 characters. Everything
-else, chrome and terminal alike, is JetBrains Mono, with CHROTE Term
+One family for chrome and terminal alike, because the face is part of
+CHROTE's character: JetBrains Mono, with CHROTE Term
 Symbols behind it — a subset of Iosevka Term, renamed because Iosevka is a
 reserved font name — covering the box drawing, braille and frame glyphs agent
-TUIs paint with. No request for a font leaves the host. There is no font picker; font size stays a
+TUIs paint with. Both are `woff2` files served from CHROTE's own origin, so no request for a
+font leaves the host. Prose (a brain page, a Bead's description, a Markdown
+file) is set a notch larger than the chrome, at a measure of about 70
+characters. There is no font picker; font size stays a
 device-local setting.
 
 ## Theme
