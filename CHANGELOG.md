@@ -57,6 +57,8 @@ release.
   gone; a star opens its page and Fit takes in the whole. The reader sets prose
   a notch larger with a one-line head, folded history and a Related list, and
   the Librarian waits behind a spine at the right edge until opened.
+- Brain search lists its answer beside the sky instead of in its place, lights
+  the result pointed at, and covers every collection without a scope control.
 - Files now exposes everything under `CHROTE_ROOTS` that the service identity's
   Unix permissions allow, while canonical paths remain inside configured roots.
 - Terminal drag/drop, assignment, terminal lifetime, and layout persistence were

@@ -216,10 +216,18 @@
   overflow: hidden;
 }
 
+/* The sky, with a search's answer down its left edge. */
+.library-room-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 /* ---- the map ---- */
 
 .library-map-frame {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -616,12 +624,6 @@
   color: var(--text-primary);
 }
 
-.library-result-path {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
 .library-result-snippet {
   margin-top: 4px;
   font-size: 12px;
@@ -645,33 +647,19 @@
   color: var(--color-error);
 }
 
-/* ---- search first: the brain's ranked results, read beside the page ---- */
+/* ---- a search's answer, a narrow list beside the sky ---- */
 
 .library-search-results {
-  flex: 1;
+  flex: 0 0 auto;
+  width: min(38ch, 40%);
   min-height: 0;
   display: flex;
   flex-direction: column;
-  width: 100%;
-  max-width: 88ch;
-  padding: 10px 14px 0;
-}
-
-.library-reading-results .library-room {
-  flex: 0 1 56ch;
-  min-width: 36ch;
-}
-
-.library-reading-results .library-dive {
-  flex: 1 1 auto;
-  width: auto;
-  max-width: none;
+  padding: 10px 10px 0 14px;
+  border-right: 1px solid var(--divider);
 }
 
 .library-search-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--divider);
 }
@@ -679,28 +667,6 @@
 .library-search-count {
   font-size: 12px;
   color: var(--text-dim);
-}
-
-.library-search-scope {
-  margin-left: auto;
-  display: flex;
-  gap: 4px;
-}
-
-.library-scope {
-  padding: 2px 8px;
-  border: 1px solid var(--divider);
-  border-radius: 3px;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.library-scope[aria-pressed='true'] {
-  border-color: var(--accent);
-  color: var(--text-primary);
 }
 
 .library-result {
@@ -761,10 +727,6 @@
   background: transparent;
   color: var(--accent);
   font-weight: 600;
-}
-
-.library-result .library-result-path {
-  font-size: 11px;
 }
 
 

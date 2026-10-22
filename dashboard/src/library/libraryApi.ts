@@ -94,9 +94,6 @@ export interface LibrarySearchResult {
   snippet: string
 }
 
-/** Which collections a search covers: the brain's default, Self alone, or all. */
-export type LibrarySearchScope = '' | 'self' | 'all'
-
 const API_BASE = '/api/library'
 
 async function request<T>(path: string, params: Record<string, string> = {}, init?: RequestInit): Promise<T> {
@@ -128,8 +125,9 @@ export function fetchPage(path: string): Promise<LibraryPageContent> {
   return request<LibraryPageContent>('/page', { path })
 }
 
-export function searchLibrary(query: string, scope: LibrarySearchScope = ''): Promise<LibrarySearchResult[]> {
-  return request<LibrarySearchResult[]>('/search', scope ? { q: query, collection: scope } : { q: query })
+/** The brain's ranked answer, over every collection. */
+export function searchLibrary(query: string): Promise<LibrarySearchResult[]> {
+  return request<LibrarySearchResult[]>('/search', { q: query })
 }
 
 export function fetchChanges(limit = 30): Promise<LibraryChanges> {

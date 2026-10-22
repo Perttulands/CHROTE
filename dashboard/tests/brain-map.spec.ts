@@ -84,6 +84,40 @@ test('keeps the camera across a tab return, reads a star beside the sky, and Fit
   await expect.poll(() => cameraGeometry(page)).not.toEqual(camera)
 })
 
+test('lists a search beside the sky, and the result pointed at is brought into view', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 })
+  await page.route('**/api/library/search**', route => route.fulfill({ json: [
+    { path: 'preferences/workflow.md', title: TITLE, kind: 'research', collection: 'preferences', summary: 'Workflow evidence.', snippet: '' },
+    { path: 'knowledge/testing.md', title: 'Test isolation', kind: 'topic', collection: 'knowledge', summary: 'Testing evidence.', snippet: '' },
+  ] }))
+  await setup(page)
+  const sky = continuous(page)
+  const label = sky.getByRole('button', { name: TITLE, exact: true })
+  const inSky = async () => {
+    const [frame, box] = await Promise.all([sky.boundingBox(), label.count().then(n => (n ? label.boundingBox() : null))])
+    return Boolean(frame && box && box.x >= frame.x && box.x + box.width <= frame.x + frame.width && box.y >= frame.y && box.y + box.height <= frame.y + frame.height)
+  }
+
+  const search = page.getByRole('searchbox', { name: 'Search the brain' })
+  await search.fill('pref')
+  const results = page.locator('.library-search-results')
+  await expect(results.getByRole('button', { name: new RegExp(`^${TITLE}`) })).toBeVisible()
+  await expect(sky).toBeVisible()
+  expect((await sky.boundingBox())!.width).toBeGreaterThan(800)
+
+  // Carry the sky away from the star, then point at its result.
+  await sky.focus()
+  for (let step = 0; step < 30 && await inSky(); step++) await page.keyboard.press('ArrowLeft')
+  await expect.poll(inSky).toBe(false)
+  await results.getByRole('button', { name: new RegExp(`^${TITLE}`) }).hover()
+  await expect.poll(inSky).toBe(true)
+
+  await search.focus()
+  await page.keyboard.press('Escape')
+  await expect(results).toHaveCount(0)
+  await expect(search).toHaveValue('')
+})
+
 test('lists the subjects on a phone, opens a page from the list, and keeps the time line in reach', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await setup(page)

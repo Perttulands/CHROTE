@@ -32,11 +32,12 @@ const mockState = vi.hoisted(() => ({
   results: [] as LibrarySearchResult[],
   saved: [] as { path: string; content: string; summary: string }[],
   saveError: null as Error | null,
+  hiddenShelves: [] as string[],
 }))
 
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
-    settings: DEFAULT_SETTINGS,
+    settings: { ...DEFAULT_SETTINGS, libraryHiddenShelves: mockState.hiddenShelves },
     sessions: mockState.sessions,
     openSendToSession: mockState.openSendToSession,
   }),
@@ -89,6 +90,7 @@ vi.mock('../library/libraryApi', async () => {
 const NOW = new Date(Date.now() - 3_600_000).toISOString()
 
 beforeEach(() => {
+  mockState.hiddenShelves = []
   // The sky draws itself at the size it is given; jsdom gives none.
   vi.stubGlobal('ResizeObserver', class {
     constructor(private readonly report: ResizeObserverCallback) {}
@@ -196,7 +198,7 @@ function star(title: string) {
 async function openLibrary() {
   render(<LibraryView />)
   await screen.findByRole('region', { name: 'Brain map' })
-  await screen.findByText(/^\d+ pages · \d+ subjects · \d+ links$/)
+  await screen.findByText(/^\d+ pages? · \d+ subjects? · \d+ links?$/)
 }
 
 /** Draw a shelf open in the rail. */
@@ -417,9 +419,9 @@ describe('LibraryView', () => {
   })
 
 
-  // The brain ranks; the tab lists its answer as the operator types and keeps
-  // the list while a page is read beside it.
-  it('lists the brain search as you type and reads results beside it', async () => {
+  // The brain ranks; the tab lists its answer beside the sky as the operator
+  // types, lights it there and keeps the list while a page is read.
+  it('lists the brain search beside the sky and reads results beside it', async () => {
     await openLibrary()
 
     const search = screen.getByRole('searchbox', { name: 'Search the brain' })
@@ -428,21 +430,35 @@ describe('LibraryView', () => {
     expect(await screen.findByText('Isolate tests from live data.')).toBeInTheDocument()
     expect(screen.getByText('durable').tagName).toBe('MARK')
     expect(region('library-search-results').getByText('Test isolation')).toBeInTheDocument()
+    expect(document.querySelector('.brain-map')).toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Collections searched' })).toBeNull()
+
+    // Pointing at a result lights its star.
+    fireEvent.mouseEnter(region('library-search-results').getByRole('button', { name: /^Workflow Preferences/ }))
+    expect(star('Workflow Preferences')).toHaveClass('is-hot')
 
     fireEvent.keyDown(search, { key: 'ArrowDown' })
     expect(await screen.findByText('Prefer small, verifiable changes.')).toBeInTheDocument()
     expect(region('library-search-results').getByText('Test isolation')).toBeInTheDocument()
 
-    // The answer can be seen on the map instead, and the list taken back.
-    fireEvent.click(screen.getByRole('button', { name: 'On the map' }))
+    // Escape clears the search first, and then closes the page.
+    fireEvent.keyDown(search, { key: 'Escape' })
+    expect(search).toHaveValue('')
     expect(document.querySelector('.library-search-results')).toBeNull()
-    expect(document.querySelector('.library-map-search')).toHaveTextContent(/results? for “durable”/)
-    fireEvent.click(screen.getByRole('button', { name: 'List' }))
-    expect(region('library-search-results').getByText('Test isolation')).toBeInTheDocument()
-
-    fireEvent.keyDown(document.activeElement ?? search, { key: 'Escape' })
+    expect(screen.getByText('Prefer small, verifiable changes.')).toBeInTheDocument()
+    fireEvent.keyDown(search, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByText('Prefer small, verifiable changes.')).not.toBeInTheDocument())
-    expect(region('library-search-results').getByText('Workflow Preferences')).toBeInTheDocument()
+  })
+
+  it('leaves a collection hidden from the sky out of the search', async () => {
+    mockState.hiddenShelves = ['preferences']
+    await openLibrary()
+    mockState.results = mockState.results.map(result => ({ ...result, collection: result.path.split('/')[0] }))
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search the brain' }), { target: { value: 'durable' } })
+
+    expect(await region('library-search-results').findByText('Test isolation')).toBeInTheDocument()
+    expect(region('library-search-results').queryByText('Workflow Preferences')).toBeNull()
+    expect(region('library-search-results').getByText('1 page')).toBeInTheDocument()
   })
 
   it('edits a page in place and commits it with a summary', async () => {

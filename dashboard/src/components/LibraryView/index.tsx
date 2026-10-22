@@ -165,7 +165,6 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   // map, not instead of it.
   const reader = usePageReader(announce, loadGraph, setGitError)
   const { page, open: openPage, close: closeDive } = reader
-  const search = useBrainSearch(announce, openPage)
   const resolveTarget = useMemo(() => createLibraryResolver(graph?.pages ?? []), [graph])
   const resolveWikiLink = useCallback((target: string) => {
     const path = resolveTarget(target, page?.path ?? '')
@@ -229,6 +228,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
   // library he is not working in today stays out of the picture until he asks
   // for it back.
   const hidden = useMemo(() => new Set(settings.libraryHiddenShelves), [settings.libraryHiddenShelves])
+  const search = useBrainSearch(announce, openPage, hidden)
   const toggleShelfOnMap = useCallback((name: string) => {
     const next = new Set(settings.libraryHiddenShelves)
     if (next.has(name)) next.delete(name)
@@ -267,16 +267,11 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
     },
   ]
 
-  // The map is the room, unless a search is standing in it. Neither a dive
-  // nor an open shelf displaces it. A search can be put on the map, where its
-  // answer is lit among everything else.
-  const [searchOnMap, setSearchOnMap] = useState(false)
+  // The map is always the room. A search lists its answer down the sky's left
+  // edge and lights it on the sky.
+  const searching = search.query.trim() !== ''
   const { results } = search
-  const showMap = results === null || searchOnMap
-  const matches = useMemo(
-    () => (searchOnMap && results ? new Set(results.map(result => result.path)) : null),
-    [results, searchOnMap],
-  )
+  const matches = useMemo(() => (results ? new Set(results.map(result => result.path)) : null), [results])
 
   // The corpus the map draws: the whole of it, less the shelves the operator
   // has hidden. They are taken out before the layout rather than left out of
@@ -472,7 +467,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
 
   return (
     <div className="library-view">
-      <div className={`library-columns${!showMap && page ? ' library-reading-results' : ''}`}>
+      <div className="library-columns">
         <Rail
           className="library-left"
           data-ui="library.shelves"
@@ -531,8 +526,8 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
         </Rail>
 
         <div className="library-room" data-ui="library.room">
-          {/* Search along the sky's top edge; what it finds is listed in the
-              sky's place, or lit on the sky. */}
+          {/* Search along the sky's top edge; what it finds is listed beside
+              the sky and lit on it. */}
           <div className="library-map-bar">
             <input
               className="library-search"
@@ -540,39 +535,32 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
               value={search.query}
               placeholder="Search the brain…"
               aria-label="Search the brain"
-              onChange={event => { setSearchOnMap(false); search.ask(event.target.value) }}
+              onChange={event => search.ask(event.target.value)}
               onKeyDown={event => { if (search.key(event.key)) event.preventDefault() }}
             />
-            {matches && results ? (
-              <span className="library-map-search">
-                {count(results.length, 'result')} for “{search.query.trim()}”
-                <button type="button" className="library-action" onClick={() => setSearchOnMap(false)}>List</button>
-              </span>
-            ) : shown && (
+            {shown && (
               <span className="library-map-count">
                 {count(mapPages, 'page')} · {count(mapShelves, 'subject')} · {count(mapLinks, 'link')}
               </span>
             )}
           </div>
-          {/* The map stays mounted under a search, so its mode, filters and
-              camera are where they were when the list is put away. */}
-          <div className="library-map-frame" style={showMap ? undefined : { display: 'none' }}>
-            {graphError && shown && <p className="library-git-error" role="alert">{graphError}</p>}
-            {mapOrWhy()}
+          <div className="library-room-body">
+            {searching && (
+              <SearchResults
+                results={results}
+                selected={search.selected}
+                openPath={page?.path ?? null}
+                listRef={search.listRef}
+                menu={pageMenu}
+                onOpen={search.choose}
+                onHover={setHoverPath}
+              />
+            )}
+            <div className="library-map-frame">
+              {graphError && shown && <p className="library-git-error" role="alert">{graphError}</p>}
+              {mapOrWhy()}
+            </div>
           </div>
-          {!showMap && (
-            <SearchResults
-              results={results ?? []}
-              selected={search.selected}
-              openPath={page?.path ?? null}
-              scope={search.scope}
-              listRef={search.listRef}
-              menu={pageMenu}
-              onScope={search.setScope}
-              onOpen={search.choose}
-              onMap={() => setSearchOnMap(true)}
-            />
-          )}
         </div>
 
         {page && (

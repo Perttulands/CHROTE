@@ -47,6 +47,8 @@ const FADE_MS = 140
 /** The lantern's reach around the pointer, and how many names it carries. */
 const LANTERN = 110
 const LANTERN_NAMES = 7
+/** How near the frame's edge a star pointed at may sit before the camera brings it in. */
+const EDGE = 40
 /** How many of a chosen page's neighbours are named; its lines show them all. */
 const RELATED_NAMES = 14
 /** Below this zoom only systems are named; above it their pages are too. */
@@ -309,6 +311,17 @@ export default function SkyMap({ graph, visible, selected, subject, matches, hov
     // The camera answers a new search, not a resize while it stands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches, starOf, size.measured])
+
+  // A page pointed at beside the sky is brought into view when it is out of it.
+  useEffect(() => {
+    const star = hoverPath ? starOf.get(hoverPath) : null
+    if (!star || !size.measured) return
+    const at = glide.current?.to ?? transformNow.current
+    const x = star.x * at.scale + at.x, y = star.y * at.scale + at.y
+    if (x < EDGE || y < EDGE || x > size.width - EDGE || y > size.height - EDGE) centreAt(star, at.scale)
+    // Only a new page pointed at moves the camera.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hoverPath, size.measured])
 
   const maxEvidence = useMemo(() => Math.max(1, ...layout.regions.map(region => region.evidence)), [layout])
   const strongest = useMemo(() => Math.max(1, ...layout.bridges.map(bridge => bridge.weight)), [layout])

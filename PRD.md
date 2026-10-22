@@ -76,11 +76,12 @@ for it. On a phone the same subjects and pages are a list. Generated indexes
 and agent instructions are excluded, and tab entry re-reads the tree, including
 moved pages.
 
-The search asks the brain service's ranked search as the operator types and
-lists each page by title, kind, summary, matched words and path, topics first,
-in the sky's place; a scope control widens it to Self or every collection, and
-the list can be put away to see what it found lit on the sky. Up and Down move
-through the results and Escape closes the page, not the list.
+The search asks the brain service's ranked search over every collection as
+the operator types, and lists each page by title, kind, summary and matched
+words, topics first, down the sky's left edge while the sky lights what it
+found; a collection hidden from the sky is left out. Pointing at a result
+lights its star and brings it into view. Up and Down move through the results
+and open them, and Escape clears the search before it closes the page.
 
 The reader gives prose room: a one-line head with the page's subject, when and
 by whom it changed, and History folded until asked for; the way back appears
