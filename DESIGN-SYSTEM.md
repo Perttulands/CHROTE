@@ -10,22 +10,41 @@ enforced_by: scripts/doc-lint.py
 
 Status: **Active core source of truth**.
 
-CHROTE is a dense private cockpit: an instrument panel for real work, legible
-and honest about state. Nothing decorative competes with the terminal.
+CHROTE is a private instrument for real work: legible, honest about state, and
+a pleasure to use. Its character comes from the work itself, as the brain drawn
+as a night sky does, never from ornament laid over it, and nothing competes
+with the terminal.
 
 ## Design principles
 
-1. **Cockpit density.** Show useful state; do not bury it in cards or copy.
-2. **Host-state first.** Make clear what is durable host state and what is
+1. **The content is the interface.** The operator acts on the thing itself (a
+   star, a row, a legend entry), not on a panel or toolbar about it. Context
+   menus, drag and drop and inline popovers beat modal workflows.
+2. **One idea per view, with character that carries meaning.** Each surface
+   draws its data one way, and its look says something true: brightness is
+   importance, haze is evidence, dim is finished. Ornament that says nothing is
+   cut.
+3. **Quiet until asked.** At rest a surface shows the work. Names, counts and
+   secondary controls appear where the operator looks, on hover, focus or
+   selection, in space reserved for them.
+4. **Motion explains change.** A state change glides from where things were, so
+   the eye can follow what changed. Nothing snaps, nothing loops for show, and
+   reduced motion gets the end state at once.
+5. **Generous targets.** Nothing that acts is smaller than 28px in either
+   direction, a row acts as a whole, and every control comes from the shared
+   kit, never from the browser's defaults.
+6. **Plain words, not storage.** Surfaces show titles, subjects and names.
+   Paths, kinds and ids appear only where the id is the point.
+7. **Reading gets a reading face.** Prose is set for reading (see Typeface);
+   monospace stays for terminals, code, ids and figures that align.
+8. **Host-state first.** Make clear what is durable host state and what is
    browser preference.
-3. **Local directness.** Context menus, drag/drop, inline popovers, and visible
-   state beat modal-heavy workflows.
-4. **Failure visibility.** Empty, degraded, blocked, and errored states are
+9. **Failure visibility.** Empty, degraded, blocked, and errored states are
    explicit and actionable.
-5. **Colour is information.** It marks meaning, never mood.
-6. **Recognition over labels.** A known agent shows its mark; anything else is
-   shown in its own words, untranslated.
-7. **Accessible contrast.** Themes may differ; state and text stay readable.
+10. **Colour is information.** It marks meaning, never mood.
+11. **Recognition over labels.** A known agent shows its mark; anything else is
+    shown in its own words, untranslated.
+12. **Accessible contrast.** Themes may differ; state and text stay readable.
 
 ## Doctrine
 
@@ -133,11 +152,13 @@ and diamonds sources. The accent marks the selected or pointed-at page.
 
 ## Typeface
 
-One family for chrome and terminal alike: JetBrains Mono, with CHROTE Term
+Two faces, each for its work, and both served as `woff2` from CHROTE's own
+origin. Prose (a brain page, a Bead's description, a Markdown file) is set in
+a proportional reading face at a measure of about 70 characters. Everything
+else, chrome and terminal alike, is JetBrains Mono, with CHROTE Term
 Symbols behind it — a subset of Iosevka Term, renamed because Iosevka is a
 reserved font name — covering the box drawing, braille and frame glyphs agent
-TUIs paint with. Both are `woff2` files served from CHROTE's own origin, so no
-request for a font leaves the host. There is no font picker; font size stays a
+TUIs paint with. No request for a font leaves the host. There is no font picker; font size stays a
 device-local setting.
 
 ## Theme
@@ -409,8 +430,8 @@ notification while the tab is hidden.
 Nothing asks a question in a dialog: a destructive control reads its own
 confirmation until a second press within three seconds runs it, a rename
 happens in the object's own place, and neither `window.prompt` nor
-`window.confirm` appears anywhere. No scanlines, no glow, no decorative motion:
-motion survives only where it confirms an action.
+`window.confirm` appears anywhere. No scanlines and no ornament: light and motion
+appear only where they carry meaning or explain a change.
 
 ## Copy tone
 
