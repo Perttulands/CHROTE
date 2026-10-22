@@ -787,6 +787,14 @@ func (h *FilesHandler) GetResource(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// clearTransferDeadlines lifts the server's read and write deadlines for a
+// file transfer, which over a slow link takes as long as its size needs.
+func clearTransferDeadlines(w http.ResponseWriter) {
+	controller := http.NewResponseController(w)
+	_ = controller.SetReadDeadline(time.Time{})
+	_ = controller.SetWriteDeadline(time.Time{})
+}
+
 // CreateResource handles POST /api/files/resources/* - create folder or upload file
 func (h *FilesHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
@@ -822,6 +830,7 @@ func (h *FilesHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusRequestEntityTooLarge, "TOO_LARGE", "File exceeds the configured upload limit")
 		return
 	}
+	clearTransferDeadlines(w)
 	r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
 	defer r.Body.Close()
 
@@ -985,5 +994,6 @@ func (h *FilesHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 
 	// Set download headers
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(result.Path)+"\"")
+	clearTransferDeadlines(w)
 	http.ServeContent(w, r, filepath.Base(result.Path), stat.ModTime(), file)
 }

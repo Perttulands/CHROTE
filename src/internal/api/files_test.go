@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/chrote/server/internal/core"
 )
@@ -662,6 +664,40 @@ func TestFilesHandlerOverwriteKeepsTheFileAndSurvivesAFailedSave(t *testing.T) {
 	}
 	if content, _ := os.ReadFile(target); string(content) != "new" || !os.SameFile(before, after) {
 		t.Fatalf("save = %q, same file %v; want new content in the same inode", content, os.SameFile(before, after))
+	}
+}
+
+// An upload over a slow link outlasts the server's read timeout and still lands.
+func TestFilesHandlerUploadOutlastsTheServerReadTimeout(t *testing.T) {
+	root := t.TempDir()
+	handler := &FilesHandler{allowedRoots: []string{root}, maxUploadBytes: defaultMaxUploadBytes}
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	server := httptest.NewUnstartedServer(mux)
+	server.Config.ReadTimeout = 100 * time.Millisecond
+	server.Start()
+	defer server.Close()
+
+	target := filepath.Join(root, "slow.bin")
+	body, writer := io.Pipe()
+	go func() {
+		for i := 0; i < 4; i++ {
+			time.Sleep(60 * time.Millisecond)
+			_, _ = writer.Write([]byte("part"))
+		}
+		_ = writer.Close()
+	}()
+	resp, err := http.Post(server.URL+"/api/files/resources"+filepath.ToSlash(target), "application/octet-stream", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("slow upload status = %d, want 200", resp.StatusCode)
+	}
+	if content, _ := os.ReadFile(target); string(content) != "partpartpartpart" {
+		t.Fatalf("slow upload wrote %q", content)
 	}
 }
 
