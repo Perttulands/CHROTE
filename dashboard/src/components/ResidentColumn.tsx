@@ -15,6 +15,11 @@
  * a press anywhere on it opening the column again. The strip is the control,
  * so neither state spends a word of the header on saying which it is.
  *
+ * As a drawer (the Librarian's, in the Brain) the strip is where the resident
+ * rests: it opens over the edge of what is beside it rather than narrowing it,
+ * so nothing in the tab moves, and closes again with its Close word. A dot on
+ * the strip says the agent has reported something the operator has not seen.
+ *
  * The column owns the terminal it shows rather than taking the pool's: a
  * pooled terminal belongs to the tile that bound it, and a terminal is attached
  * in one place at a time. Peek answers the same problem the same way.
@@ -27,6 +32,7 @@ import Menu, { type MenuGroup } from './Menu'
 import TerminalSurface, { useTerminalSession } from './TerminalSurface'
 import { harnessIdForCommand } from './harnessMarks'
 import { SessionCommandMark } from './sessionLabel'
+import { useAgentEventMarks } from '../agents/AgentEventsProvider'
 import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
 import { TABLE_CONTENT_MIN, TABLE_WIDTH_MIN, useTableObject } from '../context/TableContext'
@@ -57,6 +63,8 @@ export interface ResidentColumnProps {
    * Bead in Beads, or what is on the table. Null when the tab has nothing in hand.
    */
   reference: string | null
+  /** Rest as a strip and open over the content instead of beside it. */
+  drawer?: boolean
 }
 
 /** What the state word can read, in the order the column decides it. */
@@ -66,11 +74,12 @@ function collapsedKey(tab: ResidentTab): string {
   return `chrote.resident.${tab}.collapsed`
 }
 
-function readCollapsed(tab: ResidentTab): boolean {
+function readCollapsed(tab: ResidentTab, fallback = false): boolean {
   try {
-    return window.localStorage.getItem(collapsedKey(tab)) === 'true'
+    const stored = window.localStorage.getItem(collapsedKey(tab))
+    return stored === null ? fallback : stored === 'true'
   } catch {
-    return false
+    return fallback
   }
 }
 
@@ -82,7 +91,7 @@ function writeCollapsed(tab: ResidentTab, collapsed: boolean): void {
   }
 }
 
-export default function ResidentColumn({ active, tab, reference, minContentWidth = TABLE_CONTENT_MIN }: ResidentColumnProps) {
+export default function ResidentColumn({ active, tab, reference, minContentWidth = TABLE_CONTENT_MIN, drawer = false }: ResidentColumnProps) {
   const {
     sessions,
     settings,
@@ -104,7 +113,7 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
   // The harness the launcher is prefilled with: what the session was last seen
   // running, so a restart comes back as the same kind of agent.
   const [launchHarness, setLaunchHarness] = useState<string | undefined>(undefined)
-  const [collapsed, setCollapsed] = useState(() => readCollapsed(tab))
+  const [collapsed, setCollapsed] = useState(() => readCollapsed(tab, drawer))
   const [squeezed, setSqueezed] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const columnRef = useRef<HTMLElement>(null)
@@ -127,9 +136,9 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
   }, [announce, tab])
 
   useEffect(() => {
-    setCollapsed(readCollapsed(tab))
+    setCollapsed(readCollapsed(tab, drawer))
     setLaunching(false)
-  }, [tab])
+  }, [drawer, tab])
 
   const label = resident?.label || RESIDENT_LABELS[tab]
   const sessionName = resident?.session ?? ''
@@ -146,6 +155,7 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
         : session.attached ? 'live' : 'idle'
   const running = state === 'live' || state === 'idle'
   const sessionKey = session ? getSessionKey(session.name, session.unixUser) : ''
+  const news = useAgentEventMarks().has(sessionKey)
   const pinnedSize = session ? getSessionBadges(session).find(badge => badge.id === 'pinned-size') : undefined
 
   useEffect(() => {
@@ -214,7 +224,8 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
   // pixels wide carrying the label and the state word in one rotated line. A
   // host that configured no session is not a strip: it is the header saying so.
   const unconfigured = state === 'not configured'
-  const stripped = !unconfigured && (collapsed || squeezed)
+  // A drawer opens over the content, so the squeeze does not close it.
+  const stripped = !unconfigured && (collapsed || (!drawer && squeezed))
   const showsHeaderOnly = stripped || unconfigured
   const showsTerminal = active && running && !showsHeaderOnly
   const showsLauncher = launching && !showsHeaderOnly && resident !== null && !running
@@ -225,9 +236,23 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
   )
   const { session: terminal } = useTerminalSession(socketUrl, settings.fontSize, settings.hideScrollbar)
 
+  // A closed drawer opens to be focused, and the terminal takes the keyboard
+  // once it is there.
+  const focusWhenOpen = useRef(false)
   const focus = useCallback(() => {
+    if (drawer && collapsed) {
+      focusWhenOpen.current = true
+      writeCollapsed(tab, false)
+      setCollapsed(false)
+      return
+    }
     if (terminal) terminal.focus()
     else columnRef.current?.focus()
+  }, [collapsed, drawer, tab, terminal])
+  useEffect(() => {
+    if (!terminal || !focusWhenOpen.current) return
+    focusWhenOpen.current = false
+    terminal.focus()
   }, [terminal])
 
   // One line into the prompt, unsubmitted, ending with the line break the
@@ -360,10 +385,14 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
 
   const style = { '--resident-column-width': `${width}px` } as CSSProperties
 
+  const open = drawer && !stripped && !unconfigured
   return (
+    <>
+    {/* An open drawer leaves its strip's width behind it, so nothing moves. */}
+    {open && <div className="resident-drawer-space" aria-hidden="true" />}
     <aside
       ref={columnRef}
-      className={`resident-column${stripped ? ' collapsed' : ''}${unconfigured ? ' bare' : ''}`}
+      className={`resident-column${stripped ? ' collapsed' : ''}${unconfigured ? ' bare' : ''}${open ? ' drawer' : ''}`}
       role="complementary"
       aria-label={`The ${label}`}
       data-ui="resident.column"
@@ -394,9 +423,11 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
           onContextMenu={openMenu}
         >
           <span className="resident-strip-line">
+            {session && <SessionCommandMark command={session.currentCommand} />}
             <span className="resident-label">{label}</span>
             <span className="resident-state">{state ?? ''}</span>
           </span>
+          {news && <span className="resident-news" aria-label={`The ${label} has news`} />}
         </button>
       ) : (
         <div className="resident-header" data-ui="resident.header" onContextMenu={openMenu}>
@@ -414,6 +445,9 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
             <button type="button" className="resident-action" aria-keyshortcuts="Alt+S" onClick={() => { void paste() }}>
               Send<span className="resident-chord" aria-hidden="true">Alt+S</span>
             </button>
+          )}
+          {drawer && (
+            <button type="button" className="resident-action" onClick={() => setCollapsedTo(true)}>Close</button>
           )}
         </div>
       )}
@@ -443,5 +477,6 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
         />
       )}
     </aside>
+    </>
   )
 }

@@ -236,4 +236,24 @@ describe('the resident column', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Expand the Clerk' }))
     await waitFor(() => expect(screen.getByTestId('terminal-surface')).toBeInTheDocument())
   })
+
+  // As a drawer the resident starts closed, a spine the operator can read,
+  // and Alt+S opens it straight into the terminal with the reference pasted.
+  it('opens as a drawer from its spine or Alt+S, and closes back to the spine', async () => {
+    render(<ResidentColumn active drawer tab="beads" reference="bead test-1: Fix login bug" />)
+    const spine = await screen.findByRole('button', { name: 'Expand the Clerk' })
+    expect(spine).toHaveTextContent('Clerk')
+    expect(screen.queryByTestId('terminal-surface')).toBeNull()
+
+    fireEvent.keyDown(document, { key: 's', altKey: true })
+    await waitFor(() => expect(screen.getByTestId('terminal-surface')).toBeInTheDocument())
+    await waitFor(() => expect(mockState.sendToSession).toHaveBeenCalledWith(
+      'clerk', { text: 'bead test-1: Fix login bug\n', files: [], submit: false }, 'operator',
+    ))
+    await waitFor(() => expect(mockState.focused.length).toBeGreaterThan(0))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.getByRole('button', { name: 'Expand the Clerk' })).toBeInTheDocument()
+    expect(screen.queryByTestId('terminal-surface')).toBeNull()
+  })
 })

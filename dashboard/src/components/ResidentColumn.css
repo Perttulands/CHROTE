@@ -106,8 +106,12 @@
   color: var(--text-dim);
 }
 
+/* The session's name gives way first, so the words that act stay whole. */
 .resident-session {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text-primary);
 }
 
@@ -123,7 +127,8 @@
 
 .resident-action {
   flex: none;
-  padding: 0;
+  min-height: 28px;
+  padding: 0 4px;
   border: none;
   background: none;
   color: var(--text-primary);
@@ -155,4 +160,49 @@
   min-height: 0;
   padding: 8px;
   overflow: auto;
+}
+
+/* As a drawer the column opens over what is beside it, from the right edge,
+   and leaves its strip's width in place so nothing beside it moves. The
+   positioned ancestor is the tab's own row of columns. */
+.resident-drawer-space {
+  flex: none;
+  width: 28px;
+  border-left: 1px solid var(--divider);
+  background-color: var(--surface-primary);
+}
+
+.resident-column.drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  max-width: calc(100% - 240px);
+  animation: resident-drawer-in 180ms ease-out;
+}
+
+@keyframes resident-drawer-in {
+  from { transform: translateX(32px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resident-column.drawer { animation: none; }
+}
+
+/* Something the agent reported that the operator has not seen yet. */
+.resident-news {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background-color: var(--accent);
+}
+
+.resident-strip {
+  position: relative;
 }
