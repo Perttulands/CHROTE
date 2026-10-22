@@ -19,9 +19,12 @@ import (
 
 type hostStoreReply struct {
 	Path       string                   `json:"path"`
+	Name       string                   `json:"name"`
 	Prefix     string                   `json:"prefix"`
 	Generation string                   `json:"generation"`
+	ReadAt     string                   `json:"readAt"`
 	Pending    bool                     `json:"pending"`
+	Stale      bool                     `json:"stale"`
 	Error      string                   `json:"error"`
 	Unchanged  bool                     `json:"unchanged"`
 	Rows       []map[string]interface{} `json:"rows"`
@@ -302,5 +305,192 @@ func TestBeadsHostReadsAZeroTimeAsNoTime(t *testing.T) {
 		if got := unixSeconds(value); got != want {
 			t.Errorf("unixSeconds(%q) = %d, want %d", value, got, want)
 		}
+	}
+}
+
+func hostText(t *testing.T, h *BeadsHandler, path, id string) (int, map[string]interface{}) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.Text(rec, httptest.NewRequest(http.MethodGet, "/api/beads/text?"+url.Values{"path": {path}, "id": {id}}.Encode(), nil))
+	if rec.Code != http.StatusOK {
+		return rec.Code, nil
+	}
+	return rec.Code, decodeBeadsData(t, rec)
+}
+
+// The operator opens the tab now and then. Hours of idleness and a server
+// restart both lose the reader's snapshots; neither may make a visit cold.
+// The restarted server answers at once from what it kept: a store whose
+// manifest has not moved is current without any bd, and one written since is
+// served as it was, marked stale and pending, while one read replaces it.
+func TestBeadsHostServesKeptProjectionsAtOnceAfterARestart(t *testing.T) {
+	keep := t.TempDir()
+	h, paths := readerProjects(t, 2)
+	h.KeepHostViewsIn(keep)
+	h.DiscoverStoresWith(func() []string { return paths })
+	h.stores.read = func(context.Context, string) ([]map[string]interface{}, error) { return hostRecords("Kept"), nil }
+	hostRequest(t, h, nil)
+	first := awaitHostStore(t, h, paths[0])
+	awaitHostStore(t, h, paths[1])
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		files, _ := filepath.Glob(filepath.Join(keep, "*.json.gz"))
+		if len(files) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("kept files = %v, want one per store", files)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// A new server over the same stores: one of them was written meanwhile.
+	readerManifest(t, paths[1], "written while the server was down\n")
+	restarted := NewBeadsHandler()
+	restarted.DiscoverStoresWith(func() []string { return paths })
+	release := make(chan struct{})
+	var calls atomic.Int32
+	restarted.stores.read = func(ctx context.Context, _ string) ([]map[string]interface{}, error) {
+		calls.Add(1)
+		select {
+		case <-release:
+			return hostRecords("Fresh"), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	t.Cleanup(func() { close(release) })
+	restarted.KeepHostViewsIn(keep)
+
+	stores := hostRequest(t, restarted, nil)
+	current, written := stores[paths[0]], stores[paths[1]]
+	if current.Pending || current.Stale || current.Generation != first.Generation || len(current.Rows) != 3 || current.ReadAt != first.ReadAt {
+		t.Fatalf("unchanged store after restart = %+v, want its kept rows, current", current)
+	}
+	if !written.Pending || !written.Stale || len(written.Rows) != 3 || written.Rows[0]["title"] != "Kept" {
+		t.Fatalf("written store after restart = %+v, want its kept rows marked stale and pending", written)
+	}
+	if calls.Load() > 1 {
+		t.Fatalf("restart ran %d reads, want one, for the written store only", calls.Load())
+	}
+	// The kept text answers search and the selected Bead without a read.
+	code, text := hostText(t, restarted, paths[0], "test-aaa")
+	if code != http.StatusOK || text["bead"].(map[string]interface{})["description"] != "Grill the brain's ownership" {
+		t.Fatalf("kept text = %d %v", code, text)
+	}
+}
+
+// Idleness evicts the reader's snapshot, never the tab's projection: a visit
+// after hours away is answered from it, with no bd for an unchanged store.
+func TestBeadsHostKeepsADiscoveredStoresProjectionThroughIdleness(t *testing.T) {
+	h, paths := readerProjects(t, 1)
+	path := paths[0]
+	h.DiscoverStoresWith(func() []string { return paths })
+	var calls atomic.Int32
+	h.stores.read = func(context.Context, string) ([]map[string]interface{}, error) {
+		calls.Add(1)
+		return hostRecords("Read once"), nil
+	}
+	now := time.Now()
+	h.host.now = func() time.Time { return now }
+	h.stores.now = func() time.Time { return now }
+	hostRequest(t, h, nil)
+	read := awaitHostStore(t, h, path)
+
+	// Thirty hours on: the reader's sweep evicts its snapshot, and the next
+	// discovery walk finds the store still on the host.
+	now = now.Add(30 * time.Hour)
+	h.stores.mu.Lock()
+	h.stores.sweepLocked(now)
+	evicted := len(h.stores.entries) == 0
+	h.stores.mu.Unlock()
+	if !evicted {
+		t.Fatal("the reader's idle snapshot was not evicted; the test no longer simulates idleness")
+	}
+	h.host.mu.Lock()
+	h.host.refreshing = true
+	h.host.mu.Unlock()
+	h.host.walk()
+
+	visit := hostRequest(t, h, nil)[path]
+	if visit.Pending || visit.Stale || visit.Generation != read.Generation || len(visit.Rows) != 3 || calls.Load() != 1 {
+		t.Fatalf("visit after idleness = %+v (reads %d), want the kept rows at once and no read", visit, calls.Load())
+	}
+}
+
+// A Bead's own text comes from the projection, never from bd, and a store or
+// id the projection does not hold is plainly not found.
+func TestBeadsTextAnswersTheSelectedBeadFromTheProjection(t *testing.T) {
+	h, paths := readerProjects(t, 1)
+	path := paths[0]
+	h.DiscoverStoresWith(func() []string { return paths })
+	var calls atomic.Int32
+	h.stores.read = func(context.Context, string) ([]map[string]interface{}, error) {
+		calls.Add(1)
+		return hostRecords("Grill ownership"), nil
+	}
+	if code, _ := hostText(t, h, path, "test-aaa"); code != http.StatusNotFound {
+		t.Fatalf("text before any read = %d, want 404", code)
+	}
+	hostRequest(t, h, nil)
+	awaitHostStore(t, h, path)
+
+	code, data := hostText(t, h, path, "test-bbb")
+	bead, _ := data["bead"].(map[string]interface{})
+	if code != http.StatusOK || bead["id"] != "test-bbb" || bead["closeReason"] != "Shipped in 66dfbe6" || data["readAt"] == "" {
+		t.Fatalf("text = %d %v, want the closed Bead's close reason and read time", code, data)
+	}
+	_, data = hostText(t, h, path, "test-aaa")
+	bead = data["bead"].(map[string]interface{})
+	if bead["notes"] != "ä" || bead["labels"].([]interface{})[0] != "brain-organization" {
+		t.Fatalf("epic text = %v, want its notes and labels", bead)
+	}
+	if code, _ := hostText(t, h, path, "test-zzz"); code != http.StatusNotFound {
+		t.Fatalf("unknown id = %d, want 404", code)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("text ran %d reads, want only the tab's own", calls.Load())
+	}
+}
+
+// Terminal links need every store's prefix on each page load. A store the tab
+// has read answers from its projection, an empty store included, so a page
+// load runs no bd once every store is known.
+func TestBeadsProjectPrefixComesFromTheProjectionWithoutBd(t *testing.T) {
+	h, paths := readerProjects(t, 2)
+	h.DiscoverStoresWith(func() []string { return paths })
+	h.stores.read = func(_ context.Context, path string) ([]map[string]interface{}, error) {
+		if path == paths[1] {
+			return []map[string]interface{}{}, nil
+		}
+		return hostRecords("x"), nil
+	}
+	hostRequest(t, h, nil)
+	awaitHostStore(t, h, paths[0])
+	awaitHostStore(t, h, paths[1])
+	h.stores.mu.Lock()
+	for key := range h.stores.entries {
+		h.stores.removeLocked(key)
+	}
+	h.stores.mu.Unlock()
+	h.bdCommand = filepath.Join(t.TempDir(), "bd-must-not-run")
+
+	for i, want := range []string{"test", ""} {
+		prefix, err := h.projectPrefix(context.Background(), paths[i])
+		if err != nil || prefix != want {
+			t.Fatalf("prefix of %s = %q, %v; want %q without bd", paths[i], prefix, err, want)
+		}
+	}
+}
+
+// The store the Brain tab reads is called the brain, whatever its folder is.
+func TestBeadsHostNamesAStoreByItsRole(t *testing.T) {
+	h, paths := readerProjects(t, 2)
+	h.DiscoverStoresWith(func() []string { return paths })
+	h.stores.read = func(context.Context, string) ([]map[string]interface{}, error) { return hostRecords("x"), nil }
+	h.NameStore(paths[1], "brain")
+	stores := hostRequest(t, h, nil)
+	if stores[paths[1]].Name != "brain" || stores[paths[0]].Name != "" {
+		t.Fatalf("names = %q and %q, want only the configured store named", stores[paths[0]].Name, stores[paths[1]].Name)
 	}
 }

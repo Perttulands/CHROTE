@@ -275,7 +275,10 @@ func (h *WorkspacesHandler) walkRoots() []string {
 // walk lists every git root and Beads store from dir down to the depth limit.
 // Dot-directories, node_modules and worktrees are neither listed nor entered:
 // what they hold is tooling, dependencies, or a checkout of a project that is
-// already on the list.
+// already on the list. Nor is a folder whose name says it was set aside (see
+// setAsideWords): a backup, retired or archived copy, scratch, or someone
+// else's code. A configured Beads project or a session's folder is listed
+// wherever it is; the rule only keeps the walk from offering such folders.
 func (h *WorkspacesHandler) walk(list *workspaceList, dir string, depth int) {
 	if isWorktreePath(dir) {
 		return
@@ -304,7 +307,28 @@ func (h *WorkspacesHandler) walk(list *workspaceList, dir string, depth int) {
 }
 
 func skipWalkName(name string) bool {
-	return strings.HasPrefix(name, ".") || name == "node_modules" || name == "worktrees"
+	if strings.HasPrefix(name, ".") || name == "node_modules" || name == "worktrees" {
+		return true
+	}
+	for _, word := range strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	}) {
+		if setAsideWords[word] {
+			return true
+		}
+	}
+	return false
+}
+
+// setAsideWords are the words that, anywhere in a folder's name, say what it
+// holds is not a live project of this host's: a copy kept for safety
+// (backups/, chrote-archive), retired work (retired-2026-10-19), a throwaway
+// (scratch-beads), or another project's code (upstreams/, vendor/). A real
+// project whose name holds one is listed by configuring it.
+var setAsideWords = map[string]bool{
+	"backup": true, "backups": true, "archive": true, "archived": true, "attic": true,
+	"retired": true, "scratch": true, "tmp": true,
+	"upstream": true, "upstreams": true, "vendor": true,
 }
 
 func isWorktreePath(dir string) bool {

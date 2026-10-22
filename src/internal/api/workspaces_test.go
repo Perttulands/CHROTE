@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -449,5 +450,39 @@ func TestWorkspacesStoreProjectionSurvivesTheManifestRewriteThatReadingCauses(t 
 	}
 	if calls := readSequencedBdCalls(t, argsPath); len(calls) != 2 {
 		t.Fatalf("bd was called %d times after a write, want twice: %#v", len(calls), calls)
+	}
+}
+
+// Copies kept for safety, retired work, scratch and other people's code are
+// not projects: the walk neither lists nor enters a folder whose name says so,
+// while a project whose name merely contains such letters stays, and a
+// configured store is listed wherever it lives.
+func TestWorkspacesStoreFoldersSkipSetAsideFolders(t *testing.T) {
+	tree := newWorkspaceTestTree(t)
+	project := filepath.Join(tree.root, "games", "korpi")
+	makeValidBeadsWorkspace(t, project)
+	lookalike := filepath.Join(tree.root, "scratchpad-notes")
+	makeValidBeadsWorkspace(t, lookalike)
+	configured := filepath.Join(tree.root, "backups", "kept-on-purpose")
+	makeValidBeadsWorkspace(t, configured)
+	tree.handler.beadsWorkspaces = func() []string { return []string{configured} }
+	setAside := []string{
+		filepath.Join(tree.root, "backups", "retired", "telegram-bridge-2026-10-03"),
+		filepath.Join(tree.root, "data", "brain-verify", "scratch-beads"),
+		filepath.Join(tree.home, "research", "upstreams", "beads_viewer"),
+		filepath.Join(tree.home, "skills-attic"),
+		filepath.Join(tree.home, "kauris-archive"),
+		filepath.Join(tree.root, "chrote", "vendor"),
+	}
+	for _, path := range setAside {
+		makeValidBeadsWorkspace(t, path)
+	}
+
+	got := tree.handler.StoreFolders()
+
+	want := []string{configured, project, lookalike}
+	sort.Strings(want)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("store folders = %v, want %v", got, want)
 	}
 }

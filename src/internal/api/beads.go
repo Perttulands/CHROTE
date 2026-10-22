@@ -63,6 +63,7 @@ func (h *BeadsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/beads/state", h.State)
 	mux.HandleFunc("GET /api/beads/host", h.Host)
 	mux.HandleFunc("GET /api/beads/search", h.Search)
+	mux.HandleFunc("GET /api/beads/text", h.Text)
 	mux.HandleFunc("GET /api/beads/issue", h.IssueDetail)
 	mux.HandleFunc("POST /api/beads/issues", h.CreateIssue)
 }
@@ -666,6 +667,11 @@ func beadIsLinked(raw map[string]interface{}) bool {
 func (h *BeadsHandler) projectPrefix(ctx context.Context, projectPath string) (string, error) {
 	// Reuse a known positive identity without demanding any snapshot or counts.
 	if prefix := h.stores.retainedPrefix(projectPath); prefix != "" {
+		return prefix, nil
+	}
+	// The Beads tab's projection knows it too, an empty store's lack of one
+	// included, and outlives both idle eviction and a restart.
+	if prefix, known := h.host.knownPrefix(ctx, projectPath); known {
 		return prefix, nil
 	}
 	ctx = context.WithValue(ctx, optionalBdContextKey{}, true)

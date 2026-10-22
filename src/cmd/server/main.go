@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -187,6 +188,14 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	workspacesHandler := api.NewWorkspacesHandler(tmuxHandler, beadsHandler)
 	workspacesHandler.RegisterRoutes(mux)
 	beadsHandler.DiscoverStoresWith(workspacesHandler.StoreFolders)
+	// The Beads tab shows every store's last read at once, after a restart too.
+	if cache, err := os.UserCacheDir(); err == nil {
+		beadsHandler.KeepHostViewsIn(filepath.Join(cache, "chrote", "beads-host"))
+	} else {
+		log.Printf("Beads tab keeps its reads in memory only: %v", err)
+	}
+	// The store the Brain tab reads is the brain, whatever its folder is called.
+	beadsHandler.NameStore(config.Library.Root, "brain")
 
 	healthHandler := api.NewHealthHandlerWithBuildInfo(Version, BuildCommit)
 	healthHandler.RegisterRoutes(mux)
