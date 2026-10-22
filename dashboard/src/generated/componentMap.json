@@ -10,6 +10,7 @@
   "BeadLinks": "dashboard/src/components/BeadCard.tsx",
   "BeadSection": "dashboard/src/components/BeadCard.tsx",
   "BeadTable": "dashboard/src/components/BeadsView/BeadTable.tsx",
+  "BeadText": "dashboard/src/components/BeadsView/BeadText.tsx",
   "BeadTypeLabel": "dashboard/src/components/BeadTypeLabel.tsx",
   "BeadsColumn": "dashboard/src/components/BeadsColumn.tsx",
   "BeadsColumnRows": "dashboard/src/components/BeadsColumn.tsx",

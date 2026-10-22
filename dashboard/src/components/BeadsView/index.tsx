@@ -1,18 +1,24 @@
 /**
  * The Beads tab: every Bead on the host in one table, sliced by search,
- * project, status and days, with the selected Bead's work graph beside it.
+ * project, status and days, with the selected Bead's work graph and its text
+ * beside it.
  *
  * The strip across the top counts what was created and closed each day and
  * brushes a range of days; the rail keeps projects and statuses; the columns
- * sort; Split, Table and Graph choose what the work area shows. The slice is
+ * sort; Split, Table and Graph choose what the work area shows: Graph is the
+ * selected Bead's graph and text without the table. The slice is
  * the URL, so a copied link opens the same view. Every interaction here is the
  * browser's own work over an index built once per read: the server is asked
- * for nothing but changed rows and, for a search, the ids whose text matches.
- * Nothing here writes; creating and closing Beads stays with bd and the agents.
+ * for nothing but changed rows, for a search the ids whose text matches, and
+ * for a selected Bead its text. A store the server holds only an earlier read
+ * of is drawn from that read at once, named in the footer and the rail with
+ * its age, and replaced when the new read lands. Nothing here writes; creating
+ * and closing Beads stays with bd and the agents.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import BeadTable from './BeadTable'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import BeadTable, { idColumnChars, tableMinWidth } from './BeadTable'
+import BeadText from './BeadText'
 import FacetRail from './FacetRail'
 import TimeStrip from './TimeStrip'
 import WorkGraph from './WorkGraph'
@@ -22,10 +28,12 @@ import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
 import { tableReference, useTableObject } from '../../context/TableContext'
 import { openBeadCard } from '../../beads/beadCard'
+import { beadIdPattern } from '../../beads/beadIds'
 import { searchHostBeads, useHostBeads } from '../../beads/hostBeads'
 import { rememberBeadRows } from '../../beads/knownBeads'
 import {
   SLICE_STATUSES,
+  ageLabel,
   buildSliceIndex,
   dayLabel,
   filterSlice,
@@ -44,6 +52,7 @@ import {
   writeViewState,
   type BeadsMode,
   type SliceViewState,
+  type StripSpan,
 } from '../../beads/sliceUrl'
 import { registerChords } from '../../keys/chords'
 import { copyAndAnnounce } from '../../utils/clipboard'
@@ -100,6 +109,30 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
   const manualPaths = useMemo(() => settings.beadsProjectPaths || [], [settings.beadsProjectPaths])
   const host = useHostBeads(active, manualPaths)
   const index = useMemo(() => buildSliceIndex(host.rowStores), [host.rowStores])
+  const idChars = idColumnChars(index)
+  // What the text pane needs from the read: each store's generation, so a
+  // text is asked for once per read, and the prefixes an id in it can carry.
+  const generations = useMemo(() => new Map(host.rowStores.map(store => [store.path, store.generation])), [host.rowStores])
+  const idPattern = useMemo(
+    () => beadIdPattern([...new Set(host.rowStores.map(store => store.prefix ?? '').filter(Boolean))]),
+    [host.rowStores],
+  )
+  // A store drawn from an earlier read, by its project, with the read's age.
+  // The age is recomputed on each poll; the map changes only when it reads differently.
+  const ageKey = host.stores
+    .filter(store => store.stale)
+    .map(store => `${store.path}\u0000${ageLabel(store.readAt)}`)
+    .join('\u0001')
+  const ages = useMemo(() => {
+    const byPath = new Map(index.projects.map((project, p) => [project.path, p]))
+    const found = new Map<number, string>()
+    ageKey.split('\u0001').filter(Boolean).forEach(entry => {
+      const [path, age] = entry.split('\u0000')
+      const p = byPath.get(path)
+      if (p !== undefined && age) found.set(p, age)
+    })
+    return found
+  }, [ageKey, index.projects])
 
   // The link is the slice: written while the tab is in front, taken away when
   // the operator leaves it, so another tab's address carries no Beads state.
@@ -197,6 +230,14 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
   const copy = useCallback((text: string, what: string) => { void copyAndAnnounce(text, what, announce) }, [announce])
   const sortBy = useCallback((sort: SliceSortKey, dir: SortDirection) => patch({ sort, dir }), [patch])
   const setRange = useCallback((range: SliceViewState['range']) => patch({ range }), [patch])
+  const setSpan = useCallback((span: StripSpan) => patch({ span }), [patch])
+  // An id in a Bead's text selects that Bead here; one the host does not
+  // hold, or holds twice, goes on the table, where the card resolves it.
+  const followToken = useCallback((id: string) => {
+    const row = index.find(id)
+    if (row >= 0) selectElsewhere(row)
+    else openBeadCard(id)
+  }, [index, selectElsewhere])
   const keepProjects = useCallback((kept: ReadonlySet<number> | null) => {
     patch({ projects: kept === null ? null : index.projects.filter((_, p) => kept.has(p)).map(project => project.key) })
   }, [index, patch])
@@ -274,6 +315,9 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
   const readStores = host.stores.filter(store => store.generation)
   const pendingStores = host.stores.filter(store => store.pending)
   const failedStores = host.stores.filter(store => store.error)
+  const staleStores = host.stores.filter(store => store.stale)
+  const oldestStale = staleStores.reduce<string | undefined>(
+    (oldest, store) => !oldest || (store.readAt && store.readAt < oldest) ? store.readAt : oldest, undefined)
   const showTable = view.mode !== 'graph'
   const showGraph = view.mode !== 'table'
   const empty = host.loading
@@ -285,7 +329,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
       : result.count === 0 ? 'No Beads in this slice.' : null
 
   return (
-    <div className="beads-view">
+    <div className="beads-view" style={{ '--beads-table-min': tableMinWidth(idChars) } as CSSProperties}>
       <div className="beads-slicer" data-ui="beads.slicer">
         <div className="beads-top">
           <label className="beads-search">
@@ -316,7 +360,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
           <button type="button" className="beads-copy-link" onClick={copyLink}>Copy view link</button>
         </div>
 
-        <TimeStrip index={index} result={result} range={view.range} onRange={setRange} />
+        <TimeStrip index={index} result={result} range={view.range} onRange={setRange} span={view.span} onSpan={setSpan} />
 
         <div className="beads-body">
           <FacetRail
@@ -326,6 +370,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
             statuses={statusSet}
             onProjects={keepProjects}
             onStatuses={keepStatuses}
+            ages={ages}
             width={settings.railWidth.beads}
             onWidthCommit={commitRailWidth}
           />
@@ -357,6 +402,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
                 <div className="beads-pane beads-pane-table">
                   <BeadTable
                     index={index}
+                    idChars={idChars}
                     ordered={ordered}
                     selected={selectedRow}
                     sort={view.sort}
@@ -379,8 +425,13 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
                 </div>
               )}
               {showGraph && (
-                <div className="beads-pane beads-pane-graph">
-                  <WorkGraph index={index} selected={selectedRow} onSelect={selectElsewhere} onOpen={open} />
+                <div className="beads-pane beads-pane-detail">
+                  <div className="beads-detail">
+                    <div className="beads-detail-graph">
+                      <WorkGraph index={index} selected={selectedRow} onSelect={selectElsewhere} onOpen={open} />
+                    </div>
+                    <BeadText index={index} row={selectedRow} generations={generations} idPattern={idPattern} onToken={followToken} />
+                  </div>
                 </div>
               )}
             </div>
@@ -389,7 +440,14 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
 
         <footer className="beads-footer" data-ui="beads.footer">
           <span>{host.loading ? 'Reading stores' : `${readStores.length} ${readStores.length === 1 ? 'store' : 'stores'} read`}</span>
-          {pendingStores.length > 0 && <span>{`${pendingStores.length} reading`}</span>}
+          {staleStores.length > 0 && (
+            <span className="beads-footer-stale" title={staleStores.map(store => `${store.path}: as read ${ageLabel(store.readAt)} ago`).join('\n')}>
+              {`${staleStores.length} as read up to ${ageLabel(oldestStale)} ago${staleStores.some(store => store.pending) ? ', refreshing' : ''}`}
+            </span>
+          )}
+          {pendingStores.length > staleStores.filter(store => store.pending).length && (
+            <span>{`${pendingStores.length - staleStores.filter(store => store.pending).length} reading`}</span>
+          )}
           {failedStores.map(store => (
             <span key={store.path} className="beads-footer-error" title={`${store.path}: ${store.error}`}>
               {`${store.path}: ${store.error}`}

@@ -1,8 +1,8 @@
 /**
  * The Beads tab: every Bead on the host in one table, sliced by search,
- * project, status and days, with the selected Bead's work graph beside it;
- * and the Bead card on the table and the drawer over it
- * (beads: chrote-qtoq.2, chrote-5grx.15, chrote-5grx.47, chrote-5grx.74).
+ * project, status and days, with the selected Bead's work graph and text
+ * beside it; and the Bead card on the table and the drawer over it
+ * (beads: chrote-qtoq.2, chrote-qtoq.3, chrote-5grx.15, chrote-5grx.47, chrote-5grx.74).
  */
 
 import { test, expect, allowBrowserConsoleMessage, type Locator, type Page } from './fixtures'
@@ -107,6 +107,9 @@ test.describe('Beads', () => {
     await expect(graph.getByRole('button', { name: 'test-ep1.4: Completed feature' })).toHaveClass(/closed/)
     await expect(graph.getByRole('button', { name: 'test-ep1.3: Blocked by external API' })).toHaveClass(/blocked/)
     await expect(graph.locator('.beads-graph-legend')).toContainText('test')
+    // Its text is read in the view, beside the graph.
+    await expect(page.locator('.beads-text')).toContainText('Fix login bug')
+    await expect(page.locator('.beads-text')).toContainText('Description')
 
     // Every card is drawn inside the pane, beside the table, not over it.
     const [tableBox, canvasBox] = [await box(page.locator('.beads-table')), await box(graph.locator('.beads-graph-canvas'))]
@@ -164,7 +167,8 @@ test.describe('Beads', () => {
   // The table's geometry is the browser's: long titles wrap inside the title
   // column, every column stays inside the pane beside the rail and the Clerk,
   // and Split puts the graph beneath the table once both no longer fit side by
-  // side. Narrower still, the table scrolls sideways rather than squeeze a column.
+  // side. Narrower still, the table drops Updated, which Idle says, rather than
+  // scroll sideways or squeeze a column; every id stays whole throughout.
   test('keeps the table readable beside the rail, the graph and the Clerk', async ({ page }, testInfo) => {
     const title = 'Make every configured project and all its long-running agent work readable beside the graph and Clerk without losing the end of this title'
     await mockBeadsApiRoutes(page, {
@@ -178,15 +182,20 @@ test.describe('Beads', () => {
     const canvas = page.locator('.beads-graph-canvas')
     const titleCell = page.locator(ROW, { hasText: 'test-ep1.1' }).locator('.beads-cell-title')
     const sideways = () => table.evaluate(node => node.scrollWidth - node.clientWidth)
-    for (const [width, layout] of [[2048, 'beside'], [1600, 'beneath'], [1280, 'scrolls']] as const) {
+    const updated = page.getByRole('columnheader', { name: /Updated/ })
+    for (const [width, layout] of [[2048, 'beside'], [1600, 'beneath'], [1280, 'compact']] as const) {
       await page.setViewportSize({ width, height: 900 })
       await expect(titleCell).toBeVisible()
-      if (layout === 'scrolls') await expect.poll(sideways).toBeGreaterThan(0)
-      else await expect.poll(sideways).toBeLessThanOrEqual(1)
+      await expect.poll(sideways).toBeLessThanOrEqual(1)
+      if (layout === 'compact') await expect(updated).toHaveCount(0)
+      else await expect(updated).toHaveCount(1)
       const [tableBox, canvasBox, cellBox] = [await box(table), await box(canvas), await box(titleCell)]
       if (layout === 'beside') expect(canvasBox.x).toBeGreaterThanOrEqual(tableBox.x + tableBox.width - 1)
       else expect(canvasBox.y).toBeGreaterThanOrEqual(tableBox.y + tableBox.height - 1)
-      if (layout !== 'scrolls') expect(cellBox.x + cellBox.width).toBeLessThanOrEqual(tableBox.x + tableBox.width + 1)
+      expect(cellBox.x + cellBox.width).toBeLessThanOrEqual(tableBox.x + tableBox.width + 1)
+      for (const cell of await page.locator(`${ROW} .beads-cell-id`).all()) {
+        expect(await cell.evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(0)
+      }
       const metrics = await titleCell.evaluate(node => ({
         lines: node.getBoundingClientRect().height / parseFloat(getComputedStyle(node).lineHeight),
         visibleWidth: node.clientWidth,

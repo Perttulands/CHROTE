@@ -752,6 +752,24 @@ export async function mockBeadsApiRoutes(page: Page, options?: {
       checkedAt: new Date().toISOString(),
     })) })
   })
+  // A selected Bead's text, from the same read as its row.
+  await page.route('**/api/beads/text**', async route => {
+    const url = new URL(route.request().url())
+    const path = url.searchParams.get('path') ?? ''
+    const id = url.searchParams.get('id') ?? ''
+    const found = MOCK_HOST_STORES.find(store => store.path === path)?.rows.find(row => row.id === id)
+    if (!found) {
+      await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({
+        success: false, error: { code: 'NOT_FOUND', message: `No Bead ${id} in ${path}` },
+      }) })
+      return
+    }
+    const text = (key: string) => typeof found[key] === 'string' ? found[key] as string : undefined
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(envelope({
+      bead: { id, description: text('description'), design: text('design'), acceptance: text('acceptance'), notes: text('notes'), assignee: text('assignee') },
+      generation: 'mock-one',
+    })) })
+  })
   await page.route('**/api/beads/search**', async route => {
     const terms = (new URL(route.request().url()).searchParams.get('q') ?? '').toLowerCase().split(/\s+/).filter(Boolean)
     const matches: Record<string, string[]> = {}

@@ -1,7 +1,8 @@
 /**
  * The Beads tab's view state as a link: what it searches, which projects and
- * statuses it keeps, the brushed days, the order, the selected Bead and the
- * layout. Defaults are left out, so a plain link stays plain.
+ * statuses it keeps, the brushed days, the days the strip spans, the order,
+ * the selected Bead and the layout. Defaults are left out, so a plain link
+ * stays plain.
  */
 
 import {
@@ -18,6 +19,9 @@ import {
 export type BeadsMode = 'split' | 'table' | 'graph'
 export const BEADS_MODES: readonly BeadsMode[] = ['split', 'table', 'graph']
 
+/** The strip spans the recent days, or every day since the first Bead. */
+export type StripSpan = 'recent' | 'all'
+
 export interface SliceSelection {
   id: string
   /** The project key, carried only when the id alone names more than one Bead. */
@@ -31,6 +35,7 @@ export interface SliceViewState {
   statuses: readonly SliceStatus[] | null
   /** Inclusive local days. */
   range: { from: number; to: number } | null
+  span: StripSpan
   sort: SliceSortKey
   dir: SortDirection
   selected: SliceSelection | null
@@ -38,11 +43,11 @@ export interface SliceViewState {
 }
 
 export const DEFAULT_VIEW: SliceViewState = {
-  q: '', projects: null, statuses: null, range: null, sort: 'updated', dir: 'desc', selected: null, mode: 'split',
+  q: '', projects: null, statuses: null, range: null, span: 'recent', sort: 'updated', dir: 'desc', selected: null, mode: 'split',
 }
 
 /** Every query key the view owns, the tab included. */
-export const VIEW_KEYS = ['tab', 'q', 'p', 's', 'from', 'to', 'sort', 'dir', 'sel', 'mode'] as const
+export const VIEW_KEYS = ['tab', 'q', 'p', 's', 'from', 'to', 'span', 'sort', 'dir', 'sel', 'mode'] as const
 
 function list(value: string | null): string[] | null {
   if (value === null) return null
@@ -71,6 +76,7 @@ export function readViewState(search: string): SliceViewState {
     projects: list(params.get('p')),
     statuses,
     range: from !== null && to !== null ? { from: Math.min(from, to), to: Math.max(from, to) } : null,
+    span: params.get('span') === 'all' ? 'all' : 'recent',
     sort,
     dir,
     selected: selection
@@ -92,6 +98,7 @@ export function writeViewState(state: SliceViewState, url: URL): URL {
     next.searchParams.set('from', dayISO(state.range.from))
     if (state.range.to !== state.range.from) next.searchParams.set('to', dayISO(state.range.to))
   }
+  if (state.span !== DEFAULT_VIEW.span) next.searchParams.set('span', state.span)
   if (state.sort !== DEFAULT_VIEW.sort || state.dir !== DEFAULT_VIEW.dir) {
     next.searchParams.set('sort', state.sort)
     if (state.dir !== NATURAL_DIRECTION[state.sort]) next.searchParams.set('dir', state.dir)

@@ -79,6 +79,8 @@ export interface SliceIndex {
   maxSize: number
   maxIdle: number
   maxKids: number
+  /** Characters in the longest id, so the id column can show every id whole. */
+  idChars: number
   /** Row of a Bead id, preferring the named store; -1 when unknown or ambiguous. */
   find: (id: string, projectIndex?: number) => number
   /** Row of a Bead named as store path and id. */
@@ -119,19 +121,51 @@ export function dayLabel(day: number): string {
   return `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}`
 }
 
+/** The days the strip spans unless every day is asked for. */
+export const RECENT_DAYS = 60
+
+/**
+ * The first day the strip draws, as an offset from the index's first day: the
+ * last RECENT_DAYS days, every day when asked, and never later than the start
+ * of a brushed range, so a link to old days shows them.
+ */
+export function stripStart(days: number, span: 'recent' | 'all', range: { from: number } | null, firstDay: number): number {
+  if (span === 'all' || days <= RECENT_DAYS) return 0
+  const recent = days - RECENT_DAYS
+  return range ? Math.max(0, Math.min(recent, range.from - firstDay)) : recent
+}
+
+/** How long ago an ISO time was, as the footer and the rail say it: "40 min", "3 h", "2 days". */
+export function ageLabel(iso: string | undefined, now: number = Date.now()): string {
+  const at = iso ? Date.parse(iso) : NaN
+  if (!Number.isFinite(at)) return ''
+  const minutes = Math.max(0, Math.floor((now - at) / 60000))
+  if (minutes < 1) return 'moments'
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return `${hours} h`
+  return `${Math.floor(hours / 24)} days`
+}
+
 function basename(path: string): string {
   return path.split('/').filter(Boolean).slice(-1)[0] || path
 }
 
-/** Name every store so two stores never read alike, and a link names one exactly. */
-export function projectIdentities(stores: readonly Pick<HostStore, 'path' | 'prefix'>[]): { key: string; label: string }[] {
+/**
+ * Name every store so two stores never read alike, and a link names one
+ * exactly. A store the server names by its role (the brain) is shown by that
+ * name; its key stays its prefix, so links made before it had a name still
+ * open it.
+ */
+export function projectIdentities(stores: readonly Pick<HostStore, 'path' | 'prefix' | 'name'>[]): { key: string; label: string }[] {
   const shared = new Map<string, number>()
   stores.forEach(store => { if (store.prefix) shared.set(store.prefix, (shared.get(store.prefix) ?? 0) + 1) })
   const named = stores.map(store => {
     const folder = basename(store.path)
-    if (store.prefix && shared.get(store.prefix) === 1) return { key: store.prefix, label: store.prefix }
-    if (store.prefix) return { key: `${store.prefix}:${folder}`, label: `${store.prefix} (${folder})` }
-    return { key: `:${folder}`, label: folder }
+    const name = store.name?.trim()
+    if (store.prefix && shared.get(store.prefix) === 1) return { key: store.prefix, label: name || store.prefix }
+    if (store.prefix) return { key: `${store.prefix}:${folder}`, label: name ? `${name} (${folder})` : `${store.prefix} (${folder})` }
+    return { key: `:${folder}`, label: name || folder }
   })
   const seen = new Map<string, number>()
   named.forEach(name => seen.set(name.key, (seen.get(name.key) ?? 0) + 1))
@@ -199,11 +233,13 @@ export function buildSliceIndex(stores: readonly HostStore[], now: number = Date
   let maxSize = 0
   let maxIdle = 0
   let maxKids = 0
+  let idChars = 0
   const firstOfProject = new Int32Array(stores.length).fill(-1)
 
   for (let i = 0; i < size; i += 1) {
     const row = rows[i]
     haystack[i] = `${row.id} ${row.title}`.toLowerCase()
+    if (row.id.length > idChars) idChars = row.id.length
     if (dated(row.created)) {
       const day = localDay(row.created)
       createdDay[i] = day
@@ -270,7 +306,7 @@ export function buildSliceIndex(stores: readonly HostStore[], now: number = Date
 
   return {
     size, rows, projects, project, status, createdDay, updatedDay, closedDay, idle, kids, parent,
-    children, blockers, dependents, unresolvedBlockers, haystack, firstDay, today, maxSize, maxIdle, maxKids,
+    children, blockers, dependents, unresolvedBlockers, haystack, firstDay, today, maxSize, maxIdle, maxKids, idChars,
     find,
     rowOf: (path: string, id: string) => {
       const p = storeIndex.get(path)

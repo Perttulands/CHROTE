@@ -6,12 +6,17 @@
  * the range itself, so the brush always has its context. A store that came
  * into being after the strip begins is marked on the axis, so the step it adds
  * reads as a new store and not as a backlog.
+ *
+ * The strip spans the last RECENT_DAYS days unless the operator asks for every
+ * day, or a brushed range starts earlier; the counts behind it are the whole
+ * host's either way, so the open area starts at its true height.
  */
 
 import { memo, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useMeasuredSize } from '../../hooks/useMeasuredSize'
-import { dayLabel, type SliceIndex, type SliceResult } from '../../beads/beadsSlice'
+import { RECENT_DAYS, dayLabel, stripStart, type SliceIndex, type SliceResult } from '../../beads/beadsSlice'
+import type { StripSpan } from '../../beads/sliceUrl'
 
 const HEIGHT = 128
 const TOP = 14
@@ -25,6 +30,8 @@ interface TimeStripProps {
   result: SliceResult
   range: { from: number; to: number } | null
   onRange: (range: { from: number; to: number } | null) => void
+  span: StripSpan
+  onSpan: (span: StripSpan) => void
 }
 
 /** A round axis maximum and its step, so the gridlines fall on whole numbers. */
@@ -36,11 +43,15 @@ function niceScale(max: number): { top: number; step: number } {
   return { top: Math.ceil(max / step) * step, step }
 }
 
-function TimeStrip({ index, result, range, onRange }: TimeStripProps) {
+function TimeStrip({ index, result, range, onRange, span, onSpan }: TimeStripProps) {
   const { ref, width } = useMeasuredSize<HTMLDivElement>({ width: 960, height: HEIGHT })
-  const days = result.created.length
+  const total = result.created.length
+  // Days are offsets from the index's first day; the strip draws `start` on.
+  const start = stripStart(total, span, range, index.firstDay)
+  const days = total - start
   const plotWidth = Math.max(40, width - LEFT - RIGHT)
   const dayWidth = plotWidth / days
+  const at = (d: number) => LEFT + (d - start) * dayWidth
   const [drag, setDrag] = useState<{ start: number; end: number } | null>(null)
   const [hover, setHover] = useState<number | null>(null)
   const dragging = useRef(false)
@@ -48,38 +59,40 @@ function TimeStrip({ index, result, range, onRange }: TimeStripProps) {
   const scale = useMemo(() => {
     let most = 0
     let open = 0
-    for (let d = 0; d < days; d += 1) {
+    for (let d = start; d < total; d += 1) {
       most = Math.max(most, result.created[d], result.closed[d])
       open = Math.max(open, result.open[d])
     }
     return { bars: niceScale(most), open: niceScale(open) }
-  }, [days, result])
+  }, [result, start, total])
 
-  const openArea = useMemo(() => {
-    if (scale.open.top === 0) return ''
+  // The open count is a level, not a daily event: a line through each day's
+  // middle, filled beneath, rather than a step per day that turns into blocks
+  // when the days are wide.
+  const open = useMemo(() => {
+    if (scale.open.top === 0) return { area: '', line: '' }
     const y = (value: number) => TOP + PLOT - (value / scale.open.top) * PLOT
-    let path = `M${LEFT},${TOP + PLOT}`
-    for (let d = 0; d < days; d += 1) {
-      path += ` L${LEFT + d * dayWidth},${y(result.open[d])} L${LEFT + (d + 1) * dayWidth},${y(result.open[d])}`
-    }
-    return `${path} L${LEFT + days * dayWidth},${TOP + PLOT} Z`
-  }, [days, dayWidth, result, scale.open.top])
+    let line = `M${LEFT},${y(result.open[start])}`
+    for (let d = start; d < total; d += 1) line += ` L${LEFT + (d - start + 0.5) * dayWidth},${y(result.open[d])}`
+    line += ` L${LEFT + days * dayWidth},${y(result.open[total - 1])}`
+    return { area: `${line} L${LEFT + days * dayWidth},${TOP + PLOT} L${LEFT},${TOP + PLOT} Z`, line }
+  }, [dayWidth, days, result, scale.open.top, start, total])
 
   const labels = useMemo(() => {
     const every = Math.max(1, Math.ceil(64 / dayWidth))
     const marks: number[] = []
-    for (let d = days - 1; d >= 0; d -= every) marks.unshift(d)
+    for (let d = total - 1; d >= start; d -= every) marks.unshift(d)
     return marks
-  }, [dayWidth, days])
+  }, [dayWidth, start, total])
 
   const arrivals = useMemo(() => index.projects
-    .filter(project => project.firstDay > index.firstDay)
-    .map(project => ({ day: project.firstDay - index.firstDay, label: project.label })), [index])
+    .filter(project => project.firstDay > index.firstDay + start)
+    .map(project => ({ day: project.firstDay - index.firstDay, label: project.label })), [index, start])
 
   const dayAt = (event: ReactPointerEvent<SVGRectElement>) => {
     const box = event.currentTarget.getBoundingClientRect()
     const d = Math.floor((event.clientX - box.left) / Math.max(1, box.width / days))
-    return Math.max(0, Math.min(days - 1, d))
+    return start + Math.max(0, Math.min(days - 1, d))
   }
 
   const commit = (start: number, end: number) => {
@@ -97,7 +110,8 @@ function TimeStrip({ index, result, range, onRange }: TimeStripProps) {
   return (
     <div className="beads-strip" ref={ref} data-ui="beads.strip">
       <svg width={width} height={HEIGHT} role="img" aria-label="Beads created and closed per day">
-        <path className="beads-strip-open" d={openArea} />
+        <path className="beads-strip-open" d={open.area} />
+        <path className="beads-strip-open-line" d={open.line} />
         {gridlines.map(v => (
           <g key={v}>
             <line className="beads-strip-grid" x1={LEFT} x2={LEFT + plotWidth} y1={y(v)} y2={y(v)} />
@@ -111,17 +125,18 @@ function TimeStrip({ index, result, range, onRange }: TimeStripProps) {
         {shown && (
           <rect
             className="beads-strip-brush"
-            x={LEFT + shown.from * dayWidth}
+            x={at(Math.max(start, shown.from))}
             y={TOP - 4}
-            width={Math.max(2, (shown.to - shown.from + 1) * dayWidth)}
+            width={Math.max(2, (shown.to - Math.max(start, shown.from) + 1) * dayWidth)}
             height={PLOT + 4}
           />
         )}
-        {Array.from({ length: days }, (_, d) => {
+        {Array.from({ length: days }, (_, offset) => {
+          const d = start + offset
           const created = result.created[d]
           const closed = result.closed[d]
           if (created === 0 && closed === 0) return null
-          const x = LEFT + d * dayWidth + dayWidth / 2
+          const x = at(d) + dayWidth / 2
           return (
             <g key={d}>
               {created > 0 && <rect className="beads-strip-created" x={x - barWidth} y={y(created)} width={barWidth} height={TOP + PLOT - y(created)} />}
@@ -133,8 +148,8 @@ function TimeStrip({ index, result, range, onRange }: TimeStripProps) {
           <line
             key={arrival.label}
             className="beads-strip-arrival"
-            x1={LEFT + (arrival.day + 0.5) * dayWidth}
-            x2={LEFT + (arrival.day + 0.5) * dayWidth}
+            x1={at(arrival.day) + dayWidth / 2}
+            x2={at(arrival.day) + dayWidth / 2}
             y1={TOP + PLOT + 1}
             y2={TOP + PLOT + 5}
           >
@@ -142,7 +157,7 @@ function TimeStrip({ index, result, range, onRange }: TimeStripProps) {
           </line>
         ))}
         {labels.map(d => (
-          <text key={d} className="beads-strip-tick" x={LEFT + (d + 0.5) * dayWidth} y={HEIGHT - 6} textAnchor="middle">
+          <text key={d} className="beads-strip-tick" x={at(d) + dayWidth / 2} y={HEIGHT - 6} textAnchor="middle">
             {dayLabel(index.firstDay + d)}
           </text>
         ))}
@@ -175,15 +190,21 @@ function TimeStrip({ index, result, range, onRange }: TimeStripProps) {
           <title>Drag to keep the Beads created, updated or closed in a range of days</title>
         </rect>
       </svg>
-      <div className="beads-strip-legend" aria-hidden="true">
-        {hover !== null && hover < days && (
-          <span className="beads-strip-reading">
+      <div className="beads-strip-legend">
+        {total > RECENT_DAYS && (
+          <span className="beads-strip-span" role="group" aria-label="Days the strip spans">
+            <button type="button" aria-pressed={span === 'recent'} onClick={() => onSpan('recent')}>{`${RECENT_DAYS} days`}</button>
+            <button type="button" aria-pressed={span === 'all'} onClick={() => onSpan('all')}>{`Since ${dayLabel(index.firstDay)}`}</button>
+          </span>
+        )}
+        {hover !== null && hover < total && (
+          <span className="beads-strip-reading" aria-hidden="true">
             {`${dayLabel(index.firstDay + hover)} · ${result.created[hover]} created · ${result.closed[hover]} closed · ${result.open[hover]} open`}
           </span>
         )}
-        <span className="beads-strip-key beads-strip-key-created">Created</span>
-        <span className="beads-strip-key beads-strip-key-closed">Closed</span>
-        <span className="beads-strip-key beads-strip-key-open">Open</span>
+        <span className="beads-strip-key beads-strip-key-created" aria-hidden="true">Created</span>
+        <span className="beads-strip-key beads-strip-key-closed" aria-hidden="true">Closed</span>
+        <span className="beads-strip-key beads-strip-key-open" aria-hidden="true">Open</span>
       </div>
     </div>
   )

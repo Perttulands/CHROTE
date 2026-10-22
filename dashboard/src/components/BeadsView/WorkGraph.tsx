@@ -14,7 +14,6 @@ import { SLICE_STATUSES, STATUS_LABELS, type SliceIndex } from '../../beads/bead
 import {
   NODE_HEIGHT,
   NODE_WIDTH,
-  READABLE_SCALE,
   buildWorkGraph,
   edgePath,
   projectColours,
@@ -52,8 +51,8 @@ interface WorkGraphProps {
 function WorkGraph({ index, selected, onSelect, onOpen }: WorkGraphProps) {
   const { ref: box, width, height } = useMeasuredSize<HTMLDivElement>({ width: 640, height: 520 })
   const graph = useMemo(
-    () => selected >= 0 ? buildWorkGraph(index, selected, height) : null,
-    [height, index, selected],
+    () => selected >= 0 ? buildWorkGraph(index, selected, { width, height }) : null,
+    [height, index, selected, width],
   )
   // The canvas and its drawing are always in the document, so the box is
   // measured and the wheel bound before the first Bead is selected.
@@ -61,9 +60,10 @@ function WorkGraph({ index, selected, onSelect, onOpen }: WorkGraphProps) {
   const { restore, centreOn, toScreen } = view
   const placed = useRef<string>('')
 
-  // A new family is placed once: whole if it fits at a readable scale,
-  // otherwise from its first column, which the layout made as tall as the
-  // pane. Moving the selection inside the family leaves the drawing where the
+  // A new family is placed once at the scale its layout chose: whole if it
+  // fits at a readable scale, or a little under it, otherwise from its first wave, which the layout made as long as the pane
+  // is tall (or wide), and on the selected Bead if that is out of view.
+  // Moving the selection inside the family leaves the drawing where the
   // operator put it, unless the Bead is out of view.
   const node = graph?.nodes.find(candidate => candidate.row === selected)
   const layoutKey = graph ? `${index.rows[graph.head].id}:${graph.width}x${graph.height}:${width}x${height}` : ''
@@ -71,12 +71,11 @@ function WorkGraph({ index, selected, onSelect, onOpen }: WorkGraphProps) {
     if (!graph) return
     if (placed.current !== layoutKey) {
       placed.current = layoutKey
-      const fit = Math.min(1, width / graph.width, height / graph.height)
-      const scale = Math.max(READABLE_SCALE, fit)
+      const scale = graph.scale
       const x = graph.width * scale <= width ? (width - graph.width * scale) / 2 : 0
       const y = graph.height * scale <= height ? (height - graph.height * scale) / 2 : 0
       restore({ x, y, scale })
-      if (node && (node.x + NODE_WIDTH) * scale + x > width) {
+      if (node && ((node.x + NODE_WIDTH) * scale + x > width || (node.y + NODE_HEIGHT) * scale + y > height)) {
         centreOn({ x: node.x + NODE_WIDTH / 2, y: node.y + NODE_HEIGHT / 2 }, scale)
       }
       return
@@ -145,7 +144,7 @@ function WorkGraph({ index, selected, onSelect, onOpen }: WorkGraphProps) {
                 <path
                   key={`${edge.from}-${edge.to}`}
                   className="beads-graph-edge"
-                  d={edgePath(graph.nodes[edge.from], graph.nodes[edge.to])}
+                  d={edgePath(graph.nodes[edge.from], graph.nodes[edge.to], graph.orientation)}
                   markerEnd="url(#beads-graph-arrow)"
                 />
               ))}

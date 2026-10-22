@@ -1,11 +1,12 @@
 /* The Beads tab: a search line, the day strip, the filter rail, and a work area
-   holding the table, the graph or both. Monochrome but for the strip's closed
-   bars and the graph's project borders, which the colour rule names. */
+   holding the table, the selected Bead's graph and text, or both. Monochrome
+   but for the strip's closed bars and the graph's project borders, which the
+   colour rule names. */
 
 .beads-view {
-  /* Every column of the table at its least, and the body's scrollbar beside them. */
-  --beads-row-width: 708px;
-  --beads-table-width: calc(var(--beads-row-width) + 6px);
+  /* The table at its least, compact, with the body's scrollbar: the view sets
+     it from the longest id. */
+  --beads-table-min: 640px;
   display: flex;
   flex: 1;
   /* The row shrinks to the workspace rather than to the sum of its columns:
@@ -139,7 +140,14 @@
 
 .beads-strip-open {
   fill: var(--text-dim);
-  opacity: 0.14;
+  opacity: 0.12;
+}
+
+.beads-strip-open-line {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  opacity: 0.45;
 }
 
 .beads-strip-grid {
@@ -198,6 +206,36 @@
 
 .beads-strip-reading {
   color: var(--text-secondary);
+}
+
+/* The strip's span: the recent days or every day, one switch at its corner. */
+.beads-strip-span {
+  display: inline-flex;
+  flex: none;
+  pointer-events: auto;
+}
+
+.beads-strip-span button {
+  padding: 0 6px;
+  border: 1px solid var(--divider);
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  line-height: 12px;
+  cursor: pointer;
+}
+
+.beads-strip-span button + button {
+  border-left: none;
+}
+
+.beads-strip-span button:hover {
+  color: var(--text-primary);
+}
+
+.beads-strip-span button[aria-pressed='true'] {
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
 }
 
 .beads-strip-key {
@@ -318,6 +356,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A project drawn from an earlier read: how old that read is. */
+.beads-facet-age {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
 .beads-facet-row.empty .beads-facet-name {
   color: var(--text-dim);
 }
@@ -388,20 +433,21 @@
   border-top: 1px solid var(--divider);
 }
 
-/* Split keeps every column of the table and gives the graph the rest, down to
-   a width a family can still be read at. Narrower than both, the graph goes
-   beneath the table rather than squeezing either. */
+/* Split keeps the table whole and gives the graph and text the rest, down to
+   a width a family of a few waves is still drawn whole in. Narrower than
+   both, the graph and text go beneath the table, side by side, rather than
+   squeezing either. */
 .beads-panes-split {
-  grid-template-columns: minmax(var(--beads-table-width), 11fr) minmax(320px, 9fr);
+  grid-template-columns: minmax(var(--beads-table-min), 11fr) minmax(400px, 9fr);
 }
 
-@container beads-work (width < 1040px) {
+@container beads-work (width < 1200px) {
   .beads-panes-split {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 11fr) minmax(0, 9fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 
-  .beads-panes-split .beads-pane-graph {
+  .beads-panes-split .beads-pane-detail {
     border-top: 1px solid var(--divider);
     border-left: none;
   }
@@ -419,12 +465,105 @@
   min-height: 0;
 }
 
-.beads-pane-graph {
+/* The selected Bead's graph over its text in a tall pane, beside it in a wide one. */
+.beads-pane-detail {
+  container: beads-detail / size;
+}
+
+.beads-panes-split .beads-pane-detail {
+  border-left: 1px solid var(--divider);
+}
+
+.beads-detail {
+  display: grid;
+  flex: 1;
+  grid-template-rows: minmax(0, 11fr) minmax(0, 9fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.beads-detail-graph {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
   background-color: var(--surface-primary);
 }
 
-.beads-panes-split .beads-pane-graph {
-  border-left: 1px solid var(--divider);
+.beads-detail > .beads-text {
+  border-top: 1px solid var(--divider);
+}
+
+@container beads-detail (aspect-ratio > 3 / 2) {
+  .beads-detail {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .beads-detail > .beads-text {
+    border-top: none;
+    border-left: 1px solid var(--divider);
+  }
+}
+
+/* The selected Bead's text: what it is on one quiet line, its title, then its
+   sections in the Markdown theme the card uses. */
+.beads-text {
+  min-width: 0;
+  min-height: 0;
+  padding: 10px 14px 16px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.beads-text-empty {
+  margin: 40px 0 0;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.beads-text-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.beads-text-id {
+  color: var(--accent);
+}
+
+.beads-text-title {
+  margin: 6px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.beads-text-labels {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.beads-text-section {
+  margin-top: 14px;
+}
+
+.beads-text-section h3 {
+  margin: 0 0 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: normal;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.beads-text-error {
+  margin: 14px 0 0;
+  color: var(--color-error);
 }
 
 .beads-empty {
@@ -454,7 +593,9 @@
    so only the rows in view exist. The columns are one grid for the header and
    every row, and the table scrolls sideways before it squeezes a column. */
 .beads-table {
+  /* The table sets both from the longest id, every column or compact. */
   --beads-columns: 104px minmax(140px, 1fr) 108px 112px 60px 58px 72px 52px;
+  --beads-row-width: 708px;
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -487,7 +628,7 @@
 .beads-table-body {
   position: relative;
   flex: 1;
-  min-width: var(--beads-table-width);
+  min-width: calc(var(--beads-row-width) + 6px);
   min-height: 0;
   overflow-y: auto;
   scrollbar-gutter: stable;
@@ -496,6 +637,16 @@
 
 .beads-table-space {
   position: relative;
+}
+
+/* Ten characters in the table's font, never seen: the id column's unit. */
+.beads-ch-probe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  white-space: pre;
+  pointer-events: none;
 }
 
 .beads-table-space .beads-row {
@@ -535,8 +686,15 @@
   text-overflow: ellipsis;
 }
 
+/* An id longer than its column breaks after a dot onto a second line. */
 .beads-cell-id {
+  display: -webkit-box;
+  line-height: 15px;
+  white-space: normal;
   font-variant-numeric: tabular-nums;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 
 /* Two lines of title fit the row; a longer one ends in an ellipsis. */
@@ -800,6 +958,10 @@
 
 .beads-footer > span {
   flex: none;
+}
+
+.beads-footer > .beads-footer-stale {
+  color: var(--text-secondary);
 }
 
 .beads-footer > .beads-footer-error {

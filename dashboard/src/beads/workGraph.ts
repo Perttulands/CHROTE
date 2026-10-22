@@ -6,10 +6,16 @@
  * the same picture and only moves the highlight. The nodes are the head's
  * children (or the lone Bead), plus every Bead outside the family that blocks
  * one of them or waits on one, in any store. Edges are the blocking edges among
- * the nodes. Layout runs in waves by longest blocking path, left to right; a
- * wave taller than the pane wraps into sub-columns as tall as the pane,
- * unfinished work first, so an epic of a hundred children opens legible, at
- * no less than READABLE_SCALE, and pans sideways rather than shrinking to fit.
+ * the nodes. Layout runs in waves by longest blocking path, across the pane,
+ * across in two or more bands one under the next (as a long line of text
+ * wraps), or down it: whichever draws the family largest in the pane it has,
+ * so a long chain of a few Beads is seen whole in a pane of any shape. A family
+ * no shape shows whole at READABLE_SCALE opens whole down to WHOLE_SCALE, since
+ * every card in view beats a readable part; each card's words are a hover or a
+ * click away. A wave longer than the pane wraps into sub-columns as tall as the
+ * pane (or sub-rows as wide), unfinished work first, so an epic of a hundred
+ * children opens legible, at no less than READABLE_SCALE, and pans rather than
+ * shrinking further.
  */
 
 import { isBeadClosed } from './beadStatus'
@@ -19,8 +25,14 @@ export const NODE_WIDTH = 196
 export const NODE_HEIGHT = 40
 /** The smallest scale a graph opens at: below it the words on a card stop being read. */
 export const READABLE_SCALE = 0.85
+/** The smallest scale a family is shrunk to so that it is seen whole. */
+export const WHOLE_SCALE = 0.7
 const GAP_X = 44
 const GAP_Y = 10
+/** Between waves drawn down the pane, and between bands: room for an edge to turn. */
+const GAP_DOWN = 30
+/** The most bands a family is wrapped into. */
+const MOST_BANDS = 4
 const WRAP_GAP_X = 16
 const PAD = 16
 /** Beads outside the family that one graph draws at most. */
@@ -39,7 +51,13 @@ export interface GraphEdge {
   to: number
 }
 
+/** Waves left to right, or top to bottom. */
+export type GraphOrientation = 'across' | 'down'
+
 export interface WorkGraph {
+  orientation: GraphOrientation
+  /** The scale the family opens at in the pane it was laid out for. */
+  scale: number
   /** The family's head, drawn as the pane's title. */
   head: number
   /** The head's own parent, offered as the way up. */
@@ -69,10 +87,15 @@ function naturalOrder(index: SliceIndex) {
   }
 }
 
+/** How large a drawing `width` by `height` can be shown whole in the pane. */
+export function fitScale(pane: { width: number; height: number }, width: number, height: number): number {
+  return Math.min(1, pane.width / Math.max(1, width), pane.height / Math.max(1, height))
+}
+
 /**
- * The family of `selected`, laid out for a pane `paneHeight` tall at scale 1.
+ * The family of `selected`, laid out at scale 1 for a pane of the given size.
  */
-export function buildWorkGraph(index: SliceIndex, selected: number, paneHeight: number): WorkGraph {
+export function buildWorkGraph(index: SliceIndex, selected: number, pane: { width: number; height: number }): WorkGraph {
   const head = familyHead(index, selected)
   const members = index.children[head].length > 0 ? [...index.children[head]] : [head]
   const inFamily = new Set(members)
@@ -121,38 +144,121 @@ export function buildWorkGraph(index: SliceIndex, selected: number, paneHeight: 
     const w = wave[node]
     ;(waves[w] ??= []).push(node)
   })
-  // As many cards as the pane holds, top to bottom, at the smallest scale a
-  // graph opens at.
-  const perColumn = Math.max(4, Math.floor((paneHeight / READABLE_SCALE - 2 * PAD + GAP_Y) / (NODE_HEIGHT + GAP_Y)))
-  const nodes: GraphNode[] = rows.map(row => ({ row, x: 0, y: 0, outside: inRing.has(row) }))
-  let x = PAD
-  let height = 0
-  waves.forEach(column => {
-    if (!column) return
-    column.sort((a, b) => order(rows[a], rows[b]))
-    const columns = Math.ceil(column.length / perColumn)
-    column.forEach((node, i) => {
-      const c = Math.floor(i / perColumn)
-      const r = i % perColumn
-      nodes[node].x = x + c * (NODE_WIDTH + WRAP_GAP_X)
-      nodes[node].y = PAD + r * (NODE_HEIGHT + GAP_Y)
-      height = Math.max(height, nodes[node].y + NODE_HEIGHT + PAD)
+  const columns = waves.filter(Boolean).map(column => column.sort((a, b) => order(rows[a], rows[b])))
+  const across = placeAcross(columns, pane.height, 1)
+  const down = placeDown(columns, pane.width)
+  // Another shape only when it draws the whole family readable and larger
+  // than one band across does. When none is readable whole, whichever shape
+  // is largest, if it is whole at WHOLE_SCALE; an epic too big for any keeps
+  // the one band at READABLE_SCALE, which pans sideways.
+  const alternatives = [down]
+  for (let bands = 2; bands <= Math.min(MOST_BANDS, columns.length); bands += 1) alternatives.push(placeAcross(columns, pane.height, bands))
+  const pick = (floor: number, from: Placement) => {
+    let chosen = from
+    let best = fitScale(pane, from.width, from.height)
+    alternatives.forEach(candidate => {
+      const fit = fitScale(pane, candidate.width, candidate.height)
+      if (fit >= floor && fit > best + 0.01) { chosen = candidate; best = fit }
     })
-    x += columns * (NODE_WIDTH + WRAP_GAP_X) - WRAP_GAP_X + GAP_X
-  })
+    return { chosen, best }
+  }
+  let { chosen, best } = pick(READABLE_SCALE, across)
+  if (best < READABLE_SCALE) ({ chosen, best } = pick(WHOLE_SCALE, across))
   return {
+    orientation: chosen === down ? 'down' : 'across',
+    scale: best >= WHOLE_SCALE ? best : READABLE_SCALE,
     head,
     headParent: index.parent[head],
-    nodes,
+    nodes: rows.map((row, node) => ({ row, x: chosen.x[node], y: chosen.y[node], outside: inRing.has(row) })),
     edges,
-    width: x - GAP_X + PAD,
-    height,
+    width: chosen.width,
+    height: chosen.height,
     omitted,
   }
 }
 
-/** The curve from a blocker's right edge to the left edge of the Bead it blocks. */
-export function edgePath(from: GraphNode, to: GraphNode): string {
+interface Placement {
+  x: Float64Array
+  y: Float64Array
+  width: number
+  height: number
+}
+
+function placement(count: number): Placement {
+  return { x: new Float64Array(count), y: new Float64Array(count), width: 0, height: 0 }
+}
+
+/**
+ * Waves as columns, each wrapping into sub-columns as tall as the pane, in
+ * `bands` bands of about equal width, each under the one before.
+ */
+function placeAcross(waves: readonly (readonly number[])[], paneHeight: number, bands: number): Placement {
+  // As many cards as the pane holds, top to bottom, at the smallest scale a
+  // graph opens at.
+  const perColumn = Math.max(4, Math.floor((paneHeight / READABLE_SCALE - 2 * PAD + GAP_Y) / (NODE_HEIGHT + GAP_Y)))
+  const span = (column: readonly number[]) => Math.ceil(column.length / perColumn) * (NODE_WIDTH + WRAP_GAP_X) - WRAP_GAP_X
+  const target = (waves.reduce((sum, column) => sum + span(column), 0) + (waves.length - 1) * GAP_X) / bands
+  const placed = placement(waves.reduce((sum, column) => sum + column.length, 0))
+  let band = 0
+  let x = PAD
+  let top = PAD
+  let bottom = PAD
+  waves.forEach((column, w) => {
+    // A new band when this one is full, while bands and waves remain for it.
+    if (x > PAD && band < bands - 1 && x - PAD + span(column) > target + 1 && waves.length - w >= bands - band - 1) {
+      band += 1
+      x = PAD
+      top = bottom + GAP_DOWN
+    }
+    column.forEach((node, i) => {
+      placed.x[node] = x + Math.floor(i / perColumn) * (NODE_WIDTH + WRAP_GAP_X)
+      placed.y[node] = top + (i % perColumn) * (NODE_HEIGHT + GAP_Y)
+      bottom = Math.max(bottom, placed.y[node] + NODE_HEIGHT)
+    })
+    x += span(column) + GAP_X
+    placed.width = Math.max(placed.width, x - GAP_X + PAD)
+  })
+  placed.height = bottom + PAD
+  return placed
+}
+
+/** Waves as rows, each wrapping into sub-rows as wide as the pane, centred. */
+function placeDown(waves: readonly (readonly number[])[], paneWidth: number): Placement {
+  const perRow = Math.max(2, Math.floor((paneWidth / READABLE_SCALE - 2 * PAD + WRAP_GAP_X) / (NODE_WIDTH + WRAP_GAP_X)))
+  const placed = placement(waves.reduce((sum, row) => sum + row.length, 0))
+  const widest = Math.min(perRow, Math.max(1, ...waves.map(row => row.length)))
+  const span = (count: number) => count * NODE_WIDTH + (count - 1) * WRAP_GAP_X
+  let y = PAD
+  waves.forEach(row => {
+    const lines = Math.ceil(row.length / perRow)
+    row.forEach((node, i) => {
+      const line = Math.floor(i / perRow)
+      const inLine = Math.min(perRow, row.length - line * perRow)
+      placed.x[node] = PAD + (span(widest) - span(inLine)) / 2 + (i % perRow) * (NODE_WIDTH + WRAP_GAP_X)
+      placed.y[node] = y + line * (NODE_HEIGHT + GAP_Y)
+    })
+    y += lines * (NODE_HEIGHT + GAP_Y) - GAP_Y + GAP_DOWN
+  })
+  placed.width = span(widest) + 2 * PAD
+  placed.height = y - GAP_DOWN + PAD
+  return placed
+}
+
+/**
+ * The curve from a blocker to the Bead it blocks: right edge to left edge
+ * across the pane, bottom edge to top edge down it, and down too from the end
+ * of one band to the next band's start.
+ */
+export function edgePath(from: GraphNode, to: GraphNode, orientation: GraphOrientation = 'across'): string {
+  const nextBand = to.y >= from.y + NODE_HEIGHT && to.x < from.x + NODE_WIDTH
+  if (orientation === 'down' || nextBand) {
+    const x1 = from.x + NODE_WIDTH / 2
+    const y1 = from.y + NODE_HEIGHT
+    const x2 = to.x + NODE_WIDTH / 2
+    const y2 = to.y
+    const bend = Math.max(12, Math.abs(y2 - y1) / 2)
+    return `M${x1},${y1} C${x1},${y1 + bend} ${x2},${y2 - bend} ${x2},${y2}`
+  }
   const x1 = from.x + NODE_WIDTH
   const y1 = from.y + NODE_HEIGHT / 2
   const x2 = to.x

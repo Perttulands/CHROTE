@@ -145,11 +145,20 @@ draw, with times in Unix seconds and each Bead's text size, and the lowercased
 text search runs over. A request fingerprints the stores and copies retained
 bytes. A store whose manifest moved is re-read through the shared reader in the
 background and served from its previous projection, marked pending, until the
-new one is published. The browser names the generations it holds
+new one is published. A discovered store's projection outlives the reader's
+idle expiry, and is also written to the user cache directory, so a visit after
+hours away or a server restart answers every store at once from its last read,
+marked stale with its read time until the background read replaces it; a store
+whose manifest has not moved is current from that file and costs no `bd`. The
+browser names the generations it holds
 (`known=<generation>:<path>`), so a poll over unchanged stores carries no rows;
 answers above 32 KiB are gzipped, and the discovered store list is reused for
-thirty seconds. `GET /api/beads/search?q=` answers with the ids whose text holds
-every term, so the browser never holds the host's descriptions. The browser
+thirty seconds. Discovery leaves out folders whose name says they were set
+aside (backups, archives, retired, scratch, temporary, upstream and vendored
+checkouts); configured workspaces are always listed. `GET /api/beads/search?q=`
+answers with the ids whose text holds every term, and `GET /api/beads/text`
+answers the selected Bead's own text from the same projection, so the browser
+never holds the host's descriptions and reading one starts no `bd`. The browser
 builds one index over typed arrays when rows change; filtering, faceted counts,
 the strip's daily buckets, sorting and the work graph are computed there, and no
 interaction starts a `bd` process.

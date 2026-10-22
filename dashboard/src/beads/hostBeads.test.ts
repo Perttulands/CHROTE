@@ -61,8 +61,21 @@ describe('merging a host answer', () => {
         { path: '/b', generation: 'g1', pending: false, unchanged: true },
       ],
     })
-    expect(next.stores[0]).toMatchObject({ path: '/a', prefix: 'a', generation: 'g1', pending: true, rows })
+    expect(next.stores[0]).toMatchObject({ path: '/a', prefix: 'a', generation: 'g1', pending: true, stale: true, rows })
     expect(next.rowStores).toBe(first.rowStores)
+  })
+
+  it('marks a store the server answered from an earlier read, and clears the mark when the new read lands', () => {
+    const earlier = mergeHostAnswer(EMPTY, {
+      stores: [{ path: '/srv/data/context', name: 'brain', prefix: 'library', generation: 'g0', readAt: '2026-10-21T09:00:00Z', pending: true, stale: true, rows }],
+    })
+    expect(earlier.stores[0]).toMatchObject({ name: 'brain', stale: true, pending: true, rows })
+    const fresh = [{ ...rows[0], title: 'One, revised' }]
+    const next = mergeHostAnswer(earlier, {
+      stores: [{ path: '/srv/data/context', name: 'brain', prefix: 'library', generation: 'g1', readAt: '2026-10-21T12:00:00Z', pending: false, rows: fresh }],
+    })
+    expect(next.stores[0]).toMatchObject({ name: 'brain', stale: false, pending: false, generation: 'g1', rows: fresh })
+    expect(next.rowStores).toBe(next.stores)
   })
 
   it('keeps a failed store\'s last rows beside its error, and drops a store that went away', () => {

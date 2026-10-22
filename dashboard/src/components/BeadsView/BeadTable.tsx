@@ -6,10 +6,17 @@
  * double-click puts the Bead on the table. The arrow keys move the selection.
  * Numeric columns carry a faint bar against the largest value on the host, so
  * a bar keeps its length whatever the filter does.
+ *
+ * The id column is as wide as the longest id on the host, up to fifteen
+ * characters; a longer id, a deep child such as studio-km6.12.8.1.106, breaks
+ * after a dot onto a second line rather than being cut. A pane narrower than
+ * every column drops Updated, which Idle says in days and sorts in the same
+ * order, and lets the title narrow a little, before the table would scroll
+ * sideways.
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import MenuTarget from '../MenuTarget'
 import type { MenuGroup } from '../Menu'
 import { beadGlyph, formatBeadTime } from '../../beads/beadStatus'
@@ -27,19 +34,47 @@ import {
 export const ROW_HEIGHT = 36
 const OVERSCAN = 8
 
-const COLUMNS: { key: SliceSortKey; label: string; numeric?: boolean; title: string }[] = [
-  { key: 'id', label: 'ID', title: 'Bead id' },
-  { key: 'title', label: 'Title', title: 'Title' },
-  { key: 'project', label: 'Project', title: 'The store the Bead lives in' },
-  { key: 'status', label: 'Status', title: 'Status, blocked by any unfinished blocker in any store' },
-  { key: 'updated', label: 'Updated', numeric: true, title: 'Last update' },
-  { key: 'idle', label: 'Idle', numeric: true, title: 'Days since the last update' },
-  { key: 'size', label: 'Size', numeric: true, title: 'Characters of description, design, acceptance and notes' },
-  { key: 'kids', label: 'Kids', numeric: true, title: 'Direct children, in any store' },
+const COLUMNS: { key: SliceSortKey; label: string; numeric?: boolean; title: string; width: number }[] = [
+  { key: 'id', label: 'ID', title: 'Bead id', width: 0 },
+  { key: 'title', label: 'Title', title: 'Title', width: 140 },
+  { key: 'project', label: 'Project', title: 'The store the Bead lives in', width: 108 },
+  { key: 'status', label: 'Status', title: 'Status, blocked by any unfinished blocker in any store', width: 112 },
+  { key: 'updated', label: 'Updated', numeric: true, title: 'Last update', width: 60 },
+  { key: 'idle', label: 'Idle', numeric: true, title: 'Days since the last update', width: 58 },
+  { key: 'size', label: 'Size', numeric: true, title: 'Characters of description, design, acceptance and notes', width: 72 },
+  { key: 'kids', label: 'Kids', numeric: true, title: 'Direct children, in any store', width: 52 },
 ]
+/** The narrowest a title gets once Updated is gone. */
+const COMPACT_TITLE = 120
+/** An id cell's padding, and a pixel to spare. */
+const ID_PAD = 16
+/** The selection border, and the room the body keeps for its scrollbar. */
+const ROW_EDGE = 2
+const GUTTER = 6
+/** Ids longer than this break onto a second line: the few deep ones must not take the title's room. */
+const MOST_ID_CHARS = 15
+
+export function idColumnChars(index: Pick<SliceIndex, 'idChars'>): number {
+  return Math.max(6, Math.min(MOST_ID_CHARS, index.idChars))
+}
+
+/** The columns' fixed pixels beside the id, every column or compact. */
+function fixedWidth(compact: boolean): number {
+  return COLUMNS.reduce((sum, column) => {
+    if (column.key === 'id' || (compact && column.key === 'updated')) return sum
+    return sum + (compact && column.key === 'title' ? COMPACT_TITLE : column.width)
+  }, ID_PAD + ROW_EDGE)
+}
+
+/** The least width the table takes, compact, scrollbar included: what Split keeps for it. */
+export function tableMinWidth(idChars: number): string {
+  return `calc(${idChars}ch + ${fixedWidth(true) + GUTTER}px)`
+}
 
 interface BeadTableProps {
   index: SliceIndex
+  /** The id column's width in characters. */
+  idChars: number
   ordered: Int32Array
   selected: number
   sort: SliceSortKey
@@ -54,6 +89,11 @@ interface BeadTableProps {
   onCopy: (text: string, what: string) => void
 }
 
+/** An id too long for its column, free to break after a dot as after its prefix's hyphen. */
+function breakable(id: string) {
+  return id.split(/(?<=\.)/).flatMap((part, i) => i === 0 ? [part] : [<wbr key={i} />, part])
+}
+
 function Bar({ fraction }: { fraction: number }) {
   return (
     <span className="beads-cell-bar" aria-hidden="true">
@@ -62,8 +102,11 @@ function Bar({ fraction }: { fraction: number }) {
   )
 }
 
-function BeadTable({ index, ordered, selected, sort, dir, reveal, onSort, onSelect, onOpen, onSend, onCopy }: BeadTableProps) {
+function BeadTable({ index, idChars, ordered, selected, sort, dir, reveal, onSort, onSelect, onOpen, onSend, onCopy }: BeadTableProps) {
+  const root = useRef<HTMLDivElement>(null)
+  const probe = useRef<HTMLSpanElement>(null)
   const body = useRef<HTMLDivElement>(null)
+  const [compact, setCompact] = useState(false)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState(600)
   const position = useMemo(() => {
@@ -82,6 +125,31 @@ function BeadTable({ index, ordered, selected, sort, dir, reveal, onSort, onSele
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
+
+  // Compact when every column would not fit: decided from the table's width
+  // and the font's own character width, never from whether it overflowed, so
+  // dropping a column cannot bring it straight back.
+  useLayoutEffect(() => {
+    const element = root.current
+    const sample = probe.current
+    if (!element || !sample) return
+    const read = () => {
+      const ch = sample.getBoundingClientRect().width / 10
+      if (ch > 0) setCompact(element.clientWidth < idChars * ch + fixedWidth(false) + GUTTER)
+    }
+    read()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(read)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [idChars])
+  const columns = useMemo(() => COLUMNS.filter(column => !(compact && column.key === 'updated')), [compact])
+  const layout = useMemo(() => ({
+    '--beads-columns': columns.map(column => column.key === 'id'
+      ? `calc(${idChars}ch + ${ID_PAD}px)`
+      : column.key === 'title' ? `minmax(${compact ? COMPACT_TITLE : column.width}px, 1fr)` : `${column.width}px`).join(' '),
+    '--beads-row-width': `calc(${idChars}ch + ${fixedWidth(compact)}px)`,
+  }) as CSSProperties, [columns, compact, idChars])
 
   const scrollIntoView = useCallback((at: number) => {
     const element = body.current
@@ -173,17 +241,21 @@ function BeadTable({ index, ordered, selected, sort, dir, reveal, onSort, onSele
           onClick={() => { onSelect(row); body.current?.focus({ preventScroll: true }) }}
           onDoubleClick={() => onOpen(row)}
         >
-          <span className="beads-cell beads-cell-id" role="gridcell">{bead.id}</span>
+          <span className="beads-cell beads-cell-id" role="gridcell" title={bead.id.length > idChars ? bead.id : undefined}>
+            {bead.id.length > idChars ? breakable(bead.id) : bead.id}
+          </span>
           <span className="beads-cell beads-cell-title" role="gridcell" title={bead.title}>{bead.title}</span>
           <span className="beads-cell beads-cell-project" role="gridcell" title={project.path}>{project.label}</span>
           <span className="beads-cell beads-cell-status" role="gridcell" title={bead.status.replace(/_/g, ' ')}>
             <span className="beads-glyph" aria-hidden="true">{beadGlyph(closed ? 'closed' : bead.status, status === 'blocked')}</span>
             {STATUS_LABELS[status]}
           </span>
-          <span className="beads-cell beads-cell-number" role="gridcell" title={formatBeadTime(bead.updated ? new Date(bead.updated * 1000).toISOString() : undefined)}>
-            {index.updatedDay[row] >= 0 ? dayLabel(index.updatedDay[row]) : ''}
-          </span>
-          <span className="beads-cell beads-cell-number" role="gridcell">
+          {!compact && (
+            <span className="beads-cell beads-cell-number" role="gridcell" title={formatBeadTime(bead.updated ? new Date(bead.updated * 1000).toISOString() : undefined)}>
+              {index.updatedDay[row] >= 0 ? dayLabel(index.updatedDay[row]) : ''}
+            </span>
+          )}
+          <span className="beads-cell beads-cell-number" role="gridcell" title={compact ? formatBeadTime(bead.updated ? new Date(bead.updated * 1000).toISOString() : undefined) : undefined}>
             {idle >= 0 ? `${idle}d` : ''}
             <Bar fraction={index.maxIdle > 0 && idle > 0 ? idle / index.maxIdle : 0} />
           </span>
@@ -201,9 +273,10 @@ function BeadTable({ index, ordered, selected, sort, dir, reveal, onSort, onSele
   }
 
   return (
-    <div className="beads-table" role="grid" aria-label="Beads" aria-rowcount={ordered.length + 1} data-ui="beads.table">
+    <div ref={root} className="beads-table" role="grid" aria-label="Beads" aria-rowcount={ordered.length + 1} data-ui="beads.table" style={layout}>
+      <span ref={probe} className="beads-ch-probe" aria-hidden="true">0000000000</span>
       <div className="beads-row beads-head" role="row" aria-rowindex={1}>
-        {COLUMNS.map(column => {
+        {columns.map(column => {
           const active = sort === column.key
           return (
             <span

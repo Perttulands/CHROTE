@@ -11,6 +11,7 @@ describe('the view as a link', () => {
       projects: ['library', 'home:alice'],
       statuses: ['open', 'blocked'],
       range: { from: parseDayISO('2026-10-20')!, to: parseDayISO('2026-10-21')! },
+      span: 'all',
       sort: 'size',
       dir: 'asc',
       selected: { id: 'home-1', project: 'home:alice' },

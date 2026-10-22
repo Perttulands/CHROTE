@@ -30,11 +30,15 @@ export interface HostBead {
 
 export interface HostStore {
   path: string
+  /** What the store is called when its role names it better than its prefix. */
+  name?: string
   prefix?: string
   generation?: string
   readAt?: string
   /** A read of this store is in flight; its rows, if any, are the previous ones. */
   pending: boolean
+  /** The rows are the store as it was at readAt: it has been written since. */
+  stale?: boolean
   error?: string
   rows: readonly HostBead[]
 }
@@ -54,10 +58,12 @@ export interface HostRead {
 
 interface WireStore {
   path: string
+  name?: string
   prefix?: string
   generation?: string
   readAt?: string
   pending: boolean
+  stale?: boolean
   error?: string
   unchanged?: boolean
   rows?: HostBead[]
@@ -117,10 +123,13 @@ export function mergeHostAnswer(previous: HostRead, answer: { stores: WireStore[
     if (rows !== prior?.rows) rowsChanged = true
     return {
       path: wire.path,
+      name: wire.name,
       prefix: wire.prefix ?? (unread ? prior?.prefix : undefined),
       generation: unread ? prior?.generation : wire.generation,
       readAt: unread ? prior?.readAt : wire.readAt,
       pending: wire.pending,
+      // Rows kept from before the server lost them are as old as their read.
+      stale: unread ? !!prior?.generation : !!wire.stale,
       error: wire.error,
       rows,
     }
@@ -200,6 +209,43 @@ export function useHostBeads(active: boolean, manualPaths: readonly string[]): H
   return useSyncExternalStore(subscribe, read, read)
 }
 
+/** A Bead's written text, as the store held it at its last read. */
+export interface HostBeadText {
+  id: string
+  description?: string
+  design?: string
+  acceptance?: string
+  notes?: string
+  closeReason?: string
+  assignee?: string
+  labels?: string[]
+}
+
+const TEXTS_KEPT = 200
+const texts = new Map<string, HostBeadText>()
+
+/**
+ * The text of one Bead, from the server's projection of its store: no bd runs
+ * for it. A text is kept per store generation, so going back to a Bead costs
+ * nothing until its store changes.
+ */
+export async function fetchHostBeadText(path: string, id: string, generation: string | undefined, signal: AbortSignal): Promise<HostBeadText> {
+  const key = `${generation ?? ''}\u0000${path}\u0000${id}`
+  const kept = texts.get(key)
+  if (kept) return kept
+  const data = await getJSON<{ bead: HostBeadText; generation?: string }>('text', new URLSearchParams({ path, id }), signal)
+  // Kept under the generation it was read at, which is the one asked for
+  // unless the store moved on in between.
+  texts.set(`${data.generation ?? ''}\u0000${path}\u0000${id}`, data.bead)
+  if (texts.size > TEXTS_KEPT) texts.delete(texts.keys().next().value as string)
+  return data.bead
+}
+
+/** The text already held for a Bead at a generation, without asking. */
+export function heldHostBeadText(path: string, id: string, generation: string | undefined): HostBeadText | undefined {
+  return texts.get(`${generation ?? ''}\u0000${path}\u0000${id}`)
+}
+
 /** The ids, per store path, whose text holds every term of the query. */
 export async function searchHostBeads(query: string, signal: AbortSignal): Promise<Record<string, string[]>> {
   const data = await getJSON<{ matches: Record<string, string[]> }>('search', new URLSearchParams({ q: query }), signal)
@@ -216,5 +262,6 @@ export function resetHostBeadsForTest() {
   again = false
   manual = []
   listeners.clear()
+  texts.clear()
   state = { stores: NO_STORES, rowStores: NO_STORES, loading: true }
 }

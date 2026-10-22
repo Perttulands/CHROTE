@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  RECENT_DAYS,
   SLICE_STATUSES,
+  ageLabel,
   buildSliceIndex,
   dayISO,
   filterSlice,
@@ -11,6 +13,7 @@ import {
   rowReference,
   searchTerms,
   storeRowsForCard,
+  stripStart,
   textMatchMask,
   type SliceFilter,
   type SliceIndex,
@@ -131,6 +134,25 @@ describe('store names', () => {
       { key: ':unnamed', label: 'unnamed' },
     ])
   })
+
+  it('shows a store the server names by its role by that name, and keeps its prefix as its key', () => {
+    expect(projectIdentities([
+      { path: '/srv/data/context', prefix: 'library', name: 'brain' },
+      { path: '/srv', prefix: 'srv' },
+    ])).toEqual([
+      { key: 'library', label: 'brain' },
+      { key: 'srv', label: 'srv' },
+    ])
+  })
+
+  it('says how old a read is in the unit that reads best', () => {
+    const now = Date.parse('2026-10-22T12:00:00Z')
+    expect(ageLabel('2026-10-22T11:59:40Z', now)).toBe('moments')
+    expect(ageLabel('2026-10-22T11:18:00Z', now)).toBe('42 min')
+    expect(ageLabel('2026-10-22T08:30:00Z', now)).toBe('3 h')
+    expect(ageLabel('2026-10-19T12:00:00Z', now)).toBe('3 days')
+    expect(ageLabel(undefined, now)).toBe('')
+  })
 })
 
 describe('the strip', () => {
@@ -156,6 +178,15 @@ describe('the strip', () => {
     expect(result.open[day('2026-10-21')]).toBe(3)
     expect(result.created[day('2026-10-10')]).toBe(3)
     expect(result.closed[day('2026-10-11')]).toBe(1)
+  })
+
+  it('spans the recent days unless every day is asked for or a range starts earlier', () => {
+    expect(stripStart(200, 'recent', null, 1000)).toBe(200 - RECENT_DAYS)
+    expect(stripStart(200, 'all', null, 1000)).toBe(0)
+    expect(stripStart(RECENT_DAYS - 5, 'recent', null, 1000)).toBe(0)
+    // A link to days before the recent span widens the strip to show them.
+    expect(stripStart(200, 'recent', { from: 1000 + 30 }, 1000)).toBe(30)
+    expect(stripStart(200, 'recent', { from: 1000 + 190 }, 1000)).toBe(200 - RECENT_DAYS)
   })
 
   it('marks the day a store was first seen', () => {

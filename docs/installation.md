@@ -46,6 +46,7 @@ Defaults:
 | Managed config | `$XDG_CONFIG_HOME/chrote/chrote.env` or `$HOME/.config/chrote/chrote.env` |
 | Private overrides | `$XDG_CONFIG_HOME/chrote/secrets.env` |
 | Durable state | `$XDG_STATE_HOME/chrote` or `$HOME/.local/state/chrote` |
+| Disposable cache | `$XDG_CACHE_HOME/chrote` or `$HOME/.cache/chrote`: the Beads tab's last read of each store |
 | Server user unit | `$XDG_CONFIG_HOME/systemd/user/chrote.service` |
 
 The installer:

@@ -12,6 +12,7 @@ const mockState = vi.hoisted(() => ({
   updateSettings: vi.fn(),
   hostRequests: [] as string[],
   searchRequests: [] as string[],
+  textRequests: [] as string[],
   matches: {} as Record<string, string[]>,
 }))
 
@@ -83,6 +84,7 @@ beforeEach(() => {
   resetKnownBeadsForTest()
   mockState.hostRequests = []
   mockState.searchRequests = []
+  mockState.textRequests = []
   mockState.matches = {}
   mockState.openSendToSession.mockReset()
   vi.stubGlobal('fetch', vi.fn((input: string) => {
@@ -94,6 +96,14 @@ beforeEach(() => {
     if (url.pathname === '/api/beads/search') {
       mockState.searchRequests.push(url.searchParams.get('q') ?? '')
       return Promise.resolve(respond({ matches: mockState.matches }))
+    }
+    if (url.pathname === '/api/beads/text') {
+      const id = url.searchParams.get('id') ?? ''
+      mockState.textRequests.push(`${url.searchParams.get('path')} ${id}`)
+      return Promise.resolve(respond({
+        bead: { id, description: `The text of ${id}; it waits on ctx-xvl.`, acceptance: 'A second agent can check it.', assignee: 'claude' },
+        generation: 'g1',
+      }))
     }
     return Promise.reject(new Error(`unexpected ${url.pathname}`))
   }))
@@ -174,6 +184,38 @@ describe('the Beads tab', () => {
     expect(within(graph).getByRole('button', { name: 'library-zvi.2: Project homes for every project', pressed: true })).toBeInTheDocument()
     expect(within(graph).getByRole('button', { name: 'ctx-xvl: Connector and Ask cite the evidence' })).toBeInTheDocument()
     expect(screen.getByTestId('resident')).toHaveAttribute('data-reference', 'bead library-zvi.2: Project homes for every project')
+  })
+
+  it('reads the selected Bead\'s text in the view, once per read, and an id in it selects that Bead', async () => {
+    render(<BeadsView />)
+    await waitFor(() => expect(rowIds()).toHaveLength(5))
+    const select = (id: string) => fireEvent.click(screen.getAllByRole('row').find(item => item.querySelector('.beads-cell-id')?.textContent === id)!)
+    select('library-zvi.1')
+    const text = document.querySelector('.beads-text') as HTMLElement
+    await waitFor(() => expect(text).toHaveTextContent('The text of library-zvi.1; it waits on ctx-xvl.'))
+    expect(text).toHaveTextContent('Move the remaining records')
+    expect(text).toHaveTextContent('Acceptance criteria')
+    expect(text).toHaveTextContent('claude')
+    select('library-zvi.2')
+    await waitFor(() => expect(text).toHaveTextContent('The text of library-zvi.2'))
+    select('library-zvi.1')
+    expect(text).toHaveTextContent('The text of library-zvi.1')
+    expect(mockState.textRequests).toEqual(['/srv/data/context library-zvi.1', '/srv/data/context library-zvi.2'])
+    fireEvent.click(within(text).getByText('ctx-xvl'))
+    expect(screen.getAllByRole('row').find(item => item.getAttribute('aria-selected') === 'true')).toHaveTextContent('ctx-xvl')
+  })
+
+  it('draws a store from an earlier read at once, saying how old it is while it is read again', async () => {
+    const readAt = new Date(Date.now() - 3 * 3600 * 1000 - 60000).toISOString()
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(respond({
+      stores: [{ ...STORES[0], name: 'brain', readAt, pending: true, stale: true }, STORES[1]],
+    }))))
+    render(<BeadsView />)
+    await waitFor(() => expect(rowIds()).toHaveLength(5))
+    expect(document.querySelector('.beads-footer')).toHaveTextContent('1 as read up to 3 h ago, refreshing')
+    const projects = screen.getByRole('group', { name: 'Projects' })
+    const brain = within(projects).getByRole('button', { name: 'brain' }).closest('.beads-facet-row') as HTMLElement
+    expect(brain).toHaveTextContent('3 h')
   })
 
   it('opens the card from the keyboard, already drawn from what the table knows', async () => {

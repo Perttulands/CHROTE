@@ -89,18 +89,31 @@ hang from. Status stays the glyph `bd` prints, with the word on hover; in the
 Beads table, where status is a column to sort and scan, the word stands beside
 the glyph.
 
-The Beads tab is one table of every Bead on the host. The strip above it counts
-the Beads created (`--text-dim`) and closed (`--ansi-2`) each day, with the
-Beads open at each day's end as a faint area behind the bars, never a line
-competing with them; a tick on the axis marks the day a store was first seen,
-so its arrival reads as a new store rather than a backlog. A drag across the
-strip brushes the days the table keeps. The rail keeps two filters, project and
-status, each row a box that toggles it and a name that keeps it alone. Numeric
-columns are right-aligned with a faint bar beside the number. The work graph
-draws the selected Bead's family: its cards' borders carry their project's
-shelf colour, finished cards are dimmed and blocked cards dashed. Split keeps
-every column of the table and puts the graph beside it, or beneath it when the
-two no longer fit side by side. The target it was built to is in
+The Beads tab is one table of every Bead on the host, shown at once from each
+store's last read; a store written since its read carries the read's age in the
+rail, and the footer counts those stores with the oldest age while their new
+reads are on their way, so stale is stated rather than hidden behind a spinner. The strip above it
+counts the Beads created (`--text-dim`) and closed (`--ansi-2`) each day, with
+the Beads open at each day's end as a faint area behind the bars, its edge a
+faint line through each day, never a line competing with them; a tick on the
+axis marks the day a store was first seen, so its arrival reads as a new store
+rather than a backlog. It shows the last sixty days, wide enough to read a day;
+the words beside the scale reach every day since the first store began. A drag
+across the strip brushes the days the table keeps. The rail keeps two filters,
+project and status, each row a box that toggles it and a name that keeps it
+alone; a store is named for its prefix, or for its role when that says more,
+as the brain does. Ids are never cut: the column is as wide as the longest
+shown, up to fifteen characters, and a longer id wraps after a dot. Numeric
+columns are right-aligned with a faint bar beside the number; when the table
+is too narrow for every column, Updated gives way to Idle, which sorts the
+same. The work graph draws the selected Bead's family: its cards' borders carry
+their project's shelf colour, finished cards are dimmed and blocked cards
+dashed. A long chain wraps into bands one under the next, or runs down a tall
+pane, and a small family shrinks a little below the readable scale rather
+than leave a card out of view. Split puts the graph and the selected Bead's
+own words beside the table, or beneath it when the two no longer fit side by
+side; the text sits beside the graph in a wide pane and beneath it in a tall
+one. The target it was built to is in
 [`docs/assets/beads-slicer/`](docs/assets/beads-slicer/final-target.png).
 
 Everything else is gone: per-window accent colours, hashed per-user hues, the

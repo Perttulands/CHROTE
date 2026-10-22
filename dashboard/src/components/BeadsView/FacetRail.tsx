@@ -5,7 +5,8 @@
  * order of size, statuses in the order bd works through them.
  *
  * The box toggles one row; the name keeps that row alone, and a second click
- * on the same name brings everything back.
+ * on the same name brings everything back. A project shown from an earlier
+ * read, while it is read again, says how old that read is.
  */
 
 import { memo, useMemo, useState } from 'react'
@@ -21,6 +22,8 @@ interface FacetRailProps {
   statuses: ReadonlySet<number> | null
   onProjects: (next: ReadonlySet<number> | null) => void
   onStatuses: (next: ReadonlySet<number> | null) => void
+  /** How old each project's rows are, for a project shown from an earlier read. */
+  ages: ReadonlyMap<number, string>
   width: number
   onWidthCommit: (width: number) => void
 }
@@ -46,7 +49,7 @@ const STATUS_GLYPHS: Record<string, string> = {
   closed: beadGlyph('closed'),
 }
 
-function FacetRail({ index, result, projects, statuses, onProjects, onStatuses, width, onWidthCommit }: FacetRailProps) {
+function FacetRail({ index, result, projects, statuses, onProjects, onStatuses, ages, width, onWidthCommit }: FacetRailProps) {
   const [find, setFind] = useState('')
   const ordered = useMemo(() => index.projects
     .map((project, p) => ({ project, p }))
@@ -96,6 +99,11 @@ function FacetRail({ index, result, projects, statuses, onProjects, onStatuses, 
                 >
                   {project.label}
                 </button>
+                {ages.has(p) && (
+                  <span className="beads-facet-age" title={`As read ${ages.get(p)} ago; it has changed since and is being read again`}>
+                    {ages.get(p)}
+                  </span>
+                )}
                 <span className="beads-facet-count">{count}</span>
               </div>
             )
