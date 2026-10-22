@@ -29,6 +29,7 @@ The host runs tmux, the CHROTE server, and the resources exposed through CHROTE.
 
 - The Files view and terminal sidecar browse, read, edit, compare, rename, and send files under configured roots.
 - Canonical-path checks keep file operations inside those roots after symlink resolution.
+- A link of the form `/?files=<path>` opens the Files view at that path. Uploads stream to disk with no client timeout, up to the configured upload limit.
 - Unix permissions decide what the service identity can access. CHROTE reports permission failures plainly and does not add a second file-access policy.
 - File state remains in the filesystem. CHROTE does not mirror project contents into its own database.
 

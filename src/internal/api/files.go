@@ -381,7 +381,12 @@ func (h *FilesHandler) openConfinedParent(result PathResult, create bool) (*conf
 	return &confinedParent{directory: directory, name: name}, nil
 }
 
-func (h *FilesHandler) writeConfinedFileAt(parent *confinedParent, body []byte) error {
+// writeConfinedFileAt writes body to the parent's named file. A new file is
+// streamed to disk, so a large upload is never held in memory, and is removed
+// when the body fails. An existing file is read in full before it is rewritten
+// in place, so a failed upload leaves it untouched and a save keeps its owner
+// and inode.
+func (h *FilesHandler) writeConfinedFileAt(parent *confinedParent, body io.Reader) (err error) {
 	if parent == nil || parent.directory == nil {
 		return errFilesPathChanged
 	}
@@ -398,6 +403,9 @@ func (h *FilesHandler) writeConfinedFileAt(parent *confinedParent, body []byte) 
 		if file != nil {
 			_ = file.Close()
 		}
+		if err != nil && created {
+			_ = syscall.Unlinkat(int(parent.directory.Fd()), parent.name)
+		}
 	}()
 	info, err := file.Stat()
 	if err != nil {
@@ -406,18 +414,20 @@ func (h *FilesHandler) writeConfinedFileAt(parent *confinedParent, body []byte) 
 	if !info.Mode().IsRegular() {
 		return errors.New("file target is not a regular file")
 	}
-	if !created {
-		if err := file.Truncate(0); err != nil {
+	if created {
+		if _, err = io.Copy(file, body); err != nil {
 			return err
 		}
-	}
-	if len(body) > 0 {
-		written, err := file.Write(body)
-		if err != nil {
+	} else {
+		content, readErr := io.ReadAll(body)
+		if readErr != nil {
+			return readErr
+		}
+		if err = file.Truncate(0); err != nil {
 			return err
 		}
-		if written != len(body) {
-			return io.ErrShortWrite
+		if _, err = file.Write(content); err != nil {
+			return err
 		}
 	}
 	err = file.Close()
@@ -806,19 +816,14 @@ func (h *FilesHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read and bound the body before creating parent directories.
-	r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
-	body, err := io.ReadAll(r.Body)
-	defer r.Body.Close()
-	if err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			core.WriteError(w, http.StatusRequestEntityTooLarge, "TOO_LARGE", "File exceeds the configured upload limit")
-			return
-		}
-		core.WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+	// A declared length over the limit is refused before anything touches disk;
+	// an undeclared one is bounded while it streams.
+	if r.ContentLength > h.maxUploadBytes {
+		core.WriteError(w, http.StatusRequestEntityTooLarge, "TOO_LARGE", "File exceeds the configured upload limit")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
+	defer r.Body.Close()
 
 	parent, err := h.openConfinedParent(result, true)
 	if err != nil {
@@ -827,7 +832,12 @@ func (h *FilesHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 	}
 	defer parent.directory.Close()
 
-	if err := h.writeConfinedFileAt(parent, body); err != nil {
+	if err := h.writeConfinedFileAt(parent, r.Body); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			core.WriteError(w, http.StatusRequestEntityTooLarge, "TOO_LARGE", "File exceeds the configured upload limit")
+			return
+		}
 		writeFilesUseError(w, err, false)
 		return
 	}

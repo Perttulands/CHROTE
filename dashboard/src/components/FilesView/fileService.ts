@@ -492,8 +492,8 @@ export async function uploadFiles(path: string, files: FileList | File[]): Promi
         headers: {
           'Content-Type': file.type || 'application/octet-stream',
         },
+        // No timeout: a large file over a slow link takes as long as it takes.
         body: file,
-        signal: AbortSignal.timeout(30000),
       })
     } catch (error) {
       throw new FileOperationError(

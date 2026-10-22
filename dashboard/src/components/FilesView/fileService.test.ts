@@ -97,6 +97,8 @@ describe('uploadFiles', () => {
     // The file itself is the body, so nothing re-encodes the bytes on the way out.
     expect(init.body).toBe(upload)
     expect(init.headers['Content-Type']).toBe('text/plain')
+    // A large upload over a slow link must not be cut by a timeout.
+    expect(init.signal).toBeUndefined()
   })
 })
 

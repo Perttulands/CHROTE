@@ -199,10 +199,13 @@ function DraggedSessionOverlay({ drag }: { drag: ActiveDrag }) {
 }
 
 function DashboardContent() {
-  // A Beads view link (`?tab=beads&…`, written by the Beads tab) opens on that tab.
-  const [activeTab, setActiveTab] = useState<Tab>(() => (
-    new URLSearchParams(window.location.search).get('tab') === 'beads' ? 'beads' : 'terminal1'
-  ))
+  // A Beads view link (`?tab=beads&…`, written by the Beads tab) opens on that
+  // tab; a Files link (`?files=/path`) opens the Files tab at that path.
+  const [linkedFilesPath] = useState(() => new URLSearchParams(window.location.search).get('files'))
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    if (linkedFilesPath) return 'files'
+    return new URLSearchParams(window.location.search).get('tab') === 'beads' ? 'beads' : 'terminal1'
+  })
   const [lastActiveWorkspaceId, setLastActiveWorkspaceId] = useState<WorkspaceId>('terminal1')
   const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
   const [openFilesWorkspaceIds, setOpenFilesWorkspaceIds] = useState<Set<WorkspaceId>>(() => new Set())
@@ -210,7 +213,9 @@ function DashboardContent() {
   const [keysPanelOpen, setKeysPanelOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
   const [beadsColumnOpen, setBeadsColumnOpen] = useState(false)
-  const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
+  const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(
+    () => linkedFilesPath ? { path: linkedFilesPath, nonce: 0 } : null,
+  )
   const [beadsRevealRequest, setBeadsRevealRequest] = useState<BeadsRevealRequest | null>(null)
   const {
     addSessionToWindow,

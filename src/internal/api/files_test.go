@@ -606,6 +606,65 @@ func TestFilesHandlerRejectsOversizedUpload(t *testing.T) {
 	}
 }
 
+// An upload streams to disk as it arrives, so one that runs past the limit
+// without declaring its length is cut there and leaves no partial file.
+func TestFilesHandlerUndeclaredOversizedUploadLeavesNoPartialFile(t *testing.T) {
+	root := t.TempDir()
+	handler := &FilesHandler{allowedRoots: []string{root}, maxUploadBytes: 4}
+	target := filepath.Join(root, "large.txt")
+	req := httptest.NewRequest(http.MethodPost, "/api/files/resources/ignored", bytes.NewBufferString("12345"))
+	req.ContentLength = -1
+	req.SetPathValue("path", target)
+	rec := httptest.NewRecorder()
+
+	handler.CreateResource(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("cut upload left a partial file: %v", err)
+	}
+}
+
+// Saving over an existing file rewrites it in place, keeping its inode, and a
+// save that fails leaves the old content whole.
+func TestFilesHandlerOverwriteKeepsTheFileAndSurvivesAFailedSave(t *testing.T) {
+	root := t.TempDir()
+	handler := &FilesHandler{allowedRoots: []string{root}, maxUploadBytes: 4}
+	target := filepath.Join(root, "note.txt")
+	writeFileFixture(t, target, "old")
+	before, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(body string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/files/resources/ignored", bytes.NewBufferString(body))
+		req.ContentLength = -1
+		req.SetPathValue("path", target)
+		rec := httptest.NewRecorder()
+		handler.CreateResource(rec, req)
+		return rec.Code
+	}
+
+	if code := post("12345"); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized save status = %d, want 413", code)
+	}
+	if content, _ := os.ReadFile(target); string(content) != "old" {
+		t.Fatalf("failed save changed the file to %q", content)
+	}
+	if code := post("new"); code != http.StatusOK {
+		t.Fatalf("save status = %d, want 200", code)
+	}
+	after, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content, _ := os.ReadFile(target); string(content) != "new" || !os.SameFile(before, after) {
+		t.Fatalf("save = %q, same file %v; want new content in the same inode", content, os.SameFile(before, after))
+	}
+}
+
 func TestFilesHandlerDownloadKeepsStableInRootSymlinkUseful(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "target.txt")

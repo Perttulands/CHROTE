@@ -140,12 +140,17 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
   const { announce } = useStatus()
   const showError = useCallback((message: string) => announce(message, 'error'), [announce])
 
+  // Only the latest listing lands, so a linked folder is not overwritten by the
+  // restored one when that read finishes later.
+  const loadSequenceRef = useRef(0)
   const loadDirectory = useCallback(async (path: string) => {
     const normalized = normalizePath(path)
+    const sequence = ++loadSequenceRef.current
     setLoading(true)
     setError(null)
     try {
       const nextItems = await fetchDirectory(normalized)
+      if (sequence !== loadSequenceRef.current) return
       setItems(nextItems)
       setCurrentPath(normalized)
       setPathDraft(normalized)
@@ -153,10 +158,11 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
       setError(null)
       setExpandedPaths(previous => Array.from(new Set([...previous, '/', normalized])))
     } catch (loadError) {
+      if (sequence !== loadSequenceRef.current) return
       setItems([])
       setError(getErrorMessage(loadError, 'fetch'))
     } finally {
-      setLoading(false)
+      if (sequence === loadSequenceRef.current) setLoading(false)
     }
   }, [])
 
