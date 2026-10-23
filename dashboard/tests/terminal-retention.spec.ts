@@ -98,7 +98,7 @@ test.describe('Terminal retention', () => {
     main.send('\r\noutput while its tag was hidden')
     const mainGridsWhileHidden = main.grids.length
 
-    await page.getByRole('button', { name: 'Terminal 2' }).click()
+    await page.getByRole('button', { name: 'Terminal 2', exact: true }).click()
     await expect(visibleRows()).toContainText('connection-3')
     expect(connections.count).toBe(3)
     expect(connections.sessions.get('hq-mayor')!.grids[0]).toEqual(main.grids[0])
@@ -187,14 +187,14 @@ test.describe('Terminal retention', () => {
       },
     })
 
-    await page.getByRole('button', { name: 'Terminal 3' }).click()
+    await page.getByRole('button', { name: 'Terminal 3', exact: true }).click()
     const terminal = page.locator('.terminal-grid[data-workspace="terminal3"] .xterm-rows')
     await expect(terminal).toContainText('connection-1')
 
     await page.getByRole('button', { name: 'Settings' }).click()
     await page.getByRole('button', { name: /^Terminal tabs: / }).click()
     await page.getByRole('menuitem', { name: /^2/ }).click()
-    await expect(page.getByRole('button', { name: 'Terminal 3' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Terminal 3', exact: true })).toHaveCount(0)
 
     // Adversarial window: session refreshes must land while the workspace is
     // unreachable. A visibility-derived binding list would let the pool
@@ -206,7 +206,7 @@ test.describe('Terminal retention', () => {
     await page.getByRole('button', { name: 'Settings' }).click()
     await page.getByRole('button', { name: /^Terminal tabs: / }).click()
     await page.getByRole('menuitem', { name: /^3/ }).click()
-    await page.getByRole('button', { name: 'Terminal 3' }).click()
+    await page.getByRole('button', { name: 'Terminal 3', exact: true }).click()
 
     await expect(terminal).toContainText('connection-1')
     expect(connections.count).toBe(1)
