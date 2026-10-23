@@ -149,10 +149,11 @@
    opened, where it sits, how long it is, and the dive. */
 .library-row-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 3px 6px;
+  min-height: 28px;
+  padding: 0 6px;
   border: none;
   background: transparent;
   font-family: inherit;

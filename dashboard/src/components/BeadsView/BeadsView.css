@@ -216,7 +216,9 @@
   pointer-events: auto;
 }
 
+/* Drawn 14px tall on the strip; the target reaches 7px above and below. */
 .beads-strip-span button {
+  position: relative;
   padding: 0 6px;
   border: 1px solid var(--divider);
   background: none;
@@ -224,6 +226,12 @@
   font: inherit;
   line-height: 12px;
   cursor: pointer;
+}
+
+.beads-strip-span button::before {
+  content: '';
+  position: absolute;
+  inset: -7px 0;
 }
 
 .beads-strip-span button + button {
@@ -402,7 +410,8 @@
 }
 
 .beads-mode {
-  padding: 3px 14px;
+  min-height: 28px;
+  padding: 0 14px;
   border: none;
   background: none;
   color: var(--text-secondary);
