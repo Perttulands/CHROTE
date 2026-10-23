@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -501,6 +503,21 @@ func TestAgentContext_HasNoCodexMemoriesWhenTheHandbookIsAbsent(t *testing.T) {
 	resolved := host.handler.resolve(folder, harnessCodex, "", host.home)
 	if len(resolved.Memories) != 0 {
 		t.Fatalf("memories = %v, want none", memoryTitles(resolved.Memories))
+	}
+}
+
+func TestAgentContextRoute_AnswersAnEmptyListForAnEmptyClaudeMemoryFolder(t *testing.T) {
+	host := newAgentTestHost(t)
+	folder := filepath.Join(host.root, "project")
+	mkdirAll(t, folder)
+	mkdirAll(t, filepath.Join(host.home, ".claude", "projects", claudeMemorySlug(folder), "memory"))
+
+	recorder := host.get(t, "/api/agent/context?harness=claude-code&folder="+url.QueryEscape(folder))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", recorder.Code, recorder.Body.String())
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, `"memories":[]`) {
+		t.Fatalf("memories are not an empty list: %s", body)
 	}
 }
 

@@ -777,7 +777,9 @@ func claudeMemories(home, folder string) []AgentMemory {
 	if err != nil {
 		return []AgentMemory{}
 	}
-	var index []AgentMemory
+	// Never nil: a memory folder Claude has created but not yet written to
+	// must still answer an empty list, not null.
+	index := []AgentMemory{}
 	var rest []AgentMemory
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
