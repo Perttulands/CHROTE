@@ -1,0 +1,165 @@
+/*
+ * The control kit: every control that acts is at least 28px in each direction
+ * and set in the product's face, never the browser's 13.33px default.
+ */
+
+.kit-toggle,
+.kit-choice,
+.kit-button {
+  min-height: 28px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.kit-toggle:disabled,
+.kit-choice:disabled,
+.kit-button:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.kit-toggle:focus-visible,
+.kit-choice:focus-visible,
+.kit-button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* ---- toggle: a whole row, or the mark alone in a 28px square ---- */
+
+.kit-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.kit-toggle.bare {
+  flex: none;
+  justify-content: center;
+  width: 28px;
+  padding: 0;
+}
+
+.kit-toggle:not(:disabled):hover {
+  background: var(--surface-secondary);
+}
+
+/* The mark: a hollow square when off, filled with the accent when on. */
+.kit-toggle-mark {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--text-dim);
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.kit-toggle[aria-checked='true'] .kit-toggle-mark {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--background);
+}
+
+.kit-toggle:not(:disabled):hover .kit-toggle-mark {
+  border-color: var(--text-primary);
+}
+
+.kit-toggle-words {
+  flex: 1;
+  min-width: 0;
+}
+
+.kit-toggle-meta {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* ---- choice: the current choice in words, underlined by a hairline ---- */
+
+.kit-choice {
+  display: inline-flex;
+  align-items: center;
+  min-width: 12ch;
+  padding: 0 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--divider);
+}
+
+.kit-choice::after {
+  content: '';
+  margin-left: auto;
+  padding-left: 12px;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid var(--text-dim);
+}
+
+.kit-choice:not(:disabled):hover,
+.kit-choice[aria-expanded='true'] {
+  border-bottom-color: var(--accent);
+}
+
+.kit-choice-placeholder {
+  color: var(--text-dim);
+}
+
+/* ---- quiet button: a word that acts ---- */
+
+.kit-button {
+  padding: 0 10px;
+  color: var(--text-secondary);
+}
+
+.kit-button:not(:disabled):hover {
+  color: var(--text-primary);
+}
+
+/* ---- range: a hairline with a small square thumb ---- */
+
+.kit-range {
+  appearance: none;
+  height: 28px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.kit-range::-webkit-slider-runnable-track {
+  height: 1px;
+  background: var(--divider);
+}
+
+.kit-range::-moz-range-track {
+  height: 1px;
+  background: var(--divider);
+}
+
+.kit-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  background: var(--accent);
+  border: none;
+}
+
+.kit-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  border: none;
+  border-radius: 0;
+}
+
+.kit-range:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ScheduledTasksView from './ScheduledTasksView'
 import { DEFAULT_SETTINGS } from '../types'
 import { DEFAULT_SESSIONS_DOCK_STATE } from './workspaceFilesState'
+import { choiceValue } from './kit/testing'
 
 // The view listens to the ancestor DndContext through useDndMonitor. Capture the
 // listener so a drop can be replayed exactly as DndContext would dispatch it.
@@ -223,7 +224,7 @@ describe('ScheduledTasksView', () => {
     expect(screen.getByLabelText('Prompt')).toHaveValue('Continue if work is clear')
     expect(screen.getByRole('button', { name: 'Daily' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByLabelText('Time of day')).toHaveValue('16:00')
-    expect(screen.getByLabelText('Timezone')).toHaveValue('Europe/Helsinki')
+    expect(choiceValue('Timezone')).toMatch(/^Europe\/Helsinki/)
   })
 
   it('protects unsaved edits until the discard is repeated', async () => {

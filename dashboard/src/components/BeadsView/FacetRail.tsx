@@ -13,6 +13,7 @@ import { memo, useMemo, useState } from 'react'
 import Rail, { RailScroll, RailSection } from '../Rail'
 import { beadGlyph } from '../../beads/beadStatus'
 import { SLICE_STATUSES, STATUS_LABELS, type SliceIndex, type SliceResult } from '../../beads/beadsSlice'
+import Toggle from '../kit/Toggle'
 
 interface FacetRailProps {
   index: SliceIndex
@@ -85,10 +86,9 @@ function FacetRail({ index, result, projects, statuses, onProjects, onStatuses, 
             const count = result.projectCounts[p]
             return (
               <div key={project.path} className={`beads-facet-row${count === 0 ? ' empty' : ''}`} data-ui="beads.project">
-                <input
-                  type="checkbox"
+                <Toggle
                   checked={kept}
-                  aria-label={`Keep ${project.label}`}
+                  label={`Keep ${project.label}`}
                   onChange={() => onProjects(toggled(projects, p, index.projects.length))}
                 />
                 <button
@@ -126,10 +126,9 @@ function FacetRail({ index, result, projects, statuses, onProjects, onStatuses, 
             const count = result.statusCounts[s]
             return (
               <div key={status} className={`beads-facet-row${count === 0 ? ' empty' : ''}`} data-ui="beads.status">
-                <input
-                  type="checkbox"
+                <Toggle
                   checked={kept}
-                  aria-label={`Keep ${STATUS_LABELS[status]}`}
+                  label={`Keep ${STATUS_LABELS[status]}`}
                   onChange={() => onStatuses(toggled(statuses, s, SLICE_STATUSES.length))}
                 />
                 <button

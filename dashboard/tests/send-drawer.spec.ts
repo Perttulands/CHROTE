@@ -201,7 +201,7 @@ test('a session menu schedules a prompt directly or hands its setup to the agent
   await page.locator('.session-item').filter({ has: page.locator(`[title="${TARGET}"]`) }).click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Schedule task…' }).click()
   await drawer.getByLabel('Prompt', { exact: true }).fill('Review blockers with project context')
-  await drawer.getByLabel('Have agent refine').check()
+  await drawer.getByRole('checkbox', { name: 'Have agent refine' }).check()
   const bounds = await box(drawer)
   expect(bounds.x).toBeGreaterThanOrEqual(0)
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(391)

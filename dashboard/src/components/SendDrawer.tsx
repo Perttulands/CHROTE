@@ -55,6 +55,8 @@ import ScheduleEditor from './ScheduleEditor'
 import { emptyScheduleForm, scheduleFormError, scheduleFromForm } from './scheduledSchedule'
 import { scheduledRequest, SCHEDULED_TASKS_CHANGED } from './scheduledTasksApi'
 import { scheduledTaskDraft, scheduledTaskHandoff } from './scheduledTaskHandoff'
+import Choice from './kit/Choice'
+import Toggle from './kit/Toggle'
 import './ScheduledTasksView.css'
 import './SendDrawer.css'
 
@@ -592,15 +594,15 @@ export default function SendDrawer() {
           {!panesLoading && !panesFailed && panes.length > 1 && (
             <label className="send-drawer-section" htmlFor="send-drawer-pane">
               Pane
-              <select
+              <Choice
                 id="send-drawer-pane"
                 className="send-drawer-pane"
+                label="Pane"
+                placeholder="Pick the exact pane…"
                 value={selectedPane}
-                onChange={event => setSelectedPane(event.target.value)}
-              >
-                <option value="">Pick the exact pane…</option>
-                {panes.map(pane => <option key={pane.pane} value={pane.pane}>{paneLabel(pane)}</option>)}
-              </select>
+                onChange={setSelectedPane}
+                options={panes.map(pane => ({ value: pane.pane, label: paneLabel(pane) }))}
+              />
             </label>
           )}
 
@@ -669,7 +671,7 @@ export default function SendDrawer() {
             <fieldset className="send-drawer-schedule" disabled={sending || deliveryUnknown}>
               <ScheduleEditor schedule={schedule} onChange={setSchedule} />
               {scheduleError && <p className="send-drawer-status error" role="alert">{scheduleError}</p>}
-              <label className="send-drawer-refine"><input type="checkbox" checked={refine} onChange={event => setRefine(event.target.checked)} />Have agent refine</label>
+              <Toggle className="send-drawer-refine" checked={refine} onChange={setRefine}>Have agent refine</Toggle>
               <p className="send-drawer-hint">{refine
                 ? 'Send your prompt and schedule to this session now. The agent refines the prompt and sets up the task.'
                 : 'Create a recurring prompt for this session. Manage it in Scheduled.'}</p>

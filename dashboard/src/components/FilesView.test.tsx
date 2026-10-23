@@ -451,7 +451,7 @@ describe('FilesView Markdown editor', () => {
     expect(screen.getByText('Quoted line').closest('blockquote')).toBeInTheDocument()
     expect(screen.getByText('const answer = 42').closest('code')).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: /Done task/ })).toBeChecked()
-    expect(screen.getByRole('checkbox', { name: /Done task/ })).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: /Done task/ })).toHaveAttribute('aria-disabled', 'true')
     expect(screen.getByRole('checkbox', { name: /Open task/ })).not.toBeChecked()
 
     const safeLink = screen.getByRole('link', { name: 'Safe link' })

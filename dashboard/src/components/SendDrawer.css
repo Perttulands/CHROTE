@@ -105,12 +105,6 @@
 .send-drawer-pane {
   flex: none;
   width: 100%;
-  padding: 6px 10px;
-  background-color: var(--background);
-  border: 1px solid var(--divider);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 13px;
 }
 
 .send-drawer-search::placeholder {
@@ -118,7 +112,6 @@
 }
 
 .send-drawer-search:focus,
-.send-drawer-pane:focus,
 .send-drawer-note:focus {
   outline: none;
   border-color: var(--accent);
@@ -337,7 +330,6 @@
 .send-drawer-schedule .scheduled-targets-head { flex-direction: column; align-items: flex-start; gap: 4px; }
 .send-drawer-schedule .scheduled-field.compact { max-width: 100%; }
 .send-drawer-refine { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; font-size: 12px; color: var(--text-primary); }
-.send-drawer-refine input { accent-color: var(--accent); }
 
 .send-drawer-picker,
 .send-drawer-compose {
@@ -379,7 +371,6 @@
 .send-drawer.mobile .send-drawer-attach { min-height: 44px; }
 .send-drawer.mobile .send-drawer-note,
 .send-drawer.mobile .send-drawer-search,
-.send-drawer.mobile .send-drawer-pane { font-size: 16px; }
 .send-drawer.mobile .send-drawer-message { min-height: 80px; }
 .send-drawer.mobile .send-drawer-note { min-height: 64px; }
 .send-drawer.mobile .send-drawer-footer { padding-bottom: max(8px, env(safe-area-inset-bottom)); }

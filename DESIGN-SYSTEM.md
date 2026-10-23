@@ -162,6 +162,23 @@ file) is set a notch larger than the chrome, at a measure of about 70
 characters. There is no font picker; font size stays a
 device-local setting.
 
+## Control kit
+
+Every control comes from `dashboard/src/components/kit/`, never from the
+browser: the browser's checkbox, select and 13.33px button face do not appear.
+
+- **Toggle** is on or off: a hollow square that fills with the accent. With
+  words it is a whole row that toggles, count and all; bare, it is the mark in a
+  28px square, for a row whose name already does something else.
+- **Choice** picks one of a few: the current choice in words over a hairline,
+  opening the one menu with the choices as rows and the current one checked.
+- **Quiet button** (`kit-button`) is a word that acts.
+- **Range** (`kit-range`) is a hairline with a small square thumb.
+
+Every one is at least 28px in each direction. A control that must take less
+room in a dense row keeps its 28px target and reaches into the gap beside it,
+as the file tree's expand toggle does.
+
 ## Theme
 
 One active theme at a time, and no picker. The host authors it, the server

@@ -50,6 +50,12 @@ body {
   color: var(--text-primary);
 }
 
+/* Controls take the product's face; never the browser's 13.33px default. */
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: 13px;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;

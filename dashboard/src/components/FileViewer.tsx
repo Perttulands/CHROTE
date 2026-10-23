@@ -220,12 +220,12 @@ export function renderMarkdownPreview(content: string): ReactNode[] {
           {items.map((item, itemIndex) => (
             <li key={`item-${itemIndex}`} className={item.checked !== null ? 'fb-markdown-task-item' : undefined}>
               {item.checked !== null && (
-                <input
-                  type="checkbox"
+                <span
+                  role="checkbox"
+                  aria-checked={item.checked}
+                  aria-disabled="true"
                   aria-label={`Task: ${plainMarkdownText(item.text)}`}
-                  checked={item.checked}
-                  disabled
-                  readOnly
+                  className={`fb-markdown-task-mark${item.checked ? ' done' : ''}`}
                 />
               )}
               <span>{renderMarkdownInline(item.text, `list-${nodes.length}-${itemIndex}`)}</span>

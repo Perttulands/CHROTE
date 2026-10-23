@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import FlagPanel from './FlagPanel'
 import type { LaunchFlag } from './launchFlags'
+import { choiceValue, choose } from './kit/testing'
 
 const flags: LaunchFlag[] = [
   { name: '--continue', short: '-c', description: 'Continue the most recent conversation' },
@@ -81,10 +82,8 @@ describe('FlagPanel', () => {
     const { onChange } = panel('--verbose')
 
     fireEvent.click(screen.getByRole('button', { name: /--model/ }))
-    const choice = screen.getByLabelText('Value for --model')
-    expect(choice).toHaveValue('sonnet')
-
-    fireEvent.change(choice, { target: { value: 'opus' } })
+    expect(choiceValue('Value for --model')).toBe('sonnet')
+    choose('Value for --model', 'opus')
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     expect(onChange).toHaveBeenCalledWith('--verbose --model opus')
   })
@@ -94,7 +93,7 @@ describe('FlagPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /--model/ }))
     expect(onChange).toHaveBeenCalledWith('--verbose --continue')
-    expect(screen.queryByLabelText('Value for --model')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Value for --model/ })).not.toBeInTheDocument()
   })
 
   it('closes on the close control and on Escape', () => {

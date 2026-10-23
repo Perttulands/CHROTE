@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import SettingsView from './SettingsView'
 import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from '../types'
 import { DEFAULT_THEME } from '../theme/theme'
+import { choice, choiceValue, choose } from './kit/testing'
 
 const mockUseSession = vi.fn()
 const refreshSessions = vi.fn()
@@ -63,12 +64,10 @@ describe('SettingsView terminal launch users', () => {
 
     render(<SettingsView />)
 
-    const countSelect = screen.getByRole('combobox', { name: 'Terminal tabs' })
-    expect(countSelect).toHaveValue('3')
-    const options = within(countSelect).getAllByRole('option').map(option => option.getAttribute('value'))
-    expect(options).toEqual(['1', '2', '3', '4', '5', '6'])
-
-    fireEvent.change(countSelect, { target: { value: '5' } })
+    expect(choiceValue('Terminal tabs')).toBe('3')
+    fireEvent.click(choice('Terminal tabs'))
+    expect(screen.getAllByRole('menuitem').map(option => option.textContent?.trim()[0])).toEqual(['1', '2', '3', '4', '5', '6'])
+    fireEvent.click(screen.getByRole('menuitem', { name: /^5/ }))
 
     expect(updateSettings).toHaveBeenCalledWith({ terminalTabCount: 5 })
   })
@@ -90,9 +89,8 @@ describe('SettingsView terminal launch users', () => {
     fireEvent.change(fontSize, { target: { value: '18' } })
     expect(updateSettings).toHaveBeenCalledWith({ fontSize: 18 })
 
-    const refresh = screen.getByText('Auto-refresh Interval').closest('.settings-field')?.querySelector('select')
-    expect(refresh).toHaveValue('10000')
-    fireEvent.change(refresh as HTMLSelectElement, { target: { value: '30000' } })
+    expect(choiceValue('Auto-refresh interval')).toBe('10 seconds')
+    choose('Auto-refresh interval', '30 seconds')
     expect(updateSettings).toHaveBeenCalledWith({ autoRefreshInterval: 30000 })
   })
 
@@ -122,12 +120,11 @@ describe('SettingsView terminal launch users', () => {
 
     render(<SettingsView />)
 
-    const terminal3Select = screen.getByRole('combobox', { name: 'Terminal 3 launch user' })
-    expect(screen.getByRole('combobox', { name: 'Terminal launch user' })).toHaveValue('alice')
-    expect(screen.getByRole('combobox', { name: 'Terminal 2 launch user' })).toHaveValue('alice')
-    expect(terminal3Select).toHaveValue('bob')
+    expect(choiceValue('Terminal launch user')).toBe('alice')
+    expect(choiceValue('Terminal 2 launch user')).toBe('alice')
+    expect(choiceValue('Terminal 3 launch user')).toBe('bob')
 
-    fireEvent.change(terminal3Select, { target: { value: 'alice' } })
+    choose('Terminal 3 launch user', 'alice')
 
     expect(updateSettings).toHaveBeenCalledWith({
       terminalLaunchUsers: {
@@ -166,7 +163,7 @@ describe('SettingsView terminal launch users', () => {
 
     render(<SettingsView />)
 
-    const checkbox = screen.getByLabelText('Mouse-wheel scrolling')
+    const checkbox = screen.getByRole('checkbox', { name: 'Mouse-wheel scrolling' })
     expect(checkbox).toBeChecked()
     fireEvent.click(checkbox)
 
@@ -184,7 +181,7 @@ describe('SettingsView terminal launch users', () => {
 
     render(<SettingsView />)
 
-    const checkbox = screen.getByLabelText('Hide terminal scrollbar')
+    const checkbox = screen.getByRole('checkbox', { name: 'Hide terminal scrollbar' })
     expect(checkbox).toBeChecked()
     fireEvent.click(checkbox)
 
@@ -322,7 +319,7 @@ describe('SettingsView agent events', () => {
 
     const word = () => document.querySelector('[data-ui="settings.notification-permission"]')?.textContent
     expect(word()).toBe('not asked')
-    const checkbox = screen.getByLabelText('Browser notifications while this tab is hidden')
+    const checkbox = screen.getByRole('checkbox', { name: 'Browser notifications while this tab is hidden' })
     expect(checkbox).not.toBeChecked()
 
     fireEvent.click(checkbox)

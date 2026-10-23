@@ -145,15 +145,10 @@
   cursor: pointer;
 }
 
-.report-box-context span {
+.report-box-context .kit-toggle-words {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.report-box-context input {
-  accent-color: var(--accent);
-  margin: 0;
 }
 
 .report-box-failure {

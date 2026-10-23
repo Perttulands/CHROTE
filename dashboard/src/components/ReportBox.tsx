@@ -39,6 +39,7 @@ import { beadReference } from '../beads/beadReference'
 import { createBead, type BeadProject, type FiledBeadType } from '../beads/beadsApi'
 import { getSessionNameFromKey } from '../types'
 import { useTerminalPool } from './TerminalPool'
+import Toggle from './kit/Toggle'
 import './ReportBox.css'
 
 /** The store a complaint goes to unless the operator says otherwise. */
@@ -290,14 +291,9 @@ export default function ReportBox({ open, onClose, activeTab }: ReportBoxProps) 
             </button>
           ))}
         </div>
-        <label className="report-box-context">
-          <input
-            type="checkbox"
-            checked={withContext}
-            onChange={event => setWithContext(event.target.checked)}
-          />
-          <span>{context}</span>
-        </label>
+        <Toggle className="report-box-context" checked={withContext} onChange={setWithContext}>
+          {context}
+        </Toggle>
       </div>
       {failure !== null && <p className="report-box-failure" role="alert">{failure}</p>}
       <div className="report-box-actions">

@@ -9,6 +9,16 @@ import { useConfirmInPlace } from './confirmInPlace'
 import { askNotificationPermission, notificationPermissionWord } from '../agents/browserNotifications'
 import { audioContext, playTone } from '../agents/tones'
 import type { AgentEventKind } from '../types'
+import Choice from './kit/Choice'
+import Toggle from './kit/Toggle'
+
+const REFRESH_INTERVALS = [
+  { value: '1000', label: '1 second' },
+  { value: '2000', label: '2 seconds' },
+  { value: '5000', label: '5 seconds' },
+  { value: '10000', label: '10 seconds' },
+  { value: '30000', label: '30 seconds' },
+]
 
 function normalizeProjectPath(path: string): string {
   const trimmed = path.trim()
@@ -58,28 +68,28 @@ function SettingsView() {
     }
   }
 
-  const handleMouseScrollChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    updateSettings({ mouseScroll: e.target.checked })
+  const handleMouseScrollChange = (checked: boolean) => {
+    updateSettings({ mouseScroll: checked })
   }
 
-  const handleHideScrollbarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    updateSettings({ hideScrollbar: e.target.checked })
+  const handleHideScrollbarChange = (checked: boolean) => {
+    updateSettings({ hideScrollbar: checked })
   }
 
-  const handleRefreshIntervalChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    updateSettings({ autoRefreshInterval: parseInt(e.target.value, 10) })
+  const handleRefreshIntervalChange = (value: string) => {
+    updateSettings({ autoRefreshInterval: parseInt(value, 10) })
   }
 
-  const handleMarksChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    updateSettings({ agentEventMarks: e.target.checked })
+  const handleMarksChange = (checked: boolean) => {
+    updateSettings({ agentEventMarks: checked })
   }
 
-  const handleToastChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    updateSettings({ agentEventToast: e.target.checked })
+  const handleToastChange = (checked: boolean) => {
+    updateSettings({ agentEventToast: checked })
   }
 
-  const handleTonesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    updateSettings({ agentEventTones: e.target.checked })
+  const handleTonesChange = (checked: boolean) => {
+    updateSettings({ agentEventTones: checked })
   }
 
   // The click is the gesture the browser wants before it will make a sound.
@@ -95,8 +105,8 @@ function SettingsView() {
   // Turning notifications on asks the browser, and the word beside the setting
   // reads back what it answered. Anything but granted leaves the setting off:
   // a setting that is on and does nothing is a lie.
-  const handleNotificationsChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.checked) {
+  const handleNotificationsChange = async (checked: boolean) => {
+    if (!checked) {
       updateSettings({ agentEventNotifications: false })
       return
     }
@@ -166,7 +176,8 @@ function SettingsView() {
             max="20"
             value={settings.fontSize}
             onChange={handleFontSizeChange}
-            className="settings-slider"
+            aria-label="Font size"
+            className="settings-slider kit-range"
           />
           <div className="slider-labels">
             <span>12px</span>
@@ -175,17 +186,9 @@ function SettingsView() {
         </div>
 
         <div className="settings-field">
-          <label
-            className="settings-label"
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
-          >
-            <input
-              type="checkbox"
-              checked={settings.mouseScroll}
-              onChange={handleMouseScrollChange}
-            />
+          <Toggle className="settings-toggle" checked={settings.mouseScroll} onChange={handleMouseScrollChange}>
             Mouse-wheel scrolling
-          </label>
+          </Toggle>
           <p className="settings-hint">
             Enables tmux mouse mode so the scroll wheel scrolls history. Applies instantly to
             configured CHROTE terminal sockets. This is global per tmux server and makes
@@ -194,17 +197,9 @@ function SettingsView() {
         </div>
 
         <div className="settings-field">
-          <label
-            className="settings-label"
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
-          >
-            <input
-              type="checkbox"
-              checked={settings.hideScrollbar}
-              onChange={handleHideScrollbarChange}
-            />
+          <Toggle className="settings-toggle" checked={settings.hideScrollbar} onChange={handleHideScrollbarChange}>
             Hide terminal scrollbar
-          </label>
+          </Toggle>
           <p className="settings-hint">
             Hides the xterm scrollbar gutter in terminal windows. Under tmux that scrollback is
             empty, so the bar is dead UI; scrolling stays on the mouse wheel via tmux history.
@@ -219,17 +214,12 @@ function SettingsView() {
 
         <div className="settings-field">
           <label className="settings-label">Auto-refresh Interval</label>
-          <select
-            value={settings.autoRefreshInterval}
+          <Choice
+            label="Auto-refresh interval"
+            value={String(settings.autoRefreshInterval)}
             onChange={handleRefreshIntervalChange}
-            className="settings-select"
-          >
-            <option value={1000}>1 second</option>
-            <option value={2000}>2 seconds</option>
-            <option value={5000}>5 seconds</option>
-            <option value={10000}>10 seconds</option>
-            <option value={30000}>30 seconds</option>
-          </select>
+            options={REFRESH_INTERVALS}
+          />
           <p className="settings-hint">How often to check for new tmux sessions</p>
         </div>
 
@@ -265,17 +255,16 @@ function SettingsView() {
 
         <div className="settings-field">
           <label className="settings-label" htmlFor="terminal-tab-count">Terminal tabs</label>
-          <select
+          <Choice
             id="terminal-tab-count"
-            aria-label="Terminal tabs"
-            className="settings-select"
-            value={settings.terminalTabCount}
-            onChange={(e) => updateSettings({ terminalTabCount: Number(e.target.value) })}
-          >
-            {Array.from({ length: MAX_TERMINAL_TAB_COUNT - MIN_TERMINAL_TAB_COUNT + 1 }, (_, i) => MIN_TERMINAL_TAB_COUNT + i).map(count => (
-              <option key={count} value={count}>{count}</option>
-            ))}
-          </select>
+            label="Terminal tabs"
+            value={String(settings.terminalTabCount)}
+            onChange={value => updateSettings({ terminalTabCount: Number(value) })}
+            options={Array.from({ length: MAX_TERMINAL_TAB_COUNT - MIN_TERMINAL_TAB_COUNT + 1 }, (_, i) => {
+              const count = String(MIN_TERMINAL_TAB_COUNT + i)
+              return { value: count, label: count }
+            })}
+          />
           <p className="settings-hint">Hiding tabs never deletes their layouts or sessions; raise the count to bring them back.</p>
         </div>
 
@@ -289,18 +278,14 @@ function SettingsView() {
               return (
                 <div key={workspaceId} className="color-input-group">
                   <label className="color-input-label" htmlFor={id}>{label}</label>
-                  <select
+                  <Choice
                     id={id}
-                    aria-label={label}
-                    className="settings-select"
+                    label={label}
                     value={value}
-                    onChange={(e) => handleLaunchUserChange(workspaceId, e.target.value as LaunchUser)}
+                    onChange={next => handleLaunchUserChange(workspaceId, next as LaunchUser)}
                     disabled={configuredUsers.length === 0}
-                  >
-                    {configuredUsers.map(user => (
-                      <option key={user} value={user}>{user}</option>
-                    ))}
-                  </select>
+                    options={configuredUsers.map(user => ({ value: user, label: user }))}
+                  />
                 </div>
               )
             })}
@@ -319,51 +304,27 @@ function SettingsView() {
         </p>
 
         <div className="settings-field">
-          <label
-            className="settings-label"
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
-          >
-            <input
-              type="checkbox"
-              checked={settings.agentEventMarks}
-              onChange={handleMarksChange}
-            />
+          <Toggle className="settings-toggle" checked={settings.agentEventMarks} onChange={handleMarksChange}>
             Mark the session&apos;s row and the tab holding it
-          </label>
+          </Toggle>
           <p className="settings-hint">
             A dot and the report&apos;s first line, until the session is focused.
           </p>
         </div>
 
         <div className="settings-field">
-          <label
-            className="settings-label"
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
-          >
-            <input
-              type="checkbox"
-              checked={settings.agentEventToast}
-              onChange={handleToastChange}
-            />
+          <Toggle className="settings-toggle" checked={settings.agentEventToast} onChange={handleToastChange}>
             Name the session in the toast
-          </label>
+          </Toggle>
           <p className="settings-hint">
             The status line keeps the record either way.
           </p>
         </div>
 
         <div className="settings-field">
-          <label
-            className="settings-label"
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
-          >
-            <input
-              type="checkbox"
-              checked={settings.agentEventTones}
-              onChange={handleTonesChange}
-            />
+          <Toggle className="settings-toggle" checked={settings.agentEventTones} onChange={handleTonesChange}>
             Tones
-          </label>
+          </Toggle>
           <div className="settings-tone-list">
             <div className="settings-tone-row">
               <span>Finished: two notes, falling</span>
@@ -394,17 +355,9 @@ function SettingsView() {
         </div>
 
         <div className="settings-field">
-          <label
-            className="settings-label"
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
-          >
-            <input
-              type="checkbox"
-              checked={settings.agentEventNotifications}
-              onChange={handleNotificationsChange}
-            />
+          <Toggle className="settings-toggle" checked={settings.agentEventNotifications} onChange={handleNotificationsChange}>
             Browser notifications while this tab is hidden
-          </label>
+          </Toggle>
           <p className="settings-hint">
             Permission: <span data-ui="settings.notification-permission">{notificationPermission}</span>.
             Turning this on asks the browser, which grants it only on a secure origin.

@@ -59,6 +59,10 @@ release.
   the Librarian waits behind a spine at the right edge until opened.
 - Brain search lists its answer beside the sky instead of in its place, lights
   the result pointed at, and covers every collection without a scope control.
+- One control kit replaces the browser's checkboxes, selects and button face
+  across Settings, Beads, the Launcher, Send, schedules and flags: whole-row
+  toggles and word choices opening the product's menu, every target at least
+  28px.
 - Files now exposes everything under `CHROTE_ROOTS` that the service identity's
   Unix permissions allow, while canonical paths remain inside configured roots.
 - Terminal drag/drop, assignment, terminal lifetime, and layout persistence were
@@ -95,6 +99,9 @@ release.
   theme and is served from the theme directory.
 
 ### Fixed
+
+- The Agents tab no longer fails for a folder whose Claude memory folder exists
+  but is still empty.
 
 - Fresh terminal sidecars persist their default-closed state across reloads.
 - `/` opens Sessions for the active closed sidecar and focuses search.

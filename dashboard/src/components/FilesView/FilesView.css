@@ -237,9 +237,11 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* A 28px target that takes 16px of the row: it reaches into the gaps beside it. */
 .fb-tree-toggle {
-  width: 16px;
-  height: 18px;
+  width: 28px;
+  height: 28px;
+  margin: 0 -6px;
   border: 0;
   background: transparent;
   color: var(--text-dim);
@@ -917,6 +919,20 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* A task's box in a read-only preview: the kit's mark, not a browser checkbox. */
+.fb-markdown-task-mark {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--text-dim);
+}
+
+.fb-markdown-task-mark.done {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--background);
 }
 
 .fb-markdown-preview a {

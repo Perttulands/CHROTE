@@ -6,6 +6,7 @@ import {
   type ScheduleForm,
   type ScheduleMode,
 } from './scheduledSchedule'
+import Choice from './kit/Choice'
 
 export default function ScheduleEditor({ schedule, onChange }: { schedule: ScheduleForm; onChange: (schedule: ScheduleForm) => void }) {
   const modes: { mode: ScheduleMode; label: string }[] = [
@@ -52,14 +53,12 @@ export default function ScheduleEditor({ schedule, onChange }: { schedule: Sched
             </label>
             <label className="scheduled-field compact">
               <span>Unit</span>
-              <select
-                aria-label="Interval unit"
+              <Choice
+                label="Interval unit"
                 value={schedule.everyUnit}
-                onChange={event => onChange({ ...schedule, everyUnit: event.target.value as 'minutes' | 'hours' })}
-              >
-                <option value="minutes">minutes</option>
-                <option value="hours">hours</option>
-              </select>
+                onChange={everyUnit => onChange({ ...schedule, everyUnit })}
+                options={[{ value: 'minutes', label: 'minutes' }, { value: 'hours', label: 'hours' }]}
+              />
             </label>
           </>
         )}
@@ -90,15 +89,14 @@ export default function ScheduleEditor({ schedule, onChange }: { schedule: Sched
 
         <label className="scheduled-field compact">
           <span>Timezone</span>
-          <select
-            aria-label="Timezone"
+          <Choice
+            label="Timezone"
             value={schedule.timezone}
-            onChange={event => onChange({ ...schedule, timezone: event.target.value })}
-          >
-            {[...new Set([localZone, schedule.timezone, 'UTC'])].map(zone => (
-              <option key={zone} value={zone}>{zone === localZone ? `${zone} (yours)` : zone}</option>
+            onChange={timezone => onChange({ ...schedule, timezone })}
+            options={[...new Set([localZone, schedule.timezone, 'UTC'])].map(zone => (
+              { value: zone, label: zone === localZone ? `${zone} (yours)` : zone }
             ))}
-          </select>
+          />
         </label>
       </div>
 

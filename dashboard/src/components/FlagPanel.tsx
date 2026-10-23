@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { addFlag, flagNames, flagValue, hasFlag, removeFlag } from './launchFlags'
 import type { LaunchFlag } from './launchFlags'
+import Choice from './kit/Choice'
 import './FlagPanel.css'
 
 interface FlagPanelProps {
@@ -24,7 +25,7 @@ export default function FlagPanel({ harnessLabel, flags, line, onChange, onClose
   const [editing, setEditing] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
-  const editorRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null)
+  const editorRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => { searchRef.current?.focus() }, [])
   useEffect(() => { if (editing !== null) editorRef.current?.focus() }, [editing])
@@ -121,16 +122,14 @@ export default function FlagPanel({ harnessLabel, flags, line, onChange, onClose
               {editing === entry.name && (
                 <div className="flag-row-edit">
                   {entry.values && entry.values.length > 0 ? (
-                    <select
-                      ref={node => { editorRef.current = node }}
+                    <Choice
+                      autoFocus
                       className="flag-row-input"
-                      aria-label={`Value for ${entry.name}`}
+                      label={`Value for ${entry.name}`}
                       value={draft}
-                      onChange={event => setDraft(event.target.value)}
-                      onKeyDown={event => { if (event.key === 'Enter') commit(entry) }}
-                    >
-                      {entry.values.map(value => <option key={value} value={value}>{value}</option>)}
-                    </select>
+                      onChange={setDraft}
+                      options={entry.values.map(value => ({ value, label: value }))}
+                    />
                   ) : (
                     <input
                       ref={node => { editorRef.current = node }}

@@ -14,6 +14,7 @@ import FlagPanel from './FlagPanel'
 import type { LaunchFlag } from './launchFlags'
 import { getTerminalUserInitial, resolveLaunchUser } from '../types'
 import type { CreateSessionAttachTarget, LaunchUser, TmuxSession, WorkspaceId } from '../types'
+import Toggle from './kit/Toggle'
 import './Launcher.css'
 
 /**
@@ -477,15 +478,14 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
                 flags by the server: the session then reports when its
                 agent finishes or waits. Off means the command runs as typed.
                 A shell keeps the row, disabled, so nothing moves. */}
-            <label className="launcher-notify">
-              <input
-                type="checkbox"
-                checked={flagsOffered && notify}
-                disabled={!flagsOffered}
-                onChange={event => setNotifyPreference(event.target.checked)}
-              />
+            <Toggle
+              className="launcher-notify"
+              checked={flagsOffered && notify}
+              disabled={!flagsOffered}
+              onChange={setNotifyPreference}
+            >
               Notify on completion
-            </label>
+            </Toggle>
 
             <label className="launcher-label" htmlFor={nameFieldId}>Name</label>
             <input

@@ -192,7 +192,8 @@ test.describe('Terminal retention', () => {
     await expect(terminal).toContainText('connection-1')
 
     await page.getByRole('button', { name: 'Settings' }).click()
-    await page.getByRole('combobox', { name: 'Terminal tabs' }).selectOption('2')
+    await page.getByRole('button', { name: /^Terminal tabs: / }).click()
+    await page.getByRole('menuitem', { name: /^2/ }).click()
     await expect(page.getByRole('button', { name: 'Terminal 3' })).toHaveCount(0)
 
     // Adversarial window: session refreshes must land while the workspace is
@@ -203,7 +204,8 @@ test.describe('Terminal retention', () => {
 
     await page.getByRole('button', { name: 'Terminal', exact: true }).click()
     await page.getByRole('button', { name: 'Settings' }).click()
-    await page.getByRole('combobox', { name: 'Terminal tabs' }).selectOption('3')
+    await page.getByRole('button', { name: /^Terminal tabs: / }).click()
+    await page.getByRole('menuitem', { name: /^3/ }).click()
     await page.getByRole('button', { name: 'Terminal 3' }).click()
 
     await expect(terminal).toContainText('connection-1')
