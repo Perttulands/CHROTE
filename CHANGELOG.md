@@ -80,6 +80,11 @@ release.
   the rest of the tab. The separate explorer, its toolbars, list and grid views
   and its editor tabs are gone, and tree rows show a folder by the slash after
   its name instead of a DIR or TXT badge.
+- The Files tab opens on the host's projects, grouped by the folder they live
+  in, live ones first with their sessions and open Beads, then the roots.
+  Entering a project lands on its sessions (each a Peek away), its key
+  documents and its README, with Send to hand it to an agent; find looks only
+  inside it. `GET /api/files/find` takes `within=` for that.
 - Files now exposes everything under `CHROTE_ROOTS` that the service identity's
   Unix permissions allow, while canonical paths remain inside configured roots.
 - Terminal drag/drop, assignment, terminal lifetime, and layout persistence were

@@ -27,7 +27,7 @@ The host runs tmux, the CHROTE server, and the resources exposed through CHROTE.
 - GLB models open inline with drag-to-orbit, wheel/pinch zoom and Reset view.
 - In the file tree and sidebar search results, Up/Down moves between visible rows and opens files; Down from Find files enters the list.
 
-- The Files view and terminal sidecar are one Files panel: beside a terminal it is a sidecar whose file hangs off its edge; as the Files tab it is the tab's column, its pins above the tree, with the file filling the rest. Both browse, find by name, read, edit, compare, rename, and send files under configured roots.
+- The Files view and terminal sidecar are one Files panel: beside a terminal it is a sidecar whose file hangs off its edge; as the Files tab it is the tab's column, with the file filling the rest. The tab opens on the host's projects (the workspaces the server lists), grouped by the folder they live in with their live sessions and open Beads, then the roots for everything else; inside a project, find looks only there and the project lands on its sessions, key documents and README. Both browse, find by name, read, edit, compare, rename, and send files under configured roots.
 - Canonical-path checks keep file operations inside those roots after symlink resolution.
 - A link of the form `/?files=<path>` opens the Files view at that path. File uploads and downloads take as long as the link needs; uploads stream to disk, up to the configured upload limit.
 - Unix permissions decide what the service identity can access. CHROTE reports permission failures plainly and does not add a second file-access policy.

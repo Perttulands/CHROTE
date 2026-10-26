@@ -52,7 +52,16 @@ async function mockFilebrowserApi(page: Page, options?: {
   await page.route(fileResourcesPattern, async route => {
     const url = route.request().url()
 
+    // The roots: one, /work, holding what the test lists.
     if (url.endsWith('/resources/') || url.endsWith('/resources')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ isDir: true, items: [{ name: 'work', size: 0, modified: '2024-01-15T10:00:00Z', isDir: true, type: '' }] }),
+      })
+      return
+    }
+    if (url.endsWith('/resources/work') || url.endsWith('/resources/work/')) {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -73,6 +82,30 @@ async function mockFilebrowserApi(page: Page, options?: {
 }
 
 test.describe('The Files tab', () => {
+  test('opens on the projects, and a project lands beside the column', async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 760 })
+    await mockFilebrowserApi(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    await page.click('.tab:has-text("Files")')
+
+    const code = page.getByRole('list', { name: '/code' })
+    await expect(code.getByRole('listitem')).toHaveCount(3)
+    await expect(page.getByRole('list', { name: '/srv' }).getByRole('listitem', { name: /chrote/ })).toContainText('1 live')
+    await page.getByRole('searchbox', { name: 'Search projects' }).fill('quiet')
+    await expect(code.getByRole('listitem')).toHaveCount(1)
+    await page.keyboard.press('Enter')
+
+    const landing = page.getByRole('article', { name: 'Project quiet-project' })
+    await expect(landing).toBeVisible()
+    await expect(page.getByRole('searchbox', { name: 'Search files in quiet-project' })).toBeVisible()
+    const [panelBox, landingBox] = [
+      (await page.getByRole('complementary', { name: 'Files', exact: true }).boundingBox())!,
+      (await landing.boundingBox())!,
+    ]
+    expect(landingBox.x).toBeGreaterThanOrEqual(panelBox.x + panelBox.width - 1)
+  })
+
   test('reads a file beside the tree, filling the rest of the tab', async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 760 })
     await mockFilebrowserApi(page, {
@@ -82,6 +115,7 @@ test.describe('The Files tab', () => {
     await page.goto('/')
     await page.waitForSelector('.dashboard')
     await page.click('.tab:has-text("Files")')
+    await page.getByRole('list', { name: 'Roots' }).getByRole('listitem', { name: '/work' }).click()
     await page.locator('.files-tab .fb-tree-row', { hasText: 'notes.txt' }).click()
 
     const panel = page.getByRole('complementary', { name: 'Files', exact: true })
@@ -107,6 +141,7 @@ test.describe('The Files tab', () => {
     await page.goto('/')
     await page.waitForSelector('.dashboard')
     await page.click('.tab:has-text("Files")')
+    await page.getByRole('list', { name: 'Roots' }).getByRole('listitem', { name: '/work' }).click()
 
     const tree = page.getByRole('tree', { name: 'File tree' })
     await expect(tree.getByRole('treeitem')).toHaveCount(80)

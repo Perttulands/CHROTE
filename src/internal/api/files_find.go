@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"net/http"
 	"os"
@@ -93,8 +94,11 @@ func findLeavesMount(path string, root string, mountPoints map[string]bool) bool
 	return path != root && mountPoints[path]
 }
 
-// FindFiles handles GET /api/files/find?q= - files under the configured roots
-// whose name or root-relative path contains the query.
+// FindFiles handles GET /api/files/find?q=&within= - files under the
+// configured roots whose name or root-relative path contains the query.
+// within, when given, is one folder under a root to search instead of every
+// root, so a project's own files are found whole rather than as a sample of
+// the host.
 func (h *FilesHandler) FindFiles(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" {
@@ -102,7 +106,23 @@ func (h *FilesHandler) FindFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	candidates, truncated := h.collectFindCandidates(r.Context(), query)
+	roots := h.allowedRoots
+	if within := r.URL.Query().Get("within"); within != "" {
+		result := h.resolveSafePath(within)
+		if errors.Is(result.Err, os.ErrPermission) {
+			writeFilesUseError(w, result.Err, true)
+			return
+		}
+		if result.Error != "" {
+			core.WriteError(w, http.StatusForbidden, "FORBIDDEN", result.Error)
+			return
+		}
+		if !result.IsRoot {
+			roots = []string{result.Path}
+		}
+	}
+
+	candidates, truncated := h.collectFindCandidates(r.Context(), query, roots)
 	sortFindCandidates(candidates)
 	if len(candidates) > findResultLimit {
 		candidates = candidates[:findResultLimit]
@@ -116,7 +136,7 @@ func (h *FilesHandler) FindFiles(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, http.StatusOK, FindResponse{Matches: matches, Truncated: truncated})
 }
 
-// collectFindCandidates walks every configured root and returns up to
+// collectFindCandidates walks every given root and returns up to
 // findCandidateLimit matching regular files. The second result reports that
 // the walk stopped before it finished: the candidate cap was reached or the
 // request context ended.
@@ -127,13 +147,13 @@ func (h *FilesHandler) FindFiles(w http.ResponseWriter, r *http.Request) {
 //
 // The mount table is read once here rather than per root, so a request sees
 // one consistent view of where the walk has to stop.
-func (h *FilesHandler) collectFindCandidates(ctx context.Context, query string) ([]findCandidate, bool) {
+func (h *FilesHandler) collectFindCandidates(ctx context.Context, query string, roots []string) ([]findCandidate, bool) {
 	needle := strings.ToLower(query)
 	candidates := make([]findCandidate, 0)
 	stopped := false
 	mountPoints := readMountPoints(mountInfoPath)
 
-	for _, root := range h.allowedRoots {
+	for _, root := range roots {
 		if stopped {
 			break
 		}

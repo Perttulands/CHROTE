@@ -35,17 +35,30 @@ commits named.
    work is its glow; unfiled work drifts around "Unfiled in <project>". SkyMap
    takes a storage key, system names and words. Close: 9e9814b, f9b7e01.
 
+4. **feature**, parent `chrote-jf5l`. *Files: a portal into the host's projects.*
+   Expansion, on the operator's request (about 100 project folders over two
+   homes and /srv). The Files tab opens on `GET /api/workspaces` grouped by
+   parent folder, live projects first, roots last; a project scopes find
+   (`GET /api/files/find?within=`, new server surface) and lands on its
+   sessions, key documents and README. Close: the commit titled "Files opens on
+   the host's projects".
+
 ## New Beads, open (follow-ups noticed, not done)
 
-4. **task**, parent `chrote-5grx`. *Peek opening test flakes under full-suite load.*
+5. **task**, parent `chrote-5grx`. *Peek opening test flakes under full-suite load.*
    `tests/peek.spec.ts` "opens at one size, and a pane taller than the room…"
    failed twice in full runs this session (scale 1 and 1.25), passing alone 3/3.
    Likely the same cause as the open `chrote-ezfj` (frame-rate dependency); attach
    there rather than filing anew if it matches.
-5. **task**, parent `chrote-jf5l`. *Beads Map foot carries only Fit.*
+6. **task**, parent `chrote-jf5l`. *Beads Map foot carries only Fit.*
    The map reuses BrainSky's 52px foot with no time line, so it holds a lone Fit
    word. Either give the map the Brain's time line over created/closed days or
    drop the foot and put Fit in the work head.
-6. **decision**, parent `chrote-jf5l`. *Should the Map colour stars by Bead type?*
+7. **decision**, parent `chrote-jf5l`. *Should the Map colour stars by Bead type?*
    Stars take their system's hue, as in the Brain. The type is legible in List
    and in the selected Bead's text, but a bug and a task look alike on the sky.
+8. **feature**, parent `chrote-jf5l`. *Files: what changed, across every project.*
+   Expansion, proposed and deferred by the operator until the projects portal
+   has been used. A Changed view of uncommitted changes in every project,
+   newest first, each file opening in the panel's diff. Needs one read-only
+   route answering `git status` per workspace through `src/internal/api/git.go`.

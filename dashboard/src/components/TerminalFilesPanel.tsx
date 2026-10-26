@@ -29,6 +29,9 @@ import { getParentPath, joinFilePath, pathRelativeTo } from './FilesView/pathAct
 import { usePinnedPaths } from './FilesView/pinnedPaths'
 import type { FileItem } from './FilesView/types'
 import FilePanelViewer from './FilePanelViewer'
+import FilesProjects, { projectGroups, projectOf } from './FilesView/FilesProjects'
+import ProjectLanding from './FilesView/ProjectLanding'
+import { fetchWorkspaces, workspaceName, type Workspace } from '../workspaces/workspacesApi'
 import {
   readWorkspaceFilesState,
   writeWorkspaceFilesState,
@@ -201,6 +204,34 @@ function TerminalFilesPanel({
 
   const trimmedQuery = query.trim()
 
+  // As the Files tab, the panel's home is the host's projects rather than /,
+  // and inside a project its find looks only there.
+  const [projects, setProjects] = useState<Workspace[] | null>(null)
+  const [projectsError, setProjectsError] = useState<string | null>(null)
+  const [roots, setRoots] = useState<FileItem[] | null>(null)
+  const atHome = place === 'tab' && filesState.currentPath === '/'
+  const project = place === 'tab' && projects ? projectOf(projects, filesState.currentPath) : null
+  const projectPath = project?.path ?? null
+  useEffect(() => {
+    if (place !== 'tab' || (!atHome && projects)) return
+    let current = true
+    fetchWorkspaces({ beads: true })
+      .then(found => { if (current) { setProjects(found); setProjectsError(null) } })
+      .catch((cause: unknown) => { if (current) setProjectsError(cause instanceof Error ? cause.message : 'Could not list the projects') })
+    // The roots themselves, for the folders that are nobody's project.
+    fetchDirectory('/')
+      .then(items => { if (current) setRoots(items.filter(item => item.isDir)) })
+      .catch(() => { if (current) setRoots([]) })
+    return () => { current = false }
+    // Asked again each time the operator comes home, never while working in a project.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atHome, place])
+
+  const openProject = useCallback((path: string) => {
+    setQuery('')
+    navigateTo(path)
+  }, [navigateTo])
+
   useEffect(() => {
     if (!trimmedQuery) {
       setMatches([])
@@ -211,7 +242,7 @@ function TerminalFilesPanel({
     const controller = new AbortController()
     setFinding(true)
     const timer = setTimeout(() => {
-      void findFiles(trimmedQuery, controller.signal)
+      void (projectPath ? findFiles(trimmedQuery, controller.signal, projectPath) : findFiles(trimmedQuery, controller.signal))
         .then(result => {
           setMatches(result.matches)
           setTruncated(result.truncated)
@@ -229,7 +260,7 @@ function TerminalFilesPanel({
       clearTimeout(timer)
       controller.abort()
     }
-  }, [announce, trimmedQuery])
+  }, [announce, atHome, projectPath, trimmedQuery])
 
   const refreshFiles = useCallback(() => {
     setRefreshToken(previous => previous + 1)
@@ -358,6 +389,56 @@ function TerminalFilesPanel({
 
   const panelStyle = collapsed ? undefined : ({ '--terminal-files-width': `${resize.width}px` } as CSSProperties)
 
+  const findResults = (
+    <>
+    <div className="terminal-files-matches" role="list" aria-label="Find results">
+      {matches.map(match => (
+        <button
+          type="button"
+          role="listitem"
+          key={match.path}
+          className={`terminal-files-match ${filesState.openPath === match.path ? 'is-first' : ''}`}
+          onClick={() => openPath(match.path)}
+          onKeyDown={event => {
+            if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+            if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+            event.preventDefault()
+            const rows = Array.from(panelRef.current?.querySelectorAll<HTMLButtonElement>('.terminal-files-match') ?? [])
+            const next = rows[rows.indexOf(event.currentTarget) + (event.key === 'ArrowDown' ? 1 : -1)]
+            if (next) { next.focus({ preventScroll: true }); next.scrollIntoView?.({ block: 'nearest' }); next.click() }
+          }}
+        >
+          <PanelPath path={match.path} />
+        </button>
+      ))}
+    </div>
+    <p className="terminal-files-count">
+      {finding && matches.length === 0
+        ? 'Finding…'
+        : matches.length === 0
+          ? 'No path matches'
+          : `${matches.length} path${matches.length === 1 ? '' : 's'}${truncated ? ' · more matched' : ''} · Enter opens the first`}
+    </p>
+    </>
+  )
+
+  const pins = pinnedPaths.length > 0 && (
+    <div className="terminal-files-pins" role="list" aria-label="Pinned">
+      {pinnedPaths.map(pin => (
+        <button
+          type="button"
+          role="listitem"
+          key={pin.path}
+          className={`terminal-files-match${pin.path === filesState.currentPath || pin.path === filesState.openPath ? ' is-first' : ''}`}
+          title={pin.path}
+          onClick={() => (pin.kind === 'directory' ? navigateTo(pin.path) : openPath(pin.path))}
+        >
+          <PanelPath path={pin.path} />
+        </button>
+      ))}
+    </div>
+  )
+
   const panel = (
       <aside
         ref={panelRef}
@@ -392,11 +473,22 @@ function TerminalFilesPanel({
             />
             <div className="terminal-files-search">
               <SearchField
-                label="Search files"
+                label={atHome ? 'Search projects' : project ? `Search files in ${workspaceName(project.path)}` : 'Search files'}
                 title="Down enters the list; Up/Down browses and opens files"
                 value={query}
                 onChange={setQuery}
                 onKeyDown={event => {
+                  if (atHome && event.key === 'Enter') {
+                    const first = projectGroups(projects ?? [], query)[0]?.projects[0]
+                    if (first) { event.preventDefault(); openProject(first.path) }
+                    else if (matches.length > 0) { event.preventDefault(); openPath(matches[0].path) }
+                    return
+                  }
+                  if (atHome && event.key === 'ArrowDown') {
+                    const first = panelRef.current?.querySelector<HTMLElement>('.files-project')
+                    if (first) { event.preventDefault(); first.focus() }
+                    return
+                  }
                   if (event.key === 'ArrowDown' && !event.altKey && !event.ctrlKey && !event.metaKey) {
                     const first = panelRef.current?.querySelector<HTMLElement>(trimmedQuery ? '.terminal-files-match' : '[role="treeitem"]')
                     if (first) { event.preventDefault(); first.focus(); if (!first.hasAttribute('aria-expanded')) first.click() }
@@ -415,40 +507,33 @@ function TerminalFilesPanel({
                 }}
               />
             </div>
-            {trimmedQuery ? (
+            {atHome ? (
+              <div className="files-home">
+                {pins}
+                <FilesProjects
+                  workspaces={projects}
+                  roots={roots}
+                  error={projectsError}
+                  query={query}
+                  onOpen={openProject}
+                />
+                {trimmedQuery && (
+                  <section className="files-home-find" aria-label="Files everywhere">
+                    <h3 className="files-project-parent">Files everywhere</h3>
+                    {findResults}
+                  </section>
+                )}
+              </div>
+            ) : trimmedQuery ? (
               <>
-                <div className="terminal-files-matches" role="list" aria-label="Find results">
-                  {matches.map(match => (
-                    <button
-                      type="button"
-                      role="listitem"
-                      key={match.path}
-                      className={`terminal-files-match ${filesState.openPath === match.path ? 'is-first' : ''}`}
-                      onClick={() => openPath(match.path)}
-                      onKeyDown={event => {
-                        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
-                        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-                        event.preventDefault()
-                        const rows = Array.from(panelRef.current?.querySelectorAll<HTMLButtonElement>('.terminal-files-match') ?? [])
-                        const next = rows[rows.indexOf(event.currentTarget) + (event.key === 'ArrowDown' ? 1 : -1)]
-                        if (next) { next.focus({ preventScroll: true }); next.scrollIntoView?.({ block: 'nearest' }); next.click() }
-                      }}
-                    >
-                      <PanelPath path={match.path} />
-                    </button>
-                  ))}
-                </div>
-                <p className="terminal-files-count">
-                  {finding && matches.length === 0
-                    ? 'Finding…'
-                    : matches.length === 0
-                      ? 'No path matches'
-                      : `${matches.length} path${matches.length === 1 ? '' : 's'}${truncated ? ' · more matched' : ''} · Enter opens the first`}
-                </p>
+                {findResults}
               </>
             ) : (
               <>
                 <div className="terminal-files-nav">
+                  {place === 'tab' && (
+                    <button type="button" className="terminal-files-home" onClick={() => openProject('/')}>Projects</button>
+                  )}
                   <button
                     type="button"
                     className="terminal-files-up"
@@ -471,22 +556,7 @@ function TerminalFilesPanel({
                     ↻
                   </button>
                 </div>
-                {pinnedPaths.length > 0 && (
-                  <div className="terminal-files-pins" role="list" aria-label="Pinned">
-                    {pinnedPaths.map(pin => (
-                      <button
-                        type="button"
-                        role="listitem"
-                        key={pin.path}
-                        className={`terminal-files-match${pin.path === filesState.currentPath || pin.path === filesState.openPath ? ' is-first' : ''}`}
-                        title={pin.path}
-                        onClick={() => (pin.kind === 'directory' ? navigateTo(pin.path) : openPath(pin.path))}
-                      >
-                        <PanelPath path={pin.path} />
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {pins}
                 <FileTree
                   rootPath={filesState.currentPath}
                   currentPath={filesState.currentPath}
@@ -640,8 +710,10 @@ function TerminalFilesPanel({
       <section className="files-tab-viewer" aria-label="File">
         {filesState.openPath ? (
           <FilePanelViewer path={filesState.openPath} onClose={closeOpenPath} onOpenPath={openPath} onSend={sendPath} />
+        ) : project ? (
+          <ProjectLanding project={project} onOpenPath={openPath} />
         ) : (
-          <p className="files-panel-note">Open a file from the tree, a pin, or by name.</p>
+          <p className="files-panel-note">{atHome ? 'Open a project, or find one or any file by name.' : 'Open a file from the tree, a pin, or by name.'}</p>
         )}
       </section>
     </div>

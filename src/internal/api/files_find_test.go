@@ -326,3 +326,34 @@ func TestReadMountPointsParsesTheMountTable(t *testing.T) {
 		}
 	}
 }
+
+func TestFilesHandlerFindSearchesOnlyWithinAFolderUnderARoot(t *testing.T) {
+	root := t.TempDir()
+	inProject := filepath.Join(root, "project", "main.ts")
+	elsewhere := filepath.Join(root, "other", "main.ts")
+	writeFileFixture(t, inProject, "")
+	writeFileFixture(t, elsewhere, "")
+
+	handler := newFindHandler(root)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	scoped := func(within string) *httptest.ResponseRecorder {
+		target := "/api/files/find?" + url.Values{"q": {"main"}, "within": {within}}.Encode()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		return rec
+	}
+
+	rec := scoped(filepath.Join(root, "project"))
+	var response FindResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if got := findPaths(response); len(got) != 1 || got[0] != inProject {
+		t.Fatalf("matches = %v, want only %s", got, inProject)
+	}
+
+	if rec := scoped(t.TempDir()); rec.Code != http.StatusForbidden {
+		t.Fatalf("a folder outside every root answered %d, want 403", rec.Code)
+	}
+}

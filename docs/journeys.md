@@ -146,8 +146,8 @@ hand or hand the path to an agent.
 4. Fix a small thing in place and save, or hand the path over.
 
 **Surfaces.** The Files panel beside the terminal (1, 2, 3, 4); the Files tab,
-the same panel as a tab with the file beside it, starting from the operator's
-pins (1, 2, 3, 4); the Send drawer (4).
+the same panel as a tab with the file beside it, opening on the host's projects
+and finding within the one entered (1, 2, 3, 4); the Send drawer (4).
 
 **End action.** A small manual edit, or Send to Session with the file's path as
 the reference.
