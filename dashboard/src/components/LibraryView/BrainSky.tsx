@@ -15,7 +15,7 @@ import type { MapTransform } from '../../hooks/useMapTransform'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { existedAt, momentOf, NOW } from './mapMoment'
 import { subjectOf, subjectsOf } from './brainSubjects'
-import SkyMap from './SkyMap'
+import SkyMap, { type SkyWords } from './SkyMap'
 import './BrainSky.css'
 
 interface Props {
@@ -30,9 +30,16 @@ interface Props {
   onOpen: (path: string) => void
   /** The time line, drawn along the sky's foot. */
   timeControl: ReactNode
+  /** What the sky is called, for a sky of something other than the brain. */
+  label?: string
+  placementKey?: string
+  nameOf?: (subject: string) => string | undefined
+  words?: SkyWords
 }
 
-export default function BrainSky({ graph, fullGraph, moment = NOW, matches, hoverPath, openPath, onOpen, timeControl }: Props) {
+export default function BrainSky({
+  graph, fullGraph, moment = NOW, matches, hoverPath, openPath, onOpen, timeControl, label = 'Brain map', placementKey, nameOf, words,
+}: Props) {
   const phone = useMediaQuery('(max-width: 768px)')
   const [subject, setSubject] = useState<string | null>(null)
   const [camera, setCamera] = useState<MapTransform | null>(null)
@@ -54,13 +61,14 @@ export default function BrainSky({ graph, fullGraph, moment = NOW, matches, hove
   const keepCamera = useCallback((next: MapTransform) => setCamera(next), [])
 
   return (
-    <section className="brain-map" aria-label="Brain map">
+    <section className="brain-map" aria-label={label}>
       <div className="brain-map-body is-continuous">
         {phone
-          ? <BrainList graph={visible} matches={matches} openPath={openPath} onOpen={onOpen} />
+          ? <BrainList graph={visible} matches={matches} openPath={openPath} onOpen={onOpen} nameOf={nameOf} />
           : <SkyMap graph={fullGraph} visible={visible} selected={openPath} subject={subject}
             matches={matches} hoverPath={hoverPath} moment={moment} camera={camera} cameraRevision={revision}
-            onCameraChange={keepCamera} onSelect={onOpen} onSubject={setSubject} />}
+            onCameraChange={keepCamera} onSelect={onOpen} onSubject={setSubject}
+            placementKey={placementKey} nameOf={nameOf} words={words} />}
       </div>
       <footer className="brain-foot" aria-label="Time">
         {timeControl}
@@ -71,12 +79,13 @@ export default function BrainSky({ graph, fullGraph, moment = NOW, matches, hove
 }
 
 /** The subjects and their pages as a list, largest subject first. */
-function BrainList({ graph, matches, openPath, onOpen }: {
+function BrainList({ graph, matches, openPath, onOpen, nameOf }: {
   graph: LibraryGraph; matches: ReadonlySet<string> | null; openPath: string | null; onOpen: (path: string) => void
+  nameOf?: (subject: string) => string | undefined
 }) {
   const [open, setOpen] = useState<string | null>(null)
   const subjects = useMemo(() => subjectsOf(graph.pages)
-    .map(group => ({ ...group, pages: matches ? group.pages.filter(page => matches.has(page.path)) : group.pages }))
+    .map(group => ({ ...group, name: nameOf?.(group.id) ?? group.name, pages: matches ? group.pages.filter(page => matches.has(page.path)) : group.pages }))
     .filter(group => group.pages.length > 0)
     .sort((a, b) => b.pages.length - a.pages.length || a.name.localeCompare(b.name)), [graph, matches])
   if (subjects.length === 0) return <p className="library-empty">Nothing here at this moment.</p>

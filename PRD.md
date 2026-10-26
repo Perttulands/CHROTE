@@ -92,7 +92,8 @@ behind a spine at the tab's right edge and opens as a drawer over the reader.
 Components remain separated in the codebase and fail independently. A missing Beads workspace or unconfigured context corpus must not prevent terminal work.
 
 Beads browsing is one table of every Bead on the host, sliced by search,
-project, status and days, with the selected Bead's work graph beside it, and the
+project, status and days, with the selected Bead's work graph beside it; the
+same slice as a map of its epics in the Brain's sky; and the
 whole slice carried in the view's link. Visible work updates automatically while
 preserving query, selection, graph position, table trail and drafts. Each store
 reports whether it was read, is being read or failed; incomplete host data must

@@ -32,6 +32,7 @@ import { SessionCommandMark } from './sessionLabel'
 import { useAgentEventMarks } from '../agents/AgentEventsProvider'
 import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
+import { useTableObject } from '../context/TableContext'
 import { registerChords } from '../keys/chords'
 import { mountResident } from '../residents/residentPresence'
 import {
@@ -95,6 +96,7 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
     refreshSessions,
   } = useSession()
   const { announce } = useStatus()
+  const table = useTableObject()
 
   const [resident, setResident] = useState<Resident | null>(
     () => readCachedResidents()?.find(entry => entry.tab === tab) ?? null,
@@ -345,9 +347,29 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
     },
   ]
 
-  const style = { '--resident-column-width': `${width}px` } as CSSProperties
-
   const open = !stripped && !unconfigured
+
+  // An open drawer lies over the content, not over the table: the object the
+  // operator is handing over stays in sight beside it.
+  const [besideTable, setBesideTable] = useState(0)
+  useEffect(() => {
+    const column = open && table ? dockRef.current?.previousElementSibling?.querySelector<HTMLElement>('.table-column') : null
+    if (!column || typeof ResizeObserver === 'undefined') {
+      setBesideTable(0)
+      return
+    }
+    const measure = () => setBesideTable(column.offsetWidth)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(column)
+    return () => observer.disconnect()
+  }, [open, table])
+
+  const style = {
+    '--resident-column-width': `${width}px`,
+    '--resident-drawer-right': `${besideTable}px`,
+  } as CSSProperties
+
   return (
     // The dock is the drawer's place in the tab's row: the strip's width,
     // kept while the drawer lies open over the content, so nothing moves.

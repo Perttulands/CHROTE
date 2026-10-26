@@ -15,7 +15,7 @@ describe('the view as a link', () => {
       sort: 'size',
       dir: 'asc',
       selected: { id: 'home-1', project: 'home:alice' },
-      mode: 'graph',
+      mode: 'map',
     }
     const url = writeViewState(view, BASE)
     expect(url.searchParams.get('variant')).toBe('keep')
@@ -43,7 +43,13 @@ describe('the view as a link', () => {
     expect(view.range).toEqual({ from: parseDayISO('2026-10-20'), to: parseDayISO('2026-10-20') })
     expect(view.statuses).toEqual(['open'])
     expect(view.sort).toBe(DEFAULT_VIEW.sort)
-    expect(view.mode).toBe('split')
+    expect(view.mode).toBe('list')
+  })
+
+  it('opens a link copied before List and Map in the mode it meant', () => {
+    expect(readViewState('?tab=beads&mode=split').mode).toBe('list')
+    expect(readViewState('?tab=beads&mode=table').mode).toBe('list')
+    expect(readViewState('?tab=beads&mode=graph').mode).toBe('map')
   })
 
   it('reads nothing from a link to another tab, and clears only its own keys', () => {

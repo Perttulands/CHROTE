@@ -59,12 +59,31 @@ const MAX_FLARES = 400
 /** How many of the last day's changes breathe at once. */
 const FRESH = 40
 
-/** Where the sky put its systems, kept so the next visit finds them in place. */
+/** Where the brain's sky put its systems, kept so the next visit finds them in place. */
 const PLACEMENT_KEY = 'chrote.brain.sky.placement'
 
-function rememberedPlacement(): SkyPlacement {
+/** What a sky calls its things: the brain's pages and evidence, or another corpus's own words. */
+export interface SkyWords {
+  /** A system's count under its name, from what it keeps and the evidence it rests on. */
+  count: (kept: number, evidence: number) => string
+  /** Said of a system with no star at its centre. */
+  coreless: string
+  /** Said of a star that links nowhere. */
+  stray: string
+  /** Said when nothing in the sky is lit. */
+  empty: string
+}
+
+export const BRAIN_WORDS: SkyWords = {
+  count: (kept, evidence) => `${kept} pages${evidence > 0 ? ` · ${evidence} evidence` : ''}`,
+  coreless: 'no topic page yet',
+  stray: 'links nowhere',
+  empty: 'No pages match these filters.',
+}
+
+function rememberedPlacement(key: string): SkyPlacement {
   try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(PLACEMENT_KEY) || '{}')
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(key) || '{}')
     if (!parsed || typeof parsed !== 'object') return new Map()
     return new Map(Object.entries(parsed)
       .filter((entry): entry is [string, [number, number]] => Array.isArray(entry[1]) && entry[1].length === 2 && entry[1].every(Number.isFinite))
@@ -74,9 +93,9 @@ function rememberedPlacement(): SkyPlacement {
   }
 }
 
-function rememberPlacement(placement: SkyPlacement) {
+function rememberPlacement(key: string, placement: SkyPlacement) {
   try {
-    window.localStorage.setItem(PLACEMENT_KEY, JSON.stringify(Object.fromEntries(
+    window.localStorage.setItem(key, JSON.stringify(Object.fromEntries(
       [...placement].map(([id, at]) => [id, [at.x, at.y]]),
     )))
   } catch {
@@ -97,6 +116,11 @@ interface Props {
   onCameraChange: (camera: MapTransform) => void
   onSelect: (path: string) => void
   onSubject: (id: string) => void
+  /** Where this sky keeps its systems' places; each sky keeps its own. */
+  placementKey?: string
+  /** A system's name, where its id does not say it. */
+  nameOf?: (subject: string) => string | undefined
+  words?: SkyWords
 }
 
 interface Signpost { subject: string; name: string; count: number; target: SkyStar; x: number; y: number; angle: number; hue: string }
@@ -126,7 +150,10 @@ function useStillness(): boolean {
   return still
 }
 
-export default function SkyMap({ graph, visible, selected, subject, matches, hoverPath, moment, camera, cameraRevision, onCameraChange, onSelect, onSubject }: Props) {
+export default function SkyMap({
+  graph, visible, selected, subject, matches, hoverPath, moment, camera, cameraRevision, onCameraChange, onSelect, onSubject,
+  placementKey = PLACEMENT_KEY, nameOf, words = BRAIN_WORDS,
+}: Props) {
   const theme = useTheme()
   const still = useStillness()
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -137,11 +164,14 @@ export default function SkyMap({ graph, visible, selected, subject, matches, hov
   // Each sky is placed from the one before it, so a page arriving or a refresh
   // moves only what it must.
   const placement = useRef<SkyPlacement | null>(null)
-  const layout = useMemo(() => skyLayout(graph, placement.current ??= rememberedPlacement()), [graph])
+  const layout = useMemo(() => {
+    const placed = skyLayout(graph, placement.current ??= rememberedPlacement(placementKey))
+    return nameOf ? { ...placed, regions: placed.regions.map(region => ({ ...region, name: nameOf(region.id) ?? region.name })) } : placed
+  }, [graph, nameOf, placementKey])
   useEffect(() => {
     placement.current = placementOf(layout)
-    rememberPlacement(placement.current)
-  }, [layout])
+    rememberPlacement(placementKey, placement.current)
+  }, [layout, placementKey])
   const view = useMapTransform<HTMLDivElement>({ ...size, limits: LIMITS, initialTransform: camera })
   const { ref, restore, transform } = view
 
@@ -619,18 +649,18 @@ export default function SkyMap({ graph, visible, selected, subject, matches, hov
         const count = (regionOf.get(region.id)?.pages ?? 0)
         return <button type="button" key={region.id}
           className={`brain-region-label${region.core ? '' : ' is-unsummed'}${near.has(region.id) ? ' is-near' : ''}${region.id === (hoveredRegion ?? subject) ? ' is-focus' : ''}`}
-          title={`${region.collection} / ${region.name}${region.core ? '' : ' · no topic page yet'}`}
+          title={`${region.collection} / ${region.name}${region.core ? '' : ` · ${words.coreless}`}`}
           style={{ left: x, top: y, width, '--subject-color': hue(region.id) } as CSSProperties}
-          aria-label={`Explore ${region.name}, ${count} pages`} onClick={event => { if (event.detail === 0 || !view.panned()) { onSubject(region.id); focusRegion(region) } }}>
+          aria-label={`Explore ${region.name}, ${words.count(count, 0)}`} onClick={event => { if (event.detail === 0 || !view.panned()) { onSubject(region.id); focusRegion(region) } }}>
           <span>{region.name}</span>
-          {counted && <small>{region.pages - region.evidence} pages{region.evidence > 0 ? ` · ${region.evidence} evidence` : ''}</small>}
+          {counted && <small>{words.count(region.pages - region.evidence, region.evidence)}</small>}
         </button>
       })}
     </div>
     <div className="brain-continuous-pages">
       {labels.map(({ star, x, y, width, kind }) => <button type="button" key={star.page.path}
         className={`${kind === 'hot' ? 'is-hot' : kind === 'lantern' ? 'is-lantern' : ''}${star.role === 'stray' ? ' is-stray' : ''}`}
-        style={{ left: x, top: y, maxWidth: width }} aria-label={star.page.title} aria-current={star.page.path === selected ? 'true' : undefined} title={star.role === 'stray' ? `${star.page.title} · links nowhere` : star.page.title}
+        style={{ left: x, top: y, maxWidth: width }} aria-label={star.page.title} aria-current={star.page.path === selected ? 'true' : undefined} title={star.role === 'stray' ? `${star.page.title} · ${words.stray}` : star.page.title}
         onFocus={() => setHovered(star.page.path)} onBlur={() => setHovered(null)}
         onClick={event => { if (event.detail === 0 || !view.panned()) onSelect(star.page.path) }}>{star.page.title}</button>)}
     </div>
@@ -641,7 +671,7 @@ export default function SkyMap({ graph, visible, selected, subject, matches, hov
         <i aria-hidden="true" />{post.name}<small>{post.count}</small>
       </button>)}
     </div>
-    {stars === 0 && <p className="brain-map-empty">No pages match these filters.</p>}
+    {stars === 0 && <p className="brain-map-empty">{words.empty}</p>}
     <span className="brain-map-scale">{Math.round(transform.scale * 100)}%</span>
   </div>
 }

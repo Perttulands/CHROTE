@@ -122,17 +122,26 @@ across the strip brushes the days the table keeps. The rail keeps two filters,
 project and status, each row a box that toggles it and a name that keeps it
 alone; a store is named for its prefix, or for its role when that says more,
 as the brain does. Ids are never cut: the column is as wide as the longest
-shown, up to fifteen characters, and a longer id wraps after a dot. Numeric
+shown, up to fifteen characters, and a longer id wraps after a dot. Beside it
+the type is its word in its colour, the sixth colour rule, so a bug and an epic
+read apart down the column. Numeric
 columns are right-aligned with a faint bar beside the number; when the table
 is too narrow for every column, Updated gives way to Idle, which sorts the
-same. The work graph draws the selected Bead's family: its cards' borders carry
+same, and Size goes. The work graph draws the selected Bead's family: its cards' borders carry
 their project's shelf colour, finished cards are dimmed and blocked cards
 dashed. A long chain wraps into bands one under the next, or runs down a tall
 pane, and a small family shrinks a little below the readable scale rather
-than leave a card out of view. Split puts the graph and the selected Bead's
-own words beside the table, or beneath it when the two no longer fit side by
-side; the text sits beside the graph in a wide pane and beneath it in a tall
-one. The target it was built to is in
+than leave a card out of view. The view is List or Map. In List, nothing
+selected, the table has the pane; a selection puts the graph and the Bead's own
+words beside the table, or beneath it when the two no longer fit side by side,
+and `Escape` in the table lets it go. The text sits beside the graph in a wide
+pane and beneath it in a tall one. Map is the slice as the Brain's sky: each
+epic, or any Bead with children, a system with the Bead at its centre, its open
+work in orbit and its finished work the nebula, so how much is done shows as
+glow; Beads under no parent drift around their project's Unfiled system, and
+parent and blocker links are the lines. A star selects its Bead, whose words
+come in beside the sky. The map places every Bead of the projects kept, so a
+status or a search fades stars rather than moving them. The target it was built to is in
 [`docs/assets/beads-slicer/`](docs/assets/beads-slicer/final-target.png).
 
 Everything else is gone: per-window accent colours, hashed per-user hues, the
@@ -378,7 +387,8 @@ drawer over it, and the resident's drawer beyond both.
   Librarian in Brain, the tender in Agents, the Clerk in Beads. Closed, it is
   a 28px spine at the far right of the tab carrying the harness mark, the
   label and the state, with an accent dot when the resident has news. A click,
-  `Alt+S` or `Alt+Enter` slides it in over the content, 44 columns wide by
+  `Alt+S` or `Alt+Enter` slides it in over the content, never over the table, so
+  the object being handed over stays in sight, 44 columns wide by
   default, drag-resizable and remembered, under a 32px header carrying the
   label, the harness mark, the session name, its state as a word, Send with
   its chord, and Close, which puts it back. The spine keeps its place while

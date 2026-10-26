@@ -16,6 +16,11 @@ const mockState = vi.hoisted(() => ({
   matches: {} as Record<string, string[]>,
 }))
 
+// The sky draws on a canvas jsdom does not have; the browser tests look at it.
+vi.mock('./LibraryView/BrainSky', () => ({
+  default: ({ label }: { label: string }) => <section aria-label={label} />,
+}))
+
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
     settings: DEFAULT_SETTINGS,
@@ -151,15 +156,15 @@ describe('the Beads tab', () => {
     expect(await screen.findByText('Reading 2 stores…')).toBeInTheDocument()
   })
 
-  it('moves between Split, Table and Graph with the arrows', async () => {
+  it('moves between List and Map with the arrows', async () => {
     render(<BeadsView />)
-    const split = screen.getByRole('tab', { name: 'Split' })
-    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', split.id)
-    fireEvent.keyDown(split, { key: 'ArrowRight' })
-    expect(screen.getByRole('tab', { name: 'Table', selected: true })).toHaveFocus()
-    fireEvent.keyDown(screen.getByRole('tab', { name: 'Table' }), { key: 'ArrowLeft' })
-    fireEvent.keyDown(screen.getByRole('tab', { name: 'Split' }), { key: 'ArrowLeft' })
-    expect(screen.getByRole('tab', { name: 'Graph', selected: true })).toHaveFocus()
+    const list = screen.getByRole('tab', { name: 'List' })
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', list.id)
+    fireEvent.keyDown(list, { key: 'ArrowRight' })
+    expect(screen.getByRole('tab', { name: 'Map', selected: true })).toHaveFocus()
+    expect(screen.getByRole('region', { name: 'Beads map' })).toBeInTheDocument()
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Map' }), { key: 'ArrowRight' })
+    expect(screen.getByRole('tab', { name: 'List', selected: true })).toHaveFocus()
   })
 
   it('keeps one project by its name, and sorts by size', async () => {
@@ -233,9 +238,13 @@ describe('the Beads tab', () => {
     expect(screen.getByLabelText('Search Beads')).toHaveValue('zvi')
     await waitFor(() => expect(rowIds()).toEqual(['library-zvi.1', 'library-zvi', 'library-zvi.2']))
     expect(screen.getAllByRole('row').find(item => item.getAttribute('aria-selected') === 'true')).toHaveTextContent('library-zvi.1')
-    expect(document.querySelector('.beads-graph')).toBeNull()
-    fireEvent.click(screen.getByRole('tab', { name: 'Split' }))
+    // A link from before List and Map: its Table is the list, and the
+    // selection brings its graph beside it until Escape lets it go.
     await waitFor(() => expect(window.location.search).toBe('?tab=beads&q=zvi&sort=size&sel=library-zvi.1'))
+    expect(document.querySelector('.beads-graph')).not.toBeNull()
+    fireEvent.keyDown(document.querySelector('.beads-table-body')!, { key: 'Escape' })
+    expect(document.querySelector('.beads-graph')).toBeNull()
+    await waitFor(() => expect(window.location.search).toBe('?tab=beads&q=zvi&sort=size'))
   })
 
   it('takes its keys out of the link when the tab is left', async () => {

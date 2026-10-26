@@ -80,9 +80,10 @@ a Bead to the Clerk, the agent that keeps the register.
    projects and statuses; a drag across the daily strip keeps the days a run of
    work happened in. The columns sort, so the oldest idle or the largest open
    Beads come first.
-3. Read a Bead's family without leaving the view: in Split, the work graph
-   beside the table follows the selected row, with its parent, its children
-   and the blocking edges to and from other stores.
+3. Read a Bead's family without leaving the view: in List, selecting a row
+   brings the work graph beside the table, with its parent, its children
+   and the blocking edges to and from other stores. Map shows the whole slice
+   as epics in the Brain's sky, open work in orbit and finished work as glow.
 4. Open a Bead's card on the table with `Enter` or a double-click.
 5. Copy the view's link; it opens the same slice in a fresh tab.
 6. Open a Bead id printed in terminal output and read it on the table beside

@@ -178,7 +178,7 @@
 .resident-column.drawer {
   position: absolute;
   top: 0;
-  right: 0;
+  right: var(--resident-drawer-right, 0px);
   bottom: 0;
   z-index: 6;
   max-width: calc(100% - 240px);

@@ -5,8 +5,10 @@
  *
  * The strip across the top counts what was created and closed each day and
  * brushes a range of days; the rail keeps projects and statuses; the columns
- * sort; Split, Table and Graph choose what the work area shows: Graph is the
- * selected Bead's graph and text without the table. The slice is
+ * sort; List and Map choose what the work area shows. List is the table, and
+ * once a Bead is selected its work graph and text beside it; Map is the slice
+ * as the Brain's night sky, each epic a star system whose finished work is its
+ * glow, with the selected Bead's text beside it. The slice is
  * the URL, so a copied link opens the same view. Every interaction here is the
  * browser's own work over an index built once per read: the server is asked
  * for nothing but changed rows, for a search the ids whose text matches, and
@@ -22,6 +24,8 @@ import BeadText from './BeadText'
 import FacetRail from './FacetRail'
 import TimeStrip from './TimeStrip'
 import WorkGraph from './WorkGraph'
+import BrainSky from '../LibraryView/BrainSky'
+import type { SkyWords } from '../LibraryView/SkyMap'
 import ResidentColumn from '../ResidentColumn'
 import SearchField from '../kit/SearchField'
 import { TableSlot } from '../TableHost'
@@ -31,6 +35,7 @@ import { tableReference, useTableObject } from '../../context/TableContext'
 import { openBeadCard } from '../../beads/beadCard'
 import { beadIdPattern } from '../../beads/beadIds'
 import { searchHostBeads, useHostBeads } from '../../beads/hostBeads'
+import { beadsSky } from '../../beads/beadsSky'
 import { rememberBeadRows } from '../../beads/knownBeads'
 import {
   SLICE_STATUSES,
@@ -71,13 +76,22 @@ interface BeadsViewProps {
   reveal?: BeadsRevealRequest | null
 }
 
-const MODE_LABELS: Record<BeadsMode, string> = { split: 'Split', table: 'Table', graph: 'Graph' }
+const MODE_LABELS: Record<BeadsMode, string> = { list: 'List', map: 'Map' }
+/** What the map calls an epic's work. */
+const MAP_WORDS: SkyWords = {
+  count: (open, done) => `${open} open${done > 0 ? ` · ${done} done` : ''}`,
+  coreless: 'filed under no epic',
+  stray: 'linked to nothing',
+  empty: 'No Beads in this slice.',
+}
 /** A link is rewritten once the slice settles, not on every step of a brush. */
 const URL_DELAY_MS = 200
 /** Content search waits for a pause in typing; ids and titles answer at once. */
 const SEARCH_DELAY_MS = 120
 
 const NUMBER = new Intl.NumberFormat('en-US')
+const NO_SKY = { graph: { pages: [], links: [], tags: [] }, pathOf: () => '', rowOf: () => -1, nameOf: () => undefined }
+const EMPTY_SKY = { full: NO_SKY, visible: NO_SKY }
 
 function clockTime(iso: string | undefined): string {
   if (!iso) return ''
@@ -201,6 +215,14 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
     () => orderedRows(index, result, view.sort, view.dir),
     [index, result, view.dir, view.sort],
   )
+  // The map places every Bead of the projects in view, so a status or a search
+  // fades stars rather than moving them, and lights the slice.
+  const sky = useMemo(() => {
+    if (view.mode !== 'map') return EMPTY_SKY
+    const all: number[] = []
+    for (let row = 0; row < index.size; row += 1) if (!projectSet || projectSet.has(index.project[row])) all.push(row)
+    return { full: beadsSky(index, all), visible: beadsSky(index, ordered) }
+  }, [index, ordered, projectSet, view.mode])
 
   const selectedRow = useMemo(() => {
     if (!view.selected) return -1
@@ -216,6 +238,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
       : { id: bead.id, project: index.projects[index.project[row]].key }
   }, [index])
   const selectInTable = useCallback((row: number) => patch({ selected: selectionOf(row) }), [patch, selectionOf])
+  const deselect = useCallback(() => patch({ selected: null }), [patch])
   const selectElsewhere = useCallback((row: number) => {
     patch({ selected: selectionOf(row) })
     setRevealNonce(nonce => nonce + 1)
@@ -319,8 +342,9 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
   const staleStores = host.stores.filter(store => store.stale)
   const oldestStale = staleStores.reduce<string | undefined>(
     (oldest, store) => !oldest || (store.readAt && store.readAt < oldest) ? store.readAt : oldest, undefined)
-  const showTable = view.mode !== 'graph'
-  const showGraph = view.mode !== 'table'
+  const showTable = view.mode === 'list'
+  const showMap = view.mode === 'map'
+  const showDetail = selectedRow >= 0
   const empty = host.loading
     ? 'Reading every Beads store on this host…'
     : index.size === 0
@@ -396,7 +420,12 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
                 ))}
               </div>
             </div>
-            <div id="beads-panes" role="tabpanel" aria-labelledby={`beads-mode-${view.mode}`} className={`beads-panes beads-panes-${view.mode}`}>
+            <div
+              id="beads-panes"
+              role="tabpanel"
+              aria-labelledby={`beads-mode-${view.mode}`}
+              className={`beads-panes beads-panes-${view.mode}${showDetail ? ' with-detail' : ''}`}
+            >
               {showTable && (
                 <div className="beads-pane beads-pane-table">
                   <BeadTable
@@ -409,6 +438,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
                     reveal={revealNonce}
                     onSort={sortBy}
                     onSelect={selectInTable}
+                    onDeselect={deselect}
                     onOpen={open}
                     onSend={send}
                     onCopy={copy}
@@ -423,12 +453,30 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
                   )}
                 </div>
               )}
-              {showGraph && (
+              {showMap && (
+                <div className="beads-pane beads-pane-map">
+                  <BrainSky
+                    label="Beads map"
+                    placementKey="chrote.beads.sky.placement"
+                    graph={sky.visible.graph}
+                    fullGraph={sky.full.graph}
+                    nameOf={sky.full.nameOf}
+                    words={MAP_WORDS}
+                    matches={null}
+                    openPath={selectedRow >= 0 ? sky.full.pathOf(selectedRow) : null}
+                    onOpen={path => { const row = sky.full.rowOf(path); if (row >= 0) selectInTable(row) }}
+                    timeControl={null}
+                  />
+                </div>
+              )}
+              {showDetail && (
                 <div className="beads-pane beads-pane-detail">
                   <div className="beads-detail">
-                    <div className="beads-detail-graph">
-                      <WorkGraph index={index} selected={selectedRow} onSelect={selectElsewhere} onOpen={open} />
-                    </div>
+                    {showTable && (
+                      <div className="beads-detail-graph">
+                        <WorkGraph index={index} selected={selectedRow} onSelect={selectElsewhere} onOpen={open} />
+                      </div>
+                    )}
                     <BeadText index={index} row={selectedRow} generations={generations} idPattern={idPattern} onToken={followToken} />
                   </div>
                 </div>

@@ -70,6 +70,11 @@ release.
 - Every search box, in Beads, Brain, Files, the Files and Sessions sidecars,
   Send, flags and keybindings, is the kit's one SearchField, each saying what
   it searches as "Search …".
+- Beads shows each row's type as its coloured word in a sortable column. Split,
+  Table and Graph become List and Map: List is the table, with the selected
+  Bead's graph and text beside it only while something is selected (`Escape`
+  lets it go); Map draws the slice in the Brain's sky, each epic a system whose
+  finished work glows. Older links open in the matching mode.
 - Files now exposes everything under `CHROTE_ROOTS` that the service identity's
   Unix permissions allow, while canonical paths remain inside configured roots.
 - Terminal drag/drop, assignment, terminal lifetime, and layout persistence were
