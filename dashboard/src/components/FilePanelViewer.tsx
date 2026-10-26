@@ -337,16 +337,16 @@ function FilePanelViewer({
         <div className="files-panel-actions">
           {mode === 'edit' ? (
             <>
-              <button type="button" className="files-panel-action is-current" disabled={saving} onClick={save}>Save</button>
-              <button type="button" className="files-panel-action" onClick={press}>{armed ? 'Confirm' : 'Discard'}</button>
+              <button type="button" className="kit-button files-panel-action is-current" disabled={saving} onClick={save}>Save</button>
+              <button type="button" className="kit-button files-panel-action" onClick={press}>{armed ? 'Confirm' : 'Discard'}</button>
             </>
           ) : (
             <>
-              {editable && <button type="button" className="files-panel-action" onClick={startEdit}>Edit</button>}
+              {editable && <button type="button" className="kit-button files-panel-action" onClick={startEdit}>Edit</button>}
               {inRepository && (
                 <button
                   type="button"
-                  className={`files-panel-action ${mode === 'diff' ? 'is-current' : ''}`}
+                  className={`kit-button files-panel-action ${mode === 'diff' ? 'is-current' : ''}`}
                   aria-pressed={mode === 'diff'}
                   onClick={() => setMode(mode === 'diff' ? 'view' : 'diff')}
                 >
@@ -355,7 +355,7 @@ function FilePanelViewer({
               )}
               <button
                 type="button"
-                className="files-panel-action"
+                className="kit-button files-panel-action"
                 disabled={!onSend}
                 title={onSend ? 'Send this path to the focused session' : 'Focus a terminal session first'}
                 onClick={() => onSend?.(path)}
@@ -364,15 +364,15 @@ function FilePanelViewer({
               </button>
               <button
                 type="button"
-                className="files-panel-action"
+                className="kit-button files-panel-action"
                 onClick={() => void copyAndAnnounce(path, path, announce)}
               >
                 Copy path
               </button>
               {onResetSize && (
-                <button type="button" className="files-panel-action" onClick={onResetSize}>Reset size</button>
+                <button type="button" className="kit-button files-panel-action" onClick={onResetSize}>Reset size</button>
               )}
-              <button type="button" className="files-panel-action" onClick={onClose}>Close</button>
+              <button type="button" className="kit-button files-panel-action" onClick={onClose}>Close</button>
             </>
           )}
         </div>

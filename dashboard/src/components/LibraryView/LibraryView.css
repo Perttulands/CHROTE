@@ -357,23 +357,6 @@
   gap: 4px;
 }
 
-.library-action {
-  min-height: 28px;
-  padding: 0 8px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.library-action:hover,
-.library-action:focus-visible {
-  color: var(--text-primary);
-  outline: none;
-}
-
 /* Save is the one action that changes the corpus, so it is the one that takes
    the accent. */
 .library-action-primary {
@@ -400,24 +383,6 @@
 .library-page-meta > span {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.library-history-more {
-  min-height: 24px;
-  padding: 0;
-  border: none;
-  background: none;
-  font: inherit;
-  color: var(--text-dim);
-  text-decoration: underline;
-  text-decoration-color: var(--divider);
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
-
-.library-history-more:hover,
-.library-history-more[aria-expanded='true'] {
-  color: var(--text-primary);
 }
 
 /* The way back through this dive. */
@@ -720,5 +685,3 @@
   color: var(--accent);
   font-weight: 600;
 }
-
-

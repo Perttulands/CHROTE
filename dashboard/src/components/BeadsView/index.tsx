@@ -380,7 +380,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
               </>
             ) : <span>All days</span>}
           </span>
-          <button type="button" className="beads-copy-link" onClick={copyLink}>Copy view link</button>
+          <button type="button" className="kit-button" onClick={copyLink}>Copy view link</button>
         </div>
 
         <TimeStrip index={index} result={result} range={view.range} onRange={setRange} span={view.span} onSpan={setSpan} />
@@ -402,7 +402,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
               <span className="beads-count" role="status">
                 {`${NUMBER.format(result.count)} of ${NUMBER.format(index.size)} Beads`}
               </span>
-              <div className="beads-modes" role="tablist" aria-label="Beads layout" onKeyDown={moveMode}>
+              <div className="beads-modes kit-tabs" role="tablist" aria-label="Beads layout" onKeyDown={moveMode}>
                 {BEADS_MODES.map(mode => (
                   <button
                     key={mode}
@@ -412,7 +412,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
                     aria-selected={view.mode === mode}
                     aria-controls="beads-panes"
                     tabIndex={view.mode === mode ? 0 : -1}
-                    className={`beads-mode${view.mode === mode ? ' active' : ''}`}
+                    className="kit-button beads-mode"
                     onClick={() => patch({ mode })}
                   >
                     {MODE_LABELS[mode]}
@@ -447,7 +447,7 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
                     <div className="beads-empty" role="status">
                       <p>{empty}</p>
                       {result.count === 0 && index.size > 0 && !host.loading && (
-                        <button type="button" className="beads-clear" onClick={clearSlice}>Show every Bead</button>
+                        <button type="button" className="kit-button primary beads-clear" onClick={clearSlice}>Show every Bead</button>
                       )}
                     </div>
                   )}

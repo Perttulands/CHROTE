@@ -458,7 +458,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
             <div className="launcher-pick">
               <button
                 type="button"
-                className="launcher-quiet"
+                className="kit-button"
                 aria-expanded={flagsOpen && flagsOffered}
                 disabled={!flagsOffered}
                 onClick={() => setFlagsOpen(open => !open)}
@@ -467,7 +467,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
               </button>
               <button
                 type="button"
-                className="launcher-quiet launcher-reset"
+                className="kit-button launcher-reset"
                 disabled={!flagsEdited}
                 onClick={resetFlags}
               >
@@ -504,7 +504,7 @@ export default function Launcher({ workspaceId, attachTo, initialFolder, initial
             <div className="launcher-actions">
               <button
                 type="button"
-                className="launcher-quiet launcher-launch"
+                className="kit-button primary launcher-launch"
                 onClick={() => { void launch() }}
                 disabled={launching || name.trim() === '' || folder.trim() === ''}
               >

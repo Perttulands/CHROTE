@@ -145,8 +145,8 @@ export default function AgentStack({ context, query = '' }: AgentStackProps) {
             autoFocus
           />
           <div className="agent-expansion-actions">
-            <button type="button" className="agent-word" onClick={() => { void saveDraft() }}>Save</button>
-            <button type="button" className="agent-word" onClick={() => setDraft(null)}>Discard</button>
+            <button type="button" className="kit-button agent-word" onClick={() => { void saveDraft() }}>Save</button>
+            <button type="button" className="kit-button agent-word" onClick={() => setDraft(null)}>Discard</button>
           </div>
         </div>
       )
@@ -197,7 +197,7 @@ export default function AgentStack({ context, query = '' }: AgentStackProps) {
                   {isOpen && instruction.readable && content !== null && draft === null && (
                     <button
                       type="button"
-                      className="agent-word"
+                      className="kit-button agent-word"
                       onClick={event => { event.stopPropagation(); setDraft(content) }}
                     >
                       Edit
@@ -239,7 +239,7 @@ export default function AgentStack({ context, query = '' }: AgentStackProps) {
                   {isOpen && content !== null && draft === null && (
                     <button
                       type="button"
-                      className="agent-word"
+                      className="kit-button agent-word"
                       onClick={event => { event.stopPropagation(); setDraft(content) }}
                     >
                       Edit

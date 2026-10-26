@@ -2,7 +2,6 @@ import { scheduledRequest as fetchJSON, SCHEDULED_TASKS_CHANGED } from './schedu
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import { useDndMonitor, useDroppable } from '@dnd-kit/core'
-import { CalendarClock, Plus, SquareTerminal } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { getSessionKey, getTerminalUserInitial } from '../types'
 import type { WorkspaceId } from '../types'
@@ -389,7 +388,7 @@ function ScheduledTasksView({
         <header className="scheduled-toolbar">
           <button
             type="button"
-            className={`terminal-sidecar-button ${sessionsDockState.open ? 'active' : ''}`}
+            className={`kit-button terminal-sidecar-button ${sessionsDockState.open ? 'active' : ''}`}
             aria-label="Sessions sidecar"
             aria-controls="scheduled-sessions-sidecar"
             aria-expanded={sessionsDockState.open}
@@ -397,14 +396,13 @@ function ScheduledTasksView({
             title="Sessions"
             onClick={() => updateSessionsDockState({ open: !sessionsDockState.open })}
           >
-            <SquareTerminal size={16} aria-hidden="true" />
             <span className="terminal-sidecar-label">Sessions</span>
-            <span className="terminal-sidecar-count">{sessions.length}</span>
+            <span className="kit-chord terminal-sidecar-count">{sessions.length}</span>
           </button>
-          <h2>Scheduled Tasks</h2>
+          <h2>Scheduled tasks</h2>
           <span className="scheduled-toolbar-hint">Prompts CHROTE sends into your sessions on a timer</span>
-          <button type="button" className="scheduled-primary" onClick={() => startCreate()}>
-            <Plus size={14} aria-hidden="true" /> New Task
+          <button type="button" className="kit-button primary" onClick={() => startCreate()}>
+            New task
           </button>
         </header>
 
@@ -459,8 +457,8 @@ function ScheduledTasksView({
                 <div className="scheduled-form-header">
                   <h3>{form.id ? 'Edit task' : 'New task'}</h3>
                   <div className="scheduled-form-header-actions">
-                    <button type="button" className="scheduled-secondary" onClick={closeForm}>Cancel</button>
-                    <button type="submit" className="scheduled-primary" disabled={busy}>
+                    <button type="button" className="kit-button" onClick={closeForm}>Cancel</button>
+                    <button type="submit" className="kit-button primary" disabled={busy}>
                       {form.id ? 'Save task' : 'Create task'}
                     </button>
                   </div>
@@ -569,7 +567,6 @@ function ScheduledTasksView({
               />
             ) : (
               <div className="scheduled-empty scheduled-detail-empty">
-                <CalendarClock size={20} aria-hidden="true" />
                 <p>Select a task, or create one to send a prompt into your sessions on a schedule.</p>
               </div>
             )}
@@ -586,7 +583,7 @@ function ScheduledTasksView({
 function ConfirmDeleteButton({ onDelete }: { onDelete: () => void }) {
   const confirm = useConfirmInPlace(onDelete)
   return (
-    <button type="button" className={confirm.armed ? 'danger armed' : 'danger'} onClick={confirm.press}>
+    <button type="button" className={`kit-button danger${confirm.armed ? ' armed' : ''}`} onClick={confirm.press}>
       {confirm.armed ? 'Confirm delete' : 'Delete'}
     </button>
   )
@@ -624,10 +621,10 @@ function TaskDetail({
           </p>
         </div>
         <div className="scheduled-actions">
-          <button type="button" onClick={onEdit}>Edit</button>
-          <button type="button" onClick={onRunNow} disabled={busy}>Run now</button>
-          <button type="button" onClick={onTogglePause} disabled={busy}>{task.paused ? 'Resume' : 'Pause'}</button>
-          <button type="button" onClick={onDuplicate}>Duplicate</button>
+          <button type="button" className="kit-button" onClick={onEdit}>Edit</button>
+          <button type="button" className="kit-button" onClick={onRunNow} disabled={busy}>Run now</button>
+          <button type="button" className="kit-button" onClick={onTogglePause} disabled={busy}>{task.paused ? 'Resume' : 'Pause'}</button>
+          <button type="button" className="kit-button" onClick={onDuplicate}>Duplicate</button>
           <ConfirmDeleteButton onDelete={onDelete} />
         </div>
       </div>

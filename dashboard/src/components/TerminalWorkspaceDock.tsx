@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import { FolderTree, SquareTerminal } from 'lucide-react'
 import type { WorkspaceId } from '../types'
 import { useSession } from '../context/SessionContext'
 import { useMediaQuery } from '../hooks/useMediaQuery'
@@ -133,10 +132,10 @@ function TerminalWorkspaceDock({
   }, [active, anyPinned, closeAllSidecars, openSidecarCount])
 
   const sidecarControls = (
-    <div className="terminal-sidecar-switcher" role="group" aria-label="Workspace sidecar">
+    <div className="terminal-sidecar-switcher kit-tabs" role="group" aria-label="Workspace sidecar">
       <button
         type="button"
-        className={`terminal-sidecar-button ${sessionsOpen ? 'active' : ''}`}
+        className={`kit-button terminal-sidecar-button ${sessionsOpen ? 'active' : ''}`}
         aria-label="Sessions sidecar"
         aria-controls={sessionsPanelId}
         aria-expanded={sessionsOpen}
@@ -144,13 +143,12 @@ function TerminalWorkspaceDock({
         title="Sessions"
         onClick={toggleSessions}
       >
-        <SquareTerminal size={16} aria-hidden="true" />
         <span className="terminal-sidecar-label">Sessions</span>
-        <span className="terminal-sidecar-count" aria-label={`${sessions.length} live sessions`}>{sessions.length}</span>
+        <span className="kit-chord terminal-sidecar-count" aria-label={`${sessions.length} live sessions`}>{sessions.length}</span>
       </button>
       <button
         type="button"
-        className={`terminal-sidecar-button ${filesOpen ? 'active' : ''}`}
+        className={`kit-button terminal-sidecar-button ${filesOpen ? 'active' : ''}`}
         aria-label="Files sidecar"
         aria-controls={filesPanelId}
         aria-expanded={filesOpen}
@@ -158,7 +156,6 @@ function TerminalWorkspaceDock({
         title="Files"
         onClick={toggleFiles}
       >
-        <FolderTree size={16} aria-hidden="true" />
         <span className="terminal-sidecar-label">Files</span>
       </button>
     </div>

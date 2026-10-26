@@ -59,6 +59,7 @@
   "NoInlineView": "dashboard/src/components/FilePanelViewer.tsx",
   "PageReader": "dashboard/src/components/LibraryView/PageReader.tsx",
   "PanelPath": "dashboard/src/components/PanelPath.tsx",
+  "PathTrail": "dashboard/src/components/PathTrail.tsx",
   "Peek": "dashboard/src/components/Peek.tsx",
   "ProjectLanding": "dashboard/src/components/FilesView/ProjectLanding.tsx",
   "Rail": "dashboard/src/components/Rail.tsx",

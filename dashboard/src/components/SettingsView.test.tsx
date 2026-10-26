@@ -205,7 +205,7 @@ describe('SettingsView terminal launch users', () => {
     render(<SettingsView />)
 
     // The button that destroys is the button that asks: nothing opens over the work.
-    const nukeButton = screen.getByRole('button', { name: /Nuke All/i })
+    const nukeButton = screen.getByRole('button', { name: /Nuke all/i })
     fireEvent.click(nukeButton)
 
     expect(nukeButton).toHaveTextContent('Confirm: destroy 2 sessions')
@@ -248,7 +248,7 @@ describe('SettingsView Beads project paths', () => {
     fireEvent.change(screen.getByLabelText('Beads project path'), {
       target: { value: ' /home/secondary/velvetwood/ ' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Add Path' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add path' }))
 
     expect(updateSettings).toHaveBeenCalledWith({
       beadsProjectPaths: ['/home/operator/chrote', '/home/secondary/velvetwood'],
@@ -269,7 +269,7 @@ describe('SettingsView Beads project paths', () => {
     fireEvent.change(screen.getByLabelText('Beads project path'), {
       target: { value: '/home/secondary/velvetwood/' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Add Path' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add path' }))
 
     expect(updateSettings).not.toHaveBeenCalled()
   })

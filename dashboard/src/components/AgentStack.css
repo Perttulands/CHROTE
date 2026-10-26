@@ -95,17 +95,6 @@
 
 .agent-word {
   flex: none;
-  padding: 0 0 0 20px;
-  border: none;
-  background: none;
-  font: inherit;
-  font-size: 12px;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.agent-word:hover {
-  color: var(--text-primary);
 }
 
 .agent-name {

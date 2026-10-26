@@ -54,26 +54,26 @@ export const TERMINAL_FONT_FAMILY = '"JetBrains Mono", "CHROTE Term Symbols", mo
 
 export const DEFAULT_THEME: Theme = {
   schema: 1,
-  name: 'chrote-dark',
+  name: 'chrote-violet',
   ui: {
-    background: '#0f0f0f',
-    surface: '#1a1a1a',
-    surfaceRaised: '#252525',
-    divider: '#3a3a3a',
-    text: '#e5e5e5',
-    textSecondary: '#a3a3a3',
-    textDim: '#737373',
-    accent: '#6b9fff',
+    background: '#0f0e13',
+    surface: '#18171e',
+    surfaceRaised: '#22202a',
+    divider: '#363343',
+    text: '#e9e7f1',
+    textSecondary: '#a8a4b8',
+    textDim: '#7a7590',
+    accent: '#a68cff',
     error: '#f87171',
   },
   terminal: {
-    background: '#0a0a0a',
-    foreground: '#e5e5e5',
-    cursor: '#e5e5e5',
-    selectionBackground: '#6b9fff40',
+    background: '#0b0a0f',
+    foreground: '#e9e7f1',
+    cursor: '#a68cff',
+    selectionBackground: '#a68cff40',
     ansi: [
-      '#0f0f0f', '#f87171', '#8bd450', '#e5c07b', '#6b9fff', '#c084fc', '#45d6d6', '#a3a3a3',
-      '#737373', '#ff8a8a', '#a6e37a', '#f0d48a', '#8fb5ff', '#d3a4ff', '#7ae2e2', '#ffffff',
+      '#0f0e13', '#f87171', '#8bd450', '#e5c07b', '#6b9fff', '#e27fd6', '#45d6d6', '#a8a4b8',
+      '#7a7590', '#ff8a8a', '#a6e37a', '#f0d48a', '#8fb5ff', '#f0a6e6', '#7ae2e2', '#ffffff',
     ],
   },
   // Ten hues spread evenly around the wheel, all at the one lightness and the
@@ -82,12 +82,12 @@ export const DEFAULT_THEME: Theme = {
   // entries are far apart on the wheel rather than in order around it: shelves
   // take them in shelf order, and two shelves next to each other in the
   // alphabet are the two the eye most needs told apart. The accent stays out of
-  // them; on this map blue is what the operator is pointing at.
+  // them; on this map the accent is what the operator is pointing at.
   shelves: [
     '#b67777', '#77b6b6', '#84b677', '#a977b6', '#b69d77',
     '#7790b6', '#77b690', '#b6779d', '#a9b677', '#8477b6',
   ],
-  identity: ['#4f6d8f', '#8f6f3a', '#5f7f5a', '#7a5f8f'],
+  identity: ['#4f6d8f', '#8f6f3a', '#5f7f5a', '#8f5f5f'],
   art: [],
 }
 
@@ -207,6 +207,8 @@ export function applyTheme(theme: Theme, root: HTMLElement = document.documentEl
   set('--accent', ui.accent)
   set('--accent-light', `color-mix(in srgb, ${ui.accent} 12%, transparent)`)
   set('--accent-rgb', rgbChannels(ui.accent))
+  set('--accent-soft', `color-mix(in srgb, ${ui.accent} 7%, transparent)`)
+  set('--on-accent', ui.background)
   set('--color-error', ui.error)
   set('--color-error-light', `color-mix(in srgb, ${ui.error} 15%, transparent)`)
 

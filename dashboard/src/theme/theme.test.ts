@@ -84,27 +84,29 @@ describe('applyTheme', () => {
 
     const value = (name: string) => root.style.getPropertyValue(name)
 
-    expect(value('--background')).toBe('#0f0f0f')
-    expect(value('--surface-primary')).toBe('#1a1a1a')
-    expect(value('--surface-secondary')).toBe('#252525')
-    expect(value('--divider')).toBe('#3a3a3a')
-    expect(value('--text-primary')).toBe('#e5e5e5')
-    expect(value('--text-secondary')).toBe('#a3a3a3')
-    expect(value('--text-dim')).toBe('#737373')
-    expect(value('--accent')).toBe('#6b9fff')
-    expect(value('--accent-light')).toBe('color-mix(in srgb, #6b9fff 12%, transparent)')
-    expect(value('--accent-rgb')).toBe('107, 159, 255')
+    expect(value('--background')).toBe('#0f0e13')
+    expect(value('--surface-primary')).toBe('#18171e')
+    expect(value('--surface-secondary')).toBe('#22202a')
+    expect(value('--divider')).toBe('#363343')
+    expect(value('--text-primary')).toBe('#e9e7f1')
+    expect(value('--text-secondary')).toBe('#a8a4b8')
+    expect(value('--text-dim')).toBe('#7a7590')
+    expect(value('--accent')).toBe('#a68cff')
+    expect(value('--accent-light')).toBe('color-mix(in srgb, #a68cff 12%, transparent)')
+    expect(value('--accent-soft')).toBe('color-mix(in srgb, #a68cff 7%, transparent)')
+    expect(value('--on-accent')).toBe('#0f0e13')
+    expect(value('--accent-rgb')).toBe('166, 140, 255')
     expect(value('--color-error')).toBe('#f87171')
     expect(value('--color-error-light')).toBe('color-mix(in srgb, #f87171 15%, transparent)')
 
-    expect(value('--terminal-background')).toBe('#0a0a0a')
-    expect(value('--terminal-foreground')).toBe('#e5e5e5')
-    expect(value('--ansi-0')).toBe('#0f0f0f')
+    expect(value('--terminal-background')).toBe('#0b0a0f')
+    expect(value('--terminal-foreground')).toBe('#e9e7f1')
+    expect(value('--ansi-0')).toBe('#0f0e13')
     expect(value('--ansi-15')).toBe('#ffffff')
     expect(Array.from({ length: 16 }, (_, i) => value(`--ansi-${i}`))).toEqual(DEFAULT_THEME.terminal.ansi)
 
     expect(value('--identity-0')).toBe('#4f6d8f')
-    expect(value('--identity-3')).toBe('#7a5f8f')
+    expect(value('--identity-3')).toBe('#8f5f5f')
 
     expect(value('--shelf-0')).toBe('#b67777')
     expect(Array.from({ length: DEFAULT_THEME.shelves.length }, (_, i) => value(`--shelf-${i}`)))
@@ -119,7 +121,7 @@ describe('identityColorFor', () => {
   it('gives each user the identity colour at its position in the server order', () => {
     expect(identityColorFor('alice', terminalUsers, DEFAULT_THEME)).toBe('#4f6d8f')
     expect(identityColorFor('bob', terminalUsers, DEFAULT_THEME)).toBe('#8f6f3a')
-    expect(identityColorFor('dave', terminalUsers, DEFAULT_THEME)).toBe('#7a5f8f')
+    expect(identityColorFor('dave', terminalUsers, DEFAULT_THEME)).toBe('#8f5f5f')
   })
 
   it('wraps once the users outnumber the identity colours', () => {

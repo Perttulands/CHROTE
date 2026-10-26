@@ -458,7 +458,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
                 {' · '}
                 {length === undefined ? 'not on the map' : count(length, 'word')}
               </span>
-              <button type="button" className="library-action" onClick={() => openPage(path)}>Open</button>
+              <button type="button" className="kit-button library-action" onClick={() => openPage(path)}>Open</button>
             </div>
           )}
         </div>

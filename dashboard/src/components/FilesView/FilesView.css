@@ -24,13 +24,15 @@
   cursor: pointer;
 }
 
-.fb-tree-row:hover,
-.fb-tree-row.active {
+.fb-tree-row:hover {
   background: var(--surface-secondary);
   color: var(--text-primary);
 }
 
+/* Where the operator is: the accent's bar and its wash, as every list. */
 .fb-tree-row.active {
+  background: var(--accent-soft);
+  color: var(--text-primary);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
@@ -115,14 +117,6 @@
   font-size: 15px;
 }
 
-.fb-dialog-close {
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
-}
-
 .fb-dialog-body {
   padding: 14px;
 }
@@ -136,19 +130,4 @@
 .fb-dialog-footer {
   justify-content: flex-end;
   border-top: 1px solid var(--divider);
-}
-
-.fb-dialog-btn {
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--divider);
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.fb-dialog-btn-danger {
-  color: var(--color-error);
-  border-color: var(--color-error);
 }

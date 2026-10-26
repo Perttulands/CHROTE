@@ -151,7 +151,7 @@ describe('terminal pool', () => {
 
   it('hands a theme that lands after startup to terminals that already exist', () => {
     const { rerender } = renderPool()
-    expect(created.map(session => session.terminalBackground)).toEqual(['#0a0a0a', '#0a0a0a'])
+    expect(created.map(session => session.terminalBackground)).toEqual(['#0b0a0f', '#0b0a0f'])
 
     currentTheme = { ...DEFAULT_THEME, terminal: { ...DEFAULT_THEME.terminal, background: '#123456' } }
     rerender(poolTree())

@@ -227,54 +227,6 @@
   gap: 6px;
 }
 
-.scheduled-actions button,
-.scheduled-secondary {
-  padding: 4px 10px;
-  border: 1px solid var(--divider);
-  border-radius: 3px;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.scheduled-actions button:hover:not(:disabled),
-.scheduled-secondary:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.scheduled-actions button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.scheduled-actions button.danger:hover {
-  border-color: var(--color-error);
-  color: var(--color-error);
-}
-
-.scheduled-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 12px;
-  border: 1px solid var(--accent);
-  border-radius: 3px;
-  background: var(--accent-light);
-  color: var(--accent);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.scheduled-primary:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 .scheduled-field {
   display: flex;
   flex-direction: column;
@@ -381,33 +333,6 @@
 }
 
 /* Schedule builder */
-.scheduled-mode-switch {
-  display: inline-flex;
-  border: 1px solid var(--divider);
-  border-radius: 3px;
-  overflow: hidden;
-  width: max-content;
-}
-
-.scheduled-mode {
-  padding: 4px 12px;
-  border: 0;
-  border-right: 1px solid var(--divider);
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.scheduled-mode:last-child {
-  border-right: 0;
-}
-
-.scheduled-mode.active {
-  background: var(--accent-light);
-  color: var(--accent);
-}
 
 .scheduled-when-row {
   display: flex;
@@ -428,20 +353,11 @@
 
 .scheduled-weekday {
   min-width: 42px;
-  padding: 4px 6px;
-  border: 1px solid var(--divider);
-  border-radius: 3px;
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
 }
 
-.scheduled-weekday.active {
-  border-color: var(--accent);
-  background: var(--accent-light);
-  color: var(--accent);
+/* A day that is on is a word in the accent with a wash under it. */
+.scheduled-weekday[aria-pressed='true'] {
+  background: var(--accent-soft);
 }
 
 /* Readbacks */

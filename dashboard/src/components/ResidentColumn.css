@@ -131,17 +131,6 @@
 
 .resident-action {
   flex: none;
-  min-height: 28px;
-  padding: 0 4px;
-  border: none;
-  background: none;
-  color: var(--text-primary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.resident-action:hover {
-  color: var(--accent);
 }
 
 .resident-chord {

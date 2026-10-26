@@ -63,8 +63,7 @@
 }
 
 .report-box-store-input:focus,
-.report-box-type-option:focus-visible,
-.report-box-send:focus-visible {
+.report-box-type-option:focus-visible {
   outline: none;
   border-color: var(--accent);
 }
@@ -171,17 +170,4 @@
 
 .report-box-send {
   flex: none;
-  padding: 4px 12px;
-  background: transparent;
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  font-family: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.report-box-send:disabled {
-  border-color: var(--divider);
-  color: var(--text-dim);
-  cursor: default;
 }

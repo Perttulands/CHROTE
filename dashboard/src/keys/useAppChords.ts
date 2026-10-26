@@ -134,7 +134,7 @@ export function useAppChords(surfaces: AppChordSurfaces): void {
         return
       }
       stateRef.current.surfaces.onOpenSessionsPanel()
-      requestAnimationFrame(() => clickInActiveDock('.session-panel .add-btn'))
+      requestAnimationFrame(() => clickInActiveDock('.session-panel .session-new'))
     }
 
     const focusedSession = () => focusedWindow()?.activeSession ?? null

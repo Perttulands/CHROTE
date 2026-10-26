@@ -31,26 +31,6 @@
   color: var(--text-dim);
 }
 
-.flag-panel-close {
-  flex: none;
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  background: none;
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 11px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-
-
 .flag-panel-empty {
   padding: 4px 2px;
   font-size: 12px;

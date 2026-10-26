@@ -37,15 +37,6 @@
   text-transform: uppercase;
 }
 
-.sidecar-close-btn {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .dock-resizer {
   position: absolute;
   inset: 0 -3px 0 auto;
@@ -60,43 +51,6 @@
 .dock-resizer:focus-visible,
 .dock-resizer.dragging {
   background: var(--accent);
-}
-
-.toggle-btn,
-.add-btn {
-  background: transparent;
-  border: 1px solid var(--divider);
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: 4px 8px;
-  font-family: inherit;
-  font-size: 14px;
-  transition: all 0.2s ease;
-}
-
-.toggle-btn:hover,
-.add-btn:hover {
-  color: var(--text-primary);
-  border-color: var(--accent);
-}
-
-.add-btn {
-  font-weight: bold;
-  font-size: 16px;
-  padding: 2px 8px;
-}
-
-.add-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.panel-title {
-  flex: 1;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--text-secondary);
 }
 
 .session-panel-content {
@@ -166,8 +120,6 @@
   padding: 8px;
   border-bottom: 1px solid var(--divider);
 }
-
-
 
 /* The launcher, opened from the plus, floats over the panel at the width the
    panel itself draws it in a tile. */
@@ -272,8 +224,8 @@
 /* Rows picked out to kill together: a solid foreground outline, so the mark
    reads apart from hover's wash and the focused tile's bar, in any theme. */
 .session-item.selected {
-  outline: 1px solid var(--text-primary);
-  outline-offset: -1px;
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 /* The panel takes focus only to hold Delete and Escape for a selection. */

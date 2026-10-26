@@ -70,7 +70,7 @@
 .help-nav-item.active {
   color: var(--text-primary);
   border-color: var(--accent);
-  background: var(--accent-light);
+  background: var(--accent-soft);
 }
 
 .help-nav-icon {

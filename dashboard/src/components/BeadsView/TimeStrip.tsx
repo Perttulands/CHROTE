@@ -192,9 +192,9 @@ function TimeStrip({ index, result, range, onRange, span, onSpan }: TimeStripPro
       </svg>
       <div className="beads-strip-legend">
         {total > RECENT_DAYS && (
-          <span className="beads-strip-span" role="group" aria-label="Days the strip spans">
-            <button type="button" aria-pressed={span === 'recent'} onClick={() => onSpan('recent')}>{`${RECENT_DAYS} days`}</button>
-            <button type="button" aria-pressed={span === 'all'} onClick={() => onSpan('all')}>{`Since ${dayLabel(index.firstDay)}`}</button>
+          <span className="beads-strip-span kit-tabs" role="group" aria-label="Days the strip spans">
+            <button type="button" className="kit-button" aria-pressed={span === 'recent'} onClick={() => onSpan('recent')}>{`${RECENT_DAYS} days`}</button>
+            <button type="button" className="kit-button" aria-pressed={span === 'all'} onClick={() => onSpan('all')}>{`Since ${dayLabel(index.firstDay)}`}</button>
           </span>
         )}
         {hover !== null && hover < total && (

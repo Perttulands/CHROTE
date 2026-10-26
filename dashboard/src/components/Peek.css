@@ -44,24 +44,9 @@
 
 .peek-word {
   flex: none;
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 2px 6px;
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.peek-word:hover {
-  color: var(--text-primary);
 }
 
 /* Send is the one action here, so it alone takes the accent. */
-.peek-send:hover {
-  color: var(--accent);
-}
 
 .peek-chord {
   margin-left: 6px;

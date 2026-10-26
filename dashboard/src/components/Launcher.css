@@ -55,7 +55,7 @@
 
 .launcher-title,
 .launcher-label {
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-dim);
@@ -86,7 +86,8 @@
 }
 
 .launcher-row.selected {
-  border-color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .launcher-mark {
@@ -110,8 +111,7 @@
   flex-wrap: wrap;
 }
 
-.launcher-option,
-.launcher-quiet {
+.launcher-option {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -129,15 +129,9 @@
 }
 
 .launcher-option.selected {
-  border-color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--accent-soft);
   color: var(--text-primary);
-}
-
-/* A control that has nothing to do right now keeps its place and says so
-   by its colour, not by leaving. */
-.launcher-quiet:disabled {
-  color: var(--text-dim);
-  cursor: default;
 }
 
 .launcher-badge {
@@ -201,7 +195,7 @@
 
 .launcher-name:focus {
   outline: none;
-  border-color: var(--text-primary);
+  border-color: var(--accent);
 }
 
 .launcher-name:disabled {
@@ -213,15 +207,6 @@
   display: flex;
   justify-content: flex-end;
   margin-top: 6px;
-}
-
-.launcher-launch {
-  color: var(--text-primary);
-}
-
-.launcher-launch:disabled {
-  color: var(--text-dim);
-  cursor: default;
 }
 
 /* Short tiles use their spare width before asking the operator to scroll.
@@ -245,7 +230,6 @@
 @media (pointer: coarse) {
   .launcher-row,
   .launcher-option,
-  .launcher-quiet,
   .launcher-name,
   .launcher-notify {
     min-height: 44px;

@@ -72,8 +72,8 @@ export default function FlagPanel({ harnessLabel, flags, line, onChange, onClose
     >
       <div className="flag-panel-head">
         <span className="flag-panel-title">Flags for {harnessLabel}</span>
-        <button type="button" className="flag-panel-close" aria-label="Close flags" onClick={onClose}>
-          ✕
+        <button type="button" className="kit-button" aria-label="Close flags" onClick={onClose}>
+          Close
         </button>
       </div>
 

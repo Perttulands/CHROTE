@@ -61,8 +61,6 @@
 }
 
 .beads-range button,
-.beads-copy-link,
-.beads-clear,
 .beads-facet-all,
 .beads-graph-up,
 .beads-graph-title {
@@ -80,16 +78,7 @@
   line-height: 1;
 }
 
-.beads-copy-link {
-  flex: none;
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid var(--divider);
-}
-
 .beads-range button:hover,
-.beads-copy-link:hover,
-.beads-clear:hover,
 .beads-facet-all:hover:not(:disabled),
 .beads-graph-up:hover,
 .beads-graph-title:hover {
@@ -188,35 +177,20 @@
   pointer-events: auto;
 }
 
-/* Drawn 14px tall on the strip; the target reaches 7px above and below. */
-.beads-strip-span button {
+/* Drawn 14px tall on the strip, kit tabs in miniature; the target reaches
+   7px above and below. */
+.beads-strip-span .kit-button {
   position: relative;
+  min-height: 14px;
   padding: 0 6px;
-  border: 1px solid var(--divider);
-  background: none;
-  color: var(--text-dim);
-  font: inherit;
+  font-size: inherit;
   line-height: 12px;
-  cursor: pointer;
 }
 
-.beads-strip-span button::before {
+.beads-strip-span .kit-button::before {
   content: '';
   position: absolute;
   inset: -7px 0;
-}
-
-.beads-strip-span button + button {
-  border-left: none;
-}
-
-.beads-strip-span button:hover {
-  color: var(--text-primary);
-}
-
-.beads-strip-span button[aria-pressed='true'] {
-  background-color: var(--surface-secondary);
-  color: var(--text-primary);
 }
 
 .beads-strip-key {
@@ -362,35 +336,6 @@
 .beads-count {
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
-}
-
-.beads-modes {
-  display: flex;
-  flex: none;
-  border: 1px solid var(--divider);
-}
-
-.beads-mode {
-  min-height: 28px;
-  padding: 0 14px;
-  border: none;
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.beads-mode + .beads-mode {
-  border-left: 1px solid var(--divider);
-}
-
-.beads-mode:hover {
-  color: var(--text-primary);
-}
-
-.beads-mode.active {
-  background-color: var(--surface-secondary);
-  color: var(--text-primary);
 }
 
 .beads-panes {
@@ -586,8 +531,6 @@
 }
 
 .beads-clear {
-  border: 1px solid var(--divider);
-  padding: 3px 10px;
   pointer-events: auto;
 }
 
@@ -665,10 +608,7 @@
 
 .beads-row.selected,
 .beads-table-space .beads-row.selected:hover {
-  background-color: var(--surface-secondary);
-}
-
-.beads-table-body:focus-visible .beads-row.selected {
+  background-color: var(--accent-soft);
   border-left-color: var(--accent);
 }
 

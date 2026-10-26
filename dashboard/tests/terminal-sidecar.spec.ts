@@ -86,14 +86,15 @@ test.describe('terminal workspace sidecars', () => {
     await page.getByRole('button', { name: 'Close Files sidecar' }).click()
     await expect(dock.locator('.terminal-files-panel')).toHaveCount(0)
 
-    // The same triggers on a narrow screen: icon-only, and the panels float
-    // over the terminal rather than taking a column it cannot spare.
+    // The same triggers on a narrow screen: their words without the count,
+    // and the panels float over the terminal rather than taking a column it
+    // cannot spare.
     await page.setViewportSize({ width: 700, height: 800 })
     const narrowInitial = await box(terminal)
     const sessionsTrigger = page.getByRole('button', { name: 'Sessions sidecar', exact: true })
 
-    await expect(sessionsTrigger.locator('.terminal-sidecar-label')).toHaveCSS('display', 'none')
-    await expect(filesTrigger.locator('.terminal-sidecar-label')).toHaveCSS('display', 'none')
+    await expect(sessionsTrigger.locator('.terminal-sidecar-count')).toHaveCSS('display', 'none')
+    await expect(filesTrigger.locator('.terminal-sidecar-label')).toBeVisible()
 
     await sessionsTrigger.click()
     const overlayPanel = dock.locator('.session-panel.sidecar-overlay')

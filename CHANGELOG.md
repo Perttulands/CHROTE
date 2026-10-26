@@ -89,6 +89,16 @@ release.
   reopens the editor on it on return; only Save or Discard lets it go, and the
   page asks before it is left while one is held. PDFs read inline again, and a
   picture that cannot be read says why instead of drawing a broken image.
+- One look across CHROTE: every button is the kit's word, primary or danger
+  button, every few-way switch is kit tabs underlined in the accent, and every
+  list marks where you are with the accent's bar and wash. Outlined buttons,
+  icon buttons and close crosses are gone (Close is a word, the Files panel's
+  Up, Refresh and path line are one path trail), Settings drops its cards and
+  coloured title, and the tab bar no longer fills on hover.
+- The reference theme is violet (`chrote-violet`): near-neutral grounds with a
+  faint violet cast and a violet accent used in five roles only (where you
+  are, where input goes, what you chose, what is alive, the one primary
+  action). New tokens `--accent-soft` and `--on-accent`.
 - Files now exposes everything under `CHROTE_ROOTS` that the service identity's
   Unix permissions allow, while canonical paths remain inside configured roots.
 - Terminal drag/drop, assignment, terminal lifetime, and layout persistence were

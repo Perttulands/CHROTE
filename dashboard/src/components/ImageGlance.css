@@ -46,18 +46,6 @@
 
 .image-glance-word {
   flex: none;
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 2px 6px;
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.image-glance-word:hover {
-  color: var(--text-primary);
 }
 
 /* The picture on the terminal background, drawn at the zoom level. Until it
