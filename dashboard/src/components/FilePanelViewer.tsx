@@ -40,7 +40,7 @@ import {
   getFileExtension,
   isMarkdownFileName,
   makeFileItemFromPath,
-} from './FileViewer'
+} from './fileKinds'
 import {
   MAX_TEXT_PREVIEW_BYTES,
   fetchFileDiff,

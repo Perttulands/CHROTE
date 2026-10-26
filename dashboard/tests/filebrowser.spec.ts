@@ -43,6 +43,12 @@ async function mockFilebrowserApi(page: Page, options?: {
     })
   })
 
+  await page.route('**/api/files/diff*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ path: '', repository: '', diff: '', truncated: false }),
+  }))
+
   await page.route(fileResourcesPattern, async route => {
     const url = route.request().url()
 
@@ -66,28 +72,26 @@ async function mockFilebrowserApi(page: Page, options?: {
   })
 }
 
-test.describe('Filebrowser layout regressions', () => {
-  test('Markdown Source fills the artifact viewport instead of collapsing to textarea rows', async ({ page }) => {
+test.describe('The Files tab', () => {
+  test('reads a file beside the tree, filling the rest of the tab', async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 760 })
     await mockFilebrowserApi(page, {
-      rootItems: [{ name: 'README.md', size: 4096, modified: '2026-07-13T00:00:00Z', isDir: false, type: 'text/markdown' }],
-      rawBody: Array.from({ length: 160 }, (_, index) => `line ${index} ${'source '.repeat(24)}`).join('\n'),
+      rootItems: [{ name: 'notes.txt', size: 4096, modified: '2026-07-13T00:00:00Z', isDir: false, type: 'text/plain' }],
+      rawBody: Array.from({ length: 160 }, (_, index) => `line ${index}`).join('\n'),
     })
     await page.goto('/')
     await page.waitForSelector('.dashboard')
     await page.click('.tab:has-text("Files")')
-    await page.click('.fb-row:has-text("README.md")')
-    await page.getByRole('button', { name: 'Show Markdown source' }).click()
+    await page.locator('.files-tab .fb-tree-row', { hasText: 'notes.txt' }).click()
 
-    const source = page.getByRole('textbox', { name: 'Markdown source for README.md' })
-    const viewport = page.getByTestId('file-viewer-scroll')
-    await expect(source).toHaveAttribute('wrap', 'off')
-    const sourceBox = await source.boundingBox()
-    const viewportBox = await viewport.boundingBox()
-    expect(sourceBox).toBeTruthy()
-    expect(viewportBox).toBeTruthy()
-    expect(sourceBox!.width).toBeGreaterThanOrEqual(viewportBox!.width - 2)
-    expect(sourceBox!.height).toBeGreaterThanOrEqual(viewportBox!.height - 2)
+    const panel = page.getByRole('complementary', { name: 'Files', exact: true })
+    const viewer = page.getByRole('region', { name: 'File' })
+    await expect(viewer).toContainText('line 159')
+    const [panelBox, viewerBox] = [(await panel.boundingBox())!, (await viewer.boundingBox())!]
+    expect(viewerBox.x).toBeGreaterThanOrEqual(panelBox.x + panelBox.width - 1)
+    expect(viewerBox.x + viewerBox.width).toBeGreaterThanOrEqual(1200 - 1)
+    // No pop-out: the file is the tab's, not a window over it.
+    await expect(page.getByRole('dialog', { name: 'File notes.txt' })).toHaveCount(0)
   })
 
   test('the explorer tree scrolls a folder too long to fit instead of stretching the page', async ({ page }) => {

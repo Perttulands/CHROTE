@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { normalizeFilePath } from '../FileViewer'
+import { normalizeFilePath } from '../fileKinds'
 
 export type SavedKind = 'file' | 'directory'
 

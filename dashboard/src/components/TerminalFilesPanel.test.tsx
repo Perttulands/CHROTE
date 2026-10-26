@@ -561,7 +561,7 @@ describe('TerminalFilesPanel', () => {
     await waitFor(() => expect(mockedUploadFiles).toHaveBeenCalledWith('/srv/chrote', [upload]))
   })
 
-  it('updates a mounted Files tab from sidecar pin changes without duplicate storage entries', async () => {
+  it('shows a sidecar pin change in the Files tab without duplicate storage entries', async () => {
     seedPanelAt('/srv/chrote')
     window.localStorage.setItem('chrote.files.pinnedPaths', JSON.stringify([
       { path: '/srv/chrote', kind: 'directory' },
@@ -583,16 +583,21 @@ describe('TerminalFilesPanel', () => {
       </>,
     )
 
-    expect(await screen.findByRole('button', { name: /Pinned.*1/ })).toBeInTheDocument()
+    // The sidecar and the tab both list the one pin, the duplicate folded away.
+    const pinLists = async () => {
+      const lists = await screen.findAllByRole('list', { name: 'Pinned' })
+      return lists.map(list => within(list).getAllByRole('listitem').length)
+    }
+    expect(await pinLists()).toEqual([1, 1])
     const sidecarTree = screen.getAllByRole('tree', { name: 'File tree' })[0]
     fireEvent.contextMenu(sidecarTree)
     let menu = document.querySelector('.menu-sheet') as HTMLElement
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Unpin current folder' }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: /Pinned/ })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Pinned' })).not.toBeInTheDocument())
 
     fireEvent.contextMenu(sidecarTree)
     menu = document.querySelector('.menu-sheet') as HTMLElement
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Pin current folder' }))
-    expect(await screen.findByRole('button', { name: /Pinned.*1/ })).toBeInTheDocument()
+    expect(await pinLists()).toEqual([1, 1])
   })
 })

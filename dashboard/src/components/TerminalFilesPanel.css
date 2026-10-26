@@ -58,8 +58,7 @@
   border-bottom: 1px solid var(--divider);
 }
 
-.terminal-files-header button,
-.fb-viewer-controls button {
+.terminal-files-header button {
   border: 1px solid var(--divider);
   background: transparent;
   color: var(--text-secondary);
@@ -67,15 +66,13 @@
   cursor: pointer;
 }
 
-.terminal-files-header button:hover:not(:disabled),
-.fb-viewer-controls button:hover:not(:disabled) {
+.terminal-files-header button:hover:not(:disabled) {
   color: var(--text-primary);
   border-color: var(--accent);
   background: var(--accent-light);
 }
 
-.terminal-files-header button:disabled,
-.fb-viewer-controls button:disabled {
+.terminal-files-header button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
@@ -92,7 +89,6 @@
   margin-left: auto;
 }
 
-
 .terminal-files-panel .shared-file-tree {
   padding: 6px 0;
 }
@@ -101,137 +97,12 @@
   cursor: default;
 }
 
-.fb-file-viewer {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--background);
-}
-
-.fb-viewer-controls {
-  min-height: 36px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--divider);
-  background: var(--surface-secondary);
-  color: var(--text-dim);
-  font-size: 11px;
-}
-
-.fb-viewer-controls button {
-  min-height: 25px;
-  padding: 0 7px;
-}
-
-.fb-viewer-controls button[aria-pressed='true'] {
-  color: var(--text-primary);
-  border-color: var(--accent);
-  background: var(--accent-light);
-}
-
-.fb-viewer-controls-spacer {
-  flex: 1;
-}
-
-.fb-file-viewer-scroll {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  font-size: var(--fb-viewer-font-size, 15px);
-}
-
-.fb-file-viewer .fb-markdown-editor {
-  min-height: 100%;
-  display: block;
-}
-
-.fb-markdown-editor.mode-split {
-  display: grid;
-  grid-template-columns: minmax(0, var(--fb-markdown-source-width, 50%)) 6px minmax(0, 1fr);
-  gap: 0;
-}
-
-.fb-markdown-split-resizer {
-  min-width: 6px;
-  cursor: col-resize;
-  touch-action: none;
-  background: transparent;
-  border-left: 1px solid var(--divider);
-}
-
-.fb-markdown-split-resizer:hover,
-.fb-markdown-split-resizer:focus-visible,
-.fb-markdown-split-resizer.dragging {
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
-  outline: none;
-}
-.fb-file-viewer .fb-markdown-source,
-.fb-file-viewer .fb-markdown-preview,
-.fb-plain-text-preview {
-  min-height: 100%;
-  margin: 0;
-  font-size: var(--fb-viewer-font-size, 15px);
-}
-
-.fb-file-viewer .fb-markdown-source {
-  width: 100%;
-  min-width: 0;
-  border-right: 0;
-}
-
-.fb-file-viewer .mode-split .fb-markdown-source {
-  border-right: 1px solid var(--divider);
-}
-
-.fb-markdown-source-readonly,
-.fb-plain-text-preview {
-  padding: 16px;
-  color: var(--text-primary);
-  background: var(--background);
-  font-family: inherit;
-  line-height: 1.55;
-}
-
-.fb-markdown-source-readonly {
-  white-space: pre;
-  overflow-wrap: normal;
-  overflow: auto;
-}
-
-.fb-plain-text-preview {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.fb-file-viewer .fb-media-preview {
-  min-height: 100%;
-}
-
-.fb-file-viewer .fb-media-preview.is-actual img,
-.fb-file-viewer .fb-media-preview.is-actual .fb-image-look {
-  max-width: none;
-  max-height: none;
-}
-
-.fb-file-viewer .fb-pdf-preview {
-  min-height: 100%;
-  height: 100%;
-}
-
 /* ---- find: the header is a field, and its results are a flat list ---- */
 
 .terminal-files-search {
   flex: none;
   padding: 7px 8px 0;
 }
-
-
 
 .terminal-files-matches {
   flex: 0 1 auto;
@@ -332,6 +203,37 @@
 .terminal-files-nav button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* ---- pins: the operator's own places, above the tree ---- */
+
+.terminal-files-pins {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 30%;
+  overflow: auto;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--divider);
+}
+
+/* ---- the Files tab: the same column, and the open file filling the rest ---- */
+
+.files-tab {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.files-tab-viewer {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
 }
 
 /* ---- the pop-out: the open file, hung off the panel's right edge ---- */
@@ -586,12 +488,23 @@
     flex-basis: auto;
   }
 
-  .terminal-workspace-dock .dock-resizer,
-  .terminal-workspace-dock .sidecar-pin-btn {
+  .terminal-workspace-dock .dock-resizer {
     display: none;
   }
 
-  .fb-file-viewer .fb-markdown-editor.mode-split {
-    grid-template-columns: 1fr;
+  /* A phone has no room for the column beside the file: the tree above it. */
+  .files-tab {
+    flex-direction: column;
+  }
+
+  .files-tab .terminal-files-panel.in-tab {
+    width: 100%;
+    flex: 0 0 45%;
+    border-right: 0;
+    border-bottom: 1px solid var(--divider);
+  }
+
+  .files-tab .dock-resizer {
+    display: none;
   }
 }

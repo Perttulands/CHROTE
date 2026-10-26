@@ -47,7 +47,7 @@ test.describe('Terminal Area - Mobile View Switcher', () => {
     await page.click('.mobile-nav-item:has-text("Files")')
 
     await expect(page.locator('.mobile-nav-dropdown')).toHaveCount(0)
-    await expect(page.locator('.files-view')).toBeVisible()
+    await expect(page.locator('.files-tab')).toBeVisible()
     await expect(page.locator('.mobile-active-tab')).toContainText('Files')
 
     // On a short screen the last navigation action must scroll into view,

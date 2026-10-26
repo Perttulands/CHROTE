@@ -26,7 +26,7 @@ import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 import FilePanelViewer from './FilePanelViewer'
 import FloatingFrameHandles from './FloatingFrameHandles'
-import { getFileBaseName } from './FileViewer'
+import { getFileBaseName } from './fileKinds'
 import { useFloatingFrame } from '../hooks/useFloatingFrame'
 import { registerSurface } from '../keys/dismiss'
 

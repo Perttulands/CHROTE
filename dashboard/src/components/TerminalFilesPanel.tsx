@@ -9,7 +9,7 @@ import { copyAndAnnounce } from '../utils/clipboard'
 import FilePopout from './FilePopout'
 import FileTree from './FileTree'
 import { FileContextMenu } from './FileContextMenu'
-import { normalizeFilePath } from './FileViewer'
+import { normalizeFilePath } from './fileKinds'
 import PanelPath from './PanelPath'
 import SearchField from './kit/SearchField'
 import {
@@ -28,9 +28,11 @@ import {
 import { getParentPath, joinFilePath, pathRelativeTo } from './FilesView/pathActions'
 import { usePinnedPaths } from './FilesView/pinnedPaths'
 import type { FileItem } from './FilesView/types'
+import FilePanelViewer from './FilePanelViewer'
 import {
   readWorkspaceFilesState,
   writeWorkspaceFilesState,
+  type FilesHome,
   type WorkspaceFilesState,
 } from './workspaceFilesState'
 
@@ -38,7 +40,14 @@ import {
 const FIND_DEBOUNCE_MS = 140
 
 interface TerminalFilesPanelProps {
-  workspaceId: WorkspaceId
+  workspaceId: FilesHome
+  /**
+   * Beside a terminal, the panel is a sidecar and an open file hangs off its
+   * edge; as the Files tab it is the tab's column and the file fills the rest.
+   */
+  place?: 'sidecar' | 'tab'
+  /** The session a path is sent to where the panel has no terminal of its own. */
+  sendTarget?: string | null
   collapsed: boolean
   width: number
   pinned: boolean
@@ -79,6 +88,8 @@ interface NameDialogState {
  */
 function TerminalFilesPanel({
   workspaceId,
+  place = 'sidecar',
+  sendTarget: givenSendTarget = null,
   collapsed,
   width,
   pinned,
@@ -103,7 +114,7 @@ function TerminalFilesPanel({
   const [nameDialog, setNameDialog] = useState<NameDialogState | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null)
   const [pinnedPaths, togglePinnedPath] = usePinnedPaths()
-  const workspace = workspaces[workspaceId]
+  const workspace = place === 'tab' ? undefined : workspaces[workspaceId as WorkspaceId]
 
   const updateFilesState = useCallback((update: (previous: WorkspaceFilesState) => WorkspaceFilesState) => {
     setFilesState(previous => {
@@ -114,10 +125,11 @@ function TerminalFilesPanel({
   }, [workspaceId])
 
   const focusedWindow = useMemo(() => {
+    if (!workspace) return undefined
     const focused = workspace.windows.find(window => focusedWindowKey === `${workspaceId}-${window.id}`)
     return focused || workspace.windows.slice(0, workspace.windowCount).find(window => window.activeSession)
   }, [focusedWindowKey, workspace, workspaceId])
-  const sendTarget = focusedWindow?.activeSession ?? null
+  const sendTarget = focusedWindow?.activeSession ?? givenSendTarget
   const sessionCwd = useMemo(() => {
     if (!sendTarget) return null
     return sessions.find(entry => getSessionKey(entry.name, entry.unixUser) === sendTarget)?.cwd || null
@@ -346,261 +358,293 @@ function TerminalFilesPanel({
 
   const panelStyle = collapsed ? undefined : ({ '--terminal-files-width': `${resize.width}px` } as CSSProperties)
 
-  return (
-    <aside
-      ref={panelRef}
-      id={panelId}
-      className={`terminal-files-panel ${collapsed ? 'collapsed' : ''} ${pinned ? 'sidecar-pinned' : 'sidecar-overlay'}`}
-      style={panelStyle}
-      data-workspace-files={workspaceId}
-      aria-label="Files sidecar"
-    >
-      <header className="terminal-files-header">
-        <strong className="terminal-sidecar-title">Files</strong>
+  const panel = (
+      <aside
+        ref={panelRef}
+        id={panelId}
+        className={`terminal-files-panel ${collapsed ? 'collapsed' : ''} ${pinned ? 'sidecar-pinned' : 'sidecar-overlay'}${place === 'tab' ? ' in-tab' : ''}`}
+        style={panelStyle}
+        data-workspace-files={workspaceId}
+        aria-label={place === 'tab' ? 'Files' : 'Files sidecar'}
+      >
+        {place === 'sidecar' && <header className="terminal-files-header">
+          <strong className="terminal-sidecar-title">Files</strong>
+          {!collapsed && place === 'sidecar' && (
+            <button
+              type="button"
+              className="sidecar-close-btn"
+              aria-label="Close Files sidecar"
+              title="Close sidecar"
+              onClick={onClose}
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          )}
+        </header>}
         {!collapsed && (
-          <button
-            type="button"
-            className="sidecar-close-btn"
-            aria-label="Close Files sidecar"
-            title="Close sidecar"
-            onClick={onClose}
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        )}
-      </header>
-      {!collapsed && (
-        <>
-          <input
-            ref={uploadInputRef}
-            className="fb-hidden-input terminal-files-upload"
-            type="file"
-            multiple
-            onChange={event => void handleUploadInput(event)}
-          />
-          <div className="terminal-files-search">
-            <SearchField
-              label="Search files"
-              title="Down enters the list; Up/Down browses and opens files"
-              value={query}
-              onChange={setQuery}
-              onKeyDown={event => {
-                if (event.key === 'ArrowDown' && !event.altKey && !event.ctrlKey && !event.metaKey) {
-                  const first = panelRef.current?.querySelector<HTMLElement>(trimmedQuery ? '.terminal-files-match' : '[role="treeitem"]')
-                  if (first) { event.preventDefault(); first.focus(); if (!first.hasAttribute('aria-expanded')) first.click() }
-                  return
-                }
-                if (event.key === 'Enter' && matches.length > 0) {
-                  event.preventDefault()
-                  openPath(matches[0].path)
-                  return
-                }
-                if (event.key === 'Escape' && query) {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  setQuery('')
-                }
-              }}
+          <>
+            <input
+              ref={uploadInputRef}
+              className="fb-hidden-input terminal-files-upload"
+              type="file"
+              multiple
+              onChange={event => void handleUploadInput(event)}
             />
-          </div>
-          {trimmedQuery ? (
-            <>
-              <div className="terminal-files-matches" role="list" aria-label="Find results">
-                {matches.map(match => (
+            <div className="terminal-files-search">
+              <SearchField
+                label="Search files"
+                title="Down enters the list; Up/Down browses and opens files"
+                value={query}
+                onChange={setQuery}
+                onKeyDown={event => {
+                  if (event.key === 'ArrowDown' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                    const first = panelRef.current?.querySelector<HTMLElement>(trimmedQuery ? '.terminal-files-match' : '[role="treeitem"]')
+                    if (first) { event.preventDefault(); first.focus(); if (!first.hasAttribute('aria-expanded')) first.click() }
+                    return
+                  }
+                  if (event.key === 'Enter' && matches.length > 0) {
+                    event.preventDefault()
+                    openPath(matches[0].path)
+                    return
+                  }
+                  if (event.key === 'Escape' && query) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setQuery('')
+                  }
+                }}
+              />
+            </div>
+            {trimmedQuery ? (
+              <>
+                <div className="terminal-files-matches" role="list" aria-label="Find results">
+                  {matches.map(match => (
+                    <button
+                      type="button"
+                      role="listitem"
+                      key={match.path}
+                      className={`terminal-files-match ${filesState.openPath === match.path ? 'is-first' : ''}`}
+                      onClick={() => openPath(match.path)}
+                      onKeyDown={event => {
+                        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+                        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+                        event.preventDefault()
+                        const rows = Array.from(panelRef.current?.querySelectorAll<HTMLButtonElement>('.terminal-files-match') ?? [])
+                        const next = rows[rows.indexOf(event.currentTarget) + (event.key === 'ArrowDown' ? 1 : -1)]
+                        if (next) { next.focus({ preventScroll: true }); next.scrollIntoView?.({ block: 'nearest' }); next.click() }
+                      }}
+                    >
+                      <PanelPath path={match.path} />
+                    </button>
+                  ))}
+                </div>
+                <p className="terminal-files-count">
+                  {finding && matches.length === 0
+                    ? 'Finding…'
+                    : matches.length === 0
+                      ? 'No path matches'
+                      : `${matches.length} path${matches.length === 1 ? '' : 's'}${truncated ? ' · more matched' : ''} · Enter opens the first`}
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="terminal-files-nav">
                   <button
                     type="button"
-                    role="listitem"
-                    key={match.path}
-                    className={`terminal-files-match ${filesState.openPath === match.path ? 'is-first' : ''}`}
-                    onClick={() => openPath(match.path)}
-                    onKeyDown={event => {
-                      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
-                      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-                      event.preventDefault()
-                      const rows = Array.from(panelRef.current?.querySelectorAll<HTMLButtonElement>('.terminal-files-match') ?? [])
-                      const next = rows[rows.indexOf(event.currentTarget) + (event.key === 'ArrowDown' ? 1 : -1)]
-                      if (next) { next.focus({ preventScroll: true }); next.scrollIntoView?.({ block: 'nearest' }); next.click() }
-                    }}
+                    className="terminal-files-up"
+                    aria-label="Go to parent folder"
+                    title="Go to parent folder"
+                    disabled={filesState.currentPath === '/'}
+                    onClick={() => navigateTo(getParentPath(filesState.currentPath))}
                   >
-                    <PanelPath path={match.path} />
+                    <ArrowUp size={15} aria-hidden="true" />
                   </button>
-                ))}
-              </div>
-              <p className="terminal-files-count">
-                {finding && matches.length === 0
-                  ? 'Finding…'
-                  : matches.length === 0
-                    ? 'No path matches'
-                    : `${matches.length} path${matches.length === 1 ? '' : 's'}${truncated ? ' · more matched' : ''} · Enter opens the first`}
-              </p>
-            </>
-          ) : (
-            <>
-              <div className="terminal-files-nav">
-                <button
-                  type="button"
-                  className="terminal-files-up"
-                  aria-label="Go to parent folder"
-                  title="Go to parent folder"
-                  disabled={filesState.currentPath === '/'}
-                  onClick={() => navigateTo(getParentPath(filesState.currentPath))}
-                >
-                  <ArrowUp size={15} aria-hidden="true" />
-                </button>
-                <PanelPath path={filesState.currentPath} className="terminal-files-here" />
-                {sessionCwd && <button type="button" className="terminal-files-cwd" onClick={() => navigateTo(sessionCwd)}>CWD</button>}
-                <button
-                  type="button"
-                  className="terminal-files-refresh"
-                  aria-label="Refresh Files"
-                  title="Refresh Files"
-                  onClick={refreshFiles}
-                >
-                  ↻
-                </button>
-              </div>
-              <FileTree
-                rootPath={filesState.currentPath}
-                currentPath={filesState.currentPath}
-                selectedPath={filesState.selectedPath}
-                expandedPaths={filesState.expandedPaths}
-                scrollTop={filesState.treeScrollTop}
-                refreshToken={refreshToken}
-                onOpenDirectory={navigateTo}
-                onOpenFile={item => openPath(item.path)}
-                onExpandedPathsChange={expandedPaths => updateFilesState(previous => ({ ...previous, expandedPaths }))}
-                onScrollTopChange={treeScrollTop => updateFilesState(previous => ({ ...previous, treeScrollTop }))}
-                onItemContextMenu={(event, item) => openContextMenu(event, item)}
-                onBackgroundContextMenu={event => openContextMenu(event, null)}
-              />
-            </>
-          )}
-        </>
-      )}
-      {!collapsed && filesState.openPath && (
-        <FilePopout
-          path={filesState.openPath}
-          pinned={pinned}
-          panelRef={panelRef}
-          onClose={closeOpenPath}
-          onDismiss={dismissOpenPath}
-          onOpenPath={openPath}
-          onSend={sendPath}
-        />
-      )}
-      {!collapsed && (
-        <div
-          {...resize.handleProps}
-          className={`dock-resizer${resize.resizing ? ' dragging' : ''}`}
-          role="separator"
-          aria-label="Resize Files panel"
-          aria-orientation="vertical"
-          aria-valuenow={Math.round(resize.width)}
-          aria-valuemin={240}
-          aria-valuemax={560}
-          tabIndex={0}
-        />
-      )}
-      {contextMenu && (
-        <FileContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          item={contextMenu.item}
-          itemPinned={Boolean(contextMenu.item && pinnedPaths.some(item => item.path === contextMenu.item!.path))}
-          currentPathPinned={pinnedPaths.some(item => item.path === filesState.currentPath)}
-          onClose={() => setContextMenu(null)}
-          onOpen={item => {
-            setContextMenu(null)
-            if (item.isDir) navigateTo(item.path)
-            else openPath(item.path)
-          }}
-          onDownload={item => {
-            window.open(getDownloadUrl(item.path), '_blank')
-            setContextMenu(null)
-          }}
-          onRename={startRename}
-          onTogglePin={togglePin}
-          onCopyPath={copyPath}
-          onCopyRelativePath={path => {
-            const relative = pathRelativeTo(filesState.currentPath, path)
-            void copyAndAnnounce(relative, relative, announce)
-            setContextMenu(null)
-          }}
-          onOpenParent={path => {
-            setContextMenu(null)
-            onOpenInFiles(getParentPath(path))
-          }}
-          onDelete={requestDelete}
-          onNewFile={() => startCreate('file')}
-          onNewFolder={() => startCreate('folder')}
-          onUpload={() => {
-            setContextMenu(null)
-            uploadInputRef.current?.click()
-          }}
-          onRefresh={() => {
-            setContextMenu(null)
-            refreshFiles()
-          }}
-          onCopyCurrentPath={() => copyPath(filesState.currentPath)}
-          onToggleCurrentPathPin={() => {
-            togglePinnedPath(filesState.currentPath, 'directory')
-            setContextMenu(null)
-          }}
-        />
-      )}
-      {nameDialog && (
-        <div className="fb-dialog-overlay">
+                  <PanelPath path={filesState.currentPath} className="terminal-files-here" />
+                  {sessionCwd && <button type="button" className="terminal-files-cwd" onClick={() => navigateTo(sessionCwd)}>CWD</button>}
+                  <button
+                    type="button"
+                    className="terminal-files-refresh"
+                    aria-label="Refresh Files"
+                    title="Refresh Files"
+                    onClick={refreshFiles}
+                  >
+                    ↻
+                  </button>
+                </div>
+                {pinnedPaths.length > 0 && (
+                  <div className="terminal-files-pins" role="list" aria-label="Pinned">
+                    {pinnedPaths.map(pin => (
+                      <button
+                        type="button"
+                        role="listitem"
+                        key={pin.path}
+                        className={`terminal-files-match${pin.path === filesState.currentPath || pin.path === filesState.openPath ? ' is-first' : ''}`}
+                        title={pin.path}
+                        onClick={() => (pin.kind === 'directory' ? navigateTo(pin.path) : openPath(pin.path))}
+                      >
+                        <PanelPath path={pin.path} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <FileTree
+                  rootPath={filesState.currentPath}
+                  currentPath={filesState.currentPath}
+                  selectedPath={filesState.selectedPath}
+                  expandedPaths={filesState.expandedPaths}
+                  scrollTop={filesState.treeScrollTop}
+                  refreshToken={refreshToken}
+                  onOpenDirectory={navigateTo}
+                  onOpenFile={item => openPath(item.path)}
+                  onExpandedPathsChange={expandedPaths => updateFilesState(previous => ({ ...previous, expandedPaths }))}
+                  onScrollTopChange={treeScrollTop => updateFilesState(previous => ({ ...previous, treeScrollTop }))}
+                  onItemContextMenu={(event, item) => openContextMenu(event, item)}
+                  onBackgroundContextMenu={event => openContextMenu(event, null)}
+                />
+              </>
+            )}
+          </>
+        )}
+        {!collapsed && place === 'sidecar' && filesState.openPath && (
+          <FilePopout
+            path={filesState.openPath}
+            pinned={pinned}
+            panelRef={panelRef}
+            onClose={closeOpenPath}
+            onDismiss={dismissOpenPath}
+            onOpenPath={openPath}
+            onSend={sendPath}
+          />
+        )}
+        {!collapsed && (
           <div
-            className="fb-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label={nameDialog.kind === 'rename' ? `Rename ${nameDialog.item?.name || 'item'}` : nameDialog.kind === 'folder' ? 'New Folder' : 'New File'}
-          >
-            <div className="fb-dialog-header">
-              <h3>{nameDialog.kind === 'rename' ? 'Rename' : nameDialog.kind === 'folder' ? 'New Folder' : 'New File'}</h3>
-              <button className="fb-dialog-close" type="button" onClick={() => setNameDialog(null)}>×</button>
+            {...resize.handleProps}
+            className={`dock-resizer${resize.resizing ? ' dragging' : ''}`}
+            role="separator"
+            aria-label="Resize Files panel"
+            aria-orientation="vertical"
+            aria-valuenow={Math.round(resize.width)}
+            aria-valuemin={240}
+            aria-valuemax={560}
+            tabIndex={0}
+          />
+        )}
+        {contextMenu && (
+          <FileContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            item={contextMenu.item}
+            itemPinned={Boolean(contextMenu.item && pinnedPaths.some(item => item.path === contextMenu.item!.path))}
+            currentPathPinned={pinnedPaths.some(item => item.path === filesState.currentPath)}
+            onClose={() => setContextMenu(null)}
+            onOpen={item => {
+              setContextMenu(null)
+              if (item.isDir) navigateTo(item.path)
+              else openPath(item.path)
+            }}
+            onDownload={item => {
+              window.open(getDownloadUrl(item.path), '_blank')
+              setContextMenu(null)
+            }}
+            onRename={startRename}
+            onTogglePin={togglePin}
+            onCopyPath={copyPath}
+            onCopyRelativePath={path => {
+              const relative = pathRelativeTo(filesState.currentPath, path)
+              void copyAndAnnounce(relative, relative, announce)
+              setContextMenu(null)
+            }}
+            onOpenParent={path => {
+              setContextMenu(null)
+              onOpenInFiles(getParentPath(path))
+            }}
+            onDelete={requestDelete}
+            onNewFile={() => startCreate('file')}
+            onNewFolder={() => startCreate('folder')}
+            onUpload={() => {
+              setContextMenu(null)
+              uploadInputRef.current?.click()
+            }}
+            onRefresh={() => {
+              setContextMenu(null)
+              refreshFiles()
+            }}
+            onCopyCurrentPath={() => copyPath(filesState.currentPath)}
+            onToggleCurrentPathPin={() => {
+              togglePinnedPath(filesState.currentPath, 'directory')
+              setContextMenu(null)
+            }}
+          />
+        )}
+        {nameDialog && (
+          <div className="fb-dialog-overlay">
+            <div
+              className="fb-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-label={nameDialog.kind === 'rename' ? `Rename ${nameDialog.item?.name || 'item'}` : nameDialog.kind === 'folder' ? 'New Folder' : 'New File'}
+            >
+              <div className="fb-dialog-header">
+                <h3>{nameDialog.kind === 'rename' ? 'Rename' : nameDialog.kind === 'folder' ? 'New Folder' : 'New File'}</h3>
+                <button className="fb-dialog-close" type="button" onClick={() => setNameDialog(null)}>×</button>
+              </div>
+              <form onSubmit={event => void submitNameDialog(event)}>
+                <div className="fb-dialog-body">
+                  <label className="fb-dialog-label">
+                    {nameDialog.kind === 'rename' ? 'New name' : nameDialog.kind === 'folder' ? 'Folder name' : 'File name'}
+                    <input
+                      className="fb-dialog-input"
+                      aria-label={nameDialog.kind === 'rename' ? 'New name' : nameDialog.kind === 'folder' ? 'Folder name' : 'File name'}
+                      value={nameDialog.value}
+                      onChange={event => setNameDialog(previous => previous ? { ...previous, value: event.target.value } : previous)}
+                      autoFocus
+                    />
+                  </label>
+                </div>
+                <div className="fb-dialog-footer">
+                  <button className="fb-dialog-btn fb-dialog-btn-cancel" type="button" onClick={() => setNameDialog(null)}>Cancel</button>
+                  <button className="fb-dialog-btn fb-dialog-btn-primary" type="submit" disabled={!nameDialog.value.trim()}>
+                    {nameDialog.kind === 'rename' ? 'Rename' : 'Create'}
+                  </button>
+                </div>
+              </form>
             </div>
-            <form onSubmit={event => void submitNameDialog(event)}>
+          </div>
+        )}
+        {deleteTarget && (
+          <div className="fb-dialog-overlay">
+            <div className="fb-dialog fb-dialog-danger" role="dialog" aria-modal="true" aria-label={`Delete ${deleteTarget.name}`}>
+              <div className="fb-dialog-header">
+                <h3>Delete {deleteTarget.name}</h3>
+                <button className="fb-dialog-close" type="button" onClick={() => setDeleteTarget(null)}>×</button>
+              </div>
               <div className="fb-dialog-body">
-                <label className="fb-dialog-label">
-                  {nameDialog.kind === 'rename' ? 'New name' : nameDialog.kind === 'folder' ? 'Folder name' : 'File name'}
-                  <input
-                    className="fb-dialog-input"
-                    aria-label={nameDialog.kind === 'rename' ? 'New name' : nameDialog.kind === 'folder' ? 'Folder name' : 'File name'}
-                    value={nameDialog.value}
-                    onChange={event => setNameDialog(previous => previous ? { ...previous, value: event.target.value } : previous)}
-                    autoFocus
-                  />
-                </label>
+                <p className="fb-dialog-message">This permanently removes the selected item from disk.</p>
               </div>
               <div className="fb-dialog-footer">
-                <button className="fb-dialog-btn fb-dialog-btn-cancel" type="button" onClick={() => setNameDialog(null)}>Cancel</button>
-                <button className="fb-dialog-btn fb-dialog-btn-primary" type="submit" disabled={!nameDialog.value.trim()}>
-                  {nameDialog.kind === 'rename' ? 'Rename' : 'Create'}
-                </button>
+                <button className="fb-dialog-btn fb-dialog-btn-cancel" type="button" onClick={() => setDeleteTarget(null)}>Cancel</button>
+                <button className="fb-dialog-btn fb-dialog-btn-danger" type="button" onClick={() => void confirmDelete()}>Delete</button>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
-      {deleteTarget && (
-        <div className="fb-dialog-overlay">
-          <div className="fb-dialog fb-dialog-danger" role="dialog" aria-modal="true" aria-label={`Delete ${deleteTarget.name}`}>
-            <div className="fb-dialog-header">
-              <h3>Delete {deleteTarget.name}</h3>
-              <button className="fb-dialog-close" type="button" onClick={() => setDeleteTarget(null)}>×</button>
-            </div>
-            <div className="fb-dialog-body">
-              <p className="fb-dialog-message">This permanently removes the selected item from disk.</p>
-            </div>
-            <div className="fb-dialog-footer">
-              <button className="fb-dialog-btn fb-dialog-btn-cancel" type="button" onClick={() => setDeleteTarget(null)}>Cancel</button>
-              <button className="fb-dialog-btn fb-dialog-btn-danger" type="button" onClick={() => void confirmDelete()}>Delete</button>
             </div>
           </div>
-        </div>
-      )}
-    </aside>
+        )}
+      </aside>
+  )
+
+  if (place === 'sidecar') return panel
+
+  // The Files tab: the same column, and the file it opens filling the rest.
+  return (
+    <div className="files-tab" data-ui="files.tab">
+      {panel}
+      <section className="files-tab-viewer" aria-label="File">
+        {filesState.openPath ? (
+          <FilePanelViewer path={filesState.openPath} onClose={closeOpenPath} onOpenPath={openPath} onSend={sendPath} />
+        ) : (
+          <p className="files-panel-note">Open a file from the tree, a pin, or by name.</p>
+        )}
+      </section>
+    </div>
   )
 }
 

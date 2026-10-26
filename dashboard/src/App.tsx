@@ -224,12 +224,8 @@ function DashboardContent() {
     windowRevealRequest,
     workspaces,
     workspaceIds,
-    openSendToSession,
   } = useSession()
   const filesSendTarget = useFocusedSession()
-  const handleSendFilePath = useCallback((path: string) => {
-    if (filesSendTarget) openSendToSession({ targetSessionKey: filesSendTarget, reference: `path ${path}` })
-  }, [filesSendTarget, openSendToSession])
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
   const handleFilesOpenChange = useCallback((workspaceId: WorkspaceId, open: boolean) => {
     setOpenFilesWorkspaceIds(previous => {
@@ -439,8 +435,7 @@ function DashboardContent() {
               <Suspense fallback={<ViewFallback />}>
                 <FilesView
                   navigateRequest={filesNavigateRequest}
-                  onSendPath={filesSendTarget ? handleSendFilePath : undefined}
-                  sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
+                  sendTarget={filesSendTarget}
                 />
               </Suspense>
             </ErrorBoundary>

@@ -75,6 +75,11 @@ release.
   Bead's graph and text beside it only while something is selected (`Escape`
   lets it go); Map draws the slice in the Brain's sky, each epic a system whose
   finished work glows. Older links open in the matching mode.
+- The Files tab is the Files panel as a tab: the same find, tree, menu and
+  viewer, the operator's pins listed above the tree, and the open file filling
+  the rest of the tab. The separate explorer, its toolbars, list and grid views
+  and its editor tabs are gone, and tree rows show a folder by the slash after
+  its name instead of a DIR or TXT badge.
 - Files now exposes everything under `CHROTE_ROOTS` that the service identity's
   Unix permissions allow, while canonical paths remain inside configured roots.
 - Terminal drag/drop, assignment, terminal lifetime, and layout persistence were

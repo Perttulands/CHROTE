@@ -29,7 +29,7 @@ import { useEffect, useRef, useState } from 'react'
 import PanelPath from './PanelPath'
 import FloatingFrameHandles from './FloatingFrameHandles'
 import { describeReadFailure, getDownloadUrl } from './FilesView/fileService'
-import { getFileBaseName } from './FileViewer'
+import { getFileBaseName } from './fileKinds'
 import { closeImageGlance, useImageGlanceRequest } from './imageGlance'
 import {
   IMAGE_ZOOM_FIT,
