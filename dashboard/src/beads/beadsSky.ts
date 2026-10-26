@@ -5,7 +5,7 @@
  * centre, the open work beneath it in orbit, and its finished work the nebula
  * around it, so how much of an epic is done shows as how much it glows. A Bead
  * filed under no parent is unfiled work, drifting loose around its project's
- * unfiled system. Parent and blocker links are the sky's lines, so work that
+ * Unfiled system. Parent and blocker links are the sky's lines, so work that
  * waits on other work sits with it.
  *
  * A system is named for its root Bead's title; its id is the project and the
@@ -26,7 +26,7 @@ export interface BeadsSky {
   /** The sky's path for a row, and back. */
   pathOf: (row: number) => string
   rowOf: (path: string) => number
-  /** A system's name: its root Bead's title, or Unfiled. */
+  /** A system's name: its root Bead's title, or Unfiled in its project. */
   nameOf: (subject: string) => string | undefined
 }
 
@@ -57,7 +57,7 @@ export function beadsSky(index: SliceIndex, rows: Iterable<number>): BeadsSky {
     const project = index.projects[index.project[root]]
     const system = index.children[root].length > 0
     const subject = system ? `${project.key}/${index.rows[root].id}` : `${index.projects[index.project[row]].key}/${UNFILED}`
-    names.set(subject, system ? index.rows[root].title : 'Unfiled')
+    names.set(subject, system ? index.rows[root].title : `Unfiled in ${index.projects[index.project[row]].label}`)
     const centre = system && row === root
     return {
       path: pathOf(row),

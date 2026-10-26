@@ -30,7 +30,7 @@ describe('the Beads sky', () => {
 
   it('gathers a Bead filed under nothing as unfiled work of its project', () => {
     expect(page('app-2')).toMatchObject({ subject: 'app/~unfiled', kind: 'bug' })
-    expect(sky.nameOf('app/~unfiled')).toBe('Unfiled')
+    expect(sky.nameOf('app/~unfiled')).toBe('Unfiled in app')
   })
 
   it('draws parent and blocker links, and finds a row by its path', () => {
