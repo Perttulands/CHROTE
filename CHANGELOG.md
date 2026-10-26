@@ -63,6 +63,10 @@ release.
   across Settings, Beads, the Launcher, Send, schedules and flags: whole-row
   toggles and word choices opening the product's menu, every target at least
   28px.
+- Every resident, the Clerk and the tender as well as the Librarian, rests
+  behind a 28px spine and opens over the content as a drawer. The fixed column,
+  its Collapse menu row and the squeeze that closed it on narrow windows are
+  gone, so Beads and Agents keep their full width.
 - Files now exposes everything under `CHROTE_ROOTS` that the service identity's
   Unix permissions allow, while canonical paths remain inside configured roots.
 - Terminal drag/drop, assignment, terminal lifetime, and layout persistence were

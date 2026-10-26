@@ -98,6 +98,9 @@ beforeEach(() => {
   mockState.claimed = []
   mockState.socketUrls = []
   window.localStorage.clear()
+  // Most of these read the open drawer; the drawer's own tests start closed.
+  window.localStorage.setItem('chrote.resident.beads.collapsed', 'false')
+  window.localStorage.setItem('chrote.resident.library.collapsed', 'false')
 })
 
 afterEach(() => {
@@ -218,10 +221,9 @@ describe('the resident column', () => {
     expect(screen.getByTestId('launcher')).toHaveTextContent('clerk in /work/clerk')
   })
 
-  it('collapses to a strip that says who and how, remembers the tab, and opens on a click', async () => {
+  it('closes to a strip that says who and how, remembers the tab, and opens on a click', async () => {
     const first = await renderColumn()
-    fireEvent.contextMenu(screen.getByText('Clerk'))
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Collapse/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
 
     const strip = screen.getByRole('button', { name: 'Expand the Clerk' })
     expect(strip).toHaveTextContent('Clerk')
@@ -240,7 +242,8 @@ describe('the resident column', () => {
   // As a drawer the resident starts closed, a spine the operator can read,
   // and Alt+S opens it straight into the terminal with the reference pasted.
   it('opens as a drawer from its spine or Alt+S, and closes back to the spine', async () => {
-    render(<ResidentColumn active drawer tab="beads" reference="bead test-1: Fix login bug" />)
+    window.localStorage.clear()
+    render(<ResidentColumn active tab="beads" reference="bead test-1: Fix login bug" />)
     const spine = await screen.findByRole('button', { name: 'Expand the Clerk' })
     expect(spine).toHaveTextContent('Clerk')
     expect(screen.queryByTestId('terminal-surface')).toBeNull()

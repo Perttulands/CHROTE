@@ -183,7 +183,7 @@ test.describe('Beads', () => {
     const titleCell = page.locator(ROW, { hasText: 'test-ep1.1' }).locator('.beads-cell-title')
     const sideways = () => table.evaluate(node => node.scrollWidth - node.clientWidth)
     const updated = page.getByRole('columnheader', { name: /Updated/ })
-    for (const [width, layout] of [[2048, 'beside'], [1600, 'beneath'], [1280, 'compact']] as const) {
+    for (const [width, layout] of [[2048, 'beside'], [1280, 'beneath'], [960, 'compact']] as const) {
       await page.setViewportSize({ width, height: 900 })
       await expect(titleCell).toBeVisible()
       await expect.poll(sideways).toBeLessThanOrEqual(1)

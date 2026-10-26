@@ -12,6 +12,7 @@
 }
 
 .agents-columns {
+  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;

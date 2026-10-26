@@ -58,7 +58,7 @@ The core product is terminal workspaces, sessions, files, server status, and set
 | Brain | See the context corpus as a sky of subjects, follow references, read and correct pages |
 | Agents | Read the context a harness would get for any folder on the host |
 
-Beads, Brain and Agents each host a resident agent, the Clerk, the Librarian and the tender, as a tmux session at the right of the view (in Brain, a drawer behind a spine); the one selected object, the table, is carried from view to view.
+Beads, Brain and Agents each host a resident agent, the Clerk, the Librarian and the tender, as a tmux session in a drawer behind a spine at the right of the view; the one selected object, the table, is carried from view to view.
 
 Brain is one view: the brain as a night sky, with search along its top edge.
 The sky is for getting a feel of what the brain knows and whether it looks in

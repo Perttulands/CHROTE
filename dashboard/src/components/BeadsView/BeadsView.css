@@ -7,6 +7,7 @@
   /* The table at its least, compact, with the body's scrollbar: the view sets
      it from the longest id. */
   --beads-table-min: 640px;
+  position: relative;
   display: flex;
   flex: 1;
   /* The row shrinks to the workspace rather than to the sum of its columns:

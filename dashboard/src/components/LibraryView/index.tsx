@@ -577,7 +577,7 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
         )}
 
         <TableSlot active={active} />
-        <ResidentColumn active={active} drawer tab="library" reference={libraryReference(page?.path ?? null)} />
+        <ResidentColumn active={active} tab="library" reference={libraryReference(page?.path ?? null)} />
       </div>
     </div>
   )

@@ -284,7 +284,7 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | `Alt+A` | Sessions panel |
 | `Alt+O` | Files panel |
 | `Alt+I` | Close the table |
-| `Alt+Enter` | Focus the resident's column |
+| `Alt+Enter` | Focus the resident's drawer |
 | `Alt+K` | Keybindings panel |
 | `Alt+R` | Report an issue: file a bug or feature as a Bead, and optionally hand it to an agent |
 
@@ -356,7 +356,7 @@ usually has no session waiting for it.
 ## The right edge
 
 Three things share the right edge of a tab, in layers: the table, the Send
-drawer over it, and the resident's column beyond both.
+drawer over it, and the resident's drawer beyond both.
 
 - **The table** holds the one selected object: a Bead, a page, what an agent
   sees. It is global, so the object chosen in one tab is on the table in every
@@ -370,30 +370,28 @@ drawer over it, and the resident's column beyond both.
   with no gutter, so nothing beneath it moves. Its own border and surface say
   that a layer is beneath; no strip of cut words does. It closes after Send and
   on `Escape`, and what was beneath is there again.
-- **The resident's column** is a tmux session that lives in its tab: the
-  Librarian in Brain, the tender in Agents, the Clerk in Beads. It sits
-  at the far right of the tab, 44 columns wide by default, drag-resizable and
-  remembered, under a 32px header carrying the label, the harness mark, the
-  session name, its state as a word, and Send with its chord. The terminal is
+- **The resident's drawer** is a tmux session that lives in its tab: the
+  Librarian in Brain, the tender in Agents, the Clerk in Beads. Closed, it is
+  a 28px spine at the far right of the tab carrying the harness mark, the
+  label and the state, with an accent dot when the resident has news. A click,
+  `Alt+S` or `Alt+Enter` slides it in over the content, 44 columns wide by
+  default, drag-resizable and remembered, under a 32px header carrying the
+  label, the harness mark, the session name, its state as a word, Send with
+  its chord, and Close, which puts it back. The spine keeps its place while
+  the drawer is open, so nothing beneath it moves. The terminal is
   the input; there is no ask line. `Alt+S` in the tab pastes the table's
   reference into the resident's prompt (in Beads, the selected row's Bead
   when there is one) without submitting it, and the operator
   types the rest and presses `Enter` there; the drawer serves every other
-  session. `Alt+Enter` or a click focuses the column. When the session is
-  absent, the column shows Launch with the resident's folder. The column
-  persists per tab, so leaving and returning finds the agent mid-answer. In
-  Brain, where the sky and the reader need the width, the column is a drawer:
-  closed it is a 28px spine carrying the harness mark, the label and the
-  state, with an accent dot when the Librarian has news; a click, `Alt+S` or
-  `Alt+Enter` slides it in over the reader as the same terminal, and Close
-  puts it back. The
+  session. When the session is absent, the drawer shows Launch with the
+  resident's folder. Open or closed is remembered per tab, and the session
+  persists, so leaving and returning finds the agent mid-answer. The
   header's menu offers Peek, Send, Launch and Restart. Which session and folder
   each resident uses is operator configuration, and each resident's charter
   lives on the host outside this repository.
 
-When space runs out, the content keeps 480px first, the table shrinks to its
-minimum, and then the resident's column collapses to its header with Expand. A
-rail narrows to its longest name, between 120 and 200px.
+When space runs out, the content keeps 480px first and the table shrinks to its
+minimum; the resident's spine always keeps its 28px. A rail narrows to its longest name, between 120 and 200px.
 
 ## Floating surfaces
 

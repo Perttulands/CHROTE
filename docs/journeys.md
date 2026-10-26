@@ -87,11 +87,11 @@ a Bead to the Clerk, the agent that keeps the register.
 5. Copy the view's link; it opens the same slice in a fresh tab.
 6. Open a Bead id printed in terminal output and read it on the table beside
    the session that named it.
-7. Hand the Bead to the Clerk, whose column is at the right of the tab.
+7. Hand the Bead to the Clerk, whose drawer rests at the right of the tab.
 
 **Surfaces.** Beads tab, its strip, its table and its graph (1, 2, 3, 5); the
 table (4, 6); terminal workspace with the table at its right, for ids in
-output (6); the Clerk's column (7); the Send drawer, for any other session (7).
+output (6); the Clerk's drawer (7); the Send drawer, for any other session (7).
 
 **End action.** Paste into the Clerk: `Alt+S` puts the Bead's reference into the
 Clerk's prompt, and the operator writes the rest and presses `Enter` there.
