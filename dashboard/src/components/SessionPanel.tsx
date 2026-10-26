@@ -7,6 +7,7 @@ import type { TmuxSession, WorkspaceId } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { useResizableWidth } from '../hooks/useResizableWidth'
 import Launcher from './Launcher'
+import SearchField from './kit/SearchField'
 import SessionGroup from './SessionGroup'
 import DismissiblePanel from './DismissiblePanel'
 import Menu from './Menu'
@@ -252,12 +253,11 @@ function SessionPanel({
 
       {!isCollapsed && (
         <div className="session-search-container">
-          <input
-            type="text"
+          <SearchField
             className="session-search-input"
-            placeholder="Filter sessions..."
+            label="Search sessions"
             value={searchTerm}
-            onChange={(e) => updateSearchTerm(e.target.value)}
+            onChange={updateSearchTerm}
           />
         </div>
       )}

@@ -67,6 +67,9 @@ release.
   behind a 28px spine and opens over the content as a drawer. The fixed column,
   its Collapse menu row and the squeeze that closed it on narrow windows are
   gone, so Beads and Agents keep their full width.
+- Every search box, in Beads, Brain, Files, the Files and Sessions sidecars,
+  Send, flags and keybindings, is the kit's one SearchField, each saying what
+  it searches as "Search …".
 - Files now exposes everything under `CHROTE_ROOTS` that the service identity's
   Unix permissions allow, while canonical paths remain inside configured roots.
 - Terminal drag/drop, assignment, terminal lifetime, and layout persistence were

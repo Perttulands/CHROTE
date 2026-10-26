@@ -172,6 +172,10 @@ browser: the browser's checkbox, select and 13.33px button face do not appear.
   28px square, for a row whose name already does something else.
 - **Choice** picks one of a few: the current choice in words over a hairline,
   opening the one menu with the choices as rows and the current one checked.
+- **SearchField** is the one search box: 28px over a hairline that takes the
+  accent while typing, its placeholder saying what it searches as "Search …",
+  with a quiet hint at its right for a chord or a count. What a key does beyond
+  typing, such as Down into the results, belongs to the view that owns them.
 - **Quiet button** (`kit-button`) is a word that acts.
 - **Range** (`kit-range`) is a hairline with a small square thumb.
 

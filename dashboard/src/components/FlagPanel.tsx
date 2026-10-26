@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { addFlag, flagNames, flagValue, hasFlag, removeFlag } from './launchFlags'
 import type { LaunchFlag } from './launchFlags'
 import Choice from './kit/Choice'
+import SearchField from './kit/SearchField'
 import './FlagPanel.css'
 
 interface FlagPanelProps {
@@ -76,15 +77,7 @@ export default function FlagPanel({ harnessLabel, flags, line, onChange, onClose
         </button>
       </div>
 
-      <input
-        ref={searchRef}
-        type="text"
-        className="flag-panel-search"
-        aria-label="Search flags"
-        placeholder="Search"
-        value={query}
-        onChange={event => setQuery(event.target.value)}
-      />
+      <SearchField inputRef={searchRef} label="Search flags" value={query} onChange={setQuery} />
 
       {shown.length === 0 && (
         <div className="flag-panel-empty">

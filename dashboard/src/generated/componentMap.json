@@ -69,6 +69,7 @@
   "RetainedView": "dashboard/src/App.tsx",
   "ScheduleEditor": "dashboard/src/components/ScheduleEditor.tsx",
   "ScheduledTasksView": "dashboard/src/components/ScheduledTasksView.tsx",
+  "SearchField": "dashboard/src/components/kit/SearchField.tsx",
   "SearchResults": "dashboard/src/components/LibraryView/SearchResults.tsx",
   "SendDrawer": "dashboard/src/components/SendDrawer.tsx",
   "SendDrawerPrototype": "dashboard/src/components/SendDrawerPrototype/SendDrawerPrototype.tsx",

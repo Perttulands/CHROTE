@@ -167,20 +167,7 @@
   border-bottom: 1px solid var(--divider);
 }
 
-.session-search-input {
-  width: 100%;
-  background: var(--surface-secondary);
-  border: 1px solid var(--divider);
-  color: var(--text-primary);
-  padding: 4px 8px;
-  font-family: inherit;
-  font-size: 12px;
-  outline: none;
-}
 
-.session-search-input:focus {
-  border-color: var(--accent);
-}
 
 /* The launcher, opened from the plus, floats over the panel at the width the
    panel itself draws it in a tile. */

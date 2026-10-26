@@ -56,6 +56,7 @@ import { emptyScheduleForm, scheduleFormError, scheduleFromForm } from './schedu
 import { scheduledRequest, SCHEDULED_TASKS_CHANGED } from './scheduledTasksApi'
 import { scheduledTaskDraft, scheduledTaskHandoff } from './scheduledTaskHandoff'
 import Choice from './kit/Choice'
+import SearchField from './kit/SearchField'
 import Toggle from './kit/Toggle'
 import './ScheduledTasksView.css'
 import './SendDrawer.css'
@@ -538,14 +539,12 @@ export default function SendDrawer() {
         <div className="send-drawer-body" data-ui="send.drawer">
           {!mobile && <div className="send-drawer-section">Target</div>}
           {scheduling && !mobile ? <div className="send-drawer-schedule-target">{target?.name}<span>{target?.unixUser}</span></div> : showPicker && <div className="send-drawer-picker">
-          <input
-            type="search"
+          <SearchField
             autoFocus={mobile}
             className="send-drawer-search"
-            placeholder="Search sessions"
-            aria-label="Search sessions"
+            label="Search sessions"
             value={search}
-            onChange={event => setSearch(event.target.value)}
+            onChange={setSearch}
           />
           <div className="send-drawer-targets" role="listbox" aria-label="Target session">
             {/* The live sessions scroll; the row for one that does not exist yet

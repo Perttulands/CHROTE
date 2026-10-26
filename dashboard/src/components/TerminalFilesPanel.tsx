@@ -11,6 +11,7 @@ import FileTree from './FileTree'
 import { FileContextMenu } from './FileContextMenu'
 import { normalizeFilePath } from './FileViewer'
 import PanelPath from './PanelPath'
+import SearchField from './kit/SearchField'
 import {
   createFile,
   createFolder,
@@ -378,14 +379,11 @@ function TerminalFilesPanel({
             onChange={event => void handleUploadInput(event)}
           />
           <div className="terminal-files-search">
-            <input
-              aria-label="Find files"
-              placeholder="Find files…"
+            <SearchField
+              label="Search files"
               title="Down enters the list; Up/Down browses and opens files"
-              autoComplete="off"
-              spellCheck={false}
               value={query}
-              onChange={event => setQuery(event.target.value)}
+              onChange={setQuery}
               onKeyDown={event => {
                 if (event.key === 'ArrowDown' && !event.altKey && !event.ctrlKey && !event.metaKey) {
                   const first = panelRef.current?.querySelector<HTMLElement>(trimmedQuery ? '.terminal-files-match' : '[role="treeitem"]')

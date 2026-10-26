@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { LEADER_LABEL, chordCaps, directChordLabel, useLeader, type Chord } from './chords'
 import { useSurface } from './dismiss'
+import SearchField from '../components/kit/SearchField'
 import './KeysPanel.css'
 
 interface KeysPanelProps {
@@ -84,14 +85,12 @@ export default function KeysPanel({ isOpen, onClose }: KeysPanelProps) {
   return (
     <div ref={panelRef} className="keys-panel" data-ui="keys.panel" role="dialog" aria-label="Keybindings" onKeyDown={handleKeyDown}>
       <div className="keys-panel-search-row">
-        <input
-          ref={searchRef}
+        <SearchField
           className="keys-panel-search"
-          type="text"
+          inputRef={searchRef}
           value={query}
-          placeholder="Keybindings…"
-          aria-label="Search keybindings"
-          onChange={event => setQuery(event.target.value)}
+          label="Search keybindings"
+          onChange={setQuery}
         />
       </div>
       <div className="keys-panel-body">

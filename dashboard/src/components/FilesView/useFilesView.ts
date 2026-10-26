@@ -738,7 +738,7 @@ export function useFilesView({ navigateRequest = null, onSendPath, sendTargetLab
         void saveActiveFile()
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
         event.preventDefault()
-        document.querySelector<HTMLInputElement>('.fb-search')?.focus()
+        document.querySelector<HTMLInputElement>('.fb-search input')?.focus()
       } else if (event.key === 'F5') {
         event.preventDefault()
         refreshCurrentPath()

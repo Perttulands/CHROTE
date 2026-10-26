@@ -34,9 +34,11 @@ describe('useKeyboardShortcuts', () => {
     const dock = document.createElement('div')
     dock.className = 'terminal-workspace-dock'
     dock.dataset.active = 'true'
+    const field = document.createElement('label')
+    field.className = 'session-search-input'
     const search = document.createElement('input')
-    search.className = 'session-search-input'
-    dock.appendChild(search)
+    field.appendChild(search)
+    dock.appendChild(field)
     document.body.appendChild(dock)
 
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))
@@ -67,9 +69,10 @@ describe('useKeyboardShortcuts', () => {
     trigger.setAttribute('aria-expanded', 'false')
     const click = vi.fn(() => {
       trigger.setAttribute('aria-expanded', 'true')
-      const search = document.createElement('input')
-      search.className = 'session-search-input'
-      dock.appendChild(search)
+      const field = document.createElement('label')
+      field.className = 'session-search-input'
+      field.appendChild(document.createElement('input'))
+      dock.appendChild(field)
     })
     trigger.addEventListener('click', click)
     dock.appendChild(trigger)
@@ -80,6 +83,6 @@ describe('useKeyboardShortcuts', () => {
 
     expect(slash.defaultPrevented).toBe(true)
     expect(click).toHaveBeenCalledTimes(1)
-    await waitFor(() => expect(dock.querySelector('.session-search-input')).toHaveFocus())
+    await waitFor(() => expect(dock.querySelector('.session-search-input input')).toHaveFocus())
   })
 })

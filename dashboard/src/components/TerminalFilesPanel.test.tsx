@@ -157,7 +157,7 @@ describe('TerminalFilesPanel', () => {
     })
     renderPanel()
 
-    const field = screen.getByLabelText('Find files')
+    const field = screen.getByLabelText('Search files')
     fireEvent.change(field, { target: { value: 'journ' } })
     await waitFor(() => expect(mockedFindFiles).toHaveBeenCalledWith('journ', expect.any(AbortSignal)))
     expect(await screen.findByText('2 paths · Enter opens the first')).toBeInTheDocument()
@@ -186,11 +186,11 @@ describe('TerminalFilesPanel', () => {
     })
     renderPanel()
 
-    fireEvent.change(screen.getByLabelText('Find files'), { target: { value: 'j' } })
+    fireEvent.change(screen.getByLabelText('Search files'), { target: { value: 'j' } })
     expect(await screen.findByText('1 path · more matched · Enter opens the first')).toBeInTheDocument()
 
-    fireEvent.keyDown(screen.getByLabelText('Find files'), { key: 'Escape' })
-    await waitFor(() => expect(screen.getByLabelText('Find files')).toHaveValue(''))
+    fireEvent.keyDown(screen.getByLabelText('Search files'), { key: 'Escape' })
+    await waitFor(() => expect(screen.getByLabelText('Search files')).toHaveValue(''))
     expect(await screen.findByRole('tree', { name: 'File tree' })).toBeInTheDocument()
   })
 

@@ -366,18 +366,6 @@
 
 .fb-search {
   width: 180px;
-  height: 30px;
-  padding: 0 9px;
-  border: 1px solid var(--divider);
-  background: var(--surface-primary);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
-  outline: none;
-}
-
-.fb-search:focus {
-  border-color: var(--accent);
 }
 
 .fb-content {

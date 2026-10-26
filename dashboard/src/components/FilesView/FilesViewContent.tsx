@@ -4,6 +4,7 @@ import type { FileItem } from './types'
 import type { SavedPath } from './pinnedPaths'
 import FileTree from '../FileTree'
 import Menu from '../Menu'
+import SearchField from '../kit/SearchField'
 import FileViewer, { getFileBadge, getPreviewKind, makeFileItemFromPath } from '../FileViewer'
 import { DEFAULT_FILE_VIEW_STATE, type FileViewState } from '../workspaceFilesState'
 import { FileContextMenu } from '../FileContextMenu'
@@ -367,13 +368,7 @@ export default function FilesViewContent({
               </button>
               {contentMode === 'folder' && (
                 <>
-                  <input
-                    className="fb-search"
-                    type="search"
-                    placeholder="Filter"
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
-                  />
+                  <SearchField className="fb-search" label="Search this folder" value={searchQuery} onChange={setSearchQuery} />
                   <button className={`fb-view-btn ${viewMode === 'list' ? 'active' : ''}`} type="button" title="List view" onClick={() => setViewMode('list')}>List</button>
                   <button className={`fb-view-btn ${viewMode === 'grid' ? 'active' : ''}`} type="button" title="Grid view" onClick={() => setViewMode('grid')}>Grid</button>
                 </>

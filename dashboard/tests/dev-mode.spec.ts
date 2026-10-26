@@ -50,7 +50,7 @@ async function toggleDevMode(page: Page) {
   await expect(panel).toBeVisible()
   // The field takes the focus an effect after the panel paints; typing before
   // that drops the first letters and leaves the wrong row under the cursor.
-  const search = panel.getByRole('textbox', { name: 'Search keybindings' })
+  const search = panel.getByRole('searchbox', { name: 'Search keybindings' })
   await expect(search).toBeFocused()
   await page.keyboard.type('dev')
   await expect(search).toHaveValue('dev')

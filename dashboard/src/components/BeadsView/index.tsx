@@ -23,6 +23,7 @@ import FacetRail from './FacetRail'
 import TimeStrip from './TimeStrip'
 import WorkGraph from './WorkGraph'
 import ResidentColumn from '../ResidentColumn'
+import SearchField from '../kit/SearchField'
 import { TableSlot } from '../TableHost'
 import { useSession } from '../../context/SessionContext'
 import { useStatus } from '../../context/StatusContext'
@@ -332,23 +333,21 @@ export default function BeadsView({ active = true, reveal }: BeadsViewProps = {}
     <div className="beads-view" style={{ '--beads-table-min': tableMinWidth(idChars) } as CSSProperties}>
       <div className="beads-slicer" data-ui="beads.slicer">
         <div className="beads-top">
-          <label className="beads-search">
-            <input
-              ref={searchBox}
-              type="search"
-              value={view.q}
-              placeholder="Search Beads (title, id, content)"
-              aria-label="Search Beads"
-              onChange={event => patch({ q: event.target.value })}
-              onKeyDown={event => {
-                if (event.key !== 'ArrowDown' && event.key !== 'Enter') return
-                event.preventDefault()
-                if (selectedRow < 0 && ordered.length > 0) selectInTable(ordered[0])
-                if (showTable) document.querySelector<HTMLElement>('.beads-table-body')?.focus()
-              }}
-            />
-            <span className="beads-chord" aria-hidden="true">/</span>
-          </label>
+          <SearchField
+            className="beads-search"
+            inputRef={searchBox}
+            value={view.q}
+            label="Search Beads"
+            placeholder="Search Beads by title, id or text…"
+            hint={<span aria-hidden="true">/</span>}
+            onChange={q => patch({ q })}
+            onKeyDown={event => {
+              if (event.key !== 'ArrowDown' && event.key !== 'Enter') return
+              event.preventDefault()
+              if (selectedRow < 0 && ordered.length > 0) selectInTable(ordered[0])
+              if (showTable) document.querySelector<HTMLElement>('.beads-table-body')?.focus()
+            }}
+          />
           <span className={`beads-range${view.range ? ' set' : ''}`} data-ui="beads.range">
             {view.range ? (
               <>

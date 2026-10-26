@@ -37,6 +37,7 @@ import { copyAndAnnounce } from '../../utils/clipboard'
 import type { MenuGroup } from '../Menu'
 import MenuTarget from '../MenuTarget'
 import ResidentColumn from '../ResidentColumn'
+import SearchField from '../kit/SearchField'
 import { TableSlot } from '../TableHost'
 import Rail, { RailScroll, RailSection } from '../Rail'
 import {
@@ -529,13 +530,11 @@ export default function LibraryView({ active = true }: { active?: boolean } = {}
           {/* Search along the sky's top edge; what it finds is listed beside
               the sky and lit on it. */}
           <div className="library-map-bar">
-            <input
+            <SearchField
               className="library-search"
-              type="search"
               value={search.query}
-              placeholder="Search the brain…"
-              aria-label="Search the brain"
-              onChange={event => search.ask(event.target.value)}
+              label="Search the brain"
+              onChange={search.ask}
               onKeyDown={event => { if (search.key(event.key)) event.preventDefault() }}
             />
             {shown && (

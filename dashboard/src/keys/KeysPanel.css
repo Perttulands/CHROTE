@@ -22,25 +22,8 @@
   border-bottom: 1px solid var(--divider);
 }
 
-.keys-panel-search {
-  width: 100%;
-  padding: 2px 0 2px 10px;
-  background: transparent;
-  border: none;
-  border-left: 2px solid var(--accent);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 15px;
-  line-height: 1.6;
-}
 
-.keys-panel-search::placeholder {
-  color: var(--text-dim);
-}
 
-.keys-panel-search:focus {
-  outline: none;
-}
 
 .keys-panel-body {
   flex: 1;

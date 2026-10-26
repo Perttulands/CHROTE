@@ -9,7 +9,7 @@ export function focusSessionSearch(): boolean {
   if (!activeDock) return false
 
   const focusVisibleSearch = () => {
-    const searchInput = activeDock.querySelector('.session-search-input') as HTMLInputElement | null
+    const searchInput = activeDock.querySelector('.session-search-input input') as HTMLInputElement | null
     searchInput?.focus()
     searchInput?.select()
     return searchInput !== null

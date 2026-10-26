@@ -122,7 +122,7 @@ describe('AgentsView', () => {
   it('refreshes workspace discovery without resetting the current stack or filter', async () => {
     render(<AgentsView />)
     await screen.findByText('/home/operator/CLAUDE.md')
-    fireEvent.change(screen.getByLabelText('Filter skills and memories'), { target: { value: 'draft filter' } })
+    fireEvent.change(screen.getByLabelText('Search skills and memories'), { target: { value: 'draft filter' } })
     mockState.fetchWorkspaces.mockResolvedValue([
       { path: '/srv/new-project', sources: ['git'], sessions: [], instructions: 1 },
       ...workspaces,
@@ -133,7 +133,7 @@ describe('AgentsView', () => {
     await screen.findByText('/srv/new-project')
     expect(mockState.fetchWorkspaces).toHaveBeenCalledTimes(2)
     expect(mockState.fetchAgentContext).toHaveBeenCalledTimes(1)
-    expect(screen.getByLabelText('Filter skills and memories')).toHaveValue('draft filter')
+    expect(screen.getByLabelText('Search skills and memories')).toHaveValue('draft filter')
     expect(screen.getByTestId('resident')).toHaveTextContent('agents /home/operator claude-code')
   })
 

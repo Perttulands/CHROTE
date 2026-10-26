@@ -231,23 +231,7 @@
   padding: 7px 8px 0;
 }
 
-.terminal-files-search input {
-  width: 100%;
-  min-width: 0;
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--accent);
-  border-radius: 4px;
-  background: var(--background);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
-  outline: none;
-}
 
-.terminal-files-search input::placeholder {
-  color: var(--text-dim);
-}
 
 .terminal-files-matches {
   flex: 0 1 auto;

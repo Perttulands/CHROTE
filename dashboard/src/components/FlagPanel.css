@@ -49,21 +49,7 @@
   cursor: pointer;
 }
 
-.flag-panel-search {
-  height: 26px;
-  padding: 0 8px;
-  background: var(--background);
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
-}
 
-.flag-panel-search:focus {
-  outline: none;
-  border-color: var(--text-primary);
-}
 
 .flag-panel-empty {
   padding: 4px 2px;

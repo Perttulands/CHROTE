@@ -39,7 +39,6 @@
   min-height: 52px;
 }
 
-.library-search,
 .library-summary {
   flex: none;
   height: 26px;
@@ -52,11 +51,6 @@
   font-size: 12px;
 }
 
-.library-search::placeholder {
-  color: var(--text-dim);
-}
-
-.library-search:focus,
 .library-summary:focus {
   outline: none;
   border-color: var(--accent);
@@ -250,11 +244,7 @@
 
 .library-map-bar .library-search {
   flex: 1 1 auto;
-  min-width: 0;
   max-width: 64ch;
-  height: 32px;
-  padding: 0 10px;
-  font-size: 13px;
 }
 
 /* The count gives its width up first, so the search keeps its own. */
