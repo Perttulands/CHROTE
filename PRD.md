@@ -61,7 +61,7 @@ The core product is terminal workspaces, sessions, files, server status, and set
 
 Beads, Brain, Agents and Services each host a configured resident agent as a tmux session in a drawer behind a spine at the right of the view; the one selected object, the table, is carried from view to view.
 
-Services lists a host-owned catalog, with a description, current state, control and optional link for each service. A service can contain multiple components; the controller reports partial or failed state and starts or stops the group. The control changes current state only; startup configuration is separate. Read-only services show status without a control.
+Services lists a host-owned catalog, with a description, current state, a Start or Stop button and optional link for each service, and Restart in the row's menu. A service can contain multiple components; the controller reports partial or failed state and starts or stops the group. The control changes current state only; startup configuration is separate. Read-only services show status without a control.
 
 Brain is one view: the brain as a night sky, with search along its top edge.
 The sky is for getting a feel of what the brain knows and whether it looks in

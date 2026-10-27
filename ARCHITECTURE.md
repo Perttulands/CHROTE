@@ -101,7 +101,8 @@ content and scroll position. A table failure is contained separately from the
 workspace and its terminals.
 
 The Files, Beads, Agents, Brain, Services and Server views, and the Beads column, start
-loading on first use and retain their state after that. Retained state does not
+loading on first use and retain their state after that. Services starts its
+first read when the pointer or focus reaches its tab, so the click opens on it. Retained state does not
 require continuous requests: the Server view reads
 only while visible, with independent bounded status and history requests.
 Concurrent metadata reads share in-flight work. Beads additionally retains

@@ -28,6 +28,8 @@ interface TabBarProps {
   /** The Sessions panel's own setting, kept here because its header no longer has room for it. */
   sessionsPinned?: boolean
   onToggleSessionsPinned?: () => void
+  /** The pointer or focus reached a tab: the moment to fetch what it will draw. */
+  onTabIntent?: (tab: Tab) => void
 }
 
 interface TabMenuState {
@@ -36,7 +38,7 @@ interface TabMenuState {
   workspaceId: WorkspaceId
 }
 
-function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, onToggleSessionsPinned }: TabBarProps) {
+function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, onToggleSessionsPinned, onTabIntent }: TabBarProps) {
   const [keysMenu, setKeysMenu] = useState<{ x: number; y: number } | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [tabMenu, setTabMenu] = useState<TabMenuState | null>(null)
@@ -298,6 +300,8 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
         className={`tab ${activeTab === tab.id ? 'active' : ''} ${carries ? 'tab-with-menu' : ''} ${menuOpen ? 'dismissible-trigger-active' : ''}`}
         aria-haspopup={carries ? 'menu' : undefined}
         aria-expanded={carries ? menuOpen : undefined}
+        onPointerEnter={() => onTabIntent?.(tab.id)}
+        onFocus={() => onTabIntent?.(tab.id)}
         onClick={event => {
           if (carries && (event.target as HTMLElement).closest('.tab-menu-caret')) {
             openTabMenu(event.currentTarget, tab.id as WorkspaceId)

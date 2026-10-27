@@ -1,16 +1,215 @@
-.services-view { display: flex; flex: 1; min-width: 0; min-height: 0; position: relative; }
-.services-content { flex: 1; min-width: 0; overflow: auto; padding: 24px; }
-.services-heading { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
-.services-heading h1 { font-size: 18px; margin: 0; }
-.services-heading p, .services-table p { color: var(--text-secondary); margin: 5px 0 0; }
-.services-table-wrap { overflow-x: auto; margin-top: 20px; }
-.services-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
-.services-table th, .services-table td { padding: 10px 12px; border-bottom: 1px solid var(--divider); vertical-align: middle; }
-.services-table th { color: var(--text-dim); font-weight: normal; }
-.services-table td:first-child { width: 65%; }
-.services-table a { color: var(--accent); }
-.services-state { white-space: nowrap; color: var(--text-secondary); }
-.services-readonly { color: var(--text-dim); white-space: nowrap; }
-.services-state.state-running { color: var(--accent); }
-.services-state.state-failed, .services-error { color: var(--color-error); }
-@media (max-width: 600px) { .services-content { padding: 12px; } .services-table th, .services-table td { padding: 8px 5px; } }
+/* The Services tab: the Beads table's measures, one row per service. */
+
+.services-view {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--background);
+  color: var(--text-primary);
+}
+
+.services-main {
+  --services-columns: minmax(120px, 1.2fr) minmax(140px, 3fr) 150px minmax(110px, 1.2fr) 100px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  font-size: 13px;
+  container: services / inline-size;
+}
+
+.services-row {
+  display: grid;
+  grid-template-columns: var(--services-columns);
+  align-items: center;
+  box-sizing: border-box;
+  height: 36px;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--divider);
+  cursor: default;
+  outline: none;
+}
+
+.services-head {
+  flex: none;
+  height: 30px;
+  margin-right: 6px;
+}
+
+.services-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.services-body .services-row:hover {
+  background-color: var(--surface-primary);
+}
+
+.services-row.is-current,
+.services-body .services-row.is-current:hover {
+  border-left-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+.services-row:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.services-cell {
+  min-width: 0;
+  padding: 0 7px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.services-description,
+.services-status,
+.services-link a {
+  color: var(--text-secondary);
+}
+
+.services-link a {
+  text-decoration: none;
+}
+
+.services-link a:hover {
+  color: var(--text-primary);
+}
+
+.services-failure,
+.state-failed .services-status {
+  color: var(--color-error);
+}
+
+.state-stopped .services-status,
+.state-unknown .services-status,
+.services-readonly {
+  color: var(--text-dim);
+}
+
+.services-act {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.services-readonly {
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+/* The status glyph: the accent's dot when it runs, half of it when partial, a ring when stopped, dashed when unknown, the error when failed. */
+.services-light {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border: 1px solid var(--text-dim);
+  border-radius: 50%;
+  vertical-align: 1px;
+}
+
+.state-running .services-light {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.state-partial .services-light {
+  border-color: var(--accent);
+  background: linear-gradient(90deg, var(--accent) 50%, transparent 50%);
+}
+
+.state-failed .services-light {
+  border-color: var(--color-error);
+  background: var(--color-error);
+}
+
+.state-unknown .services-light {
+  border-style: dashed;
+}
+
+/* On its way up or down, the glyph breathes until a read agrees. */
+.state-starting .services-light,
+.state-stopping .services-light {
+  border-color: var(--accent);
+  animation: services-breathe 1.1s ease-in-out infinite alternate;
+}
+
+.state-starting .services-light {
+  background: var(--accent);
+}
+
+@keyframes services-breathe {
+  from { opacity: 1; }
+  to { opacity: 0.25; }
+}
+
+/* What was read and when: muted, and red only for a failure. */
+.services-footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 14px;
+  height: 24px;
+  margin-top: auto;
+  padding: 0 12px;
+  overflow: hidden;
+  border-top: 1px solid var(--divider);
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.services-footer > span {
+  flex: none;
+}
+
+.services-footer > .services-footer-error {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-error);
+  text-overflow: ellipsis;
+}
+
+/* A narrow pane drops the description and link; the menu still opens it. */
+@container services (width < 600px) {
+  .services-row { grid-template-columns: minmax(0, 1fr) 110px 90px; }
+
+  .services-description,
+  .services-link,
+  .services-head .services-cell:nth-child(2),
+  .services-head .services-cell:nth-child(4) {
+    display: none;
+  }
+
+  .services-name { grid-column: 1; grid-row: 1; }
+  .services-status { grid-column: 2; grid-row: 1; }
+  .services-act { grid-column: 3; grid-row: 1; }
+  .services-row.has-failure { height: auto; min-height: 36px; }
+  .services-failure {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    padding-bottom: 8px;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 600px) {
+  /* The empty resident has no drawer; its header would crowd out the list. */
+  .services-view .resident-dock:has(.resident-column.bare) { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .state-starting .services-light,
+  .state-stopping .services-light {
+    animation: none;
+  }
+}
