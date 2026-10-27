@@ -40,6 +40,7 @@ import { getSessionNameFromKey, getTerminalUserInitial, isTerminalWorkspaceId, s
 import type { WorkspaceId } from './types'
 import { ThemeProvider, useTheme } from './theme/ThemeContext'
 import { identityColorFor } from './theme/theme'
+import { readCachedServices, readServices } from './components/ServicesView/servicesApi'
 
 // Non-terminal views load as route-level chunks on first visit. The terminal
 // docks and everything they depend on stay eager: they are the startup surface
@@ -56,7 +57,16 @@ const LibraryView = lazy(() => import('./components/LibraryView'))
 const AgentsView = lazy(() => import('./components/AgentsView'))
 const SystemStatusView = lazy(() => import('./components/SystemStatusView'))
 const ScheduledTasksView = lazy(() => import('./components/ScheduledTasksView'))
-const ServicesView = lazy(() => import('./components/ServicesView'))
+const loadServicesView = () => import('./components/ServicesView')
+const ServicesView = lazy(loadServicesView)
+
+// A tab whose first paint waits on the host starts fetching when the pointer
+// or focus reaches it, so the click opens on what is already there.
+function warmTab(tab: Tab) {
+  if (tab !== 'services') return
+  void loadServicesView()
+  if (!readCachedServices()) readServices().catch(() => undefined)
+}
 
 function ViewFallback() {
   return <div className="view-chunk-loading"><Skeleton height="14px" width="180px" /></div>
@@ -415,6 +425,7 @@ function DashboardContent() {
           onShowKeys={toggleKeysPanel}
           sessionsPinned={sessionsDockState.pinned}
           onToggleSessionsPinned={toggleSessionsPinned}
+          onTabIntent={warmTab}
         />
 
         <div className="dashboard-content">
