@@ -1,18 +1,18 @@
 /**
  * The Services tab: what runs on this host, and the switch for each.
  *
- * One row per service in the host's catalog order, so nothing moves while
- * states change: a light that says how it is, the state in a word, and the one
- * action that changes it, Start or Stop, with Restart, Open and Send in the
- * row's menu. An action reads as what it is doing until the controller has
- * answered and a fresh read agrees, and a failure stays on its row in the
- * controller's own words. The list draws at once from the last read; the
- * resident Service agent sits behind the spine with the chosen row as its
+ * A table like the Beads table, one row per service in the host's catalog
+ * order: its name, what it is, its status as a glyph and a word, where it is
+ * served, and the one action that changes it, Start or Stop, with Restart,
+ * Open and Send in the row's menu. An action reads as what it is doing until
+ * the controller has answered and a fresh read agrees, and a failure takes the
+ * row's description in the controller's own words. The footer says what was
+ * read and when. The resident Service agent has the chosen row as its
  * reference.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { KeyboardEvent } from 'react'
 import MenuTarget from '../MenuTarget'
 import type { MenuGroup } from '../Menu'
 import ResidentColumn from '../ResidentColumn'
@@ -27,23 +27,21 @@ type Change = 'start' | 'stop' | 'restart'
 const READ_EVERY_MS = 10_000
 /** While the controller reports a service on its way up or down. */
 const READ_MOVING_MS = 2_000
-/** A first read slower than this says so; a quicker one just arrives. */
-const SLOW_READ_MS = 600
 
 const STATE_WORDS: Record<ServiceState, string> = {
-  running: 'Running',
-  stopped: 'Stopped',
-  starting: 'Starting…',
-  stopping: 'Stopping…',
-  partial: 'Partly running',
-  failed: 'Failed',
-  unknown: 'Unknown',
+  running: 'running',
+  stopped: 'stopped',
+  starting: 'starting…',
+  stopping: 'stopping…',
+  partial: 'partial',
+  failed: 'failed',
+  unknown: 'unknown',
 }
 
 const CHANGE_WORDS: Record<Change, { doing: string; done: string; verb: string }> = {
-  start: { doing: 'Starting…', done: 'started', verb: 'Start' },
-  stop: { doing: 'Stopping…', done: 'stopped', verb: 'Stop' },
-  restart: { doing: 'Restarting…', done: 'restarted', verb: 'Restart' },
+  start: { doing: 'starting…', done: 'started', verb: 'Start' },
+  stop: { doing: 'stopping…', done: 'stopped', verb: 'Stop' },
+  restart: { doing: 'restarting…', done: 'restarted', verb: 'Restart' },
 }
 
 /** The change the row's one button makes: towards running, unless it runs. */
@@ -74,18 +72,19 @@ function without<T>(record: Record<string, T>, key: string): Record<string, T> {
 }
 
 function serviceReference(service: Service, state: ServiceState): string {
-  return `service ${service.id} (${service.name}, ${STATE_WORDS[state].replace('…', '').toLowerCase()})`
+  return `service ${service.id} (${service.name}, ${STATE_WORDS[state].replace('…', '')})`
 }
 
-/** The tally beside the title: the states present, in the order they matter. */
-function tally(services: Service[]): { words: string; failed: string } {
-  const count = (state: ServiceState) => services.filter(service => service.state === state).length
-  const partial = count('partial')
-  const failed = count('failed')
-  return {
-    words: [`${count('running')} of ${services.length} running`, partial ? `${partial} partly` : ''].filter(Boolean).join(' · '),
-    failed: failed ? `${failed} failed` : '',
-  }
+/** Where a link goes, in fewer words than the link: its host and port. */
+function linkPlace(link: string): string {
+  try { return new URL(link).host } catch { return link }
+}
+
+/** The Beads footer's clock: hours, minutes and seconds, the same everywhere. */
+function clockTime(at: number): string {
+  const time = new Date(at)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${pad(time.getHours())}:${pad(time.getMinutes())}:${pad(time.getSeconds())}`
 }
 
 export default function ServicesView({ active }: { active: boolean }) {
@@ -96,7 +95,7 @@ export default function ServicesView({ active }: { active: boolean }) {
   const [changing, setChanging] = useState<Record<string, Change>>({})
   const [failures, setFailures] = useState<Record<string, string>>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [slow, setSlow] = useState(false)
+  const [readAt, setReadAt] = useState<number | null>(null)
   const changingRef = useRef(changing)
   changingRef.current = changing
   // Rises whenever an action lands, so a read that left before it cannot
@@ -111,6 +110,7 @@ export default function ServicesView({ active }: { active: boolean }) {
       if (started !== landed.current) return
       setServices(list)
       setReadError(null)
+      setReadAt(Date.now())
     } catch (cause) {
       if (started !== landed.current) return
       setReadError(message(cause, 'Could not read the services'))
@@ -124,13 +124,6 @@ export default function ServicesView({ active }: { active: boolean }) {
     const timer = window.setInterval(() => void read(), moving ? READ_MOVING_MS : READ_EVERY_MS)
     return () => window.clearInterval(timer)
   }, [active, moving, read])
-
-  const waiting = services === null && readError === null
-  useEffect(() => {
-    if (!waiting) return
-    const timer = window.setTimeout(() => setSlow(true), SLOW_READ_MS)
-    return () => window.clearTimeout(timer)
-  }, [waiting])
 
   const change = useCallback(async (service: Service, kind: Change) => {
     if (changingRef.current[service.id]) return
@@ -168,7 +161,7 @@ export default function ServicesView({ active }: { active: boolean }) {
 
   const selected = services?.find(service => service.id === selectedId) ?? null
   const reference = selected ? serviceReference(selected, shownState(selected)) : null
-  const summary = useMemo(() => (services && services.length > 0 ? tally(services) : null), [services])
+  const count = (state: ServiceState) => services?.filter(service => service.state === state).length ?? 0
 
   const menu = (service: Service) => (): MenuGroup[] => {
     const state = shownState(service)
@@ -224,91 +217,75 @@ export default function ServicesView({ active }: { active: boolean }) {
   return (
     <div className="services-view" data-ui="services.view">
       <main className="services-main">
-        <div className="services-subject">
-          <span>Services</span>
-          {summary && (
-            <span className="services-tally">
-              {summary.words}
-              {summary.failed && <> · <span className="services-tally-failed">{summary.failed}</span></>}
-            </span>
-          )}
+        <div className="services-row services-head" aria-hidden="true">
+          <span className="services-cell kit-label">Service</span>
+          <span className="services-cell kit-label">Description</span>
+          <span className="services-cell kit-label">Status</span>
+          <span className="services-cell kit-label">Link</span>
+          <span className="services-cell" />
         </div>
-        <p className="services-purpose">What runs on this host, and the switch for each.</p>
-
-        {readError && services !== null && (
-          <p className="services-stale" role="status">Showing the last read. {readError}</p>
-        )}
-
-        {services === null && readError !== null && (
-          <div className="services-empty" role="alert">
-            <p className="services-empty-head">The service controller did not answer.</p>
-            <p>{readError}</p>
-            <p className="services-empty-hint">The host names its controller's socket in services.json beside the launch configuration. CHROTE asks again while this tab is open.</p>
-          </div>
-        )}
-
-        {waiting && slow && <p className="services-note" aria-live="polite">Asking the host…</p>}
-
-        {services !== null && services.length === 0 && (
-          <div className="services-empty"><p className="services-empty-head">The host's catalog lists no services.</p></div>
-        )}
-
-        {services !== null && services.length > 0 && (
-          <div className="services-list" role="list" aria-label="Services" ref={listRef} onKeyDown={onListKey}>
-            {services.map((service, index) => {
-              const state = shownState(service)
-              const kind = changing[service.id]
-              const primary = service.controllable ? primaryChange(state) : null
-              const link = safeLink(service.link)
-              const failure = failures[service.id]
-              const current = service.id === selectedId
-              return (
-                <MenuTarget key={service.id} label={`${service.name} menu`} groups={menu(service)}>
-                  <div
-                    role="listitem"
-                    data-service={service.id}
-                    className={`services-row state-${state}${current ? ' is-current' : ''}`}
-                    style={{ '--i': index } as CSSProperties}
-                    aria-current={current ? 'true' : undefined}
-                    aria-label={`${service.name}, ${STATE_WORDS[state].replace('…', '')}`}
-                    tabIndex={service.id === focusableId ? 0 : -1}
-                    onClick={() => setSelectedId(service.id)}
-                    onFocus={event => { if (event.target === event.currentTarget) setSelectedId(service.id) }}
-                  >
+        <div className="services-body" role="list" aria-label="Services" ref={listRef} onKeyDown={onListKey}>
+          {services?.map(service => {
+            const state = shownState(service)
+            const kind = changing[service.id]
+            const primary = service.controllable ? primaryChange(state) : null
+            const link = safeLink(service.link)
+            const failure = failures[service.id]
+            const current = service.id === selectedId
+            return (
+              <MenuTarget key={service.id} label={`${service.name} menu`} groups={menu(service)}>
+                <div
+                  role="listitem"
+                  data-service={service.id}
+                  className={`services-row state-${state}${current ? ' is-current' : ''}`}
+                  aria-current={current ? 'true' : undefined}
+                  aria-label={`${service.name}, ${STATE_WORDS[state].replace('…', '')}`}
+                  tabIndex={service.id === focusableId ? 0 : -1}
+                  onClick={() => setSelectedId(service.id)}
+                  onFocus={event => { if (event.target === event.currentTarget) setSelectedId(service.id) }}
+                >
+                  <span className="services-cell services-name">{service.name}</span>
+                  {failure
+                    ? <span className="services-cell services-failure" role="alert" title={failure}>{failure}</span>
+                    : <span className="services-cell services-description" title={service.description}>{service.description}</span>}
+                  <span className="services-cell services-status">
                     <span className="services-light" aria-hidden="true" />
-                    <span className="services-words">
-                      <span className="services-name">{service.name}</span>
-                      {service.description && <span className="services-description">{service.description}</span>}
-                      {failure && <span className="services-failure" role="alert">{failure}</span>}
-                    </span>
-                    <span className="services-state">{kind ? CHANGE_WORDS[kind].doing : STATE_WORDS[state]}</span>
-                    <span className="services-open">
-                      {link && (
-                        <a className="kit-button" href={link} target="_blank" rel="noreferrer" title={link} tabIndex={-1} onClick={event => event.stopPropagation()}>
-                          Open
-                        </a>
-                      )}
-                    </span>
-                    <span className="services-act">
-                      {!service.controllable ? (
-                        <span className="services-readonly" title="The host reports this service but does not let CHROTE change it">Read-only</span>
-                      ) : kind || !primary ? null : (
-                        <button
-                          type="button"
-                          className="kit-button services-switch"
-                          onClick={event => { event.stopPropagation(); setSelectedId(service.id); void change(service, primary) }}
-                        >
-                          {CHANGE_WORDS[primary].verb}
-                          {current && <span className="kit-chord">Enter</span>}
-                        </button>
-                      )}
-                    </span>
-                  </div>
-                </MenuTarget>
-              )
-            })}
-          </div>
-        )}
+                    {kind ? CHANGE_WORDS[kind].doing : STATE_WORDS[state]}
+                  </span>
+                  <span className="services-cell services-link">
+                    {link && <a href={link} target="_blank" rel="noreferrer" title={link} tabIndex={-1} onClick={event => event.stopPropagation()}>{linkPlace(link)}</a>}
+                  </span>
+                  <span className="services-cell services-act">
+                    {!service.controllable ? (
+                      <span className="services-readonly" title="The host reports this service but does not let CHROTE change it">read-only</span>
+                    ) : kind || !primary ? null : (
+                      <button
+                        type="button"
+                        className="kit-button"
+                        onClick={event => { event.stopPropagation(); setSelectedId(service.id); void change(service, primary) }}
+                      >
+                        {CHANGE_WORDS[primary].verb}
+                      </button>
+                    )}
+                  </span>
+                </div>
+              </MenuTarget>
+            )
+          })}
+        </div>
+        <footer className="services-footer" data-ui="services.footer">
+          {services === null && readError === null && <span>Reading services</span>}
+          {services !== null && (
+            <>
+              <span>{`${services.length} ${services.length === 1 ? 'service' : 'services'}`}</span>
+              <span>{`${count('running')} running`}</span>
+            </>
+          )}
+          {count('partial') > 0 && <span>{`${count('partial')} partial`}</span>}
+          {count('failed') > 0 && <span className="services-footer-error">{`${count('failed')} failed`}</span>}
+          {readError && <span className="services-footer-error" title={readError}>{readError}</span>}
+          {readAt !== null && <span>{`refreshed ${clockTime(readAt)}`}</span>}
+        </footer>
       </main>
       <TableSlot active={active} />
       <ResidentColumn active={active} tab="services" reference={reference} />

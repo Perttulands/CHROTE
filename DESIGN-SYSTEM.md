@@ -148,18 +148,14 @@ come in beside the sky. The map places every Bead of the projects kept, so a
 status or a search fades stars rather than moving them. The target it was built to is in
 [`docs/assets/beads-slicer/`](docs/assets/beads-slicer/final-target.png).
 
-The Services tab is one row per service in the host's catalog order, so
-nothing moves while states change. A light leads each row: the accent's dot
-when it runs (what is alive), half filled when part of it runs, a hollow ring
-when stopped, dashed when the controller cannot say, `--color-error` when it
-failed, and breathing while it starts or stops. The state follows in a word,
-then Open when the service has a page, then the row's one switch, a word
-button that says what it will do: Start, or Stop when it runs. Restart, Open
-and Send are in the row's menu. A pressed switch gives way to the state's own
-words, Starting… or Stopping…, until the controller has answered and a fresh
-read agrees, and a failure stays on its row in the controller's words. A
-read-only service says Read-only where the switch would be. The tab opens on
-the list it already has: the pointer reaching the tab asks for it.
+The Services tab is the Beads table's measures, one row per service in the
+host's catalog order: the name, the description, the status as a glyph and a
+word, the link's host, and the row's one action, Start or Stop. The glyph is
+the accent's dot when the service runs, half of it when partial, a ring when
+stopped, dashed when unknown and `--color-error` when failed, and it breathes
+while the service starts or stops. Restart, Open and Send are in the row's
+menu. A failed action takes the row's description in the controller's words;
+the footer counts the services and says when they were read.
 
 Everything else is gone: per-window accent colours, hashed per-user hues, the
 tmux status bar hue, theme-button glows, and per-severity notification colours.

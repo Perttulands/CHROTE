@@ -24,14 +24,14 @@ it('starts a service with its Start button and says so until a read agrees', asy
   vi.stubGlobal('fetch', fetcher)
   render(<ServicesView active />)
   const row = await screen.findByRole('listitem', { name: /Example/ })
-  expect(within(row).getByRole('link', { name: 'Open' })).toHaveAttribute('href', 'https://example.test/')
+  expect(within(row).getByRole('link', { name: 'example.test' })).toHaveAttribute('href', 'https://example.test/')
   fireEvent.click(within(row).getByRole('button', { name: /Start/ }))
   expect(fetcher).toHaveBeenCalledWith('/api/services/example/start', expect.objectContaining({ method: 'POST' }))
-  expect(within(row).getByText('Starting…')).toBeInTheDocument()
+  expect(within(row).getByText('starting…')).toBeInTheDocument()
   expect(within(row).queryByRole('button')).toBeNull()
   finishStart(json({ service: { ...entry, state: 'running' }, errors: [] }))
   expect(await within(row).findByRole('button', { name: /Stop/ })).toBeInTheDocument()
-  expect(within(row).getByText('Running')).toBeInTheDocument()
+  expect(within(row).getByText('running')).toBeInTheDocument()
   expect(mockState.announce).toHaveBeenCalledWith('Example started', 'success')
 })
 
@@ -56,9 +56,9 @@ it('draws at once from a read the pointer asked for before the tab opened', asyn
   await readServices()
   render(<ServicesView active />)
   expect(screen.getByRole('listitem', { name: /Example/ })).toBeInTheDocument()
-  expect(screen.queryByText('Asking the host…')).toBeNull()
+  expect(screen.queryByText('Reading services')).toBeNull()
   const watched = screen.getByRole('listitem', { name: /Watched/ })
-  expect(within(watched).getByText('Read-only')).toBeInTheDocument()
+  expect(within(watched).getByText('read-only')).toBeInTheDocument()
   expect(within(watched).queryByRole('button')).toBeNull()
 })
 
@@ -78,8 +78,8 @@ it('hands the chosen service to the resident and acts on it with Enter', async (
   await waitFor(() => expect(screen.getByTestId('resident')).toHaveTextContent('service example (Example, running)'))
 })
 
-it('says what failed when the controller cannot be reached', async () => {
+it('says in the footer what failed when the controller cannot be reached', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('Service controller is not configured', { status: 503 })))
-  render(<ServicesView active />)
-  expect(await screen.findByRole('alert')).toHaveTextContent('Service controller is not configured')
+  const { container } = render(<ServicesView active />)
+  await waitFor(() => expect(container.querySelector('.services-footer')).toHaveTextContent('Service controller is not configured'))
 })

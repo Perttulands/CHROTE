@@ -1,4 +1,4 @@
-/* The Services tab: one row per service, a light, a word and a switch. */
+/* The Services tab: the Beads table's measures, one row per service. */
 
 .services-view {
   position: relative;
@@ -12,104 +12,46 @@
 }
 
 .services-main {
+  --services-columns: minmax(120px, 1.2fr) minmax(140px, 3fr) 150px minmax(110px, 1.2fr) 100px;
   display: flex;
-  flex-direction: column;
   flex: 1;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
-  padding: 10px 12px 12px;
-}
-
-.services-subject {
-  display: flex;
-  flex: none;
-  align-items: baseline;
-  gap: 12px;
-  font-size: 14px;
-  white-space: nowrap;
-}
-
-.services-tally {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.services-tally-failed {
-  color: var(--color-error);
-}
-
-.services-purpose {
-  flex: none;
-  margin: 5px 0 12px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.services-note,
-.services-stale {
-  flex: none;
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.services-stale {
-  color: var(--color-error);
-}
-
-.services-note {
-  animation: services-arrive 0.3s ease both;
-}
-
-.services-empty {
-  max-width: 70ch;
-  padding: 12px 0;
   font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-
-.services-empty-head {
-  color: var(--text-primary);
-}
-
-.services-empty-hint {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-/* ---- the list: a row per service, columns that hold still ---- */
-
-.services-list {
-  display: flex;
-  flex-direction: column;
-  max-width: 1100px;
-  border-top: 1px solid var(--divider);
 }
 
 .services-row {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 15ch 7ch 13ch;
+  grid-template-columns: var(--services-columns);
   align-items: center;
-  min-height: 52px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--divider);
+  box-sizing: border-box;
+  height: 36px;
   border-left: 2px solid transparent;
-  font-size: 13px;
+  border-bottom: 1px solid var(--divider);
   cursor: default;
   outline: none;
-  transition: background-color 0.12s ease;
-  animation: services-arrive 0.24s ease both;
-  animation-delay: calc(min(var(--i, 0), 12) * 30ms);
 }
 
-.services-row:hover {
-  background-color: var(--surface-secondary);
+.services-head {
+  flex: none;
+  height: 30px;
+  margin-right: 6px;
 }
 
-.services-row.is-current {
+.services-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.services-body .services-row:hover {
+  background-color: var(--surface-primary);
+}
+
+.services-row.is-current,
+.services-body .services-row.is-current:hover {
   border-left-color: var(--accent);
   background-color: var(--accent-soft);
 }
@@ -118,25 +60,61 @@
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-/* A row arrives the way a panel lights up: in order, top to bottom. */
-@keyframes services-arrive {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: none; }
+.services-cell {
+  min-width: 0;
+  padding: 0 7px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-/* ---- the light: how the service is, before a word is read ---- */
+.services-description,
+.services-status,
+.services-link a {
+  color: var(--text-secondary);
+}
 
+.services-link a {
+  text-decoration: none;
+}
+
+.services-link a:hover {
+  color: var(--text-primary);
+}
+
+.services-failure,
+.state-failed .services-status {
+  color: var(--color-error);
+}
+
+.state-stopped .services-status,
+.state-unknown .services-status,
+.services-readonly {
+  color: var(--text-dim);
+}
+
+.services-act {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.services-readonly {
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+/* The status glyph: the accent's dot when it runs, half of it when partial, a ring when stopped, dashed when unknown, the error when failed. */
 .services-light {
-  justify-self: center;
+  display: inline-block;
   box-sizing: border-box;
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
   border: 1px solid var(--text-dim);
   border-radius: 50%;
-  transition: background-color 0.3s ease, border-color 0.3s ease;
+  vertical-align: 1px;
 }
 
-/* What is alive: the accent's small dot. */
 .state-running .services-light {
   border-color: var(--accent);
   background: var(--accent);
@@ -156,7 +134,7 @@
   border-style: dashed;
 }
 
-/* On its way: the light breathes until the controller and a read agree. */
+/* On its way up or down, the glyph breathes until a read agrees. */
 .state-starting .services-light,
 .state-stopping .services-light {
   border-color: var(--accent);
@@ -172,99 +150,52 @@
   to { opacity: 0.25; }
 }
 
-.services-words {
+/* What was read and when: muted, and red only for a failure. */
+.services-footer {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  flex: none;
+  align-items: center;
+  gap: 14px;
+  height: 24px;
+  margin-top: auto;
+  padding: 0 12px;
+  overflow: hidden;
+  border-top: 1px solid var(--divider);
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.services-footer > span {
+  flex: none;
+}
+
+.services-footer > .services-footer-error {
+  flex: 0 1 auto;
   min-width: 0;
-  padding-right: 16px;
-}
-
-.services-name {
   overflow: hidden;
-  color: var(--text-primary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.services-description {
-  overflow: hidden;
-  font-size: 12px;
-  color: var(--text-dim);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.services-failure {
-  font-size: 12px;
-  line-height: 1.5;
   color: var(--color-error);
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
 }
 
-.services-state {
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.state-stopped .services-state,
-.state-unknown .services-state {
-  color: var(--text-dim);
-}
-
-.state-failed .services-state {
-  color: var(--color-error);
-}
-
-.services-open,
-.services-act {
-  display: flex;
-  justify-content: flex-end;
-  padding-right: 8px;
-}
-
-.services-open .kit-button {
-  text-decoration: none;
-}
-
-.services-switch {
-  min-width: 9ch;
-}
-
-.services-readonly {
-  padding: 0 10px;
-  font-size: 12px;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-/* A phone: the state and the switch go under the name. */
+/* A phone drops the description and the link; the menu still opens the link. */
 @media (max-width: 600px) {
-  .services-row {
-    grid-template-columns: 28px minmax(0, 1fr) auto;
-    grid-template-areas:
-      'light words act'
-      'light state open';
-    row-gap: 2px;
+  .services-main {
+    --services-columns: minmax(0, 1fr) 110px 90px;
   }
 
-  .services-light { grid-area: light; }
-  .services-words { grid-area: words; }
-  .services-state { grid-area: state; }
-  .services-open { grid-area: open; }
-  .services-act { grid-area: act; }
+  .services-description,
+  .services-failure,
+  .services-link,
+  .services-head .services-cell:nth-child(2),
+  .services-head .services-cell:nth-child(4) {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .services-row,
-  .services-note,
   .state-starting .services-light,
   .state-stopping .services-light {
     animation: none;
-  }
-
-  .services-light {
-    transition: none;
   }
 }
