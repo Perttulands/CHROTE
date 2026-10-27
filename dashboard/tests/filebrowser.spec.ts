@@ -43,6 +43,13 @@ async function mockFilebrowserApi(page: Page, options?: {
     })
   })
 
+  // Typing at home also finds files everywhere beneath the projects.
+  await page.route('**/api/files/find*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ matches: [], truncated: false }),
+  }))
+
   await page.route('**/api/files/diff*', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
