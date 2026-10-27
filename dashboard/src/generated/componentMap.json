@@ -74,6 +74,7 @@
   "SearchResults": "dashboard/src/components/LibraryView/SearchResults.tsx",
   "SendDrawer": "dashboard/src/components/SendDrawer.tsx",
   "SendDrawerPrototype": "dashboard/src/components/SendDrawerPrototype/SendDrawerPrototype.tsx",
+  "ServicesView": "dashboard/src/components/ServicesView/index.tsx",
   "SessionCommandMark": "dashboard/src/components/sessionLabel.tsx",
   "SessionGroup": "dashboard/src/components/SessionGroup.tsx",
   "SessionItem": "dashboard/src/components/SessionItem.tsx",

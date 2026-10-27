@@ -1,0 +1,16 @@
+.services-view { display: flex; flex: 1; min-width: 0; min-height: 0; position: relative; }
+.services-content { flex: 1; min-width: 0; overflow: auto; padding: 24px; }
+.services-heading { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+.services-heading h1 { font-size: 18px; margin: 0; }
+.services-heading p, .services-table p { color: var(--text-secondary); margin: 5px 0 0; }
+.services-table-wrap { overflow-x: auto; margin-top: 20px; }
+.services-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+.services-table th, .services-table td { padding: 10px 12px; border-bottom: 1px solid var(--divider); vertical-align: middle; }
+.services-table th { color: var(--text-dim); font-weight: normal; }
+.services-table td:first-child { width: 65%; }
+.services-table a { color: var(--accent); }
+.services-state { white-space: nowrap; color: var(--text-secondary); }
+.services-readonly { color: var(--text-dim); white-space: nowrap; }
+.services-state.state-running { color: var(--accent); }
+.services-state.state-failed, .services-error { color: var(--color-error); }
+@media (max-width: 600px) { .services-content { padding: 12px; } .services-table th, .services-table td { padding: 8px 5px; } }

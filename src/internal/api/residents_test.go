@@ -19,7 +19,7 @@ func TestResidentsRouteListsEveryTabFromTheEnvironment(t *testing.T) {
 
 	library := LibraryConfig{Root: "/corpus", LibrarianSession: "librarian", BeadsProject: "/corpus"}
 	mux := http.NewServeMux()
-	NewResidentsHandler(LoadResidents(library)).RegisterRoutes(mux)
+	NewResidentsHandler(LoadResidents(library, ServicesConfig{})).RegisterRoutes(mux)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/residents", nil))
 	if rec.Code != http.StatusOK {
@@ -31,6 +31,7 @@ func TestResidentsRouteListsEveryTabFromTheEnvironment(t *testing.T) {
 		{Tab: "library", Label: "Librarian", Session: "librarian", Folder: "/corpus", Beads: "/corpus"},
 		{Tab: "agents", Label: "Tender", Session: "tender", Folder: "/tender", Beads: "/tender/store"},
 		{Tab: "beads", Label: "Clerk", Session: "clerk", Folder: "/clerk", Beads: ""},
+		{Tab: "services", Label: "Service agent"},
 	}
 	if len(residents) != len(want) {
 		t.Fatalf("residents = %+v, want %+v", residents, want)

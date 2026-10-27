@@ -75,6 +75,7 @@ screen.
 | Settings | Appearance, tmux colors, session defaults, tab count, launch users, cleanup |
 | Beads | Issues, ready work, triage, dependency graph, insights, and comments from configured `bd` workspaces |
 | Scheduled | Host-owned tasks that deliver a prompt to a named tmux session on a schedule |
+| Services | Status and current-state controls from a host-owned service catalog |
 | Library | The configured context corpus: shelves, pages, search, recent changes, and edits committed as the operator |
 
 Terminal, Files, Server, and Settings are the core. Beads, Scheduled, and the

@@ -56,6 +56,7 @@ const LibraryView = lazy(() => import('./components/LibraryView'))
 const AgentsView = lazy(() => import('./components/AgentsView'))
 const SystemStatusView = lazy(() => import('./components/SystemStatusView'))
 const ScheduledTasksView = lazy(() => import('./components/ScheduledTasksView'))
+const ServicesView = lazy(() => import('./components/ServicesView'))
 
 function ViewFallback() {
   return <div className="view-chunk-loading"><Skeleton height="14px" width="180px" /></div>
@@ -459,6 +460,11 @@ function DashboardContent() {
               <Suspense fallback={<ViewFallback />}>
                 <LibraryView active={activeTab === 'library'} />
               </Suspense>
+            </ErrorBoundary>
+          </RetainedView>
+          <RetainedView active={activeTab === 'services'}>
+            <ErrorBoundary>
+              <Suspense fallback={<ViewFallback />}><ServicesView active={activeTab === 'services'} /></Suspense>
             </ErrorBoundary>
           </RetainedView>
           {activeTab === 'scheduled' && (

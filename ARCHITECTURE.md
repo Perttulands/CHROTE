@@ -60,7 +60,7 @@ A launched agent's completion is a fact the harness states, not one CHROTE infer
 
 `src/cmd/server/` assembles the process and registers the runtime routes.
 
-- `src/internal/api/` contains tmux, files, Beads, scheduled tasks, the Library, the residents, theme, launch, health, and system handlers.
+- `src/internal/api/` contains tmux, files, Beads, scheduled tasks, services, the Library, the residents, theme, launch, health, and system handlers.
 - `src/internal/proxy/` owns the terminal transport and the pseudo-terminals it attaches on.
 - `src/internal/dashboard/` embeds the built dashboard into the Go binary.
 - `src/internal/scheduled/` contains scheduled-task persistence and execution support.
@@ -100,7 +100,7 @@ placements for that same table, so switching views preserves its drafts, loaded
 content and scroll position. A table failure is contained separately from the
 workspace and its terminals.
 
-The Files, Beads, Agents, Brain and Server views, and the Beads column, start
+The Files, Beads, Agents, Brain, Services and Server views, and the Beads column, start
 loading on first use and retain their state after that. Retained state does not
 require continuous requests: the Server view reads
 only while visible, with independent bounded status and history requests.

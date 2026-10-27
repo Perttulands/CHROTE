@@ -26,12 +26,12 @@ type Resident struct {
 	Beads string `json:"beads"`
 }
 
-// LoadResidents reads the three residents from the environment. The Librarian
+// LoadResidents reads the residents from host configuration. The Librarian
 // shares the Library's own configuration, so its folder is the corpus root the
 // Library validated; the tender and the Clerk are named by their own three
-// variables each. Nothing here is validated beyond trimming: an unset session
+// variables each; Services uses its own connection configuration. An unset session
 // is a host without that resident, which the column says in so many words.
-func LoadResidents(library LibraryConfig) []Resident {
+func LoadResidents(library LibraryConfig, services ServicesConfig) []Resident {
 	env := func(name string) string { return strings.TrimSpace(os.Getenv(name)) }
 	return []Resident{
 		{
@@ -55,6 +55,7 @@ func LoadResidents(library LibraryConfig) []Resident {
 			Folder:  env("CHROTE_CLERK_FOLDER"),
 			Beads:   env("CHROTE_CLERK_BEADS"),
 		},
+		{Tab: "services", Label: "Service agent", Session: services.Resident.Session, Folder: services.Resident.Folder, Beads: services.Resident.Beads},
 	}
 }
 

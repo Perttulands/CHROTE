@@ -11,7 +11,7 @@ import { useTerminalPool } from './TerminalPool'
 import { useAgentEventMarks } from '../agents/AgentEventsProvider'
 import { bindingsCarryMark } from '../agents/agentEvents'
 
-export type Tab = WorkspaceId | 'files' | 'beads' | 'library' | 'agents' | 'scheduled' | 'server' | 'settings' | 'help'
+export type Tab = WorkspaceId | 'files' | 'beads' | 'library' | 'agents' | 'scheduled' | 'services' | 'server' | 'settings' | 'help'
 
 /** The counts a workspace can show, as the grid classes and the clamp allow. */
 const WINDOW_COUNTS = [1, 2, 3, 4] as const
@@ -75,6 +75,7 @@ function TabBar({ activeTab, onTabChange, onShowKeys, sessionsPinned = false, on
     { id: 'library', label: 'Brain' },
     { id: 'agents', label: 'Agents' },
     { id: 'scheduled', label: 'Scheduled' },
+    { id: 'services', label: 'Services' },
     ...(isFeatureEnabled('serverStatusTab') ? [{ id: 'server' as const, label: 'Server' }] : []),
     { id: 'settings', label: 'Settings' },
   ]

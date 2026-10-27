@@ -11,7 +11,7 @@
 import { apiErrorMessage } from '../apiErrors'
 import { shareInFlight } from '../inFlight'
 
-export type ResidentTab = 'library' | 'agents' | 'beads'
+export type ResidentTab = 'library' | 'agents' | 'beads' | 'services'
 
 export interface Resident {
   tab: ResidentTab
@@ -30,6 +30,7 @@ export const RESIDENT_LABELS: Record<ResidentTab, string> = {
   library: 'Librarian',
   agents: 'Tender',
   beads: 'Clerk',
+  services: 'Service agent',
 }
 
 // The last answer, so a column opened a second time draws itself right from

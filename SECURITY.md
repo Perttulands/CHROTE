@@ -129,6 +129,13 @@ Optional service URLs and tokens are server-side runtime configuration. Browser
 clients call CHROTE-owned proxy routes and must never receive service bearer
 tokens.
 
+The Services tab forwards only list, start and stop requests to the configured
+local controller over a Unix socket. The host owns the catalog, supervisor
+credentials and socket permissions; the browser supplies only a configured
+service identifier. Actions require the CHROTE request header and do not alter
+startup configuration. An unavailable controller fails independently of the
+terminal core.
+
 Scheduled tasks cross from observation into host mutation. Their contract must:
 
 - require explicit configuration and operator intent;

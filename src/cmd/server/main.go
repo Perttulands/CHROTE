@@ -208,7 +208,12 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 
 	// The residents share the Library's configuration for the Librarian, so
 	// they are read once the Library is.
-	residentsHandler := api.NewResidentsHandler(api.LoadResidents(config.Library))
+	servicesConfig, servicesErr := api.LoadServicesConfig()
+	if servicesErr != nil {
+		log.Printf("Services configuration: %v", servicesErr)
+	}
+	api.NewServicesHandler(servicesConfig.Socket).RegisterRoutes(mux)
+	residentsHandler := api.NewResidentsHandler(api.LoadResidents(config.Library, servicesConfig))
 	residentsHandler.RegisterRoutes(mux)
 
 	systemHandler := api.NewSystemHandler()
