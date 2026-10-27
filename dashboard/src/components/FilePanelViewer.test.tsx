@@ -231,10 +231,11 @@ describe('FilePanelViewer edits', () => {
     await waitFor(() => expect(screen.queryByLabelText('Edit a.txt')).toBeNull())
   })
 
-  it('asks before the page is left while an edit is unsaved', async () => {
-    render(viewer('/srv/a.txt'))
+  it('asks before the page is left while an edit is unsaved, even after its viewer closes', async () => {
+    const { unmount } = render(viewer('/srv/a.txt'))
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
     fireEvent.change(screen.getByLabelText('Edit a.txt'), { target: { value: 'alpha, edited' } })
+    unmount()
 
     const leaving = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(leaving)

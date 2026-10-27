@@ -22,7 +22,8 @@ commits named.
    The Clerk and the tender rest behind the Librarian's 28px spine and open over
    the content; the column mode, the squeeze and the menu's Collapse row are gone.
    The open drawer stops at the table so a card being handed over stays visible.
-   Close: 44aafdb, 9e9814b.
+   Close: 44aafdb, 9e9814b, and the commit titled "Keep the draft warning
+   and the drawer's room past their viewer".
 2. **task**, parent `chrote-5grx`. *One SearchField for every search box.*
    Expansion beyond the assigned work, filed as such: the operator named
    search-bar drift. The kit gains `SearchField`; ten inputs (Beads, its
@@ -59,6 +60,9 @@ fixed in the commit titled "Files keeps unsaved edits; PDFs, missing pictures
 and the Beads map on a phone", with a test that reproduces each: unsaved
 drafts lost on switching files, the Beads map collapsing on a phone after a
 selection, PDFs no longer shown inline, and a missing picture drawn broken.
+Terra's follow-up note led to "Keep the draft warning and the drawer's room
+past their viewer": the leave-page warning lifted when the last viewer closed,
+and the Clerk's drawer covered the table's first 28px.
 
 ## New Beads, open (follow-ups noticed, not done)
 

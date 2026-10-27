@@ -70,10 +70,14 @@ export function resetUnsavedForTest(): void {
   unsaved.clear()
 }
 
-function guardUnload(event: BeforeUnloadEvent) {
-  if (unsaved.size === 0) return
-  event.preventDefault()
-  event.returnValue = ''
+// The guard belongs to the page, not to a viewer: a held edit outlives the
+// viewer that made it, so closing every file must not lift the warning.
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', event => {
+    if (unsaved.size === 0) return
+    event.preventDefault()
+    event.returnValue = ''
+  })
 }
 
 export interface FilePanelViewerProps {
@@ -283,11 +287,6 @@ function FilePanelViewer({
       })
     return () => { cancelled = true }
   }, [kind, path, readable])
-
-  useEffect(() => {
-    window.addEventListener('beforeunload', guardUnload)
-    return () => window.removeEventListener('beforeunload', guardUnload)
-  }, [])
 
   const startEdit = () => {
     setDraft(content ?? '')

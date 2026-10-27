@@ -157,11 +157,12 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
   }, [session?.currentCommand])
 
   // Width: the remembered one, or 44 columns at the tile font, and never more
-  // than leaves the tab 240px beside the open drawer.
+  // than leaves the tab 240px beside the open drawer and the table.
   const remembered = clampResidentWidth(settings.residentWidth, settings.fontSize)
+  const besideTableRef = useRef(0)
   const widest = useCallback(() => {
     const row = columnRef.current?.offsetParent
-    return row ? Math.max(RESIDENT_WIDTH_MIN, row.clientWidth - 240) : Number.POSITIVE_INFINITY
+    return row ? Math.max(RESIDENT_WIDTH_MIN, row.clientWidth - 240 - besideTableRef.current) : Number.POSITIVE_INFINITY
   }, [])
   const commitWidth = useCallback((residentWidth: number) => {
     updateSettings({ residentWidth })
@@ -355,10 +356,17 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
   useEffect(() => {
     const column = open && table ? dockRef.current?.previousElementSibling?.querySelector<HTMLElement>('.table-column') : null
     if (!column || typeof ResizeObserver === 'undefined') {
+      besideTableRef.current = 0
       setBesideTable(0)
       return
     }
-    const measure = () => setBesideTable(column.offsetWidth)
+    // From the table's left edge to the right of the row the drawer is placed
+    // in, so the dock's strip between them is counted too.
+    const measure = () => {
+      const row = columnRef.current?.offsetParent
+      besideTableRef.current = row ? Math.round(row.getBoundingClientRect().right - column.getBoundingClientRect().left) : column.offsetWidth
+      setBesideTable(besideTableRef.current)
+    }
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(column)
