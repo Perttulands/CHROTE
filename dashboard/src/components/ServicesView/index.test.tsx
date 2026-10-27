@@ -50,6 +50,20 @@ it('keeps a failed action on its row in the controller\'s words after the next r
   expect(within(row).getByRole('button', { name: /Start/ })).toBeInTheDocument()
 })
 
+it('does not claim a service started when the controller reports it failed', async () => {
+  const failed = { ...entry, state: 'failed' }
+  const fetcher = vi.fn()
+    .mockResolvedValueOnce(json({ services: [entry] }))
+    .mockResolvedValueOnce(json({ service: failed, errors: [] }))
+    .mockResolvedValue(json({ services: [failed] }))
+  vi.stubGlobal('fetch', fetcher)
+  render(<ServicesView active />)
+  const row = await screen.findByRole('listitem', { name: /Example/ })
+  fireEvent.click(within(row).getByRole('button', { name: /Start/ }))
+  await waitFor(() => expect(within(row).getByText('failed')).toBeInTheDocument())
+  expect(mockState.announce).not.toHaveBeenCalledWith('Example started', 'success')
+})
+
 it('draws at once from a read the pointer asked for before the tab opened', async () => {
   const fetcher = vi.fn().mockResolvedValue(json({ services: [entry, { ...entry, id: 'watched', name: 'Watched', state: 'running', controllable: false }] }))
   vi.stubGlobal('fetch', fetcher)

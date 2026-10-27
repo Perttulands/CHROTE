@@ -5,7 +5,7 @@
  * order: its name, what it is, its status as a glyph and a word, where it is
  * served, and the one action that changes it, Start or Stop, with Restart,
  * Open and Send in the row's menu. An action reads as what it is doing until
- * the controller has answered and a fresh read agrees, and a failure takes the
+ * the controller has answered and a fresh read has finished, and a failure takes the
  * row's description in the controller's own words. The footer says what was
  * read and when. The resident Service agent has the chosen row as its
  * reference.
@@ -139,14 +139,15 @@ export default function ServicesView({ active }: { active: boolean }) {
         const now = reported
         setServices(list => list?.map(entry => (entry.id === now.id ? now : entry)) ?? list)
       }
-      announce(`${service.name} ${CHANGE_WORDS[kind].done}`, 'success')
+      const expected = kind === 'stop' ? 'stopped' : 'running'
+      if (reported?.state === expected) announce(`${service.name} ${CHANGE_WORDS[kind].done}`, 'success')
     } catch (cause) {
       landed.current += 1
       const words = message(cause, `Could not ${kind} ${service.name}`)
       setFailures(previous => ({ ...previous, [service.id]: words }))
       announce(`${service.name}: ${words}`, 'error')
     }
-    // The row keeps saying what it is doing until a read after the change agrees.
+    // Keep the action visible until the subsequent read finishes, even if it fails.
     await read(true)
     changingRef.current = without(changingRef.current, service.id)
     setChanging(changingRef.current)
@@ -237,7 +238,7 @@ export default function ServicesView({ active }: { active: boolean }) {
                 <div
                   role="listitem"
                   data-service={service.id}
-                  className={`services-row state-${state}${current ? ' is-current' : ''}`}
+                  className={`services-row state-${state}${current ? ' is-current' : ''}${failure ? ' has-failure' : ''}`}
                   aria-current={current ? 'true' : undefined}
                   aria-label={`${service.name}, ${STATE_WORDS[state].replace('…', '')}`}
                   tabIndex={service.id === focusableId ? 0 : -1}

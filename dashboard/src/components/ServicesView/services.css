@@ -185,11 +185,27 @@
   }
 
   .services-description,
-  .services-failure,
   .services-link,
   .services-head .services-cell:nth-child(2),
   .services-head .services-cell:nth-child(4) {
     display: none;
+  }
+
+  /* An unconfigured resident has no drawer to open. Its wide empty header
+     would otherwise take most of a phone's service table. */
+  .services-view .resident-dock:has(.resident-column.bare) {
+    display: none;
+  }
+
+  .services-name { grid-column: 1; grid-row: 1; }
+  .services-status { grid-column: 2; grid-row: 1; }
+  .services-act { grid-column: 3; grid-row: 1; }
+  .services-row.has-failure { height: auto; min-height: 36px; }
+  .services-failure {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    padding-bottom: 8px;
+    white-space: normal;
   }
 }
 
