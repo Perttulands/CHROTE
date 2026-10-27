@@ -677,3 +677,12 @@
     display: none;
   }
 }
+
+/* A PDF in the browser's own reader, filling the file's room. */
+.files-panel-pdf {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: var(--background);
+}

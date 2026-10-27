@@ -43,6 +43,12 @@ commits named.
    sessions, key documents and README. Close: the commit titled "Files opens on
    the host's projects".
 
+Review of this branch (Terra, at `ca8de1e`) found four defects in items 3 and 4; all four are
+fixed in the commit titled "Files keeps unsaved edits; PDFs, missing pictures
+and the Beads map on a phone", with a test that reproduces each: unsaved
+drafts lost on switching files, the Beads map collapsing on a phone after a
+selection, PDFs no longer shown inline, and a missing picture drawn broken.
+
 ## New Beads, open (follow-ups noticed, not done)
 
 5. **task**, parent `chrote-5grx`. *Peek opening test flakes under full-suite load.*

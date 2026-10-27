@@ -43,6 +43,7 @@ import {
 } from './fileKinds'
 import {
   MAX_TEXT_PREVIEW_BYTES,
+  describeReadFailure,
   fetchFileDiff,
   getDownloadUrl,
   getErrorMessage,
@@ -56,6 +57,24 @@ import {
 export const MAX_VIEWER_LINES = 2000
 
 type ViewerMode = 'view' | 'diff' | 'edit'
+
+/**
+ * Edits not yet saved, by path, for as long as the page lives. Opening another
+ * file replaces the viewer's file, never the operator's work: coming back to a
+ * path with an edit here reopens the editor on it, and only Save or Discard
+ * lets it go. While any is held, leaving the page asks first.
+ */
+const unsaved = new Map<string, string>()
+
+export function resetUnsavedForTest(): void {
+  unsaved.clear()
+}
+
+function guardUnload(event: BeforeUnloadEvent) {
+  if (unsaved.size === 0) return
+  event.preventDefault()
+  event.returnValue = ''
+}
 
 export interface FilePanelViewerProps {
   path: string
@@ -237,8 +256,16 @@ function FilePanelViewer({
       void read
         .then(next => {
           if (cancelled) return
-          if (next === null) setError('No inline view for this file')
-          else setContent(next)
+          if (next === null) {
+            setError('No inline view for this file')
+            return
+          }
+          setContent(next)
+          const kept = unsaved.get(path)
+          if (kept !== undefined && kept !== next) {
+            setDraft(kept)
+            setMode('edit')
+          }
         })
         .catch(readError => {
           if (!cancelled) setError(getErrorMessage(readError, 'read'))
@@ -257,15 +284,29 @@ function FilePanelViewer({
     return () => { cancelled = true }
   }, [kind, path, readable])
 
+  useEffect(() => {
+    window.addEventListener('beforeunload', guardUnload)
+    return () => window.removeEventListener('beforeunload', guardUnload)
+  }, [])
+
   const startEdit = () => {
     setDraft(content ?? '')
     setMode('edit')
   }
 
+  // Every keystroke is kept against the path it was typed into, so moving to
+  // another file loses nothing.
+  const changeDraft = useCallback((next: string) => {
+    setDraft(next)
+    if (next === content) unsaved.delete(path)
+    else unsaved.set(path, next)
+  }, [content, path])
+
   const discard = useCallback(() => {
+    unsaved.delete(path)
     setDraft('')
     setMode('view')
-  }, [])
+  }, [path])
 
   const { armed, press } = useConfirmInPlace(discard)
 
@@ -274,6 +315,7 @@ function FilePanelViewer({
     setSaving(true)
     void writeTextFile(path, draft)
       .then(() => {
+        unsaved.delete(path)
         setContent(draft)
         setMode('view')
         announce(`Saved ${name}`, 'success')
@@ -339,7 +381,7 @@ function FilePanelViewer({
         {mode === 'edit' ? (
           <Editor
             value={draft}
-            onChange={setDraft}
+            onChange={changeDraft}
             onSave={save}
             onCancel={press}
             label={`Edit ${name}`}
@@ -366,6 +408,9 @@ function FilePanelViewer({
                     alt={name}
                     style={size ? { width: size.width, height: size.height } : undefined}
                     onLoad={event => setPixels({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+                    onError={() => {
+                      void describeReadFailure(path).then(reason => setError(reason ?? `${name} could not be shown as a picture`))
+                    }}
                   />
                 )
                 return pictureOpensGlance ? (
@@ -377,6 +422,8 @@ function FilePanelViewer({
             </MediaStage>
             <p className="files-panel-note">{pixels ? `${pixels.width} × ${pixels.height}` : ''}</p>
           </>
+        ) : kind === 'pdf' ? (
+          <iframe className="files-panel-pdf" src={getDownloadUrl(path)} title={name} />
         ) : (kind === 'video' || kind === 'audio') && mediaFailed ? (
           <NoInlineView path={path} />
         ) : kind === 'video' ? (

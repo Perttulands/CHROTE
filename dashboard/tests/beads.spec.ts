@@ -151,6 +151,20 @@ test.describe('Beads', () => {
     await expect.poll(() => new URL(page.url()).searchParams.get('sel')).toBe('test-ep2.4')
   })
 
+  test('keeps the map and the selected Bead\'s text on screen at a phone\'s width', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/?tab=beads&mode=map&sel=test-ep2.4')
+    await page.waitForSelector('.beads-view')
+    const map = page.getByRole('region', { name: 'Beads map' })
+    const text = page.locator('.beads-text')
+    await expect(text).toContainText('Search the index')
+    const [mapBox, textBox] = [(await map.boundingBox())!, (await text.boundingBox())!]
+    expect(mapBox.width).toBeGreaterThan(100)
+    expect(mapBox.height).toBeGreaterThan(100)
+    expect(textBox.x + textBox.width).toBeLessThanOrEqual(390 + 1)
+    expect(textBox.y).toBeGreaterThanOrEqual(mapBox.y + mapBox.height - 1)
+  })
+
   test('opens the slice a copied link names in a fresh tab', async ({ page, context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     await openBeadsTab(page)

@@ -9,6 +9,7 @@ import { resetKnownBeadsForTest } from '../beads/knownBeads'
 import { openAgentContext } from '../agents/agentContextPanel'
 import { resetChordsForTest } from '../keys/chords'
 import { DEFAULT_SETTINGS } from '../types'
+import { resetUnsavedForTest } from './FilePanelViewer'
 
 const api = vi.hoisted(() => ({
   fetchBead: vi.fn(),
@@ -57,6 +58,7 @@ function Dashboard({ tab, oldSlot = true }: { tab: 'first' | 'second' | 'unsuppo
 }
 
 beforeEach(() => {
+  resetUnsavedForTest()
   resetBeadsReadForTest()
   vi.clearAllMocks()
   api.fetchBead.mockImplementation((_path: string, id: string) => Promise.resolve({

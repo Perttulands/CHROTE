@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import FilePanelViewer, { parseUnifiedDiff, prettyJson } from './FilePanelViewer'
-import { fetchFileDiff } from './FilesView/fileService'
+import FilePanelViewer, { parseUnifiedDiff, prettyJson, resetUnsavedForTest } from './FilePanelViewer'
+import { describeReadFailure, fetchFileDiff, readTextFile, writeTextFile } from './FilesView/fileService'
 import { resetImageZoomForTest, setImageZoom } from './imageZoom'
 
 vi.mock('./FilesView/fileService', async () => {
@@ -9,6 +9,9 @@ vi.mock('./FilesView/fileService', async () => {
   return {
     ...actual,
     fetchFileDiff: vi.fn(),
+    describeReadFailure: vi.fn(),
+    readTextFile: vi.fn(),
+    writeTextFile: vi.fn(),
     getDownloadUrl: (path: string) => `/api/files/raw${path}`,
   }
 })
@@ -167,11 +170,74 @@ describe('FilePanelViewer media', () => {
     expect(audio.controls).toBe(true)
   })
 
+  it('reads a PDF in the browser\'s own reader rather than only offering it', () => {
+    open('/tmp/paper.pdf')
+    expect(screen.getByTitle('paper.pdf')).toHaveAttribute('src', '/api/files/raw/tmp/paper.pdf')
+  })
+
+  it('says why a picture is not there instead of drawing a broken image', async () => {
+    vi.mocked(describeReadFailure).mockResolvedValue('File not found')
+    open('/tmp/gone.png')
+    fireEvent.error(screen.getByRole('img', { name: 'gone.png' }))
+
+    expect(await screen.findByText('File not found')).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'gone.png' })).toBeNull()
+  })
+
   it('offers a video the browser cannot decode as a download instead of a broken player', () => {
     const { container } = open('/tmp/old.avi')
     fireEvent.error(container.querySelector('video')!)
 
     expect(screen.getByText(/No inline view for this file/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute('href', '/api/files/raw/tmp/old.avi')
+  })
+})
+
+/**
+ * An edit outlives the file being swapped out from under it: the tree, a
+ * search result or a pin can open another file while one is being edited.
+ */
+describe('FilePanelViewer edits', () => {
+  const disk: Record<string, string> = { '/srv/a.txt': 'alpha on disk', '/srv/b.txt': 'beta on disk' }
+
+  beforeEach(() => {
+    resetUnsavedForTest()
+    vi.mocked(fetchFileDiff).mockResolvedValue({ path: '', repository: '', diff: '', truncated: false })
+    vi.mocked(readTextFile).mockImplementation(async path => disk[path])
+    vi.mocked(writeTextFile).mockResolvedValue(undefined)
+  })
+
+  function viewer(path: string) {
+    return <FilePanelViewer path={path} onClose={() => {}} onOpenPath={() => {}} onSend={null} />
+  }
+
+  it('keeps an unsaved edit when another file is opened, and reopens it on return', async () => {
+    const { rerender } = render(viewer('/srv/a.txt'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByLabelText('Edit a.txt'), { target: { value: 'alpha, edited' } })
+
+    rerender(viewer('/srv/b.txt'))
+    expect(await screen.findByText('beta on disk')).toBeInTheDocument()
+
+    rerender(viewer('/srv/a.txt'))
+    expect(await screen.findByLabelText('Edit a.txt')).toHaveValue('alpha, edited')
+
+    // Save lets it go: the next visit reads the file as it now is.
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(writeTextFile).toHaveBeenCalledWith('/srv/a.txt', 'alpha, edited'))
+    rerender(viewer('/srv/b.txt'))
+    await screen.findByText('beta on disk')
+    rerender(viewer('/srv/a.txt'))
+    await waitFor(() => expect(screen.queryByLabelText('Edit a.txt')).toBeNull())
+  })
+
+  it('asks before the page is left while an edit is unsaved', async () => {
+    render(viewer('/srv/a.txt'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByLabelText('Edit a.txt'), { target: { value: 'alpha, edited' } })
+
+    const leaving = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(leaving)
+    expect(leaving.defaultPrevented).toBe(true)
   })
 })

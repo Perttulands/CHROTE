@@ -425,7 +425,21 @@
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 
-  .beads-panes-list .beads-pane-detail {
+  .beads-panes.beads-panes-list.with-detail .beads-pane-detail {
+    border-top: 1px solid var(--divider);
+    border-left: none;
+  }
+}
+
+/* Too narrow for the sky and a reader side by side, as on a phone: the
+   selected Bead's text goes beneath the map, each with half the height. */
+@container beads-work (width < 720px) {
+  .beads-panes-map.with-detail {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .beads-panes.beads-panes-map.with-detail .beads-pane-detail {
     border-top: 1px solid var(--divider);
     border-left: none;
   }

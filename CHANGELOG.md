@@ -85,6 +85,10 @@ release.
   Entering a project lands on its sessions (each a Peek away), its key
   documents and its README, with Send to hand it to an agent; find looks only
   inside it. `GET /api/files/find` takes `within=` for that.
+- The Files panel keeps an unsaved edit when another file is opened and
+  reopens the editor on it on return; only Save or Discard lets it go, and the
+  page asks before it is left while one is held. PDFs read inline again, and a
+  picture that cannot be read says why instead of drawing a broken image.
 - Files now exposes everything under `CHROTE_ROOTS` that the service identity's
   Unix permissions allow, while canonical paths remain inside configured roots.
 - Terminal drag/drop, assignment, terminal lifetime, and layout persistence were
