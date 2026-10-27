@@ -181,7 +181,7 @@
   right: var(--resident-drawer-right, 0px);
   bottom: 0;
   z-index: 6;
-  max-width: calc(100% - 240px);
+  max-width: calc(100% - 240px - var(--resident-drawer-right, 0px));
   animation: resident-drawer-in 180ms ease-out;
 }
 

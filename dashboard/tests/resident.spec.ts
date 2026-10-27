@@ -158,6 +158,38 @@ test.describe('The resident column', () => {
     expect(Math.round((await box(column)).width)).toBe(closed)
   })
 
+  // Beside the table the drawer has less room: it ends at the table and must
+  // still start on screen, however wide it was last left.
+  test('stays on screen beside the table in a narrow window', async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 800 })
+    await mockApiRoutes(page)
+    await mockBeadsApiRoutes(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+
+    await openBeadsTab(page)
+    await page.locator('.beads-row[data-ui="beads.row"]', { hasText: 'Fix login bug' }).click()
+    await page.keyboard.press('Enter')
+    const table = page.getByRole('complementary', { name: 'Bead test-ep1.1' })
+    await expect(table).toBeVisible()
+    const column = page.getByRole('complementary', { name: 'The Clerk' })
+    await column.getByRole('button', { name: 'Expand the Clerk' }).click()
+    await expect(column.locator('.resident-header')).toContainText('hq-deacon')
+
+    // Left as wide as the handle will take it.
+    const handle = await box(column.locator('.resident-column-handle'))
+    await page.mouse.move(handle.x + 2, handle.y + 200)
+    await page.mouse.down()
+    await page.mouse.move(10, handle.y + 200, { steps: 8 })
+    await page.mouse.up()
+
+    const [drawerBox, tableBox, content] = [await box(column), await box(table), await box(page.locator('.dashboard-content'))]
+    expect(drawerBox.x).toBeGreaterThanOrEqual(content.x + 240 - 1)
+    expect(drawerBox.width).toBeGreaterThan(200)
+    expect(Math.round(drawerBox.x + drawerBox.width)).toBeLessThanOrEqual(Math.round(tableBox.x) + 1)
+    await expectTerminalFits(column)
+  })
+
   test('offers Launch with the Clerk folder when its session is absent', async ({ page }) => {
     await mockApiRoutes(page)
     await mockBeadsApiRoutes(page)
