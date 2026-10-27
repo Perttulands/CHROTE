@@ -53,3 +53,18 @@ test('phone keeps controls and an action failure visible without a configured ag
   await expect(row.getByRole('alert')).toHaveText('Could not start the service')
   await expect(row.getByRole('alert')).toBeVisible()
 })
+
+test('keeps service actions visible when another panel narrows the desktop pane', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await mockApiRoutes(page)
+  await mockResidentsApiRoute(page, [{ tab: 'services', label: 'Service agent', session: 'hq-deacon', folder: '/work/example', beads: '' }])
+  await page.route('**/api/services', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ services: [{ id: 'example', name: 'Example', description: 'Example service', link: '', state: 'stopped', controllable: true }] }) }))
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Services', exact: true }).click()
+  const main = page.locator('.services-main')
+  await main.evaluate(element => { element.style.flex = 'none'; element.style.width = '480px' })
+  const row = page.getByRole('listitem', { name: /Example/ })
+  const [mainBox, startBox] = [await main.boundingBox(), await row.getByRole('button', { name: 'Start' }).boundingBox()]
+  expect(startBox!.x + startBox!.width).toBeLessThanOrEqual(mainBox!.x + mainBox!.width + 1)
+  await expect(row.getByText('Example service')).toBeHidden()
+})

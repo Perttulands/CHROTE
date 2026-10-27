@@ -19,6 +19,7 @@
   min-width: 0;
   min-height: 0;
   font-size: 13px;
+  container: services / inline-size;
 }
 
 .services-row {
@@ -178,22 +179,14 @@
   text-overflow: ellipsis;
 }
 
-/* A phone drops the description and the link; the menu still opens the link. */
-@media (max-width: 600px) {
-  .services-main {
-    --services-columns: minmax(0, 1fr) 110px 90px;
-  }
+/* A narrow pane drops the description and link; the menu still opens it. */
+@container services (width < 600px) {
+  .services-row { grid-template-columns: minmax(0, 1fr) 110px 90px; }
 
   .services-description,
   .services-link,
   .services-head .services-cell:nth-child(2),
   .services-head .services-cell:nth-child(4) {
-    display: none;
-  }
-
-  /* An unconfigured resident has no drawer to open. Its wide empty header
-     would otherwise take most of a phone's service table. */
-  .services-view .resident-dock:has(.resident-column.bare) {
     display: none;
   }
 
@@ -207,6 +200,11 @@
     padding-bottom: 8px;
     white-space: normal;
   }
+}
+
+@media (max-width: 600px) {
+  /* The empty resident has no drawer; its header would crowd out the list. */
+  .services-view .resident-dock:has(.resident-column.bare) { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
