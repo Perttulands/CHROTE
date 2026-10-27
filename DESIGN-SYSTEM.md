@@ -122,17 +122,26 @@ across the strip brushes the days the table keeps. The rail keeps two filters,
 project and status, each row a box that toggles it and a name that keeps it
 alone; a store is named for its prefix, or for its role when that says more,
 as the brain does. Ids are never cut: the column is as wide as the longest
-shown, up to fifteen characters, and a longer id wraps after a dot. Numeric
+shown, up to fifteen characters, and a longer id wraps after a dot. Beside it
+the type is its word in its colour, the sixth colour rule, so a bug and an epic
+read apart down the column. Numeric
 columns are right-aligned with a faint bar beside the number; when the table
 is too narrow for every column, Updated gives way to Idle, which sorts the
-same. The work graph draws the selected Bead's family: its cards' borders carry
+same, and Size goes. The work graph draws the selected Bead's family: its cards' borders carry
 their project's shelf colour, finished cards are dimmed and blocked cards
 dashed. A long chain wraps into bands one under the next, or runs down a tall
 pane, and a small family shrinks a little below the readable scale rather
-than leave a card out of view. Split puts the graph and the selected Bead's
-own words beside the table, or beneath it when the two no longer fit side by
-side; the text sits beside the graph in a wide pane and beneath it in a tall
-one. The target it was built to is in
+than leave a card out of view. The view is List or Map. In List, nothing
+selected, the table has the pane; a selection puts the graph and the Bead's own
+words beside the table, or beneath it when the two no longer fit side by side,
+and `Escape` in the table lets it go. The text sits beside the graph in a wide
+pane and beneath it in a tall one. Map is the slice as the Brain's sky: each
+epic, or any Bead with children, a system with the Bead at its centre, its open
+work in orbit and its finished work the nebula, so how much is done shows as
+glow; Beads under no parent drift around their project's Unfiled system, and
+parent and blocker links are the lines. A star selects its Bead, whose words
+come in beside the sky. The map places every Bead of the projects kept, so a
+status or a search fades stars rather than moving them. The target it was built to is in
 [`docs/assets/beads-slicer/`](docs/assets/beads-slicer/final-target.png).
 
 Everything else is gone: per-window accent colours, hashed per-user hues, the
@@ -172,6 +181,10 @@ browser: the browser's checkbox, select and 13.33px button face do not appear.
   28px square, for a row whose name already does something else.
 - **Choice** picks one of a few: the current choice in words over a hairline,
   opening the one menu with the choices as rows and the current one checked.
+- **SearchField** is the one search box: 28px over a hairline that takes the
+  accent while typing, its placeholder saying what it searches as "Search …",
+  with a quiet hint at its right for a chord or a count. What a key does beyond
+  typing, such as Down into the results, belongs to the view that owns them.
 - **Quiet button** (`kit-button`) is a word that acts.
 - **Range** (`kit-range`) is a hairline with a small square thumb.
 
@@ -284,7 +297,7 @@ reaches the pty untouched, and so does `AltGr`, which a Finnish layout needs for
 | `Alt+A` | Sessions panel |
 | `Alt+O` | Files panel |
 | `Alt+I` | Close the table |
-| `Alt+Enter` | Focus the resident's column |
+| `Alt+Enter` | Focus the resident's drawer |
 | `Alt+K` | Keybindings panel |
 | `Alt+R` | Report an issue: file a bug or feature as a Bead, and optionally hand it to an agent |
 
@@ -356,7 +369,7 @@ usually has no session waiting for it.
 ## The right edge
 
 Three things share the right edge of a tab, in layers: the table, the Send
-drawer over it, and the resident's column beyond both.
+drawer over it, and the resident's drawer beyond both.
 
 - **The table** holds the one selected object: a Bead, a page, what an agent
   sees. It is global, so the object chosen in one tab is on the table in every
@@ -370,30 +383,29 @@ drawer over it, and the resident's column beyond both.
   with no gutter, so nothing beneath it moves. Its own border and surface say
   that a layer is beneath; no strip of cut words does. It closes after Send and
   on `Escape`, and what was beneath is there again.
-- **The resident's column** is a tmux session that lives in its tab: the
-  Librarian in Brain, the tender in Agents, the Clerk in Beads. It sits
-  at the far right of the tab, 44 columns wide by default, drag-resizable and
-  remembered, under a 32px header carrying the label, the harness mark, the
-  session name, its state as a word, and Send with its chord. The terminal is
+- **The resident's drawer** is a tmux session that lives in its tab: the
+  Librarian in Brain, the tender in Agents, the Clerk in Beads. Closed, it is
+  a 28px spine at the far right of the tab carrying the harness mark, the
+  label and the state, with an accent dot when the resident has news. A click,
+  `Alt+S` or `Alt+Enter` slides it in over the content, never over the table, so
+  the object being handed over stays in sight, 44 columns wide by
+  default, drag-resizable and remembered, under a 32px header carrying the
+  label, the harness mark, the session name, its state as a word, Send with
+  its chord, and Close, which puts it back. The spine keeps its place while
+  the drawer is open, so nothing beneath it moves. The terminal is
   the input; there is no ask line. `Alt+S` in the tab pastes the table's
   reference into the resident's prompt (in Beads, the selected row's Bead
   when there is one) without submitting it, and the operator
   types the rest and presses `Enter` there; the drawer serves every other
-  session. `Alt+Enter` or a click focuses the column. When the session is
-  absent, the column shows Launch with the resident's folder. The column
-  persists per tab, so leaving and returning finds the agent mid-answer. In
-  Brain, where the sky and the reader need the width, the column is a drawer:
-  closed it is a 28px spine carrying the harness mark, the label and the
-  state, with an accent dot when the Librarian has news; a click, `Alt+S` or
-  `Alt+Enter` slides it in over the reader as the same terminal, and Close
-  puts it back. The
+  session. When the session is absent, the drawer shows Launch with the
+  resident's folder. Open or closed is remembered per tab, and the session
+  persists, so leaving and returning finds the agent mid-answer. The
   header's menu offers Peek, Send, Launch and Restart. Which session and folder
   each resident uses is operator configuration, and each resident's charter
   lives on the host outside this repository.
 
-When space runs out, the content keeps 480px first, the table shrinks to its
-minimum, and then the resident's column collapses to its header with Expand. A
-rail narrows to its longest name, between 120 and 200px.
+When space runs out, the content keeps 480px first and the table shrinks to its
+minimum; the resident's spine always keeps its 28px. A rail narrows to its longest name, between 120 and 200px.
 
 ## Floating surfaces
 

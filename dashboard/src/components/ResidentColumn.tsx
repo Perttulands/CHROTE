@@ -10,15 +10,12 @@
  * absent the header offers Launch with the resident's folder; when the host
  * configured nothing, the header says so and nothing else.
  *
- * Closed, by the operator's Collapse or by the squeeze, the column is a strip
- * one line wide: the label and the state word turned on their side, a click or
- * a press anywhere on it opening the column again. The strip is the control,
- * so neither state spends a word of the header on saying which it is.
- *
- * As a drawer (the Librarian's, in the Brain) the strip is where the resident
- * rests: it opens over the edge of what is beside it rather than narrowing it,
- * so nothing in the tab moves, and closes again with its Close word. A dot on
- * the strip says the agent has reported something the operator has not seen.
+ * Every resident is a drawer. Closed, it is a strip one line wide: the label
+ * and the state word turned on their side, a click or a press anywhere on it
+ * opening the drawer. Open, it lies over the edge of what is beside it rather
+ * than narrowing it, so nothing in the tab moves, and closes again with its
+ * Close word. A dot on the strip says the agent has reported something the
+ * operator has not seen.
  *
  * The column owns the terminal it shows rather than taking the pool's: a
  * pooled terminal belongs to the tile that bound it, and a terminal is attached
@@ -35,7 +32,7 @@ import { SessionCommandMark } from './sessionLabel'
 import { useAgentEventMarks } from '../agents/AgentEventsProvider'
 import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
-import { TABLE_CONTENT_MIN, TABLE_WIDTH_MIN, useTableObject } from '../context/TableContext'
+import { useTableObject } from '../context/TableContext'
 import { registerChords } from '../keys/chords'
 import { mountResident } from '../residents/residentPresence'
 import {
@@ -55,7 +52,6 @@ import './ResidentColumn.css'
 export interface ResidentColumnProps {
   /** Whether this column's tab is in front. Hidden columns keep UI state only. */
   active: boolean
-  minContentWidth?: number
   tab: ResidentTab
   /**
    * The one line Alt+S pastes into the resident's prompt: the page open in
@@ -63,8 +59,6 @@ export interface ResidentColumnProps {
    * Bead in Beads, or what is on the table. Null when the tab has nothing in hand.
    */
   reference: string | null
-  /** Rest as a strip and open over the content instead of beside it. */
-  drawer?: boolean
 }
 
 /** What the state word can read, in the order the column decides it. */
@@ -74,12 +68,11 @@ function collapsedKey(tab: ResidentTab): string {
   return `chrote.resident.${tab}.collapsed`
 }
 
-function readCollapsed(tab: ResidentTab, fallback = false): boolean {
+function readCollapsed(tab: ResidentTab): boolean {
   try {
-    const stored = window.localStorage.getItem(collapsedKey(tab))
-    return stored === null ? fallback : stored === 'true'
+    return window.localStorage.getItem(collapsedKey(tab)) !== 'false'
   } catch {
-    return fallback
+    return true
   }
 }
 
@@ -91,7 +84,7 @@ function writeCollapsed(tab: ResidentTab, collapsed: boolean): void {
   }
 }
 
-export default function ResidentColumn({ active, tab, reference, minContentWidth = TABLE_CONTENT_MIN, drawer = false }: ResidentColumnProps) {
+export default function ResidentColumn({ active, tab, reference }: ResidentColumnProps) {
   const {
     sessions,
     settings,
@@ -113,10 +106,10 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
   // The harness the launcher is prefilled with: what the session was last seen
   // running, so a restart comes back as the same kind of agent.
   const [launchHarness, setLaunchHarness] = useState<string | undefined>(undefined)
-  const [collapsed, setCollapsed] = useState(() => readCollapsed(tab, drawer))
-  const [squeezed, setSqueezed] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => readCollapsed(tab))
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const columnRef = useRef<HTMLElement>(null)
+  const dockRef = useRef<HTMLDivElement>(null)
 
   // One request when the tab opens; nothing polls the host for its residents.
   useEffect(() => {
@@ -136,9 +129,9 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
   }, [announce, tab])
 
   useEffect(() => {
-    setCollapsed(readCollapsed(tab, drawer))
+    setCollapsed(readCollapsed(tab))
     setLaunching(false)
-  }, [drawer, tab])
+  }, [tab])
 
   const label = resident?.label || RESIDENT_LABELS[tab]
   const sessionName = resident?.session ?? ''
@@ -164,17 +157,13 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
   }, [session?.currentCommand])
 
   // Width: the remembered one, or 44 columns at the tile font, and never more
-  // than the tab can spare once the content keeps its 480px and the table its
-  // minimum.
+  // than leaves the tab 240px beside the open drawer and the table.
   const remembered = clampResidentWidth(settings.residentWidth, settings.fontSize)
-  const tableOpen = table !== null
-
-  const room = useCallback(() => {
-    const parent = columnRef.current?.parentElement
-    if (!parent) return Number.POSITIVE_INFINITY
-    return parent.clientWidth - minContentWidth - (tableOpen ? TABLE_WIDTH_MIN : 0)
-  }, [tableOpen, minContentWidth])
-  const widest = useCallback(() => Math.max(RESIDENT_WIDTH_MIN, room()), [room])
+  const besideTableRef = useRef(0)
+  const widest = useCallback(() => {
+    const row = columnRef.current?.offsetParent
+    return row ? Math.max(RESIDENT_WIDTH_MIN, row.clientWidth - 240 - besideTableRef.current) : Number.POSITIVE_INFINITY
+  }, [])
   const commitWidth = useCallback((residentWidth: number) => {
     updateSettings({ residentWidth })
   }, [updateSettings])
@@ -188,44 +177,28 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
   })
   const width = resize.width
 
-  // The squeeze: when the tab runs out of room the column collapses to its
-  // header rather than narrowing the content, and comes back when room does.
+  // The table beside the strip keeps the content at 480px, and the Send drawer
+  // overlays the table rather than the strip, only if both know how much the
+  // strip takes: the workspace carries the figure for them.
   useEffect(() => {
-    const parent = columnRef.current?.parentElement
-    if (!parent || typeof ResizeObserver === 'undefined') return
-    const measure = () => setSqueezed(room() < width)
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(parent)
-    return () => observer.disconnect()
-  }, [room, width])
-
-  // The table beside this column keeps the content at 480px, and the Send
-  // drawer overlays the table rather than this column, only if both know how
-  // much this column takes: the workspace carries the figure for them.
-  useEffect(() => {
-    const column = columnRef.current
-    const holder = column?.closest<HTMLElement>('.dashboard-content') ?? column?.parentElement
-    if (!column || !holder || typeof ResizeObserver === 'undefined') return
-    const tell = () => holder.style.setProperty('--resident-width', `${column.offsetWidth}px`)
+    const dock = dockRef.current
+    const holder = dock?.closest<HTMLElement>('.dashboard-content') ?? dock?.parentElement
+    if (!dock || !holder || typeof ResizeObserver === 'undefined') return
+    const tell = () => holder.style.setProperty('--resident-width', `${dock.offsetWidth}px`)
     tell()
     const observer = new ResizeObserver(tell)
-    observer.observe(column)
+    observer.observe(dock)
     return () => {
       observer.disconnect()
       holder.style.removeProperty('--resident-width')
     }
   }, [])
 
-  // Until the host has answered, the column keeps its full width: a tab that
-  // laid itself out and then moved would break the rule that nothing shifts.
-  //
-  // Collapsed, by the operator or by the squeeze, the column is a strip a few
-  // pixels wide carrying the label and the state word in one rotated line. A
-  // host that configured no session is not a strip: it is the header saying so.
+  // Closed, the drawer is a strip a few pixels wide carrying the label and the
+  // state word in one rotated line. A host that configured no session is not a
+  // strip: it is the header saying so.
   const unconfigured = state === 'not configured'
-  // A drawer opens over the content, so the squeeze does not close it.
-  const stripped = !unconfigured && (collapsed || (!drawer && squeezed))
+  const stripped = !unconfigured && collapsed
   const showsHeaderOnly = stripped || unconfigured
   const showsTerminal = active && running && !showsHeaderOnly
   const showsLauncher = launching && !showsHeaderOnly && resident !== null && !running
@@ -240,7 +213,7 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
   // once it is there.
   const focusWhenOpen = useRef(false)
   const focus = useCallback(() => {
-    if (drawer && collapsed) {
+    if (collapsed) {
       focusWhenOpen.current = true
       writeCollapsed(tab, false)
       setCollapsed(false)
@@ -248,7 +221,7 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
     }
     if (terminal) terminal.focus()
     else columnRef.current?.focus()
-  }, [collapsed, drawer, tab, terminal])
+  }, [collapsed, tab, terminal])
   useEffect(() => {
     if (!terminal || !focusWhenOpen.current) return
     focusWhenOpen.current = false
@@ -300,9 +273,8 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
     return mountResident({ tab, focus, paste: pasteLine })
   }, [active, focus, pasteLine, tab])
 
-  // The strip is the control that opens the column again, and the menu is the
-  // one that closes it; the header carries no word for either. While the
-  // squeeze holds there is no room to give back, so opening waits for room.
+  // The strip is the control that opens the drawer, and Close the one that
+  // closes it.
   const setCollapsedTo = useCallback((next: boolean) => {
     writeCollapsed(tab, next)
     setCollapsed(next)
@@ -351,13 +323,6 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
           reason: running ? undefined : 'The session is not running',
           onSelect: () => { void paste() },
         },
-        {
-          id: 'collapse',
-          label: 'Collapse',
-          disabled: collapsed,
-          reason: collapsed ? 'The column is already a strip' : undefined,
-          onSelect: () => setCollapsedTo(true),
-        },
       ],
     },
     {
@@ -383,13 +348,40 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
     },
   ]
 
-  const style = { '--resident-column-width': `${width}px` } as CSSProperties
+  const open = !stripped && !unconfigured
 
-  const open = drawer && !stripped && !unconfigured
+  // An open drawer lies over the content, not over the table: the object the
+  // operator is handing over stays in sight beside it.
+  const [besideTable, setBesideTable] = useState(0)
+  useEffect(() => {
+    const column = open && table ? dockRef.current?.previousElementSibling?.querySelector<HTMLElement>('.table-column') : null
+    if (!column || typeof ResizeObserver === 'undefined') {
+      besideTableRef.current = 0
+      setBesideTable(0)
+      return
+    }
+    // From the table's left edge to the right of the row the drawer is placed
+    // in, so the dock's strip between them is counted too.
+    const measure = () => {
+      const row = columnRef.current?.offsetParent
+      besideTableRef.current = row ? Math.round(row.getBoundingClientRect().right - column.getBoundingClientRect().left) : column.offsetWidth
+      setBesideTable(besideTableRef.current)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(column)
+    return () => observer.disconnect()
+  }, [open, table])
+
+  const style = {
+    '--resident-column-width': `${width}px`,
+    '--resident-drawer-right': `${besideTable}px`,
+  } as CSSProperties
+
   return (
-    <>
-    {/* An open drawer leaves its strip's width behind it, so nothing moves. */}
-    {open && <div className="resident-drawer-space" aria-hidden="true" />}
+    // The dock is the drawer's place in the tab's row: the strip's width,
+    // kept while the drawer lies open over the content, so nothing moves.
+    <div ref={dockRef} className={`resident-dock${open ? ' open' : ''}`}>
     <aside
       ref={columnRef}
       className={`resident-column${stripped ? ' collapsed' : ''}${unconfigured ? ' bare' : ''}${open ? ' drawer' : ''}`}
@@ -446,7 +438,7 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
               Send<span className="resident-chord" aria-hidden="true">Alt+S</span>
             </button>
           )}
-          {drawer && (
+          {!unconfigured && (
             <button type="button" className="resident-action" onClick={() => setCollapsedTo(true)}>Close</button>
           )}
         </div>
@@ -477,6 +469,6 @@ export default function ResidentColumn({ active, tab, reference, minContentWidth
         />
       )}
     </aside>
-    </>
+    </div>
   )
 }

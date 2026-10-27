@@ -12,6 +12,7 @@
 }
 
 .agents-columns {
+  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -20,19 +21,6 @@
 
 .agents-filter {
   flex: none;
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  background-color: var(--background);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
-}
-
-.agents-filter:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 .agents-rail-row {

@@ -1,4 +1,4 @@
-import { normalizeFilePath } from '../FileViewer'
+import { normalizeFilePath } from '../fileKinds'
 
 export function joinFilePath(parent: string, name: string): string {
   const cleanParent = normalizeFilePath(parent)

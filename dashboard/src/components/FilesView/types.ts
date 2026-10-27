@@ -49,35 +49,8 @@ export interface DirectoryResponse {
   name?: string
 }
 
-// ============================================
-// CONTEXT MENU TYPES
-// ============================================
-
-export interface ContextMenuState {
-  x: number
-  y: number
-  item: FileItem | null
-}
-
-export type SortKey = 'name' | 'size' | 'modified'
-export type SortDir = 'asc' | 'desc'
-export type ViewMode = 'list' | 'grid'
-export type CreateKind = 'file' | 'folder'
-
 export interface FilesViewProps {
   navigateRequest?: { path: string; nonce: number } | null
-  onSendPath?: (path: string) => void
-  sendTargetLabel?: string | null
-}
-
-export interface TabContextMenuState {
-  x: number
-  y: number
-  path: string
-}
-
-export interface CreateIntent {
-  kind: CreateKind
-  parentPath: string
-  name: string
+  /** The session a path is sent to: the terminal last in front. */
+  sendTarget?: string | null
 }

@@ -26,12 +26,6 @@ function sortTreeItems(items: FileItem[]): FileItem[] {
   })
 }
 
-function fileBadge(item: FileItem): string {
-  if (item.isDir) return 'DIR'
-  const extension = item.name.toLowerCase().split('.').pop()
-  return extension && extension !== item.name.toLowerCase() ? extension.slice(0, 4).toUpperCase() : 'TXT'
-}
-
 function ancestorPaths(path: string): string[] {
   const parts = path.split('/').filter(Boolean)
   const paths = ['/']
@@ -186,8 +180,8 @@ function FileTree({
           ) : (
             <span className="fb-tree-toggle fb-tree-toggle-spacer" aria-hidden="true" />
           )}
-          <span className={`fb-tree-glyph ${item.isDir ? 'folder' : 'file'}`}>{fileBadge(item)}</span>
-          <span className="fb-tree-name" title={item.path}>{item.name}</span>
+          {/* A folder says so by its shape, the slash after its name, not a badge. */}
+          <span className="fb-tree-name" title={item.path}>{item.isDir ? `${item.name}/` : item.name}</span>
         </div>
         {expanded && (
           <div className="fb-tree-children" role="group">

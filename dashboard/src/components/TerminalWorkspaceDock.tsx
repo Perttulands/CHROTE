@@ -84,7 +84,7 @@ function TerminalWorkspaceDock({
     setFilesDockState(previous => ({ ...previous, open: !previous.open }))
     if (!opening) return
     requestAnimationFrame(() => {
-      const field = document.getElementById(filesPanelId)?.querySelector('input[aria-label="Find files"]')
+      const field = document.getElementById(filesPanelId)?.querySelector('input[aria-label="Search files"]')
       if (field instanceof HTMLInputElement) field.focus()
     })
   }, [filesDockState.open, filesPanelId])

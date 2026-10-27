@@ -11,12 +11,13 @@
  * characters; a longer id, a deep child such as studio-km6.12.8.1.106, breaks
  * after a dot onto a second line rather than being cut. A pane narrower than
  * every column drops Updated, which Idle says in days and sorts in the same
- * order, and lets the title narrow a little, before the table would scroll
- * sideways.
+ * order, and Size, and lets the title narrow a little, before the table would
+ * scroll sideways.
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react'
+import BeadTypeLabel from '../BeadTypeLabel'
 import MenuTarget from '../MenuTarget'
 import type { MenuGroup } from '../Menu'
 import { beadGlyph, formatBeadTime } from '../../beads/beadStatus'
@@ -36,6 +37,7 @@ const OVERSCAN = 8
 
 const COLUMNS: { key: SliceSortKey; label: string; numeric?: boolean; title: string; width: number }[] = [
   { key: 'id', label: 'ID', title: 'Bead id', width: 0 },
+  { key: 'type', label: 'Type', title: 'What kind of work: bug, feature, task, epic, chore or decision', width: 84 },
   { key: 'title', label: 'Title', title: 'Title', width: 140 },
   { key: 'project', label: 'Project', title: 'The store the Bead lives in', width: 108 },
   { key: 'status', label: 'Status', title: 'Status, blocked by any unfinished blocker in any store', width: 112 },
@@ -46,6 +48,8 @@ const COLUMNS: { key: SliceSortKey; label: string; numeric?: boolean; title: str
 ]
 /** The narrowest a title gets once Updated is gone. */
 const COMPACT_TITLE = 120
+/** What a pane too narrow for every column does without. */
+const COMPACT_DROPS: ReadonlySet<SliceSortKey> = new Set(['updated', 'size'])
 /** An id cell's padding, and a pixel to spare. */
 const ID_PAD = 16
 /** The selection border, and the room the body keeps for its scrollbar. */
@@ -61,7 +65,7 @@ export function idColumnChars(index: Pick<SliceIndex, 'idChars'>): number {
 /** The columns' fixed pixels beside the id, every column or compact. */
 function fixedWidth(compact: boolean): number {
   return COLUMNS.reduce((sum, column) => {
-    if (column.key === 'id' || (compact && column.key === 'updated')) return sum
+    if (column.key === 'id' || (compact && COMPACT_DROPS.has(column.key))) return sum
     return sum + (compact && column.key === 'title' ? COMPACT_TITLE : column.width)
   }, ID_PAD + ROW_EDGE)
 }
@@ -83,6 +87,8 @@ interface BeadTableProps {
   reveal: number
   onSort: (key: SliceSortKey, dir: SortDirection) => void
   onSelect: (row: number) => void
+  /** Let the selection go, so the table has the whole pane again. */
+  onDeselect: () => void
   onOpen: (row: number) => void
   /** Hand the row's Bead to a session. */
   onSend: (row: number) => void
@@ -102,7 +108,7 @@ function Bar({ fraction }: { fraction: number }) {
   )
 }
 
-function BeadTable({ index, idChars, ordered, selected, sort, dir, reveal, onSort, onSelect, onOpen, onSend, onCopy }: BeadTableProps) {
+function BeadTable({ index, idChars, ordered, selected, sort, dir, reveal, onSort, onSelect, onDeselect, onOpen, onSend, onCopy }: BeadTableProps) {
   const root = useRef<HTMLDivElement>(null)
   const probe = useRef<HTMLSpanElement>(null)
   const body = useRef<HTMLDivElement>(null)
@@ -143,7 +149,7 @@ function BeadTable({ index, idChars, ordered, selected, sort, dir, reveal, onSor
     observer.observe(element)
     return () => observer.disconnect()
   }, [idChars])
-  const columns = useMemo(() => COLUMNS.filter(column => !(compact && column.key === 'updated')), [compact])
+  const columns = useMemo(() => COLUMNS.filter(column => !(compact && COMPACT_DROPS.has(column.key))), [compact])
   const layout = useMemo(() => ({
     '--beads-columns': columns.map(column => column.key === 'id'
       ? `calc(${idChars}ch + ${ID_PAD}px)`
@@ -184,6 +190,7 @@ function BeadTable({ index, idChars, ordered, selected, sort, dir, reveal, onSor
       case 'Home': move(0); break
       case 'End': move(ordered.length - 1); break
       case 'Enter': if (selected >= 0) onOpen(selected); break
+      case 'Escape': if (selected < 0) return; onDeselect(); event.stopPropagation(); break
       default: return
     }
     event.preventDefault()
@@ -244,6 +251,7 @@ function BeadTable({ index, idChars, ordered, selected, sort, dir, reveal, onSor
           <span className="beads-cell beads-cell-id" role="gridcell" title={bead.id.length > idChars ? bead.id : undefined}>
             {bead.id.length > idChars ? breakable(bead.id) : bead.id}
           </span>
+          <span className="beads-cell beads-cell-type" role="gridcell"><BeadTypeLabel type={bead.type} /></span>
           <span className="beads-cell beads-cell-title" role="gridcell" title={bead.title}>{bead.title}</span>
           <span className="beads-cell beads-cell-project" role="gridcell" title={project.path}>{project.label}</span>
           <span className="beads-cell beads-cell-status" role="gridcell" title={bead.status.replace(/_/g, ' ')}>
@@ -259,10 +267,12 @@ function BeadTable({ index, idChars, ordered, selected, sort, dir, reveal, onSor
             {idle >= 0 ? `${idle}d` : ''}
             <Bar fraction={index.maxIdle > 0 && idle > 0 ? idle / index.maxIdle : 0} />
           </span>
-          <span className="beads-cell beads-cell-number" role="gridcell" title={`${size} characters`}>
-            {formatSize(size)}
-            <Bar fraction={logSize > 0 ? Math.log1p(size) / logSize : 0} />
-          </span>
+          {!compact && (
+            <span className="beads-cell beads-cell-number" role="gridcell" title={`${size} characters`}>
+              {formatSize(size)}
+              <Bar fraction={logSize > 0 ? Math.log1p(size) / logSize : 0} />
+            </span>
+          )}
           <span className="beads-cell beads-cell-number" role="gridcell">
             {kids}
             <Bar fraction={logKids > 0 ? Math.log1p(kids) / logKids : 0} />

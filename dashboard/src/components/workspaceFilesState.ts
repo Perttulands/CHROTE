@@ -1,13 +1,7 @@
 import type { WorkspaceId } from '../types'
 
-export type MarkdownMode = 'preview' | 'source' | 'split'
-
-export interface FileViewState {
-  scrollTop: number
-  markdownMode: MarkdownMode
-  fontSize: number
-  markdownSplitPercent: number
-}
+/** Whose files a state belongs to: a terminal workspace's sidecar, or the Files tab. */
+export type FilesHome = WorkspaceId | 'files'
 
 export interface WorkspaceFilesState {
   currentPath: string
@@ -36,13 +30,6 @@ const WORKSPACE_FILES_DOCK_STORAGE_KEY = 'chrote.workspaceFilesDock.v1'
 const LEGACY_DOCK_V2_STORAGE_KEY = 'chrote.workspaceDock.v2'
 const LEGACY_DOCK_STORAGE_KEY = 'chrote.workspaceDock.v1'
 const FILES_STORAGE_KEY = 'chrote.workspaceFiles.v1'
-
-export const DEFAULT_FILE_VIEW_STATE: FileViewState = {
-  scrollTop: 0,
-  markdownMode: 'preview',
-  fontSize: 15,
-  markdownSplitPercent: 50,
-}
 
 export const DEFAULT_SESSIONS_DOCK_STATE: SessionsDockState = {
   open: false,
@@ -97,7 +84,7 @@ function storageKeyExists(key: string): boolean {
   }
 }
 
-function writeStorageMap(key: string, workspaceId: WorkspaceId, value: unknown, version = 1): void {
+function writeStorageMap(key: string, workspaceId: FilesHome, value: unknown, version = 1): void {
   if (typeof window === 'undefined') return
   try {
     const stored = readStorageMap(key, version)
@@ -188,7 +175,7 @@ export function writeSessionsDockState(state: SessionsDockState): void {
   })
 }
 
-export function readWorkspaceFilesDockState(workspaceId: WorkspaceId): WorkspaceFilesDockState {
+export function readWorkspaceFilesDockState(workspaceId: FilesHome): WorkspaceFilesDockState {
   const raw = readStorageMap(WORKSPACE_FILES_DOCK_STORAGE_KEY)[workspaceId]
   if (isRecord(raw)) {
     return {
@@ -219,14 +206,14 @@ export function readWorkspaceFilesDockState(workspaceId: WorkspaceId): Workspace
   return { ...DEFAULT_WORKSPACE_FILES_DOCK_STATE }
 }
 
-export function writeWorkspaceFilesDockState(workspaceId: WorkspaceId, state: WorkspaceFilesDockState): void {
+export function writeWorkspaceFilesDockState(workspaceId: FilesHome, state: WorkspaceFilesDockState): void {
   writeStorageMap(WORKSPACE_FILES_DOCK_STORAGE_KEY, workspaceId, {
     open: state.open === true,
     width: finiteNumber(state.width, DEFAULT_WORKSPACE_FILES_DOCK_STATE.width, 240, 560),
   })
 }
 
-export function readWorkspaceFilesState(workspaceId: WorkspaceId): WorkspaceFilesState {
+export function readWorkspaceFilesState(workspaceId: FilesHome): WorkspaceFilesState {
   const raw = readStorageMap(FILES_STORAGE_KEY)[workspaceId]
   if (!isRecord(raw)) return {
     ...DEFAULT_WORKSPACE_FILES_STATE,
@@ -247,7 +234,7 @@ export function readWorkspaceFilesState(workspaceId: WorkspaceId): WorkspaceFile
   }
 }
 
-export function writeWorkspaceFilesState(workspaceId: WorkspaceId, state: WorkspaceFilesState): void {
+export function writeWorkspaceFilesState(workspaceId: FilesHome, state: WorkspaceFilesState): void {
   writeStorageMap(FILES_STORAGE_KEY, workspaceId, {
     ...state,
     expandedPaths: Array.from(new Set(state.expandedPaths.filter(path => path.startsWith('/')))),

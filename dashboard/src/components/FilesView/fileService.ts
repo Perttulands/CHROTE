@@ -127,16 +127,18 @@ export interface FileDiffResult {
 }
 
 /**
- * Find files by name across the configured roots.
+ * Find files by name across the configured roots, or within one folder under
+ * them, such as the project the operator is in.
  *
  * The server owns the walk, the ignore list and the result bound; the client
  * only carries the query and the caller's abort signal, so a keystroke that has
  * been overtaken stops costing anything.
  */
-export async function findFiles(query: string, signal?: AbortSignal): Promise<FindResult> {
+export async function findFiles(query: string, signal?: AbortSignal, within?: string): Promise<FindResult> {
+  const scope = within ? `&within=${encodeURIComponent(within)}` : ''
   let response: Response
   try {
-    response = await fetch(`${API_BASE}/find?q=${encodeURIComponent(query)}`, {
+    response = await fetch(`${API_BASE}/find?q=${encodeURIComponent(query)}${scope}`, {
       headers: { Accept: 'application/json' },
       signal: signal ?? AbortSignal.timeout(10000),
     })

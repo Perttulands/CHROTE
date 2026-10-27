@@ -201,7 +201,7 @@ test.describe('Session Context Menu', () => {
     await row('hq-mayor').click({ modifiers: ['ControlOrMeta'] })
 
     // Filtered out, hq-mayor stays selected but is not one of the kills.
-    await page.getByPlaceholder('Filter sessions...').fill('gastown')
+    await page.getByPlaceholder('Search sessions…').fill('gastown')
     await expect(row('hq-mayor')).toHaveCount(0)
 
     await row('gt-gastown-joe').click({ button: 'right' })
@@ -217,7 +217,7 @@ test.describe('Session Context Menu', () => {
 
     // Back in view, hq-mayor is still selected; Ctrl adds main, and Delete
     // asks for the same confirm before anything is killed.
-    await page.getByPlaceholder('Filter sessions...').fill('')
+    await page.getByPlaceholder('Search sessions…').fill('')
     await row('main').click({ modifiers: ['ControlOrMeta'] })
     await page.keyboard.press('Delete')
     await expect(page.getByRole('menuitem', { name: 'Confirm kill 2' })).toBeFocused()

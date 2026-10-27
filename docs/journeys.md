@@ -80,18 +80,19 @@ a Bead to the Clerk, the agent that keeps the register.
    projects and statuses; a drag across the daily strip keeps the days a run of
    work happened in. The columns sort, so the oldest idle or the largest open
    Beads come first.
-3. Read a Bead's family without leaving the view: in Split, the work graph
-   beside the table follows the selected row, with its parent, its children
-   and the blocking edges to and from other stores.
+3. Read a Bead's family without leaving the view: in List, selecting a row
+   brings the work graph beside the table, with its parent, its children
+   and the blocking edges to and from other stores. Map shows the whole slice
+   as epics in the Brain's sky, open work in orbit and finished work as glow.
 4. Open a Bead's card on the table with `Enter` or a double-click.
 5. Copy the view's link; it opens the same slice in a fresh tab.
 6. Open a Bead id printed in terminal output and read it on the table beside
    the session that named it.
-7. Hand the Bead to the Clerk, whose column is at the right of the tab.
+7. Hand the Bead to the Clerk, whose drawer rests at the right of the tab.
 
 **Surfaces.** Beads tab, its strip, its table and its graph (1, 2, 3, 5); the
 table (4, 6); terminal workspace with the table at its right, for ids in
-output (6); the Clerk's column (7); the Send drawer, for any other session (7).
+output (6); the Clerk's drawer (7); the Send drawer, for any other session (7).
 
 **End action.** Paste into the Clerk: `Alt+S` puts the Bead's reference into the
 Clerk's prompt, and the operator writes the rest and presses `Enter` there.
@@ -145,7 +146,8 @@ hand or hand the path to an agent.
 4. Fix a small thing in place and save, or hand the path over.
 
 **Surfaces.** The Files panel beside the terminal (1, 2, 3, 4); the Files tab,
-for browsing (1, 2); the Send drawer (4).
+the same panel as a tab with the file beside it, opening on the host's projects
+and finding within the one entered (1, 2, 3, 4); the Send drawer (4).
 
 **End action.** A small manual edit, or Send to Session with the file's path as
 the reference.

@@ -16,8 +16,11 @@ import {
   type SortDirection,
 } from './beadsSlice'
 
-export type BeadsMode = 'split' | 'table' | 'graph'
-export const BEADS_MODES: readonly BeadsMode[] = ['split', 'table', 'graph']
+/** The table, with the selected Bead beside it; or the map of the slice. */
+export type BeadsMode = 'list' | 'map'
+export const BEADS_MODES: readonly BeadsMode[] = ['list', 'map']
+/** What links copied before the two modes named. */
+const EARLIER_MODES: Record<string, BeadsMode> = { split: 'list', table: 'list', graph: 'map' }
 
 /** The strip spans the recent days, or every day since the first Bead. */
 export type StripSpan = 'recent' | 'all'
@@ -43,7 +46,7 @@ export interface SliceViewState {
 }
 
 export const DEFAULT_VIEW: SliceViewState = {
-  q: '', projects: null, statuses: null, range: null, span: 'recent', sort: 'updated', dir: 'desc', selected: null, mode: 'split',
+  q: '', projects: null, statuses: null, range: null, span: 'recent', sort: 'updated', dir: 'desc', selected: null, mode: 'list',
 }
 
 /** Every query key the view owns, the tab included. */
@@ -82,7 +85,9 @@ export function readViewState(search: string): SliceViewState {
     selected: selection
       ? at > 0 ? { id: selection.slice(0, at), project: selection.slice(at + 1) } : { id: selection }
       : null,
-    mode: (BEADS_MODES as readonly string[]).includes(modeValue ?? '') ? modeValue as BeadsMode : DEFAULT_VIEW.mode,
+    mode: (BEADS_MODES as readonly string[]).includes(modeValue ?? '')
+      ? modeValue as BeadsMode
+      : EARLIER_MODES[modeValue ?? ''] ?? DEFAULT_VIEW.mode,
   }
 }
 

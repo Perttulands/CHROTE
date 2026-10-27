@@ -27,7 +27,7 @@ The host runs tmux, the CHROTE server, and the resources exposed through CHROTE.
 - GLB models open inline with drag-to-orbit, wheel/pinch zoom and Reset view.
 - In the file tree and sidebar search results, Up/Down moves between visible rows and opens files; Down from Find files enters the list.
 
-- The Files view and terminal sidecar browse, read, edit, compare, rename, and send files under configured roots.
+- The Files view and terminal sidecar are one Files panel: beside a terminal it is a sidecar whose file hangs off its edge; as the Files tab it is the tab's column, with the file filling the rest. The tab opens on the host's projects (the workspaces the server lists), grouped by the folder they live in with their live sessions and open Beads, then the roots for everything else; inside a project, find looks only there and the project lands on its sessions, key documents and README. Both browse, find by name, read, edit, compare, rename, and send files under configured roots.
 - Canonical-path checks keep file operations inside those roots after symlink resolution.
 - A link of the form `/?files=<path>` opens the Files view at that path. File uploads and downloads take as long as the link needs; uploads stream to disk, up to the configured upload limit.
 - Unix permissions decide what the service identity can access. CHROTE reports permission failures plainly and does not add a second file-access policy.
@@ -58,7 +58,7 @@ The core product is terminal workspaces, sessions, files, server status, and set
 | Brain | See the context corpus as a sky of subjects, follow references, read and correct pages |
 | Agents | Read the context a harness would get for any folder on the host |
 
-Beads, Brain and Agents each host a resident agent, the Clerk, the Librarian and the tender, as a tmux session at the right of the view (in Brain, a drawer behind a spine); the one selected object, the table, is carried from view to view.
+Beads, Brain and Agents each host a resident agent, the Clerk, the Librarian and the tender, as a tmux session in a drawer behind a spine at the right of the view; the one selected object, the table, is carried from view to view.
 
 Brain is one view: the brain as a night sky, with search along its top edge.
 The sky is for getting a feel of what the brain knows and whether it looks in
@@ -92,7 +92,8 @@ behind a spine at the tab's right edge and opens as a drawer over the reader.
 Components remain separated in the codebase and fail independently. A missing Beads workspace or unconfigured context corpus must not prevent terminal work.
 
 Beads browsing is one table of every Bead on the host, sliced by search,
-project, status and days, with the selected Bead's work graph beside it, and the
+project, status and days, with the selected Bead's work graph beside it; the
+same slice as a map of its epics in the Brain's sky; and the
 whole slice carried in the view's link. Visible work updates automatically while
 preserving query, selection, graph position, table trail and drafts. Each store
 reports whether it was read, is being read or failed; incomplete host data must

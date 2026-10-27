@@ -43,10 +43,32 @@ async function mockFilebrowserApi(page: Page, options?: {
     })
   })
 
+  // Typing at home also finds files everywhere beneath the projects.
+  await page.route('**/api/files/find*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ matches: [], truncated: false }),
+  }))
+
+  await page.route('**/api/files/diff*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ path: '', repository: '', diff: '', truncated: false }),
+  }))
+
   await page.route(fileResourcesPattern, async route => {
     const url = route.request().url()
 
+    // The roots: one, /work, holding what the test lists.
     if (url.endsWith('/resources/') || url.endsWith('/resources')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ isDir: true, items: [{ name: 'work', size: 0, modified: '2024-01-15T10:00:00Z', isDir: true, type: '' }] }),
+      })
+      return
+    }
+    if (url.endsWith('/resources/work') || url.endsWith('/resources/work/')) {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -66,28 +88,51 @@ async function mockFilebrowserApi(page: Page, options?: {
   })
 }
 
-test.describe('Filebrowser layout regressions', () => {
-  test('Markdown Source fills the artifact viewport instead of collapsing to textarea rows', async ({ page }) => {
+test.describe('The Files tab', () => {
+  test('opens on the projects, and a project lands beside the column', async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 760 })
+    await mockFilebrowserApi(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    await page.click('.tab:has-text("Files")')
+
+    const code = page.getByRole('list', { name: '/code' })
+    await expect(code.getByRole('listitem')).toHaveCount(3)
+    await expect(page.getByRole('list', { name: '/srv' }).getByRole('listitem', { name: /chrote/ })).toContainText('1 live')
+    await page.getByRole('searchbox', { name: 'Search projects' }).fill('quiet')
+    await expect(code.getByRole('listitem')).toHaveCount(1)
+    await page.keyboard.press('Enter')
+
+    const landing = page.getByRole('article', { name: 'Project quiet-project' })
+    await expect(landing).toBeVisible()
+    await expect(page.getByRole('searchbox', { name: 'Search files in quiet-project' })).toBeVisible()
+    const [panelBox, landingBox] = [
+      (await page.getByRole('complementary', { name: 'Files', exact: true }).boundingBox())!,
+      (await landing.boundingBox())!,
+    ]
+    expect(landingBox.x).toBeGreaterThanOrEqual(panelBox.x + panelBox.width - 1)
+  })
+
+  test('reads a file beside the tree, filling the rest of the tab', async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 760 })
     await mockFilebrowserApi(page, {
-      rootItems: [{ name: 'README.md', size: 4096, modified: '2026-07-13T00:00:00Z', isDir: false, type: 'text/markdown' }],
-      rawBody: Array.from({ length: 160 }, (_, index) => `line ${index} ${'source '.repeat(24)}`).join('\n'),
+      rootItems: [{ name: 'notes.txt', size: 4096, modified: '2026-07-13T00:00:00Z', isDir: false, type: 'text/plain' }],
+      rawBody: Array.from({ length: 160 }, (_, index) => `line ${index}`).join('\n'),
     })
     await page.goto('/')
     await page.waitForSelector('.dashboard')
     await page.click('.tab:has-text("Files")')
-    await page.click('.fb-row:has-text("README.md")')
-    await page.getByRole('button', { name: 'Show Markdown source' }).click()
+    await page.getByRole('list', { name: 'Roots' }).getByRole('listitem', { name: '/work' }).click()
+    await page.locator('.files-tab .fb-tree-row', { hasText: 'notes.txt' }).click()
 
-    const source = page.getByRole('textbox', { name: 'Markdown source for README.md' })
-    const viewport = page.getByTestId('file-viewer-scroll')
-    await expect(source).toHaveAttribute('wrap', 'off')
-    const sourceBox = await source.boundingBox()
-    const viewportBox = await viewport.boundingBox()
-    expect(sourceBox).toBeTruthy()
-    expect(viewportBox).toBeTruthy()
-    expect(sourceBox!.width).toBeGreaterThanOrEqual(viewportBox!.width - 2)
-    expect(sourceBox!.height).toBeGreaterThanOrEqual(viewportBox!.height - 2)
+    const panel = page.getByRole('complementary', { name: 'Files', exact: true })
+    const viewer = page.getByRole('region', { name: 'File' })
+    await expect(viewer).toContainText('line 159')
+    const [panelBox, viewerBox] = [(await panel.boundingBox())!, (await viewer.boundingBox())!]
+    expect(viewerBox.x).toBeGreaterThanOrEqual(panelBox.x + panelBox.width - 1)
+    expect(viewerBox.x + viewerBox.width).toBeGreaterThanOrEqual(1200 - 1)
+    // No pop-out: the file is the tab's, not a window over it.
+    await expect(page.getByRole('dialog', { name: 'File notes.txt' })).toHaveCount(0)
   })
 
   test('the explorer tree scrolls a folder too long to fit instead of stretching the page', async ({ page }) => {
@@ -103,6 +148,7 @@ test.describe('Filebrowser layout regressions', () => {
     await page.goto('/')
     await page.waitForSelector('.dashboard')
     await page.click('.tab:has-text("Files")')
+    await page.getByRole('list', { name: 'Roots' }).getByRole('listitem', { name: '/work' }).click()
 
     const tree = page.getByRole('tree', { name: 'File tree' })
     await expect(tree.getByRole('treeitem')).toHaveCount(80)

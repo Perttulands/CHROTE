@@ -37,7 +37,7 @@ test.describe('terminal workspace sidecars', () => {
     await page.keyboard.press('Alt+o')
 
     await expect(filesTrigger).toHaveAttribute('aria-expanded', 'true')
-    await expect(page.getByRole('textbox', { name: 'Find files' })).toBeFocused()
+    await expect(page.getByRole('searchbox', { name: 'Search files' })).toBeFocused()
 
     await page.keyboard.press('Alt+o')
     await expect(filesTrigger).toHaveAttribute('aria-expanded', 'false')
@@ -137,7 +137,7 @@ test.describe('terminal workspace sidecars', () => {
     await expect(sessions).toHaveClass(/sidecar-pinned/)
     const sessionsWidth = await sessions.evaluate(element => element.getBoundingClientRect().width)
 
-    const filter = page.getByPlaceholder('Filter sessions...')
+    const filter = page.getByPlaceholder('Search sessions…')
     await filter.fill('hq')
     const groupHeader = page.locator('.session-group-header').first()
     const groupName = await groupHeader.locator('.group-name').innerText()

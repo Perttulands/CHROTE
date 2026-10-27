@@ -11,6 +11,7 @@
  * blocker in another store is the same Bead it is anywhere else.
  */
 
+import { beadTypeName } from './beadType'
 import type { BeadRow } from './beadsApi'
 import type { HostBead, HostStore } from './hostBeads'
 import { isBeadClosed } from './beadStatus'
@@ -32,13 +33,13 @@ export const STATUS_LABELS: Record<SliceStatus, string> = {
   closed: 'closed',
 }
 
-export const SLICE_SORT_KEYS = ['id', 'title', 'project', 'status', 'updated', 'idle', 'size', 'kids'] as const
+export const SLICE_SORT_KEYS = ['id', 'type', 'title', 'project', 'status', 'updated', 'idle', 'size', 'kids'] as const
 export type SliceSortKey = typeof SLICE_SORT_KEYS[number]
 export type SortDirection = 'asc' | 'desc'
 
 /** The direction a column takes on its first click: text reads A to Z, numbers largest first. */
 export const NATURAL_DIRECTION: Record<SliceSortKey, SortDirection> = {
-  id: 'asc', title: 'asc', project: 'asc', status: 'asc', updated: 'desc', idle: 'desc', size: 'desc', kids: 'desc',
+  id: 'asc', type: 'asc', title: 'asc', project: 'asc', status: 'asc', updated: 'desc', idle: 'desc', size: 'desc', kids: 'desc',
 }
 
 export interface SliceProject {
@@ -417,6 +418,7 @@ export function sortOrder(index: SliceIndex, key: SliceSortKey): Uint32Array {
   let compare: (a: number, b: number) => number
   switch (key) {
     case 'id': compare = byId; break
+    case 'type': compare = (a, b) => collator.compare(beadTypeName(rows[a].type), beadTypeName(rows[b].type)) || byId(a, b); break
     case 'title': compare = (a, b) => collator.compare(rows[a].title, rows[b].title) || byId(a, b); break
     case 'project': compare = (a, b) => collator.compare(index.projects[index.project[a]].label, index.projects[index.project[b]].label) || byId(a, b); break
     case 'status': compare = (a, b) => index.status[a] - index.status[b] || updated(b) - updated(a) || byId(a, b); break

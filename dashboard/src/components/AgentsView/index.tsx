@@ -14,6 +14,7 @@ import AgentStack from '../AgentStack'
 import MenuTarget from '../MenuTarget'
 import type { MenuGroup } from '../Menu'
 import ResidentColumn from '../ResidentColumn'
+import SearchField from '../kit/SearchField'
 import { TableSlot } from '../TableHost'
 import Rail, { RailScroll, RailSection } from '../Rail'
 import { HarnessMark } from '../harnessMarks'
@@ -172,14 +173,7 @@ export default function AgentsView({ active = true, onOpenInFiles }: AgentsViewP
           width={settings.railWidth.agents}
           onWidthCommit={commitRailWidth}
         >
-          <input
-            type="text"
-            className="agents-filter"
-            aria-label="Filter skills and memories"
-            placeholder="Filter skills and memories…"
-            value={query}
-            onChange={event => setQuery(event.target.value)}
-          />
+          <SearchField className="agents-filter" label="Search skills and memories" value={query} onChange={setQuery} />
           <RailSection className="agents-group" title="Harness">
             {AGENT_HARNESSES.map(entry => (
               <button

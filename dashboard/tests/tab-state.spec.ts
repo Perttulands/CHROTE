@@ -130,7 +130,7 @@ test('returns to Beads, Brain and Agents exactly as they were left', async ({ pa
   await expect(page.getByRole('complementary', { name: 'The Tender' }).locator('.xterm-helper-textarea')).toBeFocused()
 
   await page.keyboard.press('Alt+k')
-  const search = page.getByRole('textbox', { name: 'Search keybindings' })
+  const search = page.getByRole('searchbox', { name: 'Search keybindings' })
   // Opening clears the previous query before focusing. Filling earlier can
   // have that effect erase the new filter after Playwright has entered it.
   await expect(search).toBeFocused()

@@ -63,6 +63,32 @@ release.
   across Settings, Beads, the Launcher, Send, schedules and flags: whole-row
   toggles and word choices opening the product's menu, every target at least
   28px.
+- Every resident, the Clerk and the tender as well as the Librarian, rests
+  behind a 28px spine and opens over the content as a drawer. The fixed column,
+  its Collapse menu row and the squeeze that closed it on narrow windows are
+  gone, so Beads and Agents keep their full width.
+- Every search box, in Beads, Brain, Files, the Files and Sessions sidecars,
+  Send, flags and keybindings, is the kit's one SearchField, each saying what
+  it searches as "Search …".
+- Beads shows each row's type as its coloured word in a sortable column. Split,
+  Table and Graph become List and Map: List is the table, with the selected
+  Bead's graph and text beside it only while something is selected (`Escape`
+  lets it go); Map draws the slice in the Brain's sky, each epic a system whose
+  finished work glows. Older links open in the matching mode.
+- The Files tab is the Files panel as a tab: the same find, tree, menu and
+  viewer, the operator's pins listed above the tree, and the open file filling
+  the rest of the tab. The separate explorer, its toolbars, list and grid views
+  and its editor tabs are gone, and tree rows show a folder by the slash after
+  its name instead of a DIR or TXT badge.
+- The Files tab opens on the host's projects, grouped by the folder they live
+  in, live ones first with their sessions and open Beads, then the roots.
+  Entering a project lands on its sessions (each a Peek away), its key
+  documents and its README, with Send to hand it to an agent; find looks only
+  inside it. `GET /api/files/find` takes `within=` for that.
+- The Files panel keeps an unsaved edit when another file is opened and
+  reopens the editor on it on return; only Save or Discard lets it go, and the
+  page asks before it is left while one is held. PDFs read inline again, and a
+  picture that cannot be read says why instead of drawing a broken image.
 - Files now exposes everything under `CHROTE_ROOTS` that the service identity's
   Unix permissions allow, while canonical paths remain inside configured roots.
 - Terminal drag/drop, assignment, terminal lifetime, and layout persistence were

@@ -14,6 +14,7 @@ import Rail, { RailScroll, RailSection } from '../Rail'
 import { beadGlyph } from '../../beads/beadStatus'
 import { SLICE_STATUSES, STATUS_LABELS, type SliceIndex, type SliceResult } from '../../beads/beadsSlice'
 import Toggle from '../kit/Toggle'
+import SearchField from '../kit/SearchField'
 
 interface FacetRailProps {
   index: SliceIndex
@@ -72,14 +73,7 @@ function FacetRail({ index, result, projects, statuses, onProjects, onStatuses, 
           </span>
         )}
       >
-        <input
-          className="beads-facet-find"
-          type="search"
-          value={find}
-          placeholder="Filter projects…"
-          aria-label="Filter projects"
-          onChange={event => setFind(event.target.value)}
-        />
+        <SearchField className="beads-facet-find" label="Search projects" value={find} onChange={setFind} />
         <RailScroll role="group" aria-label="Projects">
           {shown.map(({ project, p }) => {
             const kept = projects === null || projects.has(p)

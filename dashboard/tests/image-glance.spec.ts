@@ -53,8 +53,7 @@ async function mockFiles(page: Page) {
       body: JSON.stringify({
         isDir: true,
         items: [
-          { name: 'shot.png', size: PNG.length, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'image/png' },
-          { name: 'other.png', size: PNG.length, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'image/png' },
+          { name: 'tmp', size: 0, modified: '2026-09-03T00:00:00Z', isDir: true, type: '' },
         ],
       }),
     })
@@ -67,6 +66,7 @@ async function mockFiles(page: Page) {
         isDir: true,
         items: [
           { name: 'shot.png', size: PNG.length, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'image/png' },
+          { name: 'other.png', size: PNG.length, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'image/png' },
           { name: 'notes.txt', size: 17, modified: '2026-09-03T00:00:00Z', isDir: false, type: 'text/plain' },
         ],
       }),
@@ -86,8 +86,9 @@ test.describe('the image glance', () => {
     const glance = await openGlanceFromFilesTab(page)
     await glance.getByRole('button', { name: 'Open in Files' }).click()
     await expect(glance).toHaveCount(0)
-    await expect(page.getByTestId('file-viewer-scroll').getByRole('button', { name: 'shot.png' })).toBeVisible()
-    await page.locator('.fb-editor-tab-close').first().click()
+    const viewer = page.locator('.files-tab-viewer')
+    await expect(viewer.getByRole('button', { name: 'shot.png' })).toBeVisible()
+    await viewer.getByRole('button', { name: 'Close', exact: true }).click()
 
     for (const tab of ['Terminal', 'Terminal 2', 'Terminal 3']) {
       await page.getByRole('button', { name: tab, exact: true }).click()
@@ -95,7 +96,7 @@ test.describe('the image glance', () => {
       await expect(page.getByRole('dialog', { name: 'File shot.png' })).toHaveCount(0)
     }
     await page.click('.tab:has-text("Files")')
-    await expect(page.locator('.fb-row').filter({ hasText: 'shot.png' })).toBeVisible()
+    await expect(page.locator('.files-tab .fb-tree-row').filter({ hasText: 'shot.png' })).toBeVisible()
   })
 
   test('never upscales the picture, and closes on Escape and on a press outside', async ({ page }) => {
@@ -107,7 +108,7 @@ test.describe('the image glance', () => {
     await page.goto('/')
 
     const glance = await openGlanceFromFilesTab(page)
-    await expect(glance.locator('.image-glance-path')).toHaveAttribute('title', '/shot.png')
+    await expect(glance.locator('.image-glance-path')).toHaveAttribute('title', '/tmp/shot.png')
     await expect(glance.locator('.image-glance-size')).toHaveText('3 × 2')
     // Never upscaled: three pixels wide is three pixels wide.
     await expect.poll(async () => (await glance.locator('img').boundingBox())?.width).toBe(3)
@@ -115,9 +116,9 @@ test.describe('the image glance', () => {
     await page.keyboard.press('Escape')
     await expect(glance).toHaveCount(0)
 
-    await page.getByTestId('file-viewer-scroll').getByRole('button', { name: 'shot.png' }).click()
+    await page.locator('.files-tab-viewer').getByRole('button', { name: 'shot.png' }).click()
     await expect(glance).toBeVisible()
-    const view = (await page.getByTestId('file-viewer-scroll').boundingBox())!
+    const view = (await page.locator('.files-tab-viewer').boundingBox())!
     await page.mouse.click(view.x + 8, view.y + view.height - 8)
     await expect(glance).toHaveCount(0)
   })
@@ -129,9 +130,16 @@ test.describe('the image glance', () => {
    */
   async function openGlanceFromFilesTab(page: Page, name = 'shot.png', alreadyOpen = false) {
     await page.click('.tab:has-text("Files")')
-    // A reload brings the tab back on the file the operator left open.
-    if (!alreadyOpen) await page.click(`.fb-row:has-text("${name}")`)
-    await page.getByTestId('file-viewer-scroll').getByRole('button', { name }).click()
+    // A reload brings the tab back on the file the operator left open. The
+    // pictures are in /tmp, a root that is nobody's project.
+    if (!alreadyOpen) {
+      const roots = page.getByRole('list', { name: 'Roots' })
+      const row = page.locator(`.files-tab .fb-tree-row:has-text("${name}")`)
+      await expect(roots.or(row).first()).toBeVisible()
+      if (await roots.isVisible()) await roots.getByRole('listitem', { name: /\/tmp/ }).click()
+      await row.click()
+    }
+    await page.locator('.files-tab-viewer').getByRole('button', { name }).click()
     const glance = page.locator('.image-glance')
     await expect(glance).toBeVisible()
     return glance
@@ -199,10 +207,10 @@ test.describe('the image glance', () => {
     await glance.getByRole('button', { name: 'Close' }).click()
     await expect(glance).toHaveCount(0)
 
-    // Close the open file to get the listing back, then the other picture.
-    await page.locator('.fb-editor-tab-close').first().click()
+    // Close the open file, then the other picture.
+    await page.locator('.files-tab-viewer').getByRole('button', { name: 'Close', exact: true }).click()
     const second = await openGlanceFromFilesTab(page, 'other.png')
-    await expect(second.locator('.image-glance-path')).toHaveAttribute('title', '/other.png')
+    await expect(second.locator('.image-glance-path')).toHaveAttribute('title', '/tmp/other.png')
     await expect(second.locator('.image-glance-zoom')).toHaveText('125%')
     await expect.poll(async () => (await second.locator('img').boundingBox())?.width).toBe(4)
   })

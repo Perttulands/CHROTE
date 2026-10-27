@@ -37,12 +37,12 @@ describe('KeysPanel', () => {
     // The leader is not a registered chord; it is stated once, as the way in.
     expect(container.textContent).toContain('CTRL + SHIFT + SPACE')
     expect(document.querySelector('.keys-panel-backdrop')).toBeNull()
-    expect(screen.getByPlaceholderText('Keybindings…')).toHaveFocus()
+    expect(screen.getByPlaceholderText('Search keybindings…')).toHaveFocus()
   })
 
   it('filters on either column as the operator types', () => {
     const { container } = render(<KeysPanel isOpen onClose={vi.fn()} />)
-    const search = screen.getByPlaceholderText('Keybindings…')
+    const search = screen.getByPlaceholderText('Search keybindings…')
 
     fireEvent.change(search, { target: { value: 'beads' } })
     expect(container.querySelectorAll('.keys-panel-chord')).toHaveLength(1)
@@ -58,7 +58,7 @@ describe('KeysPanel', () => {
   it('moves the current row with the arrows and runs it on Enter', () => {
     const onClose = vi.fn()
     const { container } = render(<KeysPanel isOpen onClose={onClose} />)
-    const search = screen.getByPlaceholderText('Keybindings…')
+    const search = screen.getByPlaceholderText('Search keybindings…')
 
     expect(container.querySelectorAll('.keys-panel-chord')[0]).toHaveClass('current')
 

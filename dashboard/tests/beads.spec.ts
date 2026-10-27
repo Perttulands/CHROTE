@@ -96,6 +96,8 @@ test.describe('Beads', () => {
   test('draws the selected row\'s work graph beside the table and selects a row from a node', async ({ page }) => {
     await page.setViewportSize({ width: 1920, height: 900 })
     await openBeadsTab(page)
+    // Nothing selected, the table has the pane to itself.
+    await expect(page.locator('.beads-graph')).toHaveCount(0)
     await row(page, 'Fix login bug').click()
     await expect(row(page, 'Fix login bug')).toHaveAttribute('aria-selected', 'true')
 
@@ -127,15 +129,40 @@ test.describe('Beads', () => {
     const after = await box(selected)
     expect(Math.abs(after.x - before.x)).toBeLessThanOrEqual(1)
 
-    // The layout switch shows the table or the graph alone.
-    await page.getByRole('tab', { name: 'Table' }).click()
+    // Escape lets the selection go, and the table has the pane again.
+    await row(page, 'Add dark mode').click()
+    await page.keyboard.press('Escape')
     await expect(graph).toHaveCount(0)
-    await page.getByRole('tab', { name: 'Graph' }).click()
+    await expect(page.locator('.beads-text')).toHaveCount(0)
+  })
+
+  test('maps the slice as a sky of epics, and a star selects its Bead', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 })
+    await openBeadsTab(page)
+    await page.getByRole('tab', { name: 'Map' }).click()
+    const map = page.getByRole('region', { name: 'Beads map' })
+    await expect(map).toBeVisible()
     await expect(page.locator('.beads-table')).toHaveCount(0)
-    await expect(page.locator('.beads-graph').getByRole('button', { name: 'test-ep1.2: Add dark mode' })).toHaveAttribute('aria-pressed', 'true')
-    await page.getByRole('tab', { name: 'Split' }).click()
-    await expect(page.locator('.beads-table')).toBeVisible()
-    await expect(page.locator('.beads-graph')).toBeVisible()
+    const system = map.getByRole('button', { name: /^Explore Ship the reading room/ })
+    await expect(system).toBeVisible()
+    await system.click()
+    await map.getByRole('button', { name: 'Search the index' }).click()
+    await expect(page.locator('.beads-text')).toContainText('Search the index')
+    await expect.poll(() => new URL(page.url()).searchParams.get('sel')).toBe('test-ep2.4')
+  })
+
+  test('keeps the map and the selected Bead\'s text on screen at a phone\'s width', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/?tab=beads&mode=map&sel=test-ep2.4')
+    await page.waitForSelector('.beads-view')
+    const map = page.getByRole('region', { name: 'Beads map' })
+    const text = page.locator('.beads-text')
+    await expect(text).toContainText('Search the index')
+    const [mapBox, textBox] = [(await map.boundingBox())!, (await text.boundingBox())!]
+    expect(mapBox.width).toBeGreaterThan(100)
+    expect(mapBox.height).toBeGreaterThan(100)
+    expect(textBox.x + textBox.width).toBeLessThanOrEqual(390 + 1)
+    expect(textBox.y).toBeGreaterThanOrEqual(mapBox.y + mapBox.height - 1)
   })
 
   test('opens the slice a copied link names in a fresh tab', async ({ page, context }) => {
@@ -144,7 +171,7 @@ test.describe('Beads', () => {
     await page.getByLabel('Search Beads').fill('shelves')
     await page.getByRole('columnheader', { name: /Title/ }).getByRole('button').click()
     await row(page, 'Measure the shelves').click()
-    await page.getByRole('tab', { name: 'Graph' }).click()
+    await page.getByRole('tab', { name: 'Map' }).click()
     await page.getByRole('button', { name: 'Copy view link' }).click()
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('sel=test-ep2.1')
     const link = await page.evaluate(() => navigator.clipboard.readText())
@@ -155,9 +182,9 @@ test.describe('Beads', () => {
     await mockBeadsApiRoutes(fresh)
     await fresh.goto(link)
     await expect(fresh.getByLabel('Search Beads')).toHaveValue('shelves')
-    await expect(fresh.getByRole('tab', { name: 'Graph' })).toHaveAttribute('aria-selected', 'true')
-    await expect(fresh.locator('.beads-graph').getByRole('button', { name: 'test-ep2.1: Measure the shelves' })).toHaveAttribute('aria-pressed', 'true')
-    await fresh.getByRole('tab', { name: 'Table' }).click()
+    await expect(fresh.getByRole('tab', { name: 'Map' })).toHaveAttribute('aria-selected', 'true')
+    await expect(fresh.locator('.beads-text')).toContainText('Measure the shelves')
+    await fresh.getByRole('tab', { name: 'List' }).click()
     await expect(fresh.getByRole('columnheader', { name: /Title/ })).toHaveAttribute('aria-sort', 'ascending')
     await expect.poll(() => ids(fresh)).toEqual(['test-ep2.2', 'test-ep2.1'])
     await expect(row(fresh, 'Measure the shelves')).toHaveAttribute('aria-selected', 'true')
@@ -166,9 +193,9 @@ test.describe('Beads', () => {
 
   // The table's geometry is the browser's: long titles wrap inside the title
   // column, every column stays inside the pane beside the rail and the Clerk,
-  // and Split puts the graph beneath the table once both no longer fit side by
-  // side. Narrower still, the table drops Updated, which Idle says, rather than
-  // scroll sideways or squeeze a column; every id stays whole throughout.
+  // and a selection's graph stays beside the table, dropping Updated, which Idle
+  // says, and Size rather than scroll sideways or squeeze a column, until the two
+  // no longer fit and the graph goes beneath; every id stays whole throughout.
   test('keeps the table readable beside the rail, the graph and the Clerk', async ({ page }, testInfo) => {
     const title = 'Make every configured project and all its long-running agent work readable beside the graph and Clerk without losing the end of this title'
     await mockBeadsApiRoutes(page, {
@@ -178,17 +205,17 @@ test.describe('Beads', () => {
       })),
     })
     await openBeadsTab(page)
+    await page.locator(ROW, { hasText: 'test-ep1.1' }).click()
     const table = page.locator('.beads-table')
     const canvas = page.locator('.beads-graph-canvas')
     const titleCell = page.locator(ROW, { hasText: 'test-ep1.1' }).locator('.beads-cell-title')
     const sideways = () => table.evaluate(node => node.scrollWidth - node.clientWidth)
     const updated = page.getByRole('columnheader', { name: /Updated/ })
-    for (const [width, layout] of [[2048, 'beside'], [1600, 'beneath'], [1280, 'compact']] as const) {
+    for (const [width, layout, compact] of [[2048, 'beside', false], [1280, 'beside', true], [960, 'beneath', true]] as const) {
       await page.setViewportSize({ width, height: 900 })
       await expect(titleCell).toBeVisible()
       await expect.poll(sideways).toBeLessThanOrEqual(1)
-      if (layout === 'compact') await expect(updated).toHaveCount(0)
-      else await expect(updated).toHaveCount(1)
+      await expect(updated).toHaveCount(compact ? 0 : 1)
       const [tableBox, canvasBox, cellBox] = [await box(table), await box(canvas), await box(titleCell)]
       if (layout === 'beside') expect(canvasBox.x).toBeGreaterThanOrEqual(tableBox.x + tableBox.width - 1)
       else expect(canvasBox.y).toBeGreaterThanOrEqual(tableBox.y + tableBox.height - 1)

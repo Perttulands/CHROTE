@@ -1,5 +1,10 @@
-/* The resident's column: a flex sibling at the far right of its tab, hairlined
-   on the edge it faces, resizable at that edge, never a layer over anything. */
+/* The resident's drawer: a strip at the far right of its tab, hairlined on the
+   edge it faces; open, a layer over the content, resizable at that edge. */
+
+.resident-dock {
+  flex: none;
+  display: flex;
+}
 
 .resident-column {
   position: relative;
@@ -14,9 +19,8 @@
   outline: none;
 }
 
-/* Collapsed, by the operator or by the squeeze, the column is a vertical strip:
-   a closed door at the tab's right rather than a missing wall, keeping its
-   hairline and its background, and giving the rest of its width back. */
+/* Closed, the drawer is a vertical strip: a closed door at the tab's right
+   rather than a missing wall, keeping its hairline and its background. */
 .resident-column.collapsed {
   width: 28px;
 }
@@ -162,11 +166,10 @@
   overflow: auto;
 }
 
-/* As a drawer the column opens over what is beside it, from the right edge,
-   and leaves its strip's width in place so nothing beside it moves. The
+/* Open, the drawer lies over what is beside it, from the right edge, and the
+   dock keeps the strip's width in place so nothing beside it moves. The
    positioned ancestor is the tab's own row of columns. */
-.resident-drawer-space {
-  flex: none;
+.resident-dock.open {
   width: 28px;
   border-left: 1px solid var(--divider);
   background-color: var(--surface-primary);
@@ -175,10 +178,10 @@
 .resident-column.drawer {
   position: absolute;
   top: 0;
-  right: 0;
+  right: var(--resident-drawer-right, 0px);
   bottom: 0;
   z-index: 6;
-  max-width: calc(100% - 240px);
+  max-width: calc(100% - 240px - var(--resident-drawer-right, 0px));
   animation: resident-drawer-in 180ms ease-out;
 }
 

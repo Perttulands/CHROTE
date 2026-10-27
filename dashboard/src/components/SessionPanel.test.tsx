@@ -110,13 +110,13 @@ describe('SessionPanel session launcher', () => {
     expect(Array.from(container.querySelectorAll('.group-name'), node => node.textContent)).toEqual(['project', 'Other'])
     expect(Array.from(container.querySelectorAll('.session-count'), node => node.textContent)).toEqual(['2', '1'])
 
-    fireEvent.change(screen.getByPlaceholderText('Filter sessions...'), { target: { value: 'api' } })
+    fireEvent.change(screen.getByPlaceholderText('Search sessions…'), { target: { value: 'api' } })
     // A row's name is drawn as head and tail spans, so it is found by title.
     expect(screen.getByTitle('PROJECT-API')).toBeInTheDocument()
     expect(screen.queryByTitle('project-worker')).not.toBeInTheDocument()
     expect(screen.queryByText('Other')).not.toBeInTheDocument()
 
-    fireEvent.change(screen.getByPlaceholderText('Filter sessions...'), { target: { value: '' } })
+    fireEvent.change(screen.getByPlaceholderText('Search sessions…'), { target: { value: '' } })
     expect(screen.getByTitle('project-worker')).toBeInTheDocument()
     expect(screen.getByTitle('worker-beta')).toBeInTheDocument()
   })

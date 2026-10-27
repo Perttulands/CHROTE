@@ -15,6 +15,7 @@ import {
 } from './FilesView/fileService'
 import TerminalFilesPanel from './TerminalFilesPanel'
 import { resetSurfacesForTest } from '../keys/dismiss'
+import { getSessionKey } from '../types'
 import {
   DEFAULT_WORKSPACE_FILES_STATE,
   readWorkspaceFilesState,
@@ -41,6 +42,16 @@ vi.mock('./FilesView/fileService', async () => {
 
 const sessionMocks = vi.hoisted(() => ({
   openSendToSession: vi.fn(),
+  openFloatingModal: vi.fn(),
+}))
+
+const workspaceMocks = vi.hoisted(() => ({
+  fetchWorkspaces: vi.fn(),
+}))
+
+vi.mock('../workspaces/workspacesApi', async () => ({
+  ...(await vi.importActual<typeof import('../workspaces/workspacesApi')>('../workspaces/workspacesApi')),
+  fetchWorkspaces: workspaceMocks.fetchWorkspaces,
 }))
 
 const statusMocks = vi.hoisted(() => ({
@@ -60,6 +71,7 @@ vi.mock('../context/SessionContext', () => ({
     focusedWindowKey: 'terminal1-terminal1-window-0',
     sessions: [{ name: 'shell', unixUser: 'alice', windows: 1, attached: true, group: 'shell', cwd: '/srv/chrote' }],
     openSendToSession: sessionMocks.openSendToSession,
+    openFloatingModal: sessionMocks.openFloatingModal,
   }),
 }))
 
@@ -133,6 +145,11 @@ describe('TerminalFilesPanel', () => {
       return []
     })
     mockedReadTextFile.mockResolvedValue('# CHROTE')
+    workspaceMocks.fetchWorkspaces.mockResolvedValue([
+      { path: '/srv/chrote', sources: ['git', 'session'], sessions: ['shell'], openBeads: 3, instructions: 1, lastActivity: '2026-10-26T10:00:00Z' },
+      { path: '/srv/quiet', sources: ['git'], sessions: [], instructions: 0 },
+      { path: '/home/alice/code/app', sources: ['git'], sessions: [], instructions: 0 },
+    ])
     mockedWriteTextFile.mockResolvedValue(undefined)
     mockedFindFiles.mockResolvedValue({ matches: [], truncated: false })
     mockedFetchFileDiff.mockResolvedValue({ path: readme.path, repository: '', diff: '', truncated: false })
@@ -157,7 +174,7 @@ describe('TerminalFilesPanel', () => {
     })
     renderPanel()
 
-    const field = screen.getByLabelText('Find files')
+    const field = screen.getByLabelText('Search files')
     fireEvent.change(field, { target: { value: 'journ' } })
     await waitFor(() => expect(mockedFindFiles).toHaveBeenCalledWith('journ', expect.any(AbortSignal)))
     expect(await screen.findByText('2 paths · Enter opens the first')).toBeInTheDocument()
@@ -186,11 +203,11 @@ describe('TerminalFilesPanel', () => {
     })
     renderPanel()
 
-    fireEvent.change(screen.getByLabelText('Find files'), { target: { value: 'j' } })
+    fireEvent.change(screen.getByLabelText('Search files'), { target: { value: 'j' } })
     expect(await screen.findByText('1 path · more matched · Enter opens the first')).toBeInTheDocument()
 
-    fireEvent.keyDown(screen.getByLabelText('Find files'), { key: 'Escape' })
-    await waitFor(() => expect(screen.getByLabelText('Find files')).toHaveValue(''))
+    fireEvent.keyDown(screen.getByLabelText('Search files'), { key: 'Escape' })
+    await waitFor(() => expect(screen.getByLabelText('Search files')).toHaveValue(''))
     expect(await screen.findByRole('tree', { name: 'File tree' })).toBeInTheDocument()
   })
 
@@ -561,7 +578,7 @@ describe('TerminalFilesPanel', () => {
     await waitFor(() => expect(mockedUploadFiles).toHaveBeenCalledWith('/srv/chrote', [upload]))
   })
 
-  it('updates a mounted Files tab from sidecar pin changes without duplicate storage entries', async () => {
+  it('shows a sidecar pin change in the Files tab without duplicate storage entries', async () => {
     seedPanelAt('/srv/chrote')
     window.localStorage.setItem('chrote.files.pinnedPaths', JSON.stringify([
       { path: '/srv/chrote', kind: 'directory' },
@@ -583,16 +600,54 @@ describe('TerminalFilesPanel', () => {
       </>,
     )
 
-    expect(await screen.findByRole('button', { name: /Pinned.*1/ })).toBeInTheDocument()
+    // The sidecar and the tab both list the one pin, the duplicate folded away.
+    const pinLists = async () => {
+      const lists = await screen.findAllByRole('list', { name: 'Pinned' })
+      return lists.map(list => within(list).getAllByRole('listitem').length)
+    }
+    expect(await pinLists()).toEqual([1, 1])
     const sidecarTree = screen.getAllByRole('tree', { name: 'File tree' })[0]
     fireEvent.contextMenu(sidecarTree)
     let menu = document.querySelector('.menu-sheet') as HTMLElement
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Unpin current folder' }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: /Pinned/ })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Pinned' })).not.toBeInTheDocument())
 
     fireEvent.contextMenu(sidecarTree)
     menu = document.querySelector('.menu-sheet') as HTMLElement
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Pin current folder' }))
-    expect(await screen.findByRole('button', { name: /Pinned.*1/ })).toBeInTheDocument()
+    expect(await pinLists()).toEqual([1, 1])
+  })
+
+  it('opens the Files tab on the projects, grouped by where they live, and enters one', async () => {
+    render(<FilesView />)
+    const srv = await screen.findByRole('list', { name: '/srv' })
+    expect(within(srv).getAllByRole('listitem').map(row => row.textContent)).toEqual([
+      expect.stringContaining('chrote'),
+      expect.stringContaining('quiet'),
+    ])
+    expect(within(srv).getAllByRole('listitem')[0]).toHaveTextContent('1 live · 3 open')
+    expect(screen.getByRole('list', { name: '/home/alice/code' })).toBeInTheDocument()
+
+    const search = screen.getByRole('searchbox', { name: 'Search projects' })
+    fireEvent.change(search, { target: { value: 'chro' } })
+    expect(screen.queryByRole('list', { name: '/home/alice/code' })).not.toBeInTheDocument()
+    fireEvent.keyDown(search, { key: 'Enter' })
+
+    // Inside, the project lands on what it is: its documents and its README.
+    const landing = await screen.findByRole('article', { name: 'Project chrote' })
+    expect(await within(landing).findByRole('button', { name: 'README.md' })).toBeInTheDocument()
+    expect(await within(landing).findByRole('heading', { name: 'CHROTE' })).toBeInTheDocument()
+    fireEvent.click(within(landing).getByRole('button', { name: /^shell/ }))
+    expect(sessionMocks.openFloatingModal).toHaveBeenCalledWith(getSessionKey('shell', 'alice'))
+
+    // Find looks only inside the project.
+    const scoped = screen.getByRole('searchbox', { name: 'Search files in chrote' })
+    fireEvent.change(scoped, { target: { value: 'main' } })
+    await waitFor(() => expect(mockedFindFiles).toHaveBeenCalledWith('main', expect.any(AbortSignal), '/srv/chrote'))
+
+    // Projects takes the operator home again.
+    fireEvent.change(scoped, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Projects' }))
+    expect(await screen.findByRole('list', { name: '/srv' })).toBeInTheDocument()
   })
 })

@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import Choice from './Choice'
+import SearchField from './SearchField'
 import Toggle from './Toggle'
 import { choice, choiceValue, choose } from './testing'
 
@@ -53,5 +54,17 @@ describe('Choice', () => {
     render(<Unit />)
     choose('Interval unit', 'hours')
     expect(choiceValue('Interval unit')).toBe('hours')
+  })
+})
+
+describe('SearchField', () => {
+  it('is a searchbox named by its label, saying what it searches, with its hint beside', () => {
+    const onChange = vi.fn()
+    render(<SearchField label="Search flags" value="" onChange={onChange} hint="/" />)
+    const field = screen.getByRole('searchbox', { name: 'Search flags' })
+    expect(field).toHaveAttribute('placeholder', 'Search flags…')
+    expect(screen.getByText('/')).toBeInTheDocument()
+    fireEvent.change(field, { target: { value: 'model' } })
+    expect(onChange).toHaveBeenCalledWith('model')
   })
 })

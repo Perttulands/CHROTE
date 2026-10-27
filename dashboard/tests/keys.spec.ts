@@ -86,9 +86,9 @@ test('the leader and Alt chords run over a focused terminal, and keys off hands 
 
   // The opening effect clears the old query and then focuses this field.
   // Its focus, not unrelated panel content, makes the next key search text.
-  await expect(panel.getByRole('textbox', { name: 'Search keybindings' })).toBeFocused()
+  await expect(panel.getByRole('searchbox', { name: 'Search keybindings' })).toBeFocused()
   await page.keyboard.type('window')
-  await expect(panel.locator('.keys-panel-search')).toHaveValue('window')
+  await expect(panel.locator('.keys-panel-search input')).toHaveValue('window')
   await expect(panel.locator('.keys-panel-chord')).toHaveCount(5)
 
   await page.keyboard.press('Escape')

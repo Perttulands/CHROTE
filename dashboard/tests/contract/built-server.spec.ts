@@ -96,7 +96,7 @@ test('built server serves embedded assets and preserves terminal and Files workf
   const filesButton1 = terminal1Dock.getByRole('button', { name: 'Files sidecar' })
   await filesButton1.click()
   const filesPanel1 = terminal1Dock.locator('[aria-label="Files sidecar"]')
-  const findField1 = filesPanel1.getByRole('textbox', { name: 'Find files' })
+  const findField1 = filesPanel1.getByRole('searchbox', { name: 'Search files' })
   const findResponsePromise1 = page.waitForResponse(response => (
     response.request().method() === 'GET' &&
     response.url().includes('/api/files/find') &&
@@ -115,7 +115,7 @@ test('built server serves embedded assets and preserves terminal and Files workf
 
   await terminal2Dock.getByRole('button', { name: 'Files sidecar' }).click()
   const filesPanel2 = terminal2Dock.locator('[aria-label="Files sidecar"]')
-  const findField2 = filesPanel2.getByRole('textbox', { name: 'Find files' })
+  const findField2 = filesPanel2.getByRole('searchbox', { name: 'Search files' })
   await expect(findField2).toHaveValue('')
   const findResponsePromise2 = page.waitForResponse(response => (
     response.request().method() === 'GET' &&

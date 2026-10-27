@@ -1,6 +1,6 @@
 /**
- * The resident's column (beads: chrote-5grx.50, chrote-z58o): the Clerk lives in the Beads
- * tab, the Bead on the table goes into its prompt on Alt+S, and the column
+ * The resident's drawer (beads: chrote-5grx.50, chrote-z58o): the Clerk lives in the Beads
+ * tab, the Bead on the table goes into its prompt on Alt+S, and the drawer
  * keeps the width it was given. What the browser is the point of here: a live
  * terminal in the column, a chord routed while that terminal has the keyboard,
  * and a drag on real geometry that outlives a reload.
@@ -84,14 +84,15 @@ test.describe('The resident column', () => {
 
     await openBeadsTab(page)
     const column = page.getByRole('complementary', { name: 'The Clerk' })
+    await column.getByRole('button', { name: 'Expand the Clerk' }).click()
     await expect(column.locator('.resident-header')).toContainText('hq-deacon')
     await expect(column.locator('.resident-state')).toHaveText('live')
     await expect(column.locator('.xterm-rows')).toContainText('mock terminal hq-deacon')
     await expectTerminalFits(column)
 
     // A Bead on the table, then Alt+S: the reference lands in the Clerk's
-    // prompt on a line of its own, nothing is submitted, no drawer opens, and
-    // the keyboard is in the Clerk's terminal.
+    // prompt on a line of its own, nothing is submitted, no Send drawer opens,
+    // and the keyboard is in the Clerk's terminal.
     await page.locator('.beads-row[data-ui="beads.row"]', { hasText: 'Fix login bug' }).dblclick()
     await expect(page.getByRole('complementary', { name: 'Bead test-ep1.1' })).toBeVisible()
     await page.keyboard.press('Alt+s')
@@ -121,21 +122,11 @@ test.describe('The resident column', () => {
     await expect(reopened.locator('.resident-state')).toHaveText('live')
     expect(Math.round((await box(reopened)).width)).toBe(widened)
     await expectTerminalFits(reopened)
-
-    // A narrow workspace squeezes the column to its header. Once the room is
-    // back, the terminal opens against the restored frame and fits it at once.
-    await page.setViewportSize({ width: 1000, height: 900 })
-    await page.locator('.beads-row[data-ui="beads.row"]', { hasText: 'Fix login bug' }).dblclick()
-    await expect(reopened).toHaveClass(/collapsed/)
-    await expect(reopened.locator('.xterm')).toHaveCount(0)
-    await page.keyboard.press('Alt+i')
-    await expect(reopened).not.toHaveClass(/collapsed/)
-    await expectTerminalFits(reopened)
   })
 
   // Real geometry is the whole point: the strip's width, the figure the table
   // and the Send drawer read from it, and the content that must not move.
-  test('closes to a strip a couple of characters wide and opens again on a click', async ({ page }) => {
+  test('rests as a strip a couple of characters wide and opens over the content on a click', async ({ page }) => {
     await mockApiRoutes(page)
     await mockBeadsApiRoutes(page)
     await page.goto('/')
@@ -143,31 +134,60 @@ test.describe('The resident column', () => {
 
     await openBeadsTab(page)
     const column = page.getByRole('complementary', { name: 'The Clerk' })
-    await expect(column.locator('.xterm-rows')).toContainText('mock terminal hq-deacon')
-    const open = Math.round((await box(column)).width)
-    const content = page.locator('.beads-slicer')
-    const contentOpen = Math.round((await box(content)).width)
-    expect(contentOpen).toBeGreaterThanOrEqual(480)
-
-    await column.locator('.resident-header').click({ button: 'right' })
-    await page.getByRole('menuitem', { name: 'Collapse' }).click()
-
     const strip = column.getByRole('button', { name: 'Expand the Clerk' })
     await expect(strip).toContainText('Clerk')
     await expect(strip).toContainText('live')
     const closed = Math.round((await box(column)).width)
     expect(closed).toBeLessThanOrEqual(32)
+    const content = page.locator('.beads-slicer')
+    const contentClosed = Math.round((await box(content)).width)
 
     // The figure the rest of the tab lays itself out against is the strip's.
-    const told = await page.locator('.dashboard-content')
+    const told = () => page.locator('.dashboard-content')
       .evaluate(node => node.style.getPropertyValue('--resident-width'))
-    expect(told).toBe(`${closed}px`)
-    expect(Math.round((await box(content)).width)).toBeGreaterThanOrEqual(480)
+    expect(await told()).toBe(`${closed}px`)
 
     await strip.click()
     await expect(column.locator('.xterm-rows')).toContainText('mock terminal hq-deacon')
-    expect(Math.round((await box(column)).width)).toBe(open)
-    expect(Math.round((await box(content)).width)).toBe(contentOpen)
+    expect(Math.round((await box(column)).width)).toBeGreaterThan(closed)
+    expect(Math.round((await box(content)).width)).toBe(contentClosed)
+    expect(await told()).toBe(`${closed}px`)
+
+    await column.getByRole('button', { name: 'Close' }).click()
+    await expect(strip).toBeVisible()
+    expect(Math.round((await box(column)).width)).toBe(closed)
+  })
+
+  // Beside the table the drawer has less room: it ends at the table and must
+  // still start on screen, however wide it was last left.
+  test('stays on screen beside the table in a narrow window', async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 800 })
+    await mockApiRoutes(page)
+    await mockBeadsApiRoutes(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+
+    await openBeadsTab(page)
+    await page.locator('.beads-row[data-ui="beads.row"]', { hasText: 'Fix login bug' }).click()
+    await page.keyboard.press('Enter')
+    const table = page.getByRole('complementary', { name: 'Bead test-ep1.1' })
+    await expect(table).toBeVisible()
+    const column = page.getByRole('complementary', { name: 'The Clerk' })
+    await column.getByRole('button', { name: 'Expand the Clerk' }).click()
+    await expect(column.locator('.resident-header')).toContainText('hq-deacon')
+
+    // Left as wide as the handle will take it.
+    const handle = await box(column.locator('.resident-column-handle'))
+    await page.mouse.move(handle.x + 2, handle.y + 200)
+    await page.mouse.down()
+    await page.mouse.move(10, handle.y + 200, { steps: 8 })
+    await page.mouse.up()
+
+    const [drawerBox, tableBox, content] = [await box(column), await box(table), await box(page.locator('.dashboard-content'))]
+    expect(drawerBox.x).toBeGreaterThanOrEqual(content.x + 240 - 1)
+    expect(drawerBox.width).toBeGreaterThan(200)
+    expect(Math.round(drawerBox.x + drawerBox.width)).toBeLessThanOrEqual(Math.round(tableBox.x) + 1)
+    await expectTerminalFits(column)
   })
 
   test('offers Launch with the Clerk folder when its session is absent', async ({ page }) => {
@@ -183,6 +203,7 @@ test.describe('The resident column', () => {
     const column = page.getByRole('complementary', { name: 'The Clerk' })
     await expect(column.locator('.resident-state')).toHaveText('not running')
 
+    await column.getByRole('button', { name: 'Expand the Clerk' }).click()
     await column.getByRole('button', { name: 'Launch' }).click()
     const launcher = column.locator('.launcher')
     await expect(launcher.getByLabel('Session name')).toHaveValue('clerk')

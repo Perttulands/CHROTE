@@ -7,6 +7,7 @@
   /* The table at its least, compact, with the body's scrollbar: the view sets
      it from the longest id. */
   --beads-table-min: 640px;
+  position: relative;
   display: flex;
   flex: 1;
   /* The row shrinks to the workspace rather than to the sum of its columns:
@@ -37,36 +38,7 @@
 }
 
 .beads-search {
-  position: relative;
-  display: flex;
   flex: 1;
-  min-width: 0;
-}
-
-.beads-search input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 28px 6px 10px;
-  border: 1px solid var(--divider);
-  background-color: var(--surface-primary);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-}
-
-.beads-search input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-/* The chord is shown where the action is. */
-.beads-chord {
-  position: absolute;
-  top: 50%;
-  right: 10px;
-  transform: translateY(-50%);
-  color: var(--text-dim);
-  pointer-events: none;
 }
 
 .beads-range {
@@ -77,7 +49,7 @@
   gap: 6px;
   box-sizing: border-box;
   width: 168px;
-  height: 30px;
+  height: 28px;
   padding: 0 4px 0 10px;
   border: 1px solid var(--divider);
   color: var(--text-dim);
@@ -304,17 +276,6 @@
 .beads-facet-find {
   flex: none;
   margin: 0 0 6px;
-  padding: 4px 8px;
-  border: 1px solid var(--divider);
-  background-color: var(--background);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
-}
-
-.beads-facet-find:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 .beads-facet-status {
@@ -440,29 +401,52 @@
   border-top: 1px solid var(--divider);
 }
 
-/* Split keeps the table whole and gives the graph and text the rest, down to
-   a width a family of a few waves is still drawn whole in. Narrower than
-   both, the graph and text go beneath the table, side by side, rather than
-   squeezing either. */
-.beads-panes-split {
-  grid-template-columns: minmax(var(--beads-table-min), 11fr) minmax(400px, 9fr);
+/* Nothing selected, the table or the map has the whole pane. A selection
+   brings its graph and text beside the table, keeping the table whole and
+   giving them the rest down to a width a family of a few waves is still drawn
+   whole in, so the row just clicked stays under the pointer. Only a pane too
+   narrow for both puts them beneath it. Beside the map a selection brings its
+   text alone. */
+.beads-panes {
+  grid-template-columns: minmax(0, 1fr);
 }
 
-@container beads-work (width < 1200px) {
-  .beads-panes-split {
+.beads-panes-list.with-detail {
+  grid-template-columns: minmax(var(--beads-table-min), 11fr) minmax(360px, 9fr);
+}
+
+.beads-panes-map.with-detail {
+  grid-template-columns: minmax(0, 3fr) minmax(360px, 2fr);
+}
+
+@container beads-work (width < 980px) {
+  .beads-panes-list.with-detail {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 
-  .beads-panes-split .beads-pane-detail {
+  .beads-panes.beads-panes-list.with-detail .beads-pane-detail {
     border-top: 1px solid var(--divider);
     border-left: none;
   }
 }
 
-.beads-panes-table,
-.beads-panes-graph {
-  grid-template-columns: minmax(0, 1fr);
+/* Too narrow for the sky and a reader side by side, as on a phone: the
+   selected Bead's text goes beneath the map, each with half the height. */
+@container beads-work (width < 720px) {
+  .beads-panes-map.with-detail {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .beads-panes.beads-panes-map.with-detail .beads-pane-detail {
+    border-top: 1px solid var(--divider);
+    border-left: none;
+  }
+}
+
+.beads-pane-map {
+  flex-direction: column;
 }
 
 .beads-pane {
@@ -477,8 +461,13 @@
   container: beads-detail / size;
 }
 
-.beads-panes-split .beads-pane-detail {
+.beads-panes.with-detail .beads-pane-detail {
   border-left: 1px solid var(--divider);
+}
+
+/* Beside the map the detail is the text alone. */
+.beads-panes-map .beads-detail {
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .beads-detail {
@@ -511,6 +500,12 @@
     border-top: none;
     border-left: 1px solid var(--divider);
   }
+}
+
+/* Beside the map the text is alone, and takes the detail whole. */
+.beads-detail > .beads-text:only-child {
+  grid-column: 1 / -1;
+  border: none;
 }
 
 /* The selected Bead's text: what it is on one quiet line, its title, then its
@@ -721,6 +716,15 @@
 
 .beads-row.closed .beads-cell-project,
 .beads-row.closed .beads-cell-status {
+  color: var(--text-dim);
+}
+
+/* The type word in its colour, small enough to sit beside the id. */
+.beads-cell-type {
+  font-size: 11px;
+}
+
+.beads-row.closed .bead-type {
   color: var(--text-dim);
 }
 
