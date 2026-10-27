@@ -72,7 +72,7 @@ export default function BrainSky({
       </div>
       <footer className="brain-foot" aria-label="Time">
         {timeControl}
-        {!phone && <button type="button" className="brain-fit" onClick={fit} title="Take in the whole sky (Home)">Fit</button>}
+        {!phone && <button type="button" className="kit-button brain-fit" onClick={fit} title="Take in the whole sky (Home)">Fit</button>}
       </footer>
     </section>
   )

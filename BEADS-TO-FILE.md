@@ -44,6 +44,17 @@ commits named.
    sessions, key documents and README. Close: the commit titled "Files opens on
    the host's projects".
 
+4b. **task**, parent `chrote-jf5l`. *One look: the kit's buttons, tabs and rows everywhere.*
+   On the operator's request (design consistency pass). 82 button classes
+   reduced onto `kit-button` (word, primary, danger), `kit-tabs` and `kit-row`;
+   close crosses become Close, icon buttons become words, the Files nav becomes
+   a path trail. Close: the commit titled "One look and a violet accent".
+4c. **feature**, parent `chrote-jf5l`. *A violet accent with five roles.*
+   Expansion on the operator's request: reference theme `chrote-violet`,
+   `--accent-soft` and `--on-accent`, DESIGN-SYSTEM.md "The accent". The host
+   theme in operator configuration still sets the deployed accent; apply the
+   violet there to see it live. Close: the same commit.
+
 Review of this branch (Terra, at `ca8de1e`) found four defects in items 3 and 4; all four are
 fixed in the commit titled "Files keeps unsaved edits; PDFs, missing pictures
 and the Beads map on a phone", with a test that reproduces each: unsaved

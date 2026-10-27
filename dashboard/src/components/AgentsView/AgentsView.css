@@ -48,7 +48,7 @@
 
 .agents-rail-row.active {
   border-left-color: var(--accent);
-  background-color: var(--surface-secondary);
+  background-color: var(--accent-soft);
   color: var(--text-primary);
 }
 

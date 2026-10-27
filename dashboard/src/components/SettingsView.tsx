@@ -208,9 +208,9 @@ function SettingsView() {
         </div>
       </section>
 
-      {/* Session Defaults Section */}
+      {/* Session defaults Section */}
       <section className="settings-section">
-        <h2 className="settings-section-title">Session Defaults</h2>
+        <h2 className="settings-section-title">Session defaults</h2>
 
         <div className="settings-field">
           <label className="settings-label">Auto-refresh Interval</label>
@@ -330,7 +330,7 @@ function SettingsView() {
               <span>Finished: two notes, falling</span>
               <button
                 type="button"
-                className="settings-btn"
+                className="kit-button"
                 aria-label="Play the finished tone"
                 onClick={() => playAgentTone('finished')}
               >
@@ -341,7 +341,7 @@ function SettingsView() {
               <span>Needs input: one note, higher</span>
               <button
                 type="button"
-                className="settings-btn"
+                className="kit-button"
                 aria-label="Play the needs-input tone"
                 onClick={() => playAgentTone('needs-input')}
               >
@@ -369,7 +369,8 @@ function SettingsView() {
         <h2 className="settings-section-title">Session cleanup</h2>
         <p className="settings-description">Bulk destruction is an emergency action. Individual session controls are safer.</p>
         <button
-          className={nuke.armed ? 'nuke-trigger-btn armed' : 'nuke-trigger-btn'}
+          type="button"
+          className={`kit-button danger${nuke.armed ? ' armed' : ''}`}
           onClick={nuke.press}
           disabled={nuking || sessions.length === 0}
         >
@@ -377,13 +378,13 @@ function SettingsView() {
             ? 'Nuking…'
             : nuke.armed
               ? `Confirm: destroy ${sessions.length} session${sessions.length === 1 ? '' : 's'}`
-              : 'Nuke All sessions'}
+              : 'Nuke all sessions'}
         </button>
       </section>
 
-      {/* Beads Projects Section */}
+      {/* Beads projects Section */}
       <section className="settings-section">
-        <h2 className="settings-section-title">Beads Projects</h2>
+        <h2 className="settings-section-title">Beads projects</h2>
         <p className="settings-description">
           Manually add project paths for beads discovery. Use this for projects in nested directories.
         </p>
@@ -396,12 +397,11 @@ function SettingsView() {
                 <span className="beads-project-path">{path}</span>
                 <button
                   type="button"
-                  className="beads-project-remove"
+                  className="kit-button danger"
                   onClick={() => handleRemoveProjectPath(path)}
-                  title="Remove project"
                   aria-label={`Remove ${path}`}
                 >
-                  &times;
+                  Remove
                 </button>
               </div>
             ))
@@ -424,10 +424,10 @@ function SettingsView() {
             />
             <button
               type="submit"
-              className="settings-btn"
+              className="kit-button"
               disabled={!projectPathInput.trim()}
             >
-              Add Path
+              Add path
             </button>
           </div>
           <p className="settings-hint">

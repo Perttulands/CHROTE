@@ -429,17 +429,17 @@ export default function ResidentColumn({ active, tab, reference }: ResidentColum
           <span className="resident-state">{state ?? ''}</span>
           <span className="resident-header-spacer" />
           {state === 'not running' && !unconfigured && (
-            <button type="button" className="resident-action" onClick={() => setLaunching(open => !open)}>
+            <button type="button" className="kit-button resident-action" onClick={() => setLaunching(open => !open)}>
               {launching ? 'Cancel' : 'Launch'}
             </button>
           )}
           {running && (
-            <button type="button" className="resident-action" aria-keyshortcuts="Alt+S" onClick={() => { void paste() }}>
+            <button type="button" className="kit-button resident-action" aria-keyshortcuts="Alt+S" onClick={() => { void paste() }}>
               Send<span className="resident-chord" aria-hidden="true">Alt+S</span>
             </button>
           )}
           {!unconfigured && (
-            <button type="button" className="resident-action" onClick={() => setCollapsedTo(true)}>Close</button>
+            <button type="button" className="kit-button resident-action" onClick={() => setCollapsedTo(true)}>Close</button>
           )}
         </div>
       )}

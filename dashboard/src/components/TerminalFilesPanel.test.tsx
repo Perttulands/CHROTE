@@ -427,17 +427,22 @@ describe('TerminalFilesPanel', () => {
     await screen.findByRole('treeitem', { name: /README\.md/ })
     expect(mockedFetchDirectory).toHaveBeenCalledTimes(1)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh Files' }))
+    fireEvent.contextMenu(screen.getByRole('tree', { name: 'File tree' }))
+    const menu = document.querySelector('.menu-sheet') as HTMLElement
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /^Refresh/ }))
 
     await waitFor(() => expect(mockedFetchDirectory).toHaveBeenCalledTimes(2))
   })
 
-  it('navigates one normalized parent from an accessible control and no-ops at root', async () => {
+  it('steps back along the path trail, and opens a file\'s parent from its menu', async () => {
+    seedPanelAt('/srv/chrote')
     renderPanel()
 
-    const up = screen.getByRole('button', { name: 'Go to parent folder' })
-    expect(up).toBeDisabled()
-    fireEvent.click(up)
+    const trail = screen.getByRole('navigation', { name: 'Path' })
+    expect(within(trail).getByRole('button', { name: 'chrote' })).toHaveAttribute('aria-current', 'location')
+    fireEvent.click(within(trail).getByRole('button', { name: 'srv' }))
+    expect(readWorkspaceFilesState('terminal1').currentPath).toBe('/srv')
+    fireEvent.click(within(trail).getByRole('button', { name: '/' }))
     expect(readWorkspaceFilesState('terminal1').currentPath).toBe('/')
 
     fireEvent.click(await screen.findByRole('treeitem', { name: /README\.md/ }))

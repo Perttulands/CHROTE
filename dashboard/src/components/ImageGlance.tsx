@@ -185,7 +185,7 @@ function ImageGlance() {
         </span>
         <button
           type="button"
-          className="image-glance-word"
+          className="kit-button image-glance-word"
           aria-pressed={level.kind === 'fit'}
           onClick={() => setImageZoom(IMAGE_ZOOM_FIT)}
         >
@@ -193,18 +193,18 @@ function ImageGlance() {
         </button>
         <button
           type="button"
-          className="image-glance-word"
+          className="kit-button image-glance-word"
           aria-pressed={level.kind === 'percent' && level.percent === 100}
           onClick={() => setImageZoom(IMAGE_ZOOM_ONE_TO_ONE)}
         >
           1:1
         </button>
-        <button type="button" className="image-glance-word" aria-label="Zoom out" onClick={step(-1)}>−</button>
+        <button type="button" className="kit-button image-glance-word" aria-label="Zoom out" onClick={step(-1)}>−</button>
         <span className="image-glance-zoom">{percent === null ? '' : zoomPercentWord(percent)}</span>
-        <button type="button" className="image-glance-word" aria-label="Zoom in" onClick={step(1)}>+</button>
+        <button type="button" className="kit-button image-glance-word" aria-label="Zoom in" onClick={step(1)}>+</button>
         <button
           type="button"
-          className="image-glance-word"
+          className="kit-button image-glance-word"
           onClick={() => {
             closeImageGlance()
             openInFiles(path)
@@ -214,7 +214,7 @@ function ImageGlance() {
         </button>
         <button
           type="button"
-          className="image-glance-word"
+          className="kit-button image-glance-word"
           onClick={() => {
             void copyTextToClipboard(path)
             announce(`Copied ${path}`, 'success')
@@ -223,9 +223,9 @@ function ImageGlance() {
           Copy path
         </button>
         {frame.remembered && (
-          <button type="button" className="image-glance-word" onClick={frame.resetSize}>Reset size</button>
+          <button type="button" className="kit-button image-glance-word" onClick={frame.resetSize}>Reset size</button>
         )}
-        <button type="button" className="image-glance-word" onClick={closeImageGlance}>Close</button>
+        <button type="button" className="kit-button image-glance-word" onClick={closeImageGlance}>Close</button>
       </div>
       <div className="image-glance-body">
         {picture.state === 'failed' ? (

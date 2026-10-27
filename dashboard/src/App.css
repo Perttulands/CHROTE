@@ -37,22 +37,22 @@
 }
 
 .tab {
-  padding: 12px 24px;
+  padding: 12px 20px;
   background: transparent;
   border: none;
   color: var(--text-dim);
   font-family: inherit;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: color 0.15s ease, border-color 0.15s ease;
   border-bottom: 2px solid transparent;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0.08em;
 }
 
+/* The tab under the pointer brightens; only the current one takes the accent. */
 .tab:hover {
   color: var(--text-primary);
-  background-color: var(--accent-light);
 }
 
 .tab.active {

@@ -119,7 +119,7 @@ describe('ScheduledTasksView', () => {
   it('lists tasks with plain-language schedules and every target session', async () => {
     renderView()
 
-    expect(await screen.findByRole('heading', { name: 'Scheduled Tasks' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Scheduled tasks' })).toBeInTheDocument()
     const card = await screen.findByRole('button', { name: /Continue work/ })
     expect(within(card).getByText(/Daily at 16:00/)).toBeInTheDocument()
     expect(within(card).getByText('Europe/Helsinki', { exact: false })).toBeInTheDocument()

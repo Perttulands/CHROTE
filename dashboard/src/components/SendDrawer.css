@@ -287,29 +287,6 @@
   gap: 8px;
 }
 
-.send-drawer-secondary,
-.send-drawer-primary {
-  padding: 4px 12px;
-  background: transparent;
-  border: 1px solid var(--divider);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.send-drawer-primary {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.send-drawer-secondary:disabled,
-.send-drawer-primary:disabled {
-  border-color: var(--divider);
-  color: var(--text-dim);
-  cursor: default;
-}
-
 .send-drawer-hint {
   flex: none;
   margin: 0;
@@ -360,11 +337,10 @@
 .send-drawer.mobile .send-drawer-header { min-height: 44px; }
 .send-drawer.mobile .send-drawer-chord { display: none; }
 .send-drawer.mobile .send-drawer-close,
-.send-drawer.mobile .send-drawer-primary,
-.send-drawer.mobile .send-drawer-secondary,
 .send-drawer.mobile .send-drawer-target,
 .send-drawer.mobile .send-drawer-attach { min-height: 44px; }
 .send-drawer.mobile .send-drawer-search { height: 44px; }
+.send-drawer.mobile .kit-button { min-height: 44px; }
 .send-drawer.mobile .send-drawer-note,
 .send-drawer.mobile .send-drawer-message { min-height: 80px; }
 .send-drawer.mobile .send-drawer-note { min-height: 64px; }

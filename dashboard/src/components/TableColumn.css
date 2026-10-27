@@ -63,16 +63,6 @@
 
 .table-action {
   flex: none;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--text-primary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.table-action:hover {
-  color: var(--accent);
 }
 
 .table-chord {

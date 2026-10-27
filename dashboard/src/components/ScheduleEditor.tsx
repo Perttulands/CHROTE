@@ -24,12 +24,12 @@ export default function ScheduleEditor({ schedule, onChange }: { schedule: Sched
         <span className="scheduled-muted">{describeSchedule(scheduleFromForm(schedule))} · {schedule.timezone}</span>
       </div>
 
-      <div className="scheduled-mode-switch" role="group" aria-label="Schedule type">
+      <div className="scheduled-mode-switch kit-tabs" role="group" aria-label="Schedule type">
         {modes.map(({ mode, label }) => (
           <button
             key={mode}
             type="button"
-            className={`scheduled-mode ${schedule.mode === mode ? 'active' : ''}`}
+            className="kit-button"
             aria-pressed={schedule.mode === mode}
             onClick={() => onChange({ ...schedule, mode })}
           >
@@ -108,7 +108,7 @@ export default function ScheduleEditor({ schedule, onChange }: { schedule: Sched
               <button
                 key={day.value}
                 type="button"
-                className={`scheduled-weekday ${selected ? 'active' : ''}`}
+                className="kit-button scheduled-weekday"
                 aria-pressed={selected}
                 aria-label={day.long}
                 onClick={() => onChange({

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { X } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { getGroupPriority, getSessionKey } from '../types'
 import type { TmuxSession, WorkspaceId } from '../types'
@@ -208,7 +207,8 @@ function SessionPanel({
         {!isCollapsed && (
           <>
             <button
-              className="add-btn"
+              type="button"
+              className="kit-button session-new"
               aria-expanded={launcher.show}
               onClick={(event) => {
                 if (launcher.show) {
@@ -220,17 +220,11 @@ function SessionPanel({
               }}
               title="New tmux session"
             >
-              +
+              New
             </button>
             {onClose && (
-              <button
-                type="button"
-                className="toggle-btn sidecar-close-btn"
-                aria-label="Close Sessions sidecar"
-                title="Close sidecar"
-                onClick={onClose}
-              >
-                <X size={16} aria-hidden="true" />
+              <button type="button" className="kit-button" aria-label="Close Sessions sidecar" onClick={onClose}>
+                Close
               </button>
             )}
           </>

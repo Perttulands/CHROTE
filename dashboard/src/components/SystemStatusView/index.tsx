@@ -1,5 +1,5 @@
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Copy, Pause, Play, RefreshCw } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import {
   getSystemHistory,
   getSystemStatus,
@@ -711,21 +711,17 @@ function SystemStatusView({ active = true }: { active?: boolean }) {
               <span style={{ width: `${readablePercent(rootDisk?.usedPercent) || 0}%` }} />
             </span>
           </div>
-          <button type="button" className="system-icon-button" onClick={refresh} title="Refresh status" aria-label="Refresh status">
-            <RefreshCw size={16} />
-          </button>
+          <button type="button" className="kit-button" onClick={refresh} aria-label="Refresh status">Refresh</button>
           <button
             type="button"
-            className={`system-icon-button ${paused ? 'active' : ''}`}
+            className="kit-button"
+            aria-pressed={paused}
             onClick={() => setPaused(value => !value)}
-            title={paused ? 'Resume polling' : 'Pause polling'}
             aria-label={paused ? 'Resume polling' : 'Pause polling'}
           >
-            {paused ? <Play size={16} /> : <Pause size={16} />}
+            {paused ? 'Resume' : 'Pause'}
           </button>
-          <button type="button" className="system-icon-button" onClick={handleCopySnapshot} disabled={!status} title="Copy status JSON" aria-label="Copy status JSON">
-            <Copy size={16} />
-          </button>
+          <button type="button" className="kit-button" onClick={handleCopySnapshot} disabled={!status} aria-label="Copy status JSON">Copy status</button>
           {copyStatus && <span className="system-copy-status">{copyStatus}</span>}
         </div>
       </header>

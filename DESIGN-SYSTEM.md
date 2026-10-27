@@ -41,7 +41,11 @@ with the terminal.
    browser preference.
 9. **Failure visibility.** Empty, degraded, blocked, and errored states are
    explicit and actionable.
-10. **Colour is information.** It marks meaning, never mood.
+10. **Colour is information, and the accent is the operator's.** Every colour
+    marks a meaning. The accent, violet by default, is the one that marks
+    *you*: where you are, where input goes, what you chose, what is alive, and
+    the one button that acts. Used for exactly that everywhere, it is what
+    makes CHROTE one product with a character of its own.
 11. **Recognition over labels.** A known agent shows its mark; anything else is
     shown in its own words, untranslated.
 12. **Accessible contrast.** Themes may differ; state and text stay readable.
@@ -87,7 +91,7 @@ The interface is monochrome except where colour carries meaning. Nine uses live:
 | Use | Token | What the colour means |
 | --- | --- | --- |
 | Error and danger | `--color-error` | Something failed, or this action destroys |
-| Focus and the primary action | `--accent` | Where input goes; the one button that acts |
+| The operator's accent | `--accent` and its tints | Where you are, where input goes, what you chose, what is alive; the one button that acts (see The accent) |
 | The Claude Code mark | `#D97757` | The product's own mark, kept recognisable |
 | Unix-user identity | `--identity-0` … | Which account owns this session |
 | Diffs | `--ansi-2`, `--color-error` | An addition, a removal; always beside a +/- gutter |
@@ -159,6 +163,25 @@ ones. The collection rail retains collection colours. Colours may repeat;
 labels identify the group. Circles mark topics and notes, squares research,
 and diamonds sources. The accent marks the selected or pointed-at page.
 
+## The accent
+
+The accent is a voice, not a decoration. It appears in five roles and nowhere
+else, the same way on every surface, so that once learned it reads at a
+glance:
+
+| Role | How it is drawn |
+| --- | --- |
+| Where you are | The current tab, choice or step underlined in `--accent`; the current row in a list has a 2px `--accent` bar at its left and the `--accent-soft` wash |
+| Where input goes | A focused field's hairline, the focus ring, the terminal cursor and selection |
+| What you chose | A toggle's filled mark, a picked option's border and wash, a word that is on (`aria-pressed`) in `--accent` |
+| What is alive | A small `--accent` dot: a project an agent works in, a resident or tab with news; the live line of a chart |
+| The one action | One primary button per surface, filled with `--accent`, its words in `--on-accent` |
+
+Hover on a word is the `--accent-soft` wash, never a border. The accent never
+colours a heading, a title, a decorative border, a large area or a second
+button on the same surface; a surface with two primaries has none. Danger is
+`--color-error`, never the accent.
+
 ## Typeface
 
 One family for chrome and terminal alike, because the face is part of
@@ -181,16 +204,30 @@ browser: the browser's checkbox, select and 13.33px button face do not appear.
   28px square, for a row whose name already does something else.
 - **Choice** picks one of a few: the current choice in words over a hairline,
   opening the one menu with the choices as rows and the current one checked.
+- **Button** (`kit-button`) is a word that acts: quiet text that brightens on a
+  soft accent wash. `primary` fills it with the accent for the one action that
+  matters on a surface; `danger` speaks in the error colour, and a two-press
+  confirmation shows `armed` in its wash. A chord beside a word is
+  `kit-chord`. There are no outlined buttons and no icon buttons: a cross is the
+  word Close, an arrow is a step in a path.
+- **Tabs** (`kit-tabs`) choose between a few views or states in words, the
+  current one underlined in the accent: the Sessions and Files switch, List and
+  Map, the strip's span, a schedule's kind.
+- **Row** (`kit-row`) is a line in a list that acts as a whole, with the
+  current one marked as everywhere: the accent's bar and its wash.
+- **Label** (`kit-label`) is the quiet capitals over a section.
+- **PathTrail** is where the operator stands as folders to step back along,
+  starting at the project when inside one; it replaces Up and the path line.
 - **SearchField** is the one search box: 28px over a hairline that takes the
   accent while typing, its placeholder saying what it searches as "Search …",
   with a quiet hint at its right for a chord or a count. What a key does beyond
   typing, such as Down into the results, belongs to the view that owns them.
-- **Quiet button** (`kit-button`) is a word that acts.
 - **Range** (`kit-range`) is a hairline with a small square thumb.
 
-Every one is at least 28px in each direction. A control that must take less
-room in a dense row keeps its 28px target and reaches into the gap beside it,
-as the file tree's expand toggle does.
+Every one is at least 28px in each direction, and 44px under a coarse
+pointer. A control that must take less room in a dense row keeps its 28px
+target and reaches into the gap beside it, as the file tree's expand toggle
+does.
 
 ## Theme
 
@@ -217,6 +254,12 @@ answers for it. Every colour is `#rrggbb` or `#rrggbbaa`.
 the reference document and the served fallback;
 [`docs/installation.md`](docs/installation.md) documents the environment.
 
+The reference theme is `chrote-violet`: near-neutral grounds with a faint
+violet cast, so the accent belongs to them, and the accent `#a68cff` at 7:1 on
+the background. The terminal's magenta is moved toward pink so a Bead epic
+(`--ansi-5`) is never mistaken for the accent, and no identity colour is
+violet. A host theme sets its own accent; the roles above stay the same.
+
 ### Colour token model
 
 The theme writes these custom properties on `:root`:
@@ -224,7 +267,7 @@ The theme writes these custom properties on `:root`:
 ```css
 --background  --surface-primary  --surface-secondary  --divider
 --text-primary  --text-secondary  --text-dim
---accent  --accent-light  --accent-rgb
+--accent  --accent-light  --accent-soft  --on-accent  --accent-rgb
 --color-error  --color-error-light
 --terminal-background  --terminal-foreground  --ansi-0 … --ansi-15
 --identity-0 … --identity-n  --shelf-0 … --shelf-n

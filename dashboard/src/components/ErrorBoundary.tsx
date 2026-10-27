@@ -40,7 +40,7 @@ export default class ErrorBoundary extends Component<Props, State> {
             <div className="error-icon">&#x26A0;</div>
             <h2>Something went wrong</h2>
             <p className="error-message">{this.state.error?.message || 'An unexpected error occurred'}</p>
-            <button className="error-retry-btn" onClick={this.handleRetry}>
+            <button className="kit-button error-retry-btn" onClick={this.handleRetry}>
               Try Again
             </button>
           </div>

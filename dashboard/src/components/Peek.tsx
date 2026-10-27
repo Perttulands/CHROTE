@@ -241,13 +241,13 @@ function Peek() {
             {connectionState === 'closed' || connectionState === 'dropped' ? 'Terminal disconnected' : 'Loading terminal…'}
           </span>
         )}
-        <button type="button" className="peek-word peek-send" onClick={() => openSendToSession({ targetSessionKey: floatingSession })}>
+        <button type="button" className="kit-button peek-word peek-send" onClick={() => openSendToSession({ targetSessionKey: floatingSession })}>
           Send<span className="peek-chord" aria-hidden="true">Alt+S</span>
         </button>
         {frame.remembered && (
-          <button type="button" className="peek-word" onClick={frame.resetSize}>Reset size</button>
+          <button type="button" className="kit-button peek-word" onClick={frame.resetSize}>Reset size</button>
         )}
-        <button type="button" className="peek-word" onClick={closeFloatingModal}>Close</button>
+        <button type="button" className="kit-button peek-word" onClick={closeFloatingModal}>Close</button>
       </div>
       <div className={ended ? 'peek-body detached' : 'peek-body'}>
         {canOpenSession ? (

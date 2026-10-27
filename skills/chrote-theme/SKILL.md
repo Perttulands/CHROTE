@@ -33,7 +33,10 @@ liveness is text, and colour carries meaning or is absent.
 
 - Build the interface from `background`, `surface`, `surfaceRaised` and
   `divider` as near-neutral steps, and let the three text tones do the work.
-- Spend `accent` only on focus and selection, and `error` only on errors.
+- `accent` is the operator's colour: where they are, where input goes, what
+  they chose, what is alive, and the one primary button (DESIGN-SYSTEM.md,
+  The accent). Keep it distinct from `ansi` 5, which marks a Bead epic, and
+  from every `identity` colour. `error` is for errors only.
 - The 16 `ansi` entries are the terminal's own palette. Keep them
   recognisable as the standard eight and their bright pair.
 - `identity` colours should be muted and clearly distinct from `accent`.

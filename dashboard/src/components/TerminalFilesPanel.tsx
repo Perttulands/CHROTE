@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from 'react'
-import { ArrowUp, X } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { useStatus } from '../context/StatusContext'
 import { useResizableWidth } from '../hooks/useResizableWidth'
@@ -11,6 +10,7 @@ import FileTree from './FileTree'
 import { FileContextMenu } from './FileContextMenu'
 import { normalizeFilePath } from './fileKinds'
 import PanelPath from './PanelPath'
+import PathTrail from './PathTrail'
 import SearchField from './kit/SearchField'
 import {
   createFile,
@@ -451,14 +451,8 @@ function TerminalFilesPanel({
         {place === 'sidecar' && <header className="terminal-files-header">
           <strong className="terminal-sidecar-title">Files</strong>
           {!collapsed && place === 'sidecar' && (
-            <button
-              type="button"
-              className="sidecar-close-btn"
-              aria-label="Close Files sidecar"
-              title="Close sidecar"
-              onClick={onClose}
-            >
-              <X size={16} aria-hidden="true" />
+            <button type="button" className="kit-button" aria-label="Close Files sidecar" onClick={onClose}>
+              Close
             </button>
           )}
         </header>}
@@ -531,30 +525,13 @@ function TerminalFilesPanel({
             ) : (
               <>
                 <div className="terminal-files-nav">
-                  {place === 'tab' && (
-                    <button type="button" className="terminal-files-home" onClick={() => openProject('/')}>Projects</button>
-                  )}
-                  <button
-                    type="button"
-                    className="terminal-files-up"
-                    aria-label="Go to parent folder"
-                    title="Go to parent folder"
-                    disabled={filesState.currentPath === '/'}
-                    onClick={() => navigateTo(getParentPath(filesState.currentPath))}
-                  >
-                    <ArrowUp size={15} aria-hidden="true" />
-                  </button>
-                  <PanelPath path={filesState.currentPath} className="terminal-files-here" />
-                  {sessionCwd && <button type="button" className="terminal-files-cwd" onClick={() => navigateTo(sessionCwd)}>CWD</button>}
-                  <button
-                    type="button"
-                    className="terminal-files-refresh"
-                    aria-label="Refresh Files"
-                    title="Refresh Files"
-                    onClick={refreshFiles}
-                  >
-                    ↻
-                  </button>
+                  <PathTrail
+                    path={filesState.currentPath}
+                    onNavigate={navigateTo}
+                    base={project ? { path: project.path, label: workspaceName(project.path) } : null}
+                    home={place === 'tab' ? { label: 'Projects', onSelect: () => openProject('/') } : null}
+                  />
+                  {sessionCwd && <button type="button" className="kit-button" title={sessionCwd} onClick={() => navigateTo(sessionCwd)}>CWD</button>}
                 </div>
                 {pins}
                 <FileTree
@@ -656,7 +633,7 @@ function TerminalFilesPanel({
             >
               <div className="fb-dialog-header">
                 <h3>{nameDialog.kind === 'rename' ? 'Rename' : nameDialog.kind === 'folder' ? 'New Folder' : 'New File'}</h3>
-                <button className="fb-dialog-close" type="button" onClick={() => setNameDialog(null)}>×</button>
+                <button className="kit-button" type="button" onClick={() => setNameDialog(null)}>Close</button>
               </div>
               <form onSubmit={event => void submitNameDialog(event)}>
                 <div className="fb-dialog-body">
@@ -672,8 +649,8 @@ function TerminalFilesPanel({
                   </label>
                 </div>
                 <div className="fb-dialog-footer">
-                  <button className="fb-dialog-btn fb-dialog-btn-cancel" type="button" onClick={() => setNameDialog(null)}>Cancel</button>
-                  <button className="fb-dialog-btn fb-dialog-btn-primary" type="submit" disabled={!nameDialog.value.trim()}>
+                  <button className="kit-button fb-dialog-btn fb-dialog-btn-cancel" type="button" onClick={() => setNameDialog(null)}>Cancel</button>
+                  <button className="kit-button fb-dialog-btn fb-dialog-btn-primary" type="submit" disabled={!nameDialog.value.trim()}>
                     {nameDialog.kind === 'rename' ? 'Rename' : 'Create'}
                   </button>
                 </div>
@@ -686,14 +663,14 @@ function TerminalFilesPanel({
             <div className="fb-dialog fb-dialog-danger" role="dialog" aria-modal="true" aria-label={`Delete ${deleteTarget.name}`}>
               <div className="fb-dialog-header">
                 <h3>Delete {deleteTarget.name}</h3>
-                <button className="fb-dialog-close" type="button" onClick={() => setDeleteTarget(null)}>×</button>
+                <button className="kit-button" type="button" onClick={() => setDeleteTarget(null)}>Close</button>
               </div>
               <div className="fb-dialog-body">
                 <p className="fb-dialog-message">This permanently removes the selected item from disk.</p>
               </div>
               <div className="fb-dialog-footer">
-                <button className="fb-dialog-btn fb-dialog-btn-cancel" type="button" onClick={() => setDeleteTarget(null)}>Cancel</button>
-                <button className="fb-dialog-btn fb-dialog-btn-danger" type="button" onClick={() => void confirmDelete()}>Delete</button>
+                <button className="kit-button fb-dialog-btn fb-dialog-btn-cancel" type="button" onClick={() => setDeleteTarget(null)}>Cancel</button>
+                <button className="kit-button danger fb-dialog-btn" type="button" onClick={() => void confirmDelete()}>Delete</button>
               </div>
             </div>
           </div>

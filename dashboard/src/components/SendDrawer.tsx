@@ -531,7 +531,7 @@ export default function SendDrawer() {
           <div className="send-drawer-summary-name">{selected === NEW_AGENT ? (launch?.label ?? 'New agent…') : target?.name ?? 'Choose a session'}</div>
           {target?.unixUser && <span className="send-drawer-section">{target.unixUser}</span>}
         </div>
-        {!scheduling && <button type="button" className="send-drawer-secondary"
+        {!scheduling && <button type="button" className="kit-button send-drawer-secondary"
           onClick={() => setChoosingTarget(value => !value)}>
           {showPicker && selected ? 'Back' : 'Change'}
         </button>}
@@ -686,7 +686,7 @@ export default function SendDrawer() {
 
           {scheduling ? (
             <div className="send-drawer-actions">
-              <button type="button" className="send-drawer-primary"
+              <button type="button" className="kit-button primary send-drawer-primary"
                 disabled={refine ? !canSend : !draft || !note.trim() || Boolean(scheduleError) || sending || deliveryUnknown || Boolean(target?.ended || target?.unresolvedBare)}
                 onClick={() => refine ? send(true) : void createScheduledTask()}>
                 {sending ? (refine ? 'Sending…' : 'Creating…') : refine ? 'Send to agent' : 'Create task'}
@@ -696,7 +696,7 @@ export default function SendDrawer() {
           <div className="send-drawer-actions">
             <button
               type="button"
-              className="send-drawer-secondary"
+              className="kit-button send-drawer-secondary"
               onClick={() => send(false)}
               disabled={!canSend}
             >
@@ -704,7 +704,7 @@ export default function SendDrawer() {
             </button>
             <button
               type="button"
-              className="send-drawer-primary"
+              className="kit-button primary send-drawer-primary"
               onClick={() => send(true)}
               disabled={!canSend}
             >

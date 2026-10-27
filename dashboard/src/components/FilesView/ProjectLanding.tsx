@@ -69,7 +69,7 @@ export default function ProjectLanding({ project, onOpenPath }: ProjectLandingPr
         <span className="project-landing-facts">{projectFacts(project).join(' · ')}</span>
         <button
           type="button"
-          className="files-panel-action"
+          className="kit-button files-panel-action"
           onClick={() => openSendToSession({ reference: `project ${project.path}`, launch: { label: `Launch in ${name}`, folder: project.path } })}
         >
           Send…

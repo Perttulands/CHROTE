@@ -64,7 +64,7 @@ export default function AgentContextSheet() {
         <span className="table-header-spacer" />
         <button
           type="button"
-          className="table-action"
+          className="kit-button table-action"
           onClick={() => openSendToSession({
             targetSessionKey: request.sessionKey,
             reference: `agents ${folder} ${harness}`,
@@ -72,7 +72,7 @@ export default function AgentContextSheet() {
         >
           Send
         </button>
-        <button type="button" className="table-action" aria-keyshortcuts="Escape" onClick={closeAgentContext}>
+        <button type="button" className="kit-button table-action" aria-keyshortcuts="Escape" onClick={closeAgentContext}>
           Close<span className="table-chord" aria-hidden="true">Esc</span>
         </button>
       </div>

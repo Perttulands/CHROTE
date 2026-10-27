@@ -127,17 +127,17 @@ export default function PageReader({ reader, diveRef, titleOf, summaryOf, whereO
           <h1 title={page.title}>{page.title}</h1>
           <div className="library-page-actions">
             {draft === null ? (
-              <button type="button" className="library-action" onClick={reader.startEdit}>Edit</button>
+              <button type="button" className="kit-button library-action" onClick={reader.startEdit}>Edit</button>
             ) : (
               <>
-                <button type="button" className="library-action library-action-primary" onClick={() => void reader.save()}>Save</button>
-                <button type="button" className="library-action" onClick={reader.discard}>
+                <button type="button" className="kit-button library-action library-action-primary" onClick={() => void reader.save()}>Save</button>
+                <button type="button" className="kit-button library-action" onClick={reader.discard}>
                   {discarding ? 'Confirm' : 'Discard'}
                 </button>
               </>
             )}
-            <button type="button" className="library-action" onClick={onSend}>Send</button>
-            <button type="button" className="library-action library-dive-close" onClick={reader.close}>
+            <button type="button" className="kit-button library-action" onClick={onSend}>Send</button>
+            <button type="button" className="kit-button library-action library-dive-close" onClick={reader.close}>
               Close<span className="library-chord">Esc</span>
             </button>
           </div>
@@ -146,7 +146,7 @@ export default function PageReader({ reader, diveRef, titleOf, summaryOf, whereO
           {where && <span>{where}</span>}
           <span>{page.updated ? `changed ${libraryWhen(page.updated)} by ${page.author}` : 'never committed'}</span>
           {page.history.length > 0 && (
-            <button type="button" className="library-history-more" aria-expanded={historyOpen} onClick={reader.toggleHistory}>
+            <button type="button" className="kit-button library-history-more" aria-expanded={historyOpen} onClick={reader.toggleHistory}>
               History
             </button>
           )}

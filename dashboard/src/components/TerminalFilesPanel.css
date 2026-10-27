@@ -58,25 +58,6 @@
   border-bottom: 1px solid var(--divider);
 }
 
-.terminal-files-header button {
-  border: 1px solid var(--divider);
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.terminal-files-header button:hover:not(:disabled) {
-  color: var(--text-primary);
-  border-color: var(--accent);
-  background: var(--accent-light);
-}
-
-.terminal-files-header button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 .terminal-files-up,
 .terminal-files-cwd,
 .terminal-files-refresh {
@@ -186,25 +167,6 @@
   font-size: 12px;
 }
 
-.terminal-files-nav button {
-  border: 1px solid var(--divider);
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.terminal-files-nav button:hover:not(:disabled) {
-  color: var(--text-primary);
-  border-color: var(--accent);
-  background: var(--accent-light);
-}
-
-.terminal-files-nav button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 /* ---- pins: the operator's own places, above the tree ---- */
 
 .terminal-files-pins {
@@ -275,10 +237,21 @@
   outline: none;
 }
 
-/* A project an agent is working in is bright, and marked at its edge. */
+/* A project an agent is working in is bright, with a dot in the accent: the
+   accent marks what is alive as well as where the operator is. */
 .files-project.is-live {
-  border-left-color: var(--accent);
   color: var(--text-primary);
+}
+
+.files-project.is-live .files-project-name::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
 }
 
 .files-project-name {
@@ -293,13 +266,6 @@
   flex: none;
   margin-left: auto;
   color: var(--text-dim);
-  font-size: 11px;
-}
-
-.terminal-files-nav .terminal-files-home {
-  flex: none;
-  min-height: 28px;
-  padding: 0 7px;
   font-size: 11px;
 }
 
@@ -447,26 +413,6 @@
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.files-panel-action {
-  border: 0;
-  padding: 0;
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.files-panel-action:hover:not(:disabled),
-.files-panel-action.is-current {
-  color: var(--text-primary);
-}
-
-.files-panel-action:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .files-panel-viewer-body {

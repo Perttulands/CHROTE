@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
-import { Send } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { copySessionUnavailableReason } from '../context/sessionCopy'
 import { useTerminalPool } from './TerminalPool'
@@ -323,10 +322,10 @@ function DetachedTile({ state, sessionName, restarting, onRestore, onRestart, on
       <div className="terminal-tile-detached-actions">
         {state === 'ended' ? (
           <>
-            <button className="terminal-tile-detached-action" type="button" disabled={restarting} onClick={onRestart}>
+            <button className="kit-button terminal-tile-detached-action" type="button" disabled={restarting} onClick={onRestart}>
               {restarting ? 'Restarting…' : 'Restart'}
             </button>
-            <button className="terminal-tile-detached-action" type="button" onClick={onRemove}>Remove</button>
+            <button className="kit-button terminal-tile-detached-action" type="button" onClick={onRemove}>Remove</button>
           </>
         ) : (
           // Both dial the same session again, and neither displaces anybody.
@@ -334,7 +333,7 @@ function DetachedTile({ state, sessionName, restarting, onRestore, onRestart, on
           // this device's size; Reconnect leaves the size where it is, which is
           // why the tile does that one for the operator when it can.
           <button
-            className="terminal-tile-detached-action"
+            className="kit-button terminal-tile-detached-action"
             type="button"
             title={state === 'takenOver' ? CLAIM_EXPLANATION : undefined}
             onClick={onRestore}
@@ -512,12 +511,11 @@ function TerminalWindow({ workspaceId, window: windowConfig, style, onOpenFilesA
         <div className="window-controls">
           {activeSession && (
             <button
-              className="window-send-btn"
+              className="kit-button window-send-btn"
               onClick={() => openSendToSession({ targetSessionKey: activeSession })}
-              title={`Send to ${getSessionNameFromKey(activeSession)}`}
               aria-label={`Send to session ${getSessionNameFromKey(activeSession)}`}
             >
-              <Send size={12} aria-hidden="true" />
+              Send
             </button>
           )}
           {/* The two detached states say so in the tile itself; only a tile on

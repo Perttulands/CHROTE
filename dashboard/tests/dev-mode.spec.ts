@@ -138,7 +138,7 @@ for (const completion of ['before enabling', 'while enabled'] as const) {
     await expect(drawer).toBeVisible()
     await expect(drawer.locator('.send-drawer-reference')).toHaveText(
       `component TerminalWindow (dashboard/src/components/TerminalWindow.tsx) tile.header ` +
-      `in terminal1 window 1: button 'Send to session ${TARGET}'`,
+      `in terminal1 window 1: button 'Send'`,
     )
     await expect(drawer.getByLabel('Message to send')).toBeFocused()
 

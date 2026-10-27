@@ -300,7 +300,7 @@ export default function ReportBox({ open, onClose, activeTab }: ReportBoxProps) 
         <span className="report-box-hint">Enter files · Shift+Enter new line · Ctrl+Enter files and sends</span>
         <button
           type="button"
-          className="report-box-send"
+          className="kit-button primary report-box-send"
           disabled={filing || !title || !storeProject}
           onClick={() => { void file(true) }}
         >

@@ -18,63 +18,16 @@
   background-color: var(--surface-primary);
 }
 
+/* The sidecar switch is kit tabs: Sessions and Files, the open one
+   underlined in the accent. */
 .terminal-sidecar-switcher {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  flex: 0 0 auto;
-  padding: 2px;
-  border: 1px solid var(--divider);
-  border-radius: 5px;
-  background: var(--surface-secondary);
-}
-
-.terminal-sidecar-button {
-  min-width: 0;
-  height: 26px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 3px;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-}
-
-.terminal-sidecar-button:hover,
-.terminal-sidecar-button:focus-visible {
-  color: var(--text-primary);
-  background: var(--accent-light);
-  outline: none;
-}
-
-.terminal-sidecar-button:focus-visible {
-  box-shadow: 0 0 0 1px var(--accent);
+  align-self: stretch;
 }
 
 .terminal-sidecar-button.active {
   color: var(--text-primary);
-  background: var(--accent-light);
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-.terminal-sidecar-count {
-  min-width: 17px;
-  height: 17px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  font-size: 9px;
-  line-height: 1;
+  box-shadow: inset 0 -2px 0 var(--accent);
+  border-radius: 0;
 }
 
 .terminal-controls-divider {
@@ -317,27 +270,6 @@
   flex: 0 0 auto;
 }
 
-.window-send-btn {
-  background: transparent;
-  border: 1px solid var(--divider);
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: 2px 6px;
-  font-size: 12px;
-  transition: all 0.15s ease;
-}
-
-.window-send-btn:hover {
-  color: var(--text-primary);
-  border-color: var(--accent);
-}
-
-.window-send-btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 6px;
-}
-
 .terminal-loading-state {
   color: var(--text-dim);
   font-size: 10px;
@@ -389,30 +321,6 @@
   gap: 8px;
 }
 
-/* Plain outline controls. Reclaiming a tile is ordinary work, so it is drawn
-   like ordinary work: an outline, the secondary text colour, no shouting. */
-.terminal-tile-detached-action {
-  padding: 5px 12px;
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.terminal-tile-detached-action:hover:not(:disabled),
-.terminal-tile-detached-action:focus-visible {
-  color: var(--text-primary);
-  border-color: var(--text-secondary);
-}
-
-.terminal-tile-detached-action:disabled {
-  opacity: 0.5;
-  cursor: wait;
-}
-
 .tag-state {
   color: var(--text-dim);
   font-size: 10px;
@@ -440,12 +348,6 @@
     gap: 6px;
   }
 
-  .terminal-sidecar-button {
-    width: 28px;
-    padding: 0;
-  }
-
-  .terminal-sidecar-label,
   .terminal-sidecar-count {
     display: none;
   }

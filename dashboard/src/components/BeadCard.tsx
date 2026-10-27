@@ -149,7 +149,7 @@ export default function BeadCard({ onOpenInBeads, active = true }: BeadCardProps
         {onOpenInBeads && (
           <button
             type="button"
-            className="table-action"
+            className="kit-button table-action"
             disabled={!canOpenInBeads}
             onClick={() => { if (bead && projectPath) onOpenInBeads(projectPath, bead.id) }}
           >
@@ -158,7 +158,7 @@ export default function BeadCard({ onOpenInBeads, active = true }: BeadCardProps
         )}
         <button
           type="button"
-          className="table-action"
+          className="kit-button table-action"
           aria-keyshortcuts={residentPresent ? undefined : 'Alt+S'}
           disabled={!bead}
           onClick={send}
@@ -167,16 +167,16 @@ export default function BeadCard({ onOpenInBeads, active = true }: BeadCardProps
         </button>
         <button
           type="button"
-          className="table-action"
+          className="kit-button table-action"
           onClick={() => { void copyAndAnnounce(request.id, request.id, announce) }}
         >
           Copy id
         </button>
         {behind > 0 && (
-          <button type="button" className="table-action" onClick={backInBeadCard}>Back</button>
+          <button type="button" className="kit-button table-action" onClick={backInBeadCard}>Back</button>
         )}
         <span className="table-header-spacer" />
-        <button type="button" className="table-action" aria-keyshortcuts="Escape" onClick={closeBeadCard}>
+        <button type="button" className="kit-button table-action" aria-keyshortcuts="Escape" onClick={closeBeadCard}>
           Close<span className="table-chord" aria-hidden="true">Esc</span>
         </button>
       </div>

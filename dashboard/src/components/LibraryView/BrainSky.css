@@ -1,12 +1,12 @@
 .brain-map { flex: 1; min-height: 0; display: flex; flex-direction: column; font: inherit; }
-.brain-map button { font: inherit; color: var(--text-primary); }
+.brain-map button:not(.kit-button) { font: inherit; color: var(--text-primary); }
 .brain-map-body { flex: 1; min-height: 0; display: flex; }
 .brain-count { color: var(--text-dim); font-weight: normal; font-size: 11px; }
 
 /* The foot: the time line across the sky, and Fit at its end. */
 .brain-foot { container-type: inline-size; flex: none; display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 14px; border-top: 1px solid var(--divider); }
-.brain-map .brain-fit { flex: none; min-width: 44px; height: 28px; padding: 0 8px; font-size: 12px; border: none; background: transparent; color: var(--text-dim); cursor: pointer; }
-.brain-map .brain-fit:hover, .brain-map .brain-fit:focus-visible { color: var(--text-primary); outline: none; }
+.brain-map .brain-fit { flex: none; min-width: 44px;
+}
 
 /* On a phone: the subjects as a list, whole rows to tap. */
 .brain-list { flex: 1; overflow: auto; padding: 6px 0; }
