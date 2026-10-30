@@ -135,6 +135,8 @@ describe('SystemStatusView', () => {
     fetchMock.mockReset()
     mockSystemResponses()
     vi.stubGlobal('fetch', fetchMock)
+    // These cover the traces; the process map has its own test below.
+    localStorage.setItem('chrote.server.view', 'traces')
     vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
     Object.assign(navigator, { clipboard: { writeText: vi.fn() } })
   })
@@ -147,6 +149,42 @@ describe('SystemStatusView', () => {
 
   const reads = (resource: string) => fetchMock.mock.calls.filter(([url]) => requestPath(url).endsWith(`/api/system/${resource}`))
   const tick = (ms = 0) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+
+  it('shows the process map by its groups, and stops reading processes on the traces', async () => {
+    localStorage.setItem('chrote.server.view', 'map')
+    const processes = {
+      timestamp: '2026-10-30T12:00:00Z',
+      hostname: 'vps-1',
+      cores: 4,
+      memoryTotalBytes: 8 * 1024 ** 3,
+      groups: [{
+        key: 'tmux:chrote3-claude',
+        kind: 'tmux',
+        name: 'chrote3-claude',
+        cpuPercent: 18,
+        rssBytes: 400 * 1024 ** 2,
+        count: 2,
+        processes: [
+          { pid: 200, ppid: 1, name: 'bash', command: 'bash', cpuPercent: 0, rssBytes: 4 * 1024 ** 2, threads: 1 },
+          { pid: 210, ppid: 200, name: 'claude', command: 'claude --resume', cpuPercent: 18, rssBytes: 396 * 1024 ** 2, threads: 12 },
+        ],
+      }],
+    }
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const path = requestPath(input)
+      if (path.endsWith('/api/system/processes')) return envelope(processes)
+      if (path.endsWith('/api/system/status')) return envelope(statusResponse())
+      return envelope(historyResponse())
+    })
+    render(<SystemStatusView active />)
+    expect(await screen.findByText('chrote3-claude')).toBeInTheDocument()
+    expect(screen.getByText('claude')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Traces' }))
+    const before = reads('processes').length
+    await waitFor(() => expect(screen.queryByText('chrote3-claude')).not.toBeInTheDocument())
+    expect(reads('processes').length).toBe(before)
+  })
 
   it('refreshes on visible entry and sleeps while either the tab or document is hidden', async () => {
     vi.useFakeTimers()

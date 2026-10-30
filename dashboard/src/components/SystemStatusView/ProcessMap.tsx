@@ -41,7 +41,7 @@ function useGlide<T>(target: T | null, blend: (from: T, to: T, t: number) => T):
   useEffect(() => {
     if (!target) return
     const from = drawnRef.current
-    if (!from || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (!from || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
       drawnRef.current = target
       setDrawn(target)
       return
@@ -72,7 +72,7 @@ export function ProcessMap({ data, error }: { data: ProcessMapData | null; error
   const previous = useRef<ProcessLayout | null>(null)
   const layout = useMemo(() => {
     if (!data) return null
-    const next = layoutProcessMap(data.groups, previous.current)
+    const next = layoutProcessMap(data.groups || [], previous.current)
     previous.current = next
     return next
   }, [data])
@@ -102,9 +102,10 @@ export function ProcessMap({ data, error }: { data: ProcessMapData | null; error
     )
   }
 
-  const totalCPU = data.groups.reduce((sum, group) => sum + group.cpuPercent, 0) / Math.max(1, data.cores)
-  const totalRSS = data.groups.reduce((sum, group) => sum + group.rssBytes, 0)
-  const processCount = data.groups.reduce((sum, group) => sum + group.count, 0)
+  const groups = data.groups || []
+  const totalCPU = groups.reduce((sum, group) => sum + group.cpuPercent, 0) / Math.max(1, data.cores)
+  const totalRSS = groups.reduce((sum, group) => sum + group.rssBytes, 0)
+  const processCount = groups.reduce((sum, group) => sum + group.count, 0)
   // Text keeps one size on screen whatever the zoom.
   const unit = box.w / 1000
 
@@ -113,7 +114,7 @@ export function ProcessMap({ data, error }: { data: ProcessMapData | null; error
       <div className="process-map-bar">
         <span className="process-map-title">Process map</span>
         <span>{processCount} processes</span>
-        <span>{data.groups.length} groups</span>
+        <span>{groups.length} groups</span>
         {focus && (
           <button type="button" className="process-map-back" onClick={() => setFocusKey(null)}>
             ← whole host
@@ -130,7 +131,7 @@ export function ProcessMap({ data, error }: { data: ProcessMapData | null; error
           setFocusKey(null)
         }}
         role="img"
-        aria-label={`${processCount} processes in ${data.groups.length} groups`}
+        aria-label={`${processCount} processes in ${groups.length} groups`}
         style={{ '--u': unit } as React.CSSProperties}
       >
         <g className="process-map-spokes">
