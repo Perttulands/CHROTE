@@ -50,6 +50,15 @@ describe('process map layout', () => {
     expect(layout.hidden.map(g => g.key)).toEqual(['g02', 'g01', 'g00'])
   })
 
+  it('folds quiet services away but always shows tmux sessions', () => {
+    const quiet = group('service:dbus', [[5, 1, 0, 4]])
+    const session = { ...group('tmux:notes', [[6, 1, 0, 2]]), kind: 'tmux' as const }
+    const busy = group('service:nginx', [[7, 1, 3, 80]])
+    const layout = layoutProcessMap([quiet, session, busy])
+    expect(layout.groups.map(g => g.key).sort()).toEqual(['service:nginx', 'tmux:notes'])
+    expect(layout.hidden.map(g => g.key)).toEqual(['service:dbus'])
+  })
+
   it('starts from the previous layout so a poll barely moves a group', () => {
     const first = layoutProcessMap([group('a', [[2, 1, 5]]), group('b', [[3, 1, 1]])])
     const second = layoutProcessMap([group('a', [[2, 1, 6]]), group('b', [[3, 1, 1]])], first)

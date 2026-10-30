@@ -13,6 +13,9 @@
 import type { ProcessGroup, ProcessNode } from '../../services/systemClient'
 
 export const MAX_GROUPS = 12
+/** Below this a group that isn't a tmux session folds away: about half a
+ * percent of a core, or 32 MiB, does not draw anything worth a circle. */
+export const QUIET_WEIGHT = 0.5
 const HUB_RADIUS = 64
 const GROUP_GAP = 30
 const RELAX_STEPS = 240
@@ -69,7 +72,7 @@ export function nodeRadius(node: ProcessNode) {
 
 function groupRadius(group: ProcessGroup) {
   const gb = group.rssBytes / (1024 * MiB)
-  return Math.max(70, Math.min(190, 58 + 11 * Math.sqrt(group.processes.length) + 34 * Math.sqrt(gb)))
+  return Math.max(48, Math.min(190, 36 + 11 * Math.sqrt(group.processes.length) + 40 * Math.sqrt(gb)))
 }
 
 /** The processes of one group, laid out around (0, 0) inside radius r. */
@@ -139,8 +142,8 @@ export function layoutGroup(group: ProcessGroup, r: number): PlacedNode[] {
 /** The whole map. `previous` keeps groups near where they last were. */
 export function layoutProcessMap(groups: ProcessGroup[], previous?: ProcessLayout | null): ProcessLayout {
   const ranked = [...groups].sort((a, b) => groupWeight(b) - groupWeight(a) || a.key.localeCompare(b.key))
-  const visible = ranked.slice(0, MAX_GROUPS)
-  const hidden = ranked.slice(MAX_GROUPS)
+  const visible = ranked.filter(group => group.kind === 'tmux' || groupWeight(group) >= QUIET_WEIGHT).slice(0, MAX_GROUPS)
+  const hidden = ranked.filter(group => !visible.includes(group))
   // Stable order around the hub, so a group keeps its side of the map.
   visible.sort((a, b) => a.key.localeCompare(b.key))
 
