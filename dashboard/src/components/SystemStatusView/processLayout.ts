@@ -65,9 +65,10 @@ export function hueFor(key: string) {
   return GROUP_HUES[hash % GROUP_HUES.length]
 }
 
+/** Memory sets a dot's size; CPU swells it, so the busy ones stand out. */
 export function nodeRadius(node: ProcessNode) {
   const mb = node.rssBytes / MiB
-  return Math.min(15, 3 + 1.6 * Math.sqrt(mb / 16))
+  return Math.min(18, 3 + 1.6 * Math.sqrt(mb / 16) + 0.12 * Math.min(node.cpuPercent, 60))
 }
 
 function groupRadius(group: ProcessGroup) {

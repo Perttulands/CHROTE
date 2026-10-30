@@ -84,6 +84,22 @@ export function ProcessMap({ data, error }: { data: ProcessMapData | null; error
   const targetBox = useMemo(() => (layout ? boxFor(layout, focus) : null), [layout, focus])
   const box = useGlide(targetBox, blendBox)
 
+  // The drawn size of the map, so text and the hub keep one size on screen
+  // whatever the zoom.
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  const [screen, setScreen] = useState({ w: 1000, h: 700 })
+  const ready = drawn !== null
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      if (width > 0 && height > 0) setScreen({ w: width, h: height })
+    })
+    observer.observe(svg)
+    return () => observer.disconnect()
+  }, [ready])
+
   // Keep the picked process fresh as polls arrive, and drop it when it ends.
   const live = useMemo(() => {
     if (!picked || !layout) return null
@@ -106,8 +122,8 @@ export function ProcessMap({ data, error }: { data: ProcessMapData | null; error
   const totalCPU = groups.reduce((sum, group) => sum + group.cpuPercent, 0) / Math.max(1, data.cores)
   const totalRSS = groups.reduce((sum, group) => sum + group.rssBytes, 0)
   const processCount = groups.reduce((sum, group) => sum + group.count, 0)
-  // Text keeps one size on screen whatever the zoom.
-  const unit = box.w / 1000
+  // One screen pixel in map units.
+  const unit = Math.max(box.w / screen.w, box.h / screen.h)
 
   return (
     <section className="process-map" aria-label="Process map">
@@ -123,6 +139,7 @@ export function ProcessMap({ data, error }: { data: ProcessMapData | null; error
         {error && <span className="process-map-stale" title={error}>stale</span>}
       </div>
       <svg
+        ref={svgRef}
         className="process-map-svg"
         viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
         preserveAspectRatio="xMidYMid meet"
@@ -140,8 +157,8 @@ export function ProcessMap({ data, error }: { data: ProcessMapData | null; error
             return (
               <line
                 key={group.key}
-                x1={group.x / d * 34}
-                y1={group.y / d * 34}
+                x1={group.x / d * 26 * unit}
+                y1={group.y / d * 26 * unit}
                 x2={group.x - group.x / d * group.r}
                 y2={group.y - group.y / d * group.r}
               />
@@ -211,11 +228,11 @@ export function ProcessMap({ data, error }: { data: ProcessMapData | null; error
         ))}
 
         <g className="process-hub">
-          <circle className="process-hub-halo" r={34} />
-          <circle className="process-hub-dot" r={20} />
-          <text x={42} y={-4} fontSize={14 * unit} className="process-hub-name">{data.hostname || 'host'}</text>
-          <text x={42} y={12 * unit} fontSize={10 * unit} className="process-label-meta">cpu {formatCPU(totalCPU)} of {data.cores} cores</text>
-          <text x={42} y={25 * unit} fontSize={10 * unit} className="process-label-meta">
+          <circle className="process-hub-halo" r={26 * unit} />
+          <circle className="process-hub-dot" r={13 * unit} />
+          <text x={34 * unit} y={-4 * unit} fontSize={13 * unit} className="process-hub-name">{data.hostname || 'host'}</text>
+          <text x={34 * unit} y={12 * unit} fontSize={10 * unit} className="process-label-meta">cpu {formatCPU(totalCPU)} of {data.cores} cores</text>
+          <text x={34 * unit} y={25 * unit} fontSize={10 * unit} className="process-label-meta">
             mem {formatBytes(totalRSS)}{data.memoryTotalBytes ? ` / ${formatBytes(data.memoryTotalBytes)}` : ''}
           </text>
         </g>
