@@ -485,3 +485,9 @@
 
   .system-instrument-meta { display: none; }
 }
+
+.system-view-switch {
+  display: flex;
+  gap: 4px;
+}
+

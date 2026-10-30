@@ -1,0 +1,253 @@
+/* The process map: what draws the machine's resources. */
+
+.process-map {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+}
+
+.process-map-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 16px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--divider);
+}
+
+.process-map-title {
+  color: var(--text-primary);
+}
+
+.process-map-back {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--divider);
+  color: var(--text-primary);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.process-map-stale {
+  color: #fbbf24;
+}
+
+.process-map-empty {
+  margin: auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.process-map-svg {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  font-family: inherit;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.process-map-spokes line {
+  stroke: var(--text-dim, #4b5563);
+  stroke-opacity: 0.28;
+  stroke-width: calc(var(--u) * 1);
+}
+
+.process-group-ring {
+  fill: var(--hue);
+  fill-opacity: 0.025;
+  stroke: var(--hue);
+  stroke-opacity: 0.55;
+  stroke-width: calc(var(--u) * 1.1);
+  stroke-dasharray: calc(var(--u) * 3) calc(var(--u) * 4);
+  cursor: zoom-in;
+  transition: fill-opacity 160ms ease;
+}
+
+.process-group-ring:hover,
+.process-group.is-focus .process-group-ring {
+  fill-opacity: 0.06;
+}
+
+.process-group-name {
+  fill: var(--hue);
+  text-anchor: middle;
+}
+
+.process-group-meta {
+  fill: var(--text-secondary);
+  text-anchor: middle;
+}
+
+.process-link {
+  stroke: var(--hue);
+  stroke-opacity: 0.4;
+  stroke-width: calc(var(--u) * 1);
+}
+
+.process-node {
+  cursor: pointer;
+}
+
+.process-dot {
+  fill: var(--hue);
+  filter: drop-shadow(0 0 calc(var(--u) * 4) var(--hue));
+}
+
+.process-node.is-centre .process-dot {
+  stroke: #fff;
+  stroke-opacity: 0.25;
+  stroke-width: calc(var(--u) * 1.5);
+}
+
+.process-centre-ring {
+  fill: none;
+  stroke: var(--hue);
+  stroke-opacity: 0.5;
+  stroke-width: calc(var(--u) * 1.2);
+}
+
+.process-node.is-picked .process-dot {
+  stroke: #fff;
+  stroke-opacity: 0.9;
+  stroke-width: calc(var(--u) * 2);
+}
+
+.process-halo {
+  fill: var(--hue);
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: process-beat 1.6s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes process-beat {
+  0% { opacity: 0.32; transform: scale(0.45); }
+  100% { opacity: 0; transform: scale(1.15); }
+}
+
+.process-label text {
+  fill: var(--text-primary);
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: var(--background);
+  stroke-width: calc(var(--u) * 3);
+  stroke-linejoin: round;
+}
+
+.process-label-meta {
+  fill: var(--text-secondary) !important;
+}
+
+.process-hub-halo {
+  fill: var(--accent, #60a5fa);
+  fill-opacity: 0.08;
+  stroke: var(--accent, #60a5fa);
+  stroke-opacity: 0.45;
+  stroke-width: calc(var(--u) * 1.5);
+}
+
+.process-hub-dot {
+  fill: var(--accent, #60a5fa);
+  filter: drop-shadow(0 0 calc(var(--u) * 10) var(--accent, #60a5fa));
+}
+
+.process-hub text {
+  fill: var(--text-primary);
+  paint-order: stroke;
+  stroke: var(--background);
+  stroke-width: calc(var(--u) * 3);
+}
+
+.process-detail {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  max-width: min(420px, calc(100% - 32px));
+  padding: 10px 12px;
+  background: var(--surface-primary, #111);
+  border: 1px solid var(--divider);
+  border-left: 2px solid var(--hue);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.process-detail-group {
+  color: var(--text-secondary);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.process-detail-group strong {
+  color: var(--hue);
+  font-weight: 600;
+}
+
+.process-detail-name {
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+.process-detail-name span {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.process-detail-command {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.process-detail dl {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 2px 14px;
+  margin: 8px 0 0;
+  justify-content: start;
+}
+
+.process-detail dt {
+  grid-row: 1;
+  color: var(--text-secondary);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.process-detail dd {
+  grid-row: 2;
+  margin: 0;
+}
+
+.process-map-hidden {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  max-width: 50%;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .process-halo { animation: none; opacity: 0.15; }
+}
+
+@media (max-width: 720px) {
+  .process-map-hidden { display: none; }
+  .process-detail { left: 8px; right: 8px; bottom: 8px; max-width: none; }
+}

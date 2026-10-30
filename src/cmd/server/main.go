@@ -222,6 +222,7 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 		stopSystemHistory = startDefaultSystemHistorySampler(systemHandler, ctx)
 	}
 	systemHandler.RegisterRoutes(mux)
+	api.NewProcessHandler(tmuxHandler).RegisterRoutes(mux)
 
 	launchHandler := api.NewLaunchHandler(config.Launch)
 	launchHandler.RegisterRoutes(mux)

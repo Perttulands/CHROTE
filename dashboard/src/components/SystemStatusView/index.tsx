@@ -2,6 +2,7 @@ import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo
 import { AlertTriangle } from 'lucide-react'
 import {
   getSystemHistory,
+  getSystemProcesses,
   getSystemStatus,
   type SystemDiskStatus,
   type SystemGPUStatus,
@@ -10,6 +11,10 @@ import {
 } from '../../services/systemClient'
 import { copyTextToClipboard } from '../../utils/clipboard'
 import { useSystemRead } from './useSystemRead'
+import { ProcessMap } from './ProcessMap'
+
+const VIEW_KEY = 'chrote.server.view'
+type ServerView = 'map' | 'traces'
 
 const ACTIVE_POLL_MS = 2000
 const HISTORY_POLL_MS = 5 * 60_000
@@ -573,12 +578,19 @@ function SystemStatusView({ active = true }: { active?: boolean }) {
   }, [])
 
   const visible = active && documentVisible
+  const [view, setView] = useState<ServerView>(() => (localStorage.getItem(VIEW_KEY) === 'traces' ? 'traces' : 'map'))
+  const chooseView = (next: ServerView) => {
+    setView(next)
+    localStorage.setItem(VIEW_KEY, next)
+  }
+  const { data: processes, error: processError, refresh: refreshProcesses } = useSystemRead(getSystemProcesses, visible && view === 'map', paused, ACTIVE_POLL_MS)
   const { data: status, error, loading, refresh: refreshStatus } = useSystemRead(getSystemStatus, visible, paused, ACTIVE_POLL_MS)
   const { data: history, error: historyError, refresh: refreshHistory } = useSystemRead(getSystemHistory, visible, paused, HISTORY_POLL_MS)
   const refresh = useCallback(() => {
     refreshStatus()
     refreshHistory()
-  }, [refreshStatus, refreshHistory])
+    refreshProcesses()
+  }, [refreshStatus, refreshHistory, refreshProcesses])
   // The server owns historical sampling. A fresh live tip can be drawn without
   // downloading that history again or erasing it when a later read fails.
   const historySamples = useMemo(() => combineStatusHistory(history?.samples || [], status), [history, status])
@@ -697,6 +709,10 @@ function SystemStatusView({ active = true }: { active?: boolean }) {
           </p>
         </div>
         <div className="system-hero-actions">
+          <div className="system-view-switch" role="group" aria-label="Server view">
+            <button type="button" className="kit-button" aria-pressed={view === 'map'} onClick={() => chooseView('map')}>Map</button>
+            <button type="button" className="kit-button" aria-pressed={view === 'traces'} onClick={() => chooseView('traces')}>Traces</button>
+          </div>
           <div
             className={`system-storage-meter ${(rootDisk?.usedPercent || 0) >= 85 ? 'is-warn' : ''}`}
             role="img"
@@ -728,12 +744,16 @@ function SystemStatusView({ active = true }: { active?: boolean }) {
 
       {error && <div className="system-error" role="alert">{error}</div>}
 
-      <InstrumentBoard
-        instruments={instruments}
-        samples={timelineSamples}
-        historyError={historyError}
-        historyLabel={historyLabel}
-      />
+      {view === 'map' ? (
+        <ProcessMap data={processes} error={processError} />
+      ) : (
+        <InstrumentBoard
+          instruments={instruments}
+          samples={timelineSamples}
+          historyError={historyError}
+          historyLabel={historyLabel}
+        />
+      )}
 
       <WarningPanel warnings={warnings} />
     </div>

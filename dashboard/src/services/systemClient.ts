@@ -92,6 +92,34 @@ export interface SystemGPUStatus {
   message?: string
 }
 
+export interface ProcessMap {
+  timestamp: string
+  hostname: string
+  cores: number
+  memoryTotalBytes: number
+  groups: ProcessGroup[]
+}
+
+export interface ProcessGroup {
+  key: string
+  kind: 'tmux' | 'service' | 'system'
+  name: string
+  cpuPercent: number
+  rssBytes: number
+  count: number
+  processes: ProcessNode[]
+}
+
+export interface ProcessNode {
+  pid: number
+  ppid: number
+  name: string
+  command: string
+  cpuPercent: number
+  rssBytes: number
+  threads: number
+}
+
 export interface SystemWarning {
   code: string
   message: string
@@ -123,4 +151,8 @@ export function getSystemStatus(signal?: AbortSignal) {
 
 export function getSystemHistory(signal?: AbortSignal) {
   return request<SystemHistory>('/api/system/history', signal)
+}
+
+export function getSystemProcesses(signal?: AbortSignal) {
+  return request<ProcessMap>('/api/system/processes', signal)
 }
