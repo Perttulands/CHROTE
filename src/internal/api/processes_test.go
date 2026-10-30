@@ -20,12 +20,12 @@ func TestParseProcessStatCountsFieldsFromTheLastParenthesis(t *testing.T) {
 
 func TestServiceFromCgroupNamesTheDeepestService(t *testing.T) {
 	cases := map[string]string{
-		"/system.slice/nginx.service":                                          "nginx",
+		"/system.slice/nginx.service":                                            "nginx",
 		"/user.slice/user-1000.slice/user@1000.service/app.slice/chrote.service": "chrote",
 		"/user.slice/user-1000.slice/user@1000.service/init.scope":               "",
-		"/system.slice/system-getty.slice/getty@tty1.service":                   "getty@tty1",
-		"/system.slice/foo\\x2dbar.service":                                    "foo-bar",
-		"/init.scope":                                                          "",
+		"/system.slice/system-getty.slice/getty@tty1.service":                    "getty@tty1",
+		"/system.slice/foo\\x2dbar.service":                                      "foo-bar",
+		"/init.scope":                                                            "",
 	}
 	for path, want := range cases {
 		if got := serviceFromCgroup(path); got != want {
