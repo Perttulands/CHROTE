@@ -112,7 +112,8 @@ one mocked primary-action journey.
 
 CI runs on pushes to `main` and `master`, pull requests targeting either branch,
 and manual `workflow_dispatch`. It always runs document and host-neutrality
-checks. The `changes` job selects whether the five product jobs are also needed.
+checks, and builds the documentation site in a temporary directory to check its
+links and anchors, since the site renders canonical documents. The `changes` job selects whether the five product jobs are also needed.
 
 `scripts/ci-product-required.py` contains the documentation allowlist. It admits
 named root narrative Markdown files, Markdown under `docs/`, and images under

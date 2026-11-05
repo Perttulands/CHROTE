@@ -24,17 +24,17 @@ contributor docs.
 
 The application shell currently exposes:
 
-- Terminal 1
-- Terminal 2
-- Terminal 3
+- Terminal 1 to N (three by default, one to six in Settings)
 - Files
 - Beads
-- Library
+- Brain (the `library` view id)
+- Agents
 - Scheduled
+- Services
 - Server (default-enabled feature flag)
 - Settings
 
-Help is an application-shell dialog, not a persistent tab.
+Help opens from the tab bar's menu, not as a persistent tab.
 
 ## Architecture map
 

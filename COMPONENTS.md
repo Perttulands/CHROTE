@@ -21,12 +21,14 @@ process or the host exits.
 
 | Surface | Backing capability |
 | --- | --- |
-| Terminal 1-3 | Independent layouts over tmux sessions |
+| Terminal 1 to N | Independent layouts over tmux sessions; three by default, one to six in Settings |
 | Sessions/Files sidecar | Session discovery, Peek, assignment navigation, and workspace-local files |
 | Files | Configured-root file operations and terminal handoff |
 | Beads | Configured `bd` workspaces and issue data |
-| Library | The configured context corpus, read and corrected through CHROTE-owned routes |
+| Brain | The configured context corpus, read and corrected through CHROTE-owned `/api/library` routes |
+| Agents | The instruction stack, skills and memories a harness loads in a folder |
 | Scheduled | Scheduled-task definitions, locks, runs, and history |
+| Services | Current state and start or stop through a host-owned service controller |
 | Server | Health, resources, runtime events, and bounded system history |
 | Settings | Appearance, terminal behavior, flags, and session cleanup |
 
@@ -36,7 +38,8 @@ process or the host exits.
 | --- | --- |
 | `bd` | Beads issue source; configured workspaces remain authoritative |
 | `bv` | Optional graph-aware Beads TUI launched inside a terminal |
-| Context corpus | The Library's source; a Markdown tree under git named by `CHROTE_LIBRARY_ROOT`, and no corpus is bundled |
+| Context corpus | Brain's source; a Markdown tree under git named by `CHROTE_LIBRARY_ROOT`, and no corpus is bundled |
+| Service controller | The Services tab's backend, listening on a Unix socket named in `services.json`; none is bundled |
 | Tailscale or equivalent | Private HTTPS/network access outside localhost |
 
 Optional integrations must degrade clearly when unavailable. They must not make
