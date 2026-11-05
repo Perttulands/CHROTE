@@ -24,9 +24,25 @@ server.
 - Go 1.26.6+
 - Node.js 20.19+ or 22.12+
 - npm
+- Python 3, which the dashboard build uses to stamp the embedded bundle
 - tmux
+- `setfacl`, from the distribution's `acl` package: Send to Session grants
+  each drop to its target Unix user with a POSIX ACL, and the installer stops
+  without it
 - curl
 - Git
+
+Go, Node.js, npm and Python 3 are build requirements; `./install.sh --binary
+PATH` installs an already-built server without them.
+
+If `CHROTE_TMUX_SOCKET` is set in the installing shell, the installer treats it
+as a request for cross-user socket grants, which only a root install performs,
+and stops. Run an ordinary install with `env -u CHROTE_TMUX_SOCKET ./install.sh`.
+
+A user service normally stops when the user's last login session ends. To keep
+CHROTE reachable while logged out, enable lingering with
+`loginctl enable-linger "$USER"`, which some distributions reserve for
+administrators.
 
 ## Install
 
@@ -95,6 +111,11 @@ agents running in tmux.
 
 The dashboard port remains loopback-only.
 
+The installer does not read an earlier install's choices: every run rewrites
+`chrote.env` from its own options and defaults. Repeat `--workspace` and
+`--port` whenever you re-run it, or the file root returns to `$HOME` and the
+port to `8094`.
+
 ## Verify
 
 ```bash
@@ -122,17 +143,23 @@ start the user service.
 
 ## Configure optional capabilities
 
-Edit the managed non-secret values in:
+The installer writes the managed values to:
 
 ```text
 ~/.config/chrote/chrote.env
 ```
 
-Put optional tokens and private service URLs in:
+It rewrites that file completely on every run, so an edit there lasts only
+until the next install or upgrade. Put every setting of your own, optional
+capabilities and tokens alike, in:
 
 ```text
 ~/.config/chrote/secrets.env
 ```
+
+The installer creates `secrets.env` once and never rewrites it. The unit loads
+it after `chrote.env`, so a value there also overrides a managed one, such as
+`CHROTE_ROOTS`.
 
 Then reload:
 
@@ -148,8 +175,8 @@ access grants, but must not remove or narrow the session owner's access.
 ## Environment
 
 A few optional variables move presentation, launch and library choices out of
-the binary and into operator configuration. Set them in `chrote.env` and restart
-the service. All are unset on a fresh install, and CHROTE runs without any of
+the binary and into operator configuration. Set them in `secrets.env` and
+restart the service. All are unset on a fresh install, and CHROTE runs without any of
 them.
 
 ### `CHROTE_THEME_DIR`
@@ -307,12 +334,14 @@ nothing.
 
 ### The residents
 
-Three tabs each host a resident agent as a tmux session in a column at the
-tab's right edge: the Librarian in the Library, the tender in Agents, the Clerk
-in Beads. Each resident is a session name, the folder its launcher starts in
-when the session is absent, and the Beads project the resident works from.
-The Librarian takes its three from the Library variables above,
-with the corpus root as its folder; the other two have three variables each.
+Four tabs each host a resident agent as a tmux session in a column at the
+tab's right edge: the Librarian in Brain (the Library), the tender in Agents,
+the Clerk in Beads, and the service agent in Services. Each resident is a
+session name, the folder its launcher starts in when the session is absent, and
+the Beads project the resident works from. The Librarian takes its three from
+the Library variables above, with the corpus root as its folder; the tender and
+the Clerk have three variables each; the service agent is the `resident` object
+of the Services configuration below.
 
 | Variable | What it names |
 | --- | --- |
@@ -332,24 +361,53 @@ CHROTE_CLERK_FOLDER=/absolute/path/to/clerk
 CHROTE_CLERK_BEADS=/absolute/path/to/store
 ```
 
-`GET /api/residents` reports all three as
+`GET /api/residents` reports all four as
 `[{ tab, label, session, folder, beads }]`, one entry per tab in tab order,
 whether or not anything is configured for it; the dashboard reads the residents
 from this route alone. Each resident's charter lives on the host outside this
 repository, and the sessions are started from the column's Launch, not by the
 server.
 
+### Services
+
+The Services tab forwards list, start and stop requests to a controller the
+host runs on a Unix socket. CHROTE reads where that socket is from a JSON file:
+`CHROTE_SERVICES_CONFIG` when set, otherwise `services.json` beside
+`CHROTE_LAUNCH_CONFIG` when that is set, otherwise
+`$XDG_CONFIG_HOME/chrote/services.json`. The file is read at startup; a missing
+file leaves the tab explaining that no controller is configured, and an invalid
+one is logged and treated the same way.
+
+```json
+{
+  "socket": "/absolute/path/to/services.sock",
+  "resident": {"session": "service-agent", "folder": "/absolute/path", "beads": "/absolute/path/to/store"}
+}
+```
+
+The controller answers `GET /services` with `{"services": [...]}`, each entry
+`{ id, name, description, link, state, controllable }`, and
+`POST /services/{id}/start` or `/stop` with `{"service": {...}}`, or with
+`error` or `errors` on failure. `state` is one of `running`, `stopped`,
+`starting`, `stopping`, `partial`, `failed` or `unknown`.
+
 ## Upgrade
 
 ```bash
 cd CHROTE
 git pull --ff-only
-./install.sh
+npm ci --prefix dashboard
+./install.sh   # repeat the --workspace and --port you installed with
 ```
 
+The dashboard build installs dependencies only when `dashboard/node_modules` is
+missing, so `npm ci` keeps an upgrade from building against packages the new
+lockfile no longer names.
+
 The installer rebuilds from the checked-out commit, atomically replaces the
-managed binary, rewrites managed non-secret configuration, preserves
-`secrets.env` and durable state, then restarts and health-checks the user service.
+managed binary, rewrites `chrote.env` from its options and defaults, preserves
+`secrets.env` and durable state, then restarts and health-checks the user
+service.
 
 Review release notes and `git diff` before upgrading alpha builds.
 
@@ -358,6 +416,9 @@ Review release notes and `git diff` before upgrading alpha builds.
 ```bash
 ./uninstall.sh
 ```
+
+It asks before removing anything; `-y` skips the question. An install made with
+`--prefix` needs the same `--prefix` here.
 
 The default uninstall removes:
 
@@ -370,7 +431,9 @@ It preserves:
 
 - the configured workspace;
 - CHROTE durable state;
-- `secrets.env`.
+- `secrets.env`;
+- the Beads tab's disposable cache under `$XDG_CACHE_HOME/chrote`, which can be
+  deleted by hand.
 
 Explicit cleanup is available:
 
@@ -385,19 +448,39 @@ The workspace is never deleted.
 ```bash
 npm ci --prefix dashboard
 ./scripts/build-embedded-dashboard.sh
+python3 scripts/check-embedded-dashboard.py
 
 cd src
 go test ./...
 cd ..
 ./scripts/build-server.sh ./chrote-server
-./chrote-server
 ```
 
 The server build script stamps the version from `VERSION` and the HEAD commit of
-this checkout.
+this checkout. Do not build a release from stale embedded assets:
+`check-embedded-dashboard.py` must pass first.
 
-Do not build a release from stale embedded assets. The canonical embed script and
-`diff -qr dashboard/dist src/internal/dashboard/dist` must agree first.
+A bare `./chrote-server` uses compiled defaults meant for an installed host. It
+has no tmux socket mapping, so every terminal request fails with "no tmux
+sockets are configured", and its state directories are a fixed system path.
+Give it what the installer would:
+
+```bash
+state="$PWD/.dev-state"
+tmux_tmp="${TMUX_TMPDIR:-/tmp}"
+HOST=127.0.0.1 PORT=8090 \
+CHROTE_ROOTS="$HOME/work" CHROTE_WORKDIR="$HOME/work" \
+CHROTE_TMUX_SOCKET="$(id -un)=${tmux_tmp%/}/tmux-$(id -u)/default" \
+CHROTE_SCHEDULED_TASKS_DIR="$state/scheduled-tasks" \
+CHROTE_SESSION_DROPS_DIR="$state/session-drops" \
+CHROTE_AGENT_HOOKS_DIR="$state/agent-hooks" \
+./chrote-server
+```
+
+Port 8090 is the backend `npm run dev` in `dashboard/` proxies to, and stays
+clear of an installed CHROTE on 8094. The socket path drops a trailing slash
+from `TMUX_TMPDIR`, as the installer does. Unset, `CHROTE_ROOTS` defaults to
+`$HOME,/code,/vault`.
 
 ## Remote access
 
@@ -406,3 +489,10 @@ CHROTE has no application login. Treat network access as shell access.
 Keep the server on loopback and put remote access behind an operator-controlled
 private network and HTTPS, such as Tailscale Serve. See
 [`SECURITY.md`](../SECURITY.md).
+
+A front door must pass WebSocket upgrades on `/terminal/` and keep the
+browser's original `Host` header: the terminal WebSocket compares the `Origin`
+with the host the request was addressed to, and answers `403` when a proxy has
+rewritten it. Tailscale Serve keeps it. A proxy that cannot must have its
+public origin listed in `CORS_ORIGINS`. Browser notifications for agent events
+need a secure origin, which HTTPS provides.

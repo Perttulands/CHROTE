@@ -19,8 +19,9 @@ operator data into a product change.
 - Go 1.26.6+
 - Node.js 20.19+ or 22.12+
 - npm
-- Python 3 for documentation checks
+- Python 3 for the dashboard build stamp and documentation checks
 - tmux for the disposable built-server and installation checks
+- `setfacl`, from the `acl` package, for the installation checks
 
 ## Setup
 
@@ -49,6 +50,13 @@ python3 scripts/doc-lint.py
 python3 scripts/host-neutrality.py
 git diff --check
 ```
+
+The CI `docs` job also runs `python3 scripts/build-docs-site.py --check`, which
+builds the documentation site in `docs/site/` into a temporary directory and
+fails on a broken link or anchor; run it when the change touches the site or a
+document it renders.
+`python3 scripts/build-docs-site.py --serve` previews it on
+`http://127.0.0.1:8000`.
 
 To reproduce all five product jobs locally, start at the repository root of a
 clean, committed checkout. This recipe stops at the first failure. The installer

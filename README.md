@@ -71,17 +71,19 @@ screen.
 | --- | --- |
 | Terminal 1 to N | Attach, arrange, and type into tmux sessions |
 | Files | Browse, read, edit, compare, and send files under the configured roots to a session |
-| Server | Health, resource readings, runtime events, and a bounded history |
-| Settings | Appearance, tmux colors, session defaults, tab count, launch users, cleanup |
-| Beads | Issues, ready work, triage, dependency graph, insights, and comments from configured `bd` workspaces |
+| Beads | One table of every Bead in every `bd` store on the host, sliced by search, project, status and days, with each Bead's work graph |
+| Brain | The configured context corpus as a sky of subjects: search, a reader, and edits committed as the operator |
+| Agents | The instructions, skills and memories a harness would load in any folder on the host |
 | Scheduled | Host-owned tasks that deliver a prompt to a named tmux session on a schedule |
 | Services | Status and current-state controls from a host-owned service catalog |
-| Library | The configured context corpus: shelves, pages, search, recent changes, and edits committed as the operator |
+| Server | Health, resource readings, runtime events, and a bounded history |
+| Settings | Appearance, session defaults, tab count, launch users, agent events, cleanup |
 
-Terminal, Files, Server, and Settings are the core. Beads, Scheduled, and the
-Library are first-party components built on that core. Each one degrades alone
-when `bd` is missing or no corpus is configured, and none of them can stop the
-core from loading.
+Terminal, Files, Server, and Settings are the core. Beads, Brain, Agents,
+Scheduled and Services are first-party components built on that core. Brain's
+configuration and routes keep its earlier name, the Library. Each component
+degrades alone when `bd` is missing, no corpus is configured or no service
+controller answers, and none of them can stop the core from loading.
 
 A scheduled task sends its prompt into tmux verbatim. The receipt says CHROTE
 delivered the keystrokes. It does not claim the program on the other end read
@@ -119,7 +121,7 @@ inside tmux. Read [SECURITY.md](SECURITY.md) before you expose this anywhere.
 ## Install
 
 You need Linux or WSL with user systemd, Go 1.26.6 or newer, Node.js 20.19+ or
-22.12+, npm, tmux, curl, and Git.
+22.12+, npm, Python 3, tmux, `setfacl` (the `acl` package), curl, and Git.
 
 ```bash
 git clone https://github.com/Perttulands/CHROTE.git
@@ -132,7 +134,9 @@ Then open <http://127.0.0.1:8094>.
 The installer builds the dashboard and the Go binary from your checkout,
 installs them under `$HOME/.local`, writes a `chrote.service` user unit, starts
 it, and checks `/api/health`. It never calls `sudo`. Use `--workspace PATH` to
-narrow the file root from `$HOME`, or `--port` to move the port.
+narrow the file root from `$HOME`, or `--port` to move the port. The installer
+does not remember them: repeat both when you re-run it, and keep settings of
+your own in `~/.config/chrote/secrets.env`, which it never rewrites.
 
 [docs/installation.md](docs/installation.md) covers upgrades, optional
 integrations, and remote access. [docs/troubleshooting.md](docs/troubleshooting.md)
@@ -174,6 +178,7 @@ The dashboard is embedded in the binary, so build it with
 
 | Need | Read |
 | --- | --- |
+| A browsable guide to installing, using and running CHROTE | The documentation site, built locally from [docs/site/](docs/site/README.md) |
 | Why CHROTE exists | [VISION.md](VISION.md) |
 | Product contract and non-goals | [PRD.md](PRD.md) |
 | System ownership and runtime shape | [ARCHITECTURE.md](ARCHITECTURE.md) |

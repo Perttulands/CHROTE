@@ -22,14 +22,14 @@ curl -v http://127.0.0.1:8094/api/health
 Expected health shape:
 
 ```json
-{"status":"ok","timestamp":"...","version":"2.0.0-alpha.2-dev"}
+{"status":"ok","version":"2.0.0-alpha.2-dev","commit":"<full commit hash>","timestamp":"..."}
 ```
 
 A tagged release reports its tag-derived version instead of the development
 suffix.
 
-If the port was customized, read `PORT` from
-`~/.config/chrote/chrote.env` and use that value.
+If the port was customized, read `PORT` from `~/.config/chrote/chrote.env`, or
+from `secrets.env` where it overrides that, and use that value.
 
 ## 2. Dashboard loads, but terminals fail
 
@@ -68,10 +68,12 @@ broken. tmux owns the session lifetime; CHROTE is a replaceable client.
 ss -ltnp | grep -E ':8094\b'
 ```
 
-Choose unused loopback ports and reinstall:
+Choose an unused loopback port and reinstall. The installer does not remember
+an earlier `--workspace`; if you installed with one, pass the same path again,
+or the file root returns to `$HOME`:
 
 ```bash
-./install.sh --port 8096
+./install.sh --port 8096   # plus --workspace PATH if you installed with one
 ```
 
 ## 4. Files view is empty or denied
@@ -79,7 +81,7 @@ Choose unused loopback ports and reinstall:
 Inspect the configured roots:
 
 ```bash
-grep -E '^CHROTE_(ROOTS|WORKDIR)=' ~/.config/chrote/chrote.env
+grep -E '^CHROTE_(ROOTS|WORKDIR)=' ~/.config/chrote/*.env
 ```
 
 Rules:
@@ -90,7 +92,8 @@ Rules:
   path is reported as a permission error, not an empty root.
 
 Re-run the installer with the intended workspace instead of widening roots to
-`/` as a debugging shortcut:
+`/` as a debugging shortcut. Add `--port` if you installed with one; otherwise
+the port returns to `8094`:
 
 ```bash
 ./install.sh --workspace "$HOME/work"
@@ -105,7 +108,7 @@ curl http://127.0.0.1:8094/api/beads/health
 ```
 
 If `bd` is outside the service `PATH`, set an absolute `CHROTE_BD_COMMAND` in
-`chrote.env`. Configure `CHROTE_BEADS_WORKSPACES` to actual Beads roots.
+`secrets.env`, which the installer never rewrites. Configure `CHROTE_BEADS_WORKSPACES` to actual Beads roots.
 
 `bv` is optional. Its absence must not break Beads API or dashboard operation.
 
@@ -146,7 +149,7 @@ Both come from host configuration described under
 [Environment](installation.md#environment).
 
 ```bash
-grep -E '^CHROTE_(THEME_DIR|LAUNCH_CONFIG)=' ~/.config/chrote/chrote.env
+grep -E '^CHROTE_(THEME_DIR|LAUNCH_CONFIG)=' ~/.config/chrote/*.env
 curl -i http://127.0.0.1:8094/api/theme
 curl http://127.0.0.1:8094/api/launch
 ```
@@ -155,7 +158,7 @@ curl http://127.0.0.1:8094/api/launch
   exists but is not schema 1. Fix the field the response names. CHROTE does not
   fall back to the default here, because a silent fallback would hide a broken
   edit behind a palette that looks deliberate.
-- `/api/theme` answers with `chrote-dark` and an empty `art` list: that is the
+- `/api/theme` answers with `chrote-violet` and an empty `art` list: that is the
   embedded default, so `CHROTE_THEME_DIR` is unset or holds no `theme.json`.
 - The launcher offers only `Shell`: `CHROTE_LAUNCH_CONFIG` is unset. If it is
   set and the service will not start at all, the startup log names the parse or
@@ -167,10 +170,13 @@ curl http://127.0.0.1:8094/api/launch
 
 ```bash
 cd CHROTE
-./install.sh
+./install.sh   # add the --workspace and --port you installed with, if any
 ```
 
-Reinstall preserves the configured workspace, XDG state, and `secrets.env`.
+Reinstall preserves the workspace directory, XDG state, and `secrets.env`. It
+rewrites `chrote.env` from its options and defaults, so repeat the original
+`--workspace` and `--port`, and only those: a new `--workspace` narrows the
+file root to it. Keep your own settings in `secrets.env`.
 Uninstall also preserves them by default:
 
 ```bash

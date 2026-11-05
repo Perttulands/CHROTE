@@ -95,3 +95,4 @@ src/internal/dashboard/dist.stamp
 prototype-output/
 .superpowers/
 .codex/
+docs/site/_site/

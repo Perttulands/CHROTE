@@ -1,0 +1,8 @@
+[
+  {"section": "Start", "pages": ["index", "concepts", "install", "first-session", "remote-access"]},
+  {"section": "Use", "pages": ["terminals", "send-to-session", "files", "beads", "brain", "agents", "scheduled", "services", "server-and-settings", "keyboard"]},
+  {"section": "Configure", "pages": ["configuration", "environment", "launcher", "theme", "integrations", "multi-user"]},
+  {"section": "Operate", "pages": ["upgrade", "troubleshooting", "state"]},
+  {"section": "Trust", "pages": ["security"]},
+  {"section": "Reference", "pages": ["http-api", "develop", "documents"]}
+]

@@ -41,6 +41,7 @@ jobs:
         run: |
           python3 scripts/doc-lint.py
           python3 scripts/host-neutrality.py
+          python3 scripts/build-docs-site.py --check
 
   # The dashboard bundle is embedded into the Go binary by a compile-time
   # directive and is not tracked, so every job that compiles the server needs

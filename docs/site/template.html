@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}} · CHROTE docs</title>
+<meta name="description" content="{{description}}">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0f0e13">
+<link rel="icon" href="{{root}}assets/favicon.png" type="image/png">
+<link rel="stylesheet" href="{{root}}assets/site.css">
+</head>
+<body class="{{body_class}}">
+<a class="skip" href="#content">Skip to content</a>
+<header class="bar">
+  <button type="button" class="menu-toggle" aria-controls="sidebar" aria-expanded="false">Menu</button>
+  <a class="wordmark" href="{{root}}index.html"><span class="mark">CHROTE</span><span class="sub">docs</span></a>
+  <div class="search" role="search">
+    <label class="visually-hidden" for="search-input">Search the documentation</label>
+    <input id="search-input" type="search" placeholder="Search …" autocomplete="off" spellcheck="false"
+      role="combobox" aria-expanded="false" aria-controls="search-results" aria-autocomplete="list">
+    <span class="search-hint" aria-hidden="true">/</span>
+    <ul id="search-results" class="search-results" role="listbox" aria-label="Search results" hidden></ul>
+  </div>
+  <span class="version" title="VERSION in this checkout">v{{version}}</span>
+  <a class="repo" href="{{repository}}" rel="noopener">GitHub</a>
+</header>
+<div class="frame">
+  <nav id="sidebar" class="sidebar" aria-label="Documentation">
+    {{nav}}
+  </nav>
+  <main id="content" class="main" tabindex="-1">
+    <article class="prose" data-section="{{section}}">
+      {{content}}
+    </article>
+    {{provenance}}
+    {{pager}}
+    <footer class="foot">
+      <p>CHROTE is MIT licensed. This site is built from the repository with <code>scripts/build-docs-site.py</code>.</p>
+    </footer>
+  </main>
+  <aside class="aside">{{toc}}</aside>
+</div>
+<div class="toast" role="status" aria-live="polite"></div>
+<script src="{{root}}assets/search-index.js" defer></script>
+<script src="{{root}}assets/site.js" defer></script>
+</body>
+</html>
