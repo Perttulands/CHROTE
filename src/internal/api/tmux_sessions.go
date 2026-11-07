@@ -394,8 +394,9 @@ func (h *TmuxHandler) runTmuxOnSocketContext(parent context.Context, socket stri
 	return h.runTmuxOnSocketInput(parent, socket, "", args...)
 }
 
-// runTmuxOnSocketInput runs one tmux command, feeding stdin from input. Only a
-// control-mode client reads commands from stdin; every other caller passes "".
+// runTmuxOnSocketInput runs one tmux command, feeding stdin from input. Every
+// current caller passes ""; only a control-mode client would read stdin, and
+// CHROTE no longer starts one (see sizeCreatedSession).
 func (h *TmuxHandler) runTmuxOnSocketInput(parent context.Context, socket, input string, args ...string) (string, error) {
 	if parent == nil {
 		parent = context.Background()

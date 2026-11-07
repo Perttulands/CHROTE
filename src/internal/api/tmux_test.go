@@ -995,11 +995,11 @@ func assertNoTopLevelKey(t *testing.T, response map[string]interface{}, key stri
 }
 
 // tmuxCreationCalls is the whole argv a create produces: the detached session,
-// the control-mode attach that keeps it alive, and the mouse policy.
+// the one-time sizing (resize, then unset window-size), and the mouse policy.
 func tmuxCreationCalls(socket, session, workdir, mouse string) []string {
 	calls := []string{
 		"-S " + socket + " new-session -d -P -F #{session_id} -e CHROTE_CREATION_TOKEN=<token> -s " + session + " -c " + workdir,
-		"-S " + socket + " -C attach-session -t $42",
+		"-S " + socket + " resize-window -t $42 -x 200 -y 50 ; set-window-option -t $42 -u window-size",
 	}
 	return append(calls, tmuxMousePolicyCalls(socket, mouse)...)
 }

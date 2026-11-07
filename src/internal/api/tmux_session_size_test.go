@@ -11,9 +11,9 @@ import (
 	"testing"
 )
 
-// installSizingRecorderTmux installs a fake tmux that records both its argv and
-// the stdin it was given, so a control-mode sizing command can be asserted in
-// full.
+// installSizingRecorderTmux installs a fake tmux that records its argv (and any
+// stdin, should a control-mode client ever come back), so the sizing command
+// can be asserted in full.
 func installSizingRecorderTmux(t *testing.T) (argsPath, stdinPath string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -58,7 +58,7 @@ func createSessionThroughHandler(t *testing.T, name string) *httptest.ResponseRe
 }
 
 func TestCreateSessionSizesOnceWithoutPinningTheWindow(t *testing.T) {
-	argsPath, stdinPath := installSizingRecorderTmux(t)
+	argsPath, _ := installSizingRecorderTmux(t)
 	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
 
 	createSessionThroughHandler(t, "sizing-smoke")
@@ -71,42 +71,41 @@ func TestCreateSessionSizesOnceWithoutPinningTheWindow(t *testing.T) {
 				t.Fatalf("new-session pinned the window at creation: %q", call)
 			}
 		}
-		if strings.Contains(call, "resize-window") {
-			t.Fatalf("creation used resize-window, which pins window-size manual: %q", call)
-		}
 		if strings.Contains(call, "attach-session") {
+			t.Fatalf("creation started a client; a control-mode attach can crash tmux 3.6a: %q", call)
+		}
+		if strings.Contains(call, "resize-window") {
 			sizing = append(sizing, call)
 		}
 	}
 	if len(sizing) != 1 {
-		t.Fatalf("sizing attaches = %#v, want exactly one", sizing)
+		t.Fatalf("sizing calls = %#v, want exactly one", sizing)
 	}
-	if want := "-S /tmp/tmux-a -C attach-session -t $7"; sizing[0] != want {
+	// The resize and the unset travel in one tmux command, so the window is
+	// never left on window-size manual.
+	if want := "-S /tmp/tmux-a resize-window -t $7 -x 200 -y 50 ; set-window-option -t $7 -u window-size"; sizing[0] != want {
 		t.Fatalf("sizing call = %q, want %q", sizing[0], want)
 	}
 
-	stdin, err := os.ReadFile(stdinPath)
-	if err != nil {
-		t.Fatalf("read recorded stdin: %v", err)
-	}
-	if got, want := string(stdin), "refresh-client -C 200,50\n"; got != want {
-		t.Fatalf("control-mode stdin = %q, want %q", got, want)
-	}
-
 	t.Run("a configured canonical size is the one sized to", func(t *testing.T) {
-		_, stdinPath := installSizingRecorderTmux(t)
+		argsPath, _ := installSizingRecorderTmux(t)
 		t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")
 		t.Setenv("CHROTE_TERMINAL_CREATION_COLS", "160")
 		t.Setenv("CHROTE_TERMINAL_CREATION_ROWS", "48")
 
 		createSessionThroughHandler(t, "configured-size-smoke")
 
-		stdin, err := os.ReadFile(stdinPath)
-		if err != nil {
-			t.Fatalf("read recorded stdin: %v", err)
+		found := false
+		for _, call := range readFakeCommandCalls(t, argsPath) {
+			if strings.Contains(call, "resize-window") {
+				found = true
+				if !strings.Contains(call, "-x 160 -y 48 ; set-window-option") {
+					t.Fatalf("sizing call = %q, want 160x48 followed by the unset", call)
+				}
+			}
 		}
-		if got, want := string(stdin), "refresh-client -C 160,48\n"; got != want {
-			t.Fatalf("control-mode stdin = %q, want %q", got, want)
+		if !found {
+			t.Fatalf("no sizing call recorded")
 		}
 	})
 
@@ -128,7 +127,7 @@ func TestCreateSessionSizesOnceWithoutPinningTheWindow(t *testing.T) {
 func TestCreateSessionCleansUpWhenSizingFails(t *testing.T) {
 	argsPath := installScriptedTmux(t, `
 case "$*" in
-  *" -C attach-session"*) echo 'no server running' >&2; exit 1 ;;
+  *"resize-window"*) echo 'no server running' >&2; exit 1 ;;
 esac
 `)
 	t.Setenv("CHROTE_TMUX_SOCKET", "alice=/tmp/tmux-a")

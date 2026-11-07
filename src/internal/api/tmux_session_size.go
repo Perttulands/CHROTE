@@ -45,15 +45,23 @@ func canonicalWindowDimension(envName string, fallback, minimum int) int {
 	return parsed
 }
 
-// sizeCreatedSession gives a session the canonical size exactly once, through a
-// control-mode client that attaches, sets the size and leaves. tmux sizes a
-// clientless window to the arriving client and keeps that size after it
-// detaches, and unlike resize-window this leaves window-size on latest, so the
-// next real viewer still decides the size. The client needs no pty.
+// sizeCreatedSession gives a session the canonical size exactly once. One tmux
+// command resizes the window and then unsets its window-size option, which
+// resize-window had set to manual, so the window inherits latest again and the
+// next real viewer still decides the size. A clientless window keeps the size
+// it was given.
+//
+// This deliberately avoids a control-mode client (-C attach plus
+// refresh-client -C). tmux 3.6a sets CLIENT_CONTROL before control_start runs,
+// so a notification broadcast in that window (another session created, a
+// rename, a detach) reaches control_write with a NULL control_state and the
+// whole server segfaults. That took down a shared pool on 2026-11-06 and
+// reproduces on a scratch socket. See ADR 0017, decision 3.
 func (h *TmuxHandler) sizeCreatedSession(parent context.Context, socket, target string) error {
 	cols, rows := canonicalWindowSize()
-	input := fmt.Sprintf("refresh-client -C %d,%d\n", cols, rows)
-	if _, err := h.runTmuxOnSocketInput(parent, socket, input, "-C", "attach-session", "-t", target); err != nil {
+	if _, err := h.runTmuxOnSocketContext(parent, socket,
+		"resize-window", "-t", target, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows),
+		";", "set-window-option", "-t", target, "-u", "window-size"); err != nil {
 		return fmt.Errorf("size new tmux session %q to %dx%d: %w", target, cols, rows, err)
 	}
 	return nil
