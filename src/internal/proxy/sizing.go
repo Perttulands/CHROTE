@@ -32,8 +32,8 @@ import (
 const ignoreSizeFlag = "ignore-size"
 
 // clientListFormat pairs each attached client with its flags. A client with no
-// tty, such as the transient control-mode client that sizes a new session,
-// cannot be addressed by `refresh-client -t` and is skipped.
+// tty, such as a control-mode client, cannot be addressed by
+// `refresh-client -t` and is skipped.
 const clientListFormat = "#{client_tty}\t#{client_flags}"
 
 // sizingClientTTYs reports the clients that currently set the size of a

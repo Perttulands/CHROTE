@@ -100,6 +100,15 @@ Probed on scratch sockets, created and destroyed for the probe:
 - A control-mode client (`-C attach` plus `refresh-client -C`) sizes a window
   without a pty and leaves `window-size` on `latest`. The size persists after
   that client detaches.
+- Measured 2026-11-07, on tmux 3.6a: that control-mode client can crash the
+  server. `CLIENT_CONTROL` is set when the client identifies, before
+  `control_start` allocates its state, so a notification broadcast in between
+  (another session created, a rename, a detach) segfaults in `control_write`.
+  It took down a shared pool at boot on 2026-11-06 and reproduces on a scratch
+  socket under session churn. `resize-window` followed by
+  `set-window-option -u window-size`, in one tmux command, gives the same
+  result without a client: the window keeps the size, `window-size` is back on
+  `latest`, and the next viewer resizes it.
 
 ## Decision
 
@@ -135,13 +144,15 @@ Probed on scratch sockets, created and destroyed for the probe:
    once at the claiming viewer's size.
 
 3. **A new session is sized once, at creation, and never again.** The
-   create-session path attaches a transient control-mode client, sets the
-   canonical size, and detaches. There is no periodic sweep, no idle
-   classification, and no recurring check of any kind. After creation, the last
-   viewer's size is the size, and a session nobody views keeps whatever it was
-   left at.
+   create-session path resizes the new window and unsets its `window-size` in
+   the same tmux command, so it is never left `manual` (amended 2026-11-07; it
+   used a transient control-mode client, which can crash tmux 3.6a). There is
+   no periodic sweep, no idle classification, and no recurring check of any
+   kind. After creation, the last viewer's size is the size, and a session
+   nobody views keeps whatever it was left at.
 
-4. **CHROTE never creates a `manual` window.** `resize-window` is not used.
+4. **CHROTE never creates a `manual` window.** `resize-window` is used only
+   at creation, paired with the unset in the same command (decision 3).
    Manual windows that already exist are surfaced, not silently normalised, and
    carry an explicit operator action to release them.
 
